@@ -87,3 +87,12 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
         self.inner.shutdown().map_err(Into::into)
     }
 }
+
+impl<T: Stream> Stream for FramedWrite<T> {
+    type Item = T::Item;
+    type Error = T::Error;
+
+    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
+        self.inner.poll()
+    }
+}

@@ -1,13 +1,24 @@
 use ConnectionError;
 use frame::Frame;
 
-use futures::*;
-use bytes::BytesMut;
+use tokio_io::AsyncWrite;
 
-use std::io;
+use futures::*;
+use bytes::{BytesMut, Buf};
+
+use std::io::{self, Write};
 
 pub struct FramedRead<T> {
     inner: T,
+}
+
+impl<T> FramedRead<T>
+    where T: Stream<Item = BytesMut, Error = io::Error>,
+          T: AsyncWrite,
+{
+    pub fn new(inner: T) -> FramedRead<T> {
+        FramedRead { inner: inner }
+    }
 }
 
 impl<T> Stream for FramedRead<T>
@@ -41,3 +52,22 @@ impl<T: Sink> Sink for FramedRead<T> {
     }
 }
 
+impl<T: io::Write> io::Write for FramedRead<T> {
+    fn write(&mut self, src: &[u8]) -> io::Result<usize> {
+        self.inner.write(src)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<T: AsyncWrite> AsyncWrite for FramedRead<T> {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.inner.shutdown()
+    }
+
+    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+        self.inner.write_buf(buf)
+    }
+}
