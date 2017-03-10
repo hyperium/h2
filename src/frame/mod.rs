@@ -32,7 +32,7 @@ mod util;
 
 pub use self::data::Data;
 pub use self::head::{Head, Kind, StreamId};
-pub use self::settings::Settings;
+pub use self::settings::{Settings, SettingSet};
 pub use self::unknown::Unknown;
 
 const FRAME_HEADER_LEN: usize = 9;

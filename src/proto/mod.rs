@@ -1,5 +1,6 @@
 mod framed_read;
 mod framed_write;
+mod settings;
 
 use {frame, ConnectionError};
 use self::framed_read::FramedRead;

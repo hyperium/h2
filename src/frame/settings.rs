@@ -1,12 +1,17 @@
-use frame::{Error, Head, Kind};
+use frame::{Frame, Error, Head, Kind};
 use bytes::{Bytes, BytesMut, BufMut, BigEndian};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Settings {
     flag: SettingsFlag,
     // Fields
+    values: SettingSet,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct SettingSet {
     header_table_size: Option<u32>,
-    enable_push: Option<bool>,
+    enable_push: Option<u32>,
     max_concurrent_streams: Option<u32>,
     initial_window_size: Option<u32>,
     max_frame_size: Option<u32>,
@@ -35,6 +40,20 @@ const ALL: u8 = ACK;
 // ===== impl Settings =====
 
 impl Settings {
+    pub fn ack() -> Settings {
+        Settings {
+            flag: SettingsFlag::ack(),
+            .. Settings::default()
+        }
+    }
+
+    pub fn new(values: SettingSet) -> Settings {
+        Settings {
+            flag: SettingsFlag::empty(),
+            values: values,
+        }
+    }
+
     pub fn load(head: Head, payload: Bytes) -> Result<Settings, Error> {
         use self::Setting::*;
 
@@ -54,10 +73,7 @@ impl Settings {
             }
 
             // Return the ACK frame
-            return Ok(Settings {
-                flag: flag,
-                .. Settings::default()
-            });
+            return Ok(Settings::ack());
         }
 
         // Ensure the payload length is correct, each setting is 6 bytes long.
@@ -71,22 +87,22 @@ impl Settings {
         for raw in payload.chunks(6) {
             match Setting::load(raw) {
                 Some(HeaderTableSize(val)) => {
-                    settings.header_table_size = Some(val);
+                    settings.values.header_table_size = Some(val);
                 }
                 Some(EnablePush(val)) => {
-                    settings.enable_push = Some(val == 1);
+                    settings.values.enable_push = Some(val);
                 }
                 Some(MaxConcurrentStreams(val)) => {
-                    settings.max_concurrent_streams = Some(val);
+                    settings.values.max_concurrent_streams = Some(val);
                 }
                 Some(InitialWindowSize(val)) => {
-                    settings.initial_window_size = Some(val);
+                    settings.values.initial_window_size = Some(val);
                 }
                 Some(MaxFrameSize(val)) => {
-                    settings.max_frame_size = Some(val);
+                    settings.values.max_frame_size = Some(val);
                 }
                 Some(MaxHeaderListSize(val)) => {
-                    settings.max_header_list_size = Some(val);
+                    settings.values.max_header_list_size = Some(val);
                 }
                 None => {}
             }
@@ -121,29 +137,35 @@ impl Settings {
     fn for_each<F: FnMut(Setting)>(&self, mut f: F) {
         use self::Setting::*;
 
-        if let Some(v) = self.header_table_size {
+        if let Some(v) = self.values.header_table_size {
             f(HeaderTableSize(v));
         }
 
-        if let Some(v) = self.enable_push {
-            f(EnablePush(if v { 1 } else { 0 }));
+        if let Some(v) = self.values.enable_push {
+            f(EnablePush(v));
         }
 
-        if let Some(v) = self.max_concurrent_streams {
+        if let Some(v) = self.values.max_concurrent_streams {
             f(MaxConcurrentStreams(v));
         }
 
-        if let Some(v) = self.initial_window_size {
+        if let Some(v) = self.values.initial_window_size {
             f(InitialWindowSize(v));
         }
 
-        if let Some(v) = self.max_frame_size {
+        if let Some(v) = self.values.max_frame_size {
             f(MaxFrameSize(v));
         }
 
-        if let Some(v) = self.max_header_list_size {
+        if let Some(v) = self.values.max_header_list_size {
             f(MaxHeaderListSize(v));
         }
+    }
+}
+
+impl From<Settings> for Frame {
+    fn from(src: Settings) -> Frame {
+        Frame::Settings(src)
     }
 }
 
@@ -204,6 +226,10 @@ impl Setting {
 // ===== impl SettingsFlag =====
 
 impl SettingsFlag {
+    pub fn empty() -> SettingsFlag {
+        SettingsFlag(0)
+    }
+
     pub fn load(bits: u8) -> SettingsFlag {
         SettingsFlag(bits & ALL)
     }
