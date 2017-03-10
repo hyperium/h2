@@ -1,4 +1,7 @@
-use bytes::Bytes;
+use error::{ConnectionError, Reason};
+use bytes::{Bytes, BytesMut, BufMut};
+
+use std::io;
 
 /// A helper macro that unpacks a sequence of 4 bytes found in the buffer with
 /// the given identifier, starting at the given offset, into the given integer
@@ -29,9 +32,26 @@ mod util;
 
 pub use self::data::Data;
 pub use self::head::{Head, Kind, StreamId};
+pub use self::settings::Settings;
 pub use self::unknown::Unknown;
 
 const FRAME_HEADER_LEN: usize = 9;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Frame {
+    /*
+    Data(DataFrame<'a>),
+    HeadersFrame(HeadersFrame<'a>),
+    RstStreamFrame(RstStreamFrame),
+    SettingsFrame(SettingsFrame),
+    PingFrame(PingFrame),
+    GoawayFrame(GoawayFrame<'a>),
+    WindowUpdateFrame(WindowUpdateFrame),
+    UnknownFrame(RawFrame<'a>),
+    */
+    Settings(Settings),
+    Unknown(Unknown),
+}
 
 /// Errors that can occur during parsing an HTTP/2 frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,26 +84,22 @@ pub enum Error {
 
     /// The payload length specified by the frame header was not the
     /// value necessary for the specific frame type.
-    InvalidPayloadLength
+    InvalidPayloadLength,
+
+    /// Received a payload with an ACK settings frame
+    InvalidPayloadAckSettings,
+
+    /// An invalid stream identifier was provided.
+    ///
+    /// This is returned if a settings frame is received with a stream
+    /// identifier other than zero.
+    InvalidStreamId,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Frame {
-    /*
-    Data(DataFrame<'a>),
-    HeadersFrame(HeadersFrame<'a>),
-    RstStreamFrame(RstStreamFrame),
-    SettingsFrame(SettingsFrame),
-    PingFrame(PingFrame),
-    GoawayFrame(GoawayFrame<'a>),
-    WindowUpdateFrame(WindowUpdateFrame),
-    UnknownFrame(RawFrame<'a>),
-    */
-    Unknown(Unknown),
-}
+// ===== impl Frame ======
 
 impl Frame {
-    pub fn load(mut frame: Bytes) -> Frame {
+    pub fn load(mut frame: Bytes) -> Result<Frame, Error> {
         let head = Head::parse(&frame);
 
         // Extract the payload from the frame
@@ -91,8 +107,44 @@ impl Frame {
 
 
         match head.kind() {
-            Kind::Unknown => Frame::Unknown(Unknown::new(head, frame)),
+            Kind::Unknown => {
+                let unknown = Unknown::new(head, frame);
+                Ok(Frame::Unknown(unknown))
+            }
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn encode_len(&self) -> usize {
+        use self::Frame::*;
+
+        match *self {
+            Settings(ref frame) => frame.encode_len(),
+            Unknown(ref frame) => frame.encode_len(),
+        }
+    }
+
+    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), Error> {
+        use self::Frame::*;
+
+        debug_assert!(dst.remaining_mut() >= self.encode_len());
+
+        match *self {
+            Settings(ref frame) => frame.encode(dst),
+            Unknown(ref frame) => frame.encode(dst),
+        }
+    }
+}
+
+// ===== impl Error =====
+
+impl From<Error> for ConnectionError {
+    fn from(src: Error) -> ConnectionError {
+        use self::Error::*;
+
+        match src {
+            // TODO: implement
+            _ => ConnectionError::Proto(Reason::ProtocolError),
         }
     }
 }

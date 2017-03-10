@@ -1,7 +1,7 @@
-use frame::{Error, Head};
-use bytes::Bytes;
+use frame::{Error, Head, Kind};
+use bytes::{Bytes, BytesMut, BufMut, BigEndian};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Settings {
     flag: SettingsFlag,
     // Fields
@@ -41,8 +41,7 @@ impl Settings {
         debug_assert_eq!(head.kind(), ::frame::Kind::Settings);
 
         if head.stream_id() != 0 {
-            // TODO: raise ProtocolError
-            unimplemented!();
+            return Err(Error::InvalidStreamId);
         }
 
         // Load the flag
@@ -51,8 +50,7 @@ impl Settings {
         if flag.is_ack() {
             // Ensure that the payload is empty
             if payload.len() > 0 {
-                // TODO: raise a FRAME_SIZE_ERROR
-                unimplemented!();
+                return Err(Error::InvalidPayloadLength);
             }
 
             // Return the ACK frame
@@ -64,7 +62,7 @@ impl Settings {
 
         // Ensure the payload length is correct, each setting is 6 bytes long.
         if payload.len() % 6 != 0 {
-            return Err(Error::PartialSettingLength);
+            return Err(Error::InvalidPayloadAckSettings);
         }
 
         let mut settings = Settings::default();
@@ -95,6 +93,57 @@ impl Settings {
         }
 
         Ok(settings)
+    }
+
+    pub fn encode_len(&self) -> usize {
+        super::FRAME_HEADER_LEN + self.payload_len()
+    }
+
+    fn payload_len(&self) -> usize {
+        let mut len = 0;
+        self.for_each(|_| len += 6);
+        len
+    }
+
+    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), Error> {
+        // Create & encode an appropriate frame head
+        let head = Head::new(Kind::Settings, self.flag.into(), 0);
+        let payload_len = self.payload_len();
+
+        try!(head.encode(payload_len, dst));
+
+        // Encode the settings
+        self.for_each(|setting| setting.encode(dst));
+
+        Ok(())
+    }
+
+    fn for_each<F: FnMut(Setting)>(&self, mut f: F) {
+        use self::Setting::*;
+
+        if let Some(v) = self.header_table_size {
+            f(HeaderTableSize(v));
+        }
+
+        if let Some(v) = self.enable_push {
+            f(EnablePush(if v { 1 } else { 0 }));
+        }
+
+        if let Some(v) = self.max_concurrent_streams {
+            f(MaxConcurrentStreams(v));
+        }
+
+        if let Some(v) = self.initial_window_size {
+            f(InitialWindowSize(v));
+        }
+
+        if let Some(v) = self.max_frame_size {
+            f(MaxFrameSize(v));
+        }
+
+        if let Some(v) = self.max_header_list_size {
+            f(MaxHeaderListSize(v));
+        }
     }
 }
 
@@ -134,6 +183,22 @@ impl Setting {
 
         Setting::from_id(id, val)
     }
+
+    fn encode(&self, dst: &mut BytesMut) {
+        use self::Setting::*;
+
+        let (kind, val) = match *self {
+            HeaderTableSize(v) => (1, v),
+            EnablePush(v) => (2, v),
+            MaxConcurrentStreams(v) => (3, v),
+            InitialWindowSize(v) => (4, v),
+            MaxFrameSize(v) => (5, v),
+            MaxHeaderListSize(v) => (6, v),
+        };
+
+        dst.put_u16::<BigEndian>(kind);
+        dst.put_u32::<BigEndian>(val);
+    }
 }
 
 // ===== impl SettingsFlag =====
@@ -149,5 +214,11 @@ impl SettingsFlag {
 
     pub fn is_ack(&self) -> bool {
         self.0 & ACK == ACK
+    }
+}
+
+impl From<SettingsFlag> for u8 {
+    fn from(src: SettingsFlag) -> u8 {
+        src.0
     }
 }

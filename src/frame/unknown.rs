@@ -1,5 +1,5 @@
-use frame::Head;
-use bytes::Bytes;
+use frame::{Head, Error};
+use bytes::{Bytes, BytesMut, BufMut};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unknown {
@@ -13,5 +13,15 @@ impl Unknown {
             head: head,
             payload: payload,
         }
+    }
+
+    pub fn encode_len(&self) -> usize {
+        self.head.encode_len() + self.payload.len()
+    }
+
+    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), Error> {
+        try!(self.head.encode(self.payload.len(), dst));
+        dst.put(&self.payload);
+        Ok(())
     }
 }
