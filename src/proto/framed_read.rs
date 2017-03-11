@@ -1,5 +1,5 @@
 use ConnectionError;
-use frame::Frame;
+use frame::{self, Frame, Kind};
 
 use tokio_io::AsyncWrite;
 
@@ -10,6 +10,10 @@ use std::io::{self, Write};
 
 pub struct FramedRead<T> {
     inner: T,
+
+    // hpack decoder state
+    // hpack: hpack::Decoder,
+
 }
 
 impl<T> FramedRead<T>
@@ -17,7 +21,9 @@ impl<T> FramedRead<T>
           T: AsyncWrite,
 {
     pub fn new(inner: T) -> FramedRead<T> {
-        FramedRead { inner: inner }
+        FramedRead {
+            inner: inner,
+        }
     }
 }
 
@@ -28,14 +34,36 @@ impl<T> Stream for FramedRead<T>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        match try_ready!(self.inner.poll()) {
-            Some(bytes) => {
-                Frame::load(bytes.freeze())
-                    .map(|frame| Async::Ready(Some(frame)))
-                    .map_err(ConnectionError::from)
+        let mut bytes = match try_ready!(self.inner.poll()) {
+            Some(bytes) => bytes,
+            None => return Ok(Async::Ready(None)),
+        };
+
+        // Parse the head
+        let head = frame::Head::parse(&bytes);
+
+        let frame = match head.kind() {
+            Kind::Data => unimplemented!(),
+            Kind::Headers => unimplemented!(),
+            Kind::Priority => unimplemented!(),
+            Kind::Reset => unimplemented!(),
+            Kind::Settings => {
+                let frame = try!(frame::Settings::load(head, &bytes[frame::HEADER_LEN..]));
+                frame.into()
             }
-            None => Ok(Async::Ready(None)),
-        }
+            Kind::PushPromise => unimplemented!(),
+            Kind::Ping => unimplemented!(),
+            Kind::GoAway => unimplemented!(),
+            Kind::WindowUpdate => unimplemented!(),
+            Kind::Continuation => unimplemented!(),
+            Kind::Unknown => {
+                let _ = bytes.split_to(frame::HEADER_LEN);
+                frame::Unknown::new(head, bytes.freeze()).into()
+            }
+            _ => unimplemented!(),
+        };
+
+        Ok(Async::Ready(Some(frame)))
     }
 }
 

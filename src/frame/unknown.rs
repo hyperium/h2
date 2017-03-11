@@ -1,4 +1,4 @@
-use frame::{Head, Error};
+use frame::{Frame, Head, Error};
 use bytes::{Bytes, BytesMut, BufMut};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,5 +23,11 @@ impl Unknown {
         try!(self.head.encode(self.payload.len(), dst));
         dst.put(&self.payload);
         Ok(())
+    }
+}
+
+impl From<Unknown> for Frame {
+    fn from(src: Unknown) -> Frame {
+        Frame::Unknown(src)
     }
 }

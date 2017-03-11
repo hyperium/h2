@@ -35,7 +35,7 @@ pub use self::head::{Head, Kind, StreamId};
 pub use self::settings::{Settings, SettingSet};
 pub use self::unknown::Unknown;
 
-const FRAME_HEADER_LEN: usize = 9;
+pub const HEADER_LEN: usize = 9;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
@@ -103,8 +103,7 @@ impl Frame {
         let head = Head::parse(&frame);
 
         // Extract the payload from the frame
-        let _ = frame.drain_to(FRAME_HEADER_LEN);
-
+        let _ = frame.drain_to(HEADER_LEN);
 
         match head.kind() {
             Kind::Unknown => {

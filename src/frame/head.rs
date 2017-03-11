@@ -62,7 +62,7 @@ impl Head {
     }
 
     pub fn encode_len(&self) -> usize {
-        super::FRAME_HEADER_LEN
+        super::HEADER_LEN
     }
 
     pub fn encode<T: BufMut>(&self, payload_len: usize, dst: &mut T) -> Result<(), Error> {

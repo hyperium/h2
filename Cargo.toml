@@ -8,6 +8,7 @@ futures = "0.1"
 tokio-io = { git = "https://github.com/alexcrichton/tokio-io" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 bytes = { git = "https://github.com/carllerche/bytes" }
+tower = { path = "/Users/carllerche/Code/Oss/Tokio/tower/tower-http" }
 
 [replace]
 "futures:0.1.10" = { git = "https://github.com/alexcrichton/futures-rs", branch = "close" }

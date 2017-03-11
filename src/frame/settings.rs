@@ -54,7 +54,7 @@ impl Settings {
         }
     }
 
-    pub fn load(head: Head, payload: Bytes) -> Result<Settings, Error> {
+    pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
         use self::Setting::*;
 
         debug_assert_eq!(head.kind(), ::frame::Kind::Settings);
@@ -112,7 +112,7 @@ impl Settings {
     }
 
     pub fn encode_len(&self) -> usize {
-        super::FRAME_HEADER_LEN + self.payload_len()
+        super::HEADER_LEN + self.payload_len()
     }
 
     fn payload_len(&self) -> usize {
