@@ -15,19 +15,22 @@ pub struct Settings<T> {
     is_dirty: bool,
 }
 
+/*
+ * TODO:
+ * - Settings ack timeout for connection error
+ */
+
 impl<T> Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T) -> Settings<T> {
+    pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
         Settings {
             inner: inner,
-            local: frame::SettingSet::default(),
+            local: local,
             remote: frame::SettingSet::default(),
             remaining_acks: 0,
-            // Always start in the dirty state as sending the settings frame is
-            // part of the connection handshake
-            is_dirty: true,
+            is_dirty: false,
         }
     }
 
@@ -37,14 +40,20 @@ impl<T> Settings<T>
 
     fn try_send_pending(&mut self) -> Poll<(), ConnectionError> {
         if self.is_dirty {
-            // Create the new frame
             let frame = frame::Settings::new(self.local.clone()).into();
             try_ready!(self.try_send(frame));
 
             self.is_dirty = false;
         }
 
-        unimplemented!();
+        while self.remaining_acks > 0 {
+            let frame = frame::Settings::ack().into();
+            try_ready!(self.try_send(frame));
+
+            self.remaining_acks -= 1;
+        }
+
+        Ok(Async::Ready(()))
     }
 
     fn try_send(&mut self, item: frame::Frame) -> Poll<(), ConnectionError> {
@@ -82,13 +91,8 @@ impl<T> Sink for Settings<T>
         // Settings frames take priority, so `item` cannot be sent if there are
         // any pending acks OR the local settings have been changed w/o sending
         // an associated frame.
-        if self.has_pending_sends() {
-            // Try to flush them
-            try!(self.poll_complete());
-
-            if self.has_pending_sends() {
-                return Ok(AsyncSink::NotReady(item));
-            }
+        if !try!(self.try_send_pending()).is_ready() {
+            return Ok(AsyncSink::NotReady(item));
         }
 
         self.inner.start_send(item)
@@ -99,8 +103,8 @@ impl<T> Sink for Settings<T>
     }
 
     fn close(&mut self) -> Poll<(), ConnectionError> {
-        if self.has_pending_sends() {
-            try_ready!(self.poll_complete());
+        if !try!(self.try_send_pending()).is_ready() {
+            return Ok(Async::NotReady);
         }
 
         self.inner.close()
