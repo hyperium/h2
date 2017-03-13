@@ -1,6 +1,8 @@
 mod encoder;
 mod decoder;
 mod entry;
+mod huffman;
+mod huffman_table;
 // mod table;
 
 pub use self::encoder::Encoder;

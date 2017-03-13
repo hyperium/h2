@@ -1,6 +1,7 @@
 use tower::http::{HeaderName, Method, StatusCode, Str};
 
 /// HPack table entry
+#[derive(Debug, Clone)]
 pub enum Entry {
     Header {
         name: HeaderName,
