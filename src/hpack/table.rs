@@ -1,18 +1,7 @@
+use hpack::Entry;
+
 use tower::http::{HeaderName, StatusCode, Method, Str};
 use std::collections::VecDeque;
-
-/// HPack table entry
-pub enum Entry {
-    Header {
-        name: HeaderName,
-        value: Str,
-    },
-    Authority(Str),
-    Method(Method),
-    Scheme(Str),
-    Path(Str),
-    Status(StatusCode),
-}
 
 /// Get an entry from the static table
 pub fn get_static(idx: usize) -> Entry {

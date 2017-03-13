@@ -4,11 +4,13 @@ use tower::http::{HeaderName, Str};
 use bytes::{Buf, Bytes};
 
 use std::io::Cursor;
+use std::collections::VecDeque;
 
 /// Decodes headers using HPACK
 pub struct Decoder {
     // Protocol indicated that the max table size will update
     max_size_update: Option<usize>,
+    table: Table,
 }
 
 /// Represents all errors that can be encountered while performing the decoding
@@ -112,6 +114,12 @@ enum Representation {
     SizeUpdate,
 }
 
+struct Table {
+    entries: VecDeque<Entry>,
+    size: usize,
+    max_size: usize,
+}
+
 // ===== impl Decoder =====
 
 impl Decoder {
@@ -119,6 +127,7 @@ impl Decoder {
     pub fn new() -> Decoder {
         Decoder {
             max_size_update: None,
+            table: Table::new(4_096),
         }
     }
 
@@ -193,8 +202,6 @@ impl Representation {
     }
 }
 
-// ===== Utils =====
-
 fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderError> {
     // The octet limit is chosen such that the maximum allowed *value* can
     // never overflow an unsigned 32-bit integer. The maximum value of any
@@ -256,4 +263,38 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
 
 fn peek_u8<B: Buf>(buf: &mut B) -> u8 {
     buf.bytes()[0]
+}
+
+// ===== impl Table =====
+
+impl Table {
+    fn new(max_size: usize) -> Table {
+        Table {
+            entries: VecDeque::new(),
+            size: 0,
+            max_size: max_size,
+        }
+    }
+
+    fn max_size(&self) -> usize {
+        self.max_size
+    }
+
+    fn insert(&mut self, entry: Entry) {
+        let len = entry.len();
+
+        debug_assert!(len <= self.max_size);
+
+        while self.size + len > self.max_size {
+            let last = self.entries.pop_back()
+                .expect("size of table != 0, but no headers left!");
+
+            self.size -= last.len();
+        }
+
+        self.size += len;
+
+        // Track the entry
+        self.entries.push_front(entry);
+    }
 }
