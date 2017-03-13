@@ -4,17 +4,246 @@ struct Node {
     id: Option<usize>,
     left: Option<Box<Node>>,
     right: Option<Box<Node>>,
-    terminal: Option<u8>,
+    terminal: Option<usize>,
     maybe_eos: bool,
     transitions: RefCell<Vec<Transition>>,
 }
 
 #[derive(Debug, Default, Copy, Clone)]
 struct Transition {
-    target: usize,
-    byte: Option<u8>,
+    target: Option<usize>,
+    byte: Option<usize>,
     maybe_eos: bool,
 }
+
+impl Node {
+    fn new(byte: usize, code: &[bool]) -> Box<Node> {
+        let mut node = Box::new(Node {
+            id: None,
+            left: None,
+            right: None,
+            terminal: None,
+            maybe_eos: false,
+            transitions: Default::default(),
+        });
+
+        node.insert(byte, code);
+        node
+    }
+
+    fn insert(&mut self, byte: usize, code: &[bool]) {
+        if code.is_empty() {
+            self.terminal = Some(byte);
+            return;
+        }
+
+        let (head, rest) = code.split_at(1);
+
+        if !head[0] {
+            match self.left {
+                Some(ref mut node) => {
+                    node.insert(byte, rest);
+                }
+                None => {
+                    self.left = Some(Node::new(byte, rest));
+                }
+            }
+        } else {
+            match self.right {
+                Some(ref mut node) => {
+                    node.insert(byte, rest);
+                }
+                None => {
+                    self.right = Some(Node::new(byte, rest));
+                }
+            }
+        }
+    }
+
+    fn set_id(&mut self, next_id: &mut usize, prefix: &mut Vec<bool>) {
+        if self.terminal.is_some() {
+            return;
+        }
+
+        if prefix.len() <= 7 && prefix.iter().all(|i| *i) {
+            self.maybe_eos = true;
+        }
+
+        let id = *next_id;
+        *next_id = id + 1;
+        self.id = Some(id);
+
+        if let Some(ref mut node) = self.left {
+            prefix.push(false);
+            node.set_id(next_id, prefix);
+            prefix.pop();
+        }
+
+        if let Some(ref mut node) = self.right {
+            prefix.push(true);
+            node.set_id(next_id, prefix);
+            prefix.pop();
+        }
+    }
+
+    fn compute_transitions(&self, root: &Node) {
+        self.compute_transition(None, self, root, 4);
+
+        if let Some(ref node) = self.left {
+            node.compute_transitions(root);
+        }
+
+        if let Some(ref node) = self.right {
+            node.compute_transitions(root);
+        }
+    }
+
+    fn compute_transition(&self,
+                          byte: Option<usize>,
+                          start: &Node,
+                          root: &Node,
+                          steps_remaining: usize)
+    {
+        if steps_remaining == 0 {
+            let (byte, target) = match byte {
+                Some(256) => (None, None),
+                _ => {
+                    (byte, Some(self.id.unwrap_or(0)))
+                }
+            };
+
+            start.transitions.borrow_mut().push(Transition {
+                target: target,
+                byte: byte,
+                maybe_eos: self.maybe_eos,
+            });
+
+            return;
+        }
+
+        let mut next = self;
+
+        if self.terminal.is_some() {
+            next = root;
+        }
+
+        assert!(next.left.is_some());
+        assert!(next.right.is_some());
+
+        for node in &[next.left.as_ref().unwrap(), next.right.as_ref().unwrap()] {
+            let byte = match node.terminal {
+                Some(b) => {
+                    assert!(byte.is_none());
+                    Some(b)
+                }
+                None => byte,
+            };
+
+            node.compute_transition(byte, start, root, steps_remaining - 1);
+        }
+    }
+
+    fn print(&self) {
+        const MAYBE_EOS: u8 = 1;
+        const DECODED: u8 = 2;
+        const ERROR: u8 = 4;
+
+        if self.terminal.is_some() {
+            return;
+        }
+
+        println!("    // {}", self.id.unwrap());
+        println!("    [");
+
+        for transition in self.transitions.borrow().iter() {
+            let mut flags = 0;
+            let mut out = 0;
+
+            let target = match transition.target {
+                Some(target) => target,
+                None => {
+                    flags |= ERROR;
+                    0
+                }
+            };
+
+            if let Some(byte) = transition.byte {
+                out = byte;
+                flags |= DECODED;
+
+                // TODO: Add other flags
+            }
+
+            if transition.maybe_eos {
+                flags |= MAYBE_EOS;
+            }
+
+            println!("        ({}, {}, 0x{:02x}),", target, out, flags);
+        }
+
+        println!("    ],");
+
+        self.left.as_ref().unwrap().print();
+        self.right.as_ref().unwrap().print();
+    }
+}
+
+/// Returns root of tree
+fn load_table() -> Box<Node> {
+    let mut lines = TABLE.lines();
+    let mut root: Option<Box<Node>> = None;
+
+    // Skip the first line, which is empty
+    lines.next();
+
+    for (i, line) in lines.enumerate() {
+        let mut bits: Vec<bool> = vec![];
+
+        for &b in &line.as_bytes()[12..45] {
+            match b {
+                b'1' => bits.push(true),
+                b'0' => bits.push(false),
+                b'|' | b' ' => {}
+                _ => panic!("unexpected byte; {:?}", b),
+            }
+        }
+
+        match root {
+            Some(ref mut node) => {
+                node.insert(i, &bits);
+            }
+            None => {
+                root = Some(Node::new(i, &bits));
+            }
+        }
+    }
+
+    // Assign IDs to all state transition nodes
+    let mut root = root.unwrap();
+    let mut id = 0;
+    root.set_id(&mut id, &mut vec![]);
+
+    // Compute transitions for each node
+    root.compute_transitions(&root);
+
+    root
+}
+
+pub fn main() {
+    let table = load_table();
+
+    println!("// !!! DO NOT EDIT !!! Generated by src/bin/genhuff.rs");
+    println!("");
+
+    println!("// (next-state, byte, flags)");
+    println!("pub const DECODE_TABLE: [[(usize, u8, u8); 16]; 256] = [");
+
+    table.print();
+
+    println!("];");
+}
+
+
 
 const TABLE: &'static str = r##"
     (  0)  |11111111|11000                             1ff8  [13]
@@ -274,254 +503,3 @@ const TABLE: &'static str = r##"
     (254)  |11111111|11111111|11111110|000          7fffff0  [27]
     (255)  |11111111|11111111|11111011|10           3ffffee  [26]
 EOS (256)  |11111111|11111111|11111111|111111      3fffffff  [30]"##;
-
-const VALID_NAME_CHAR: &'static [u8] = &[
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, //    0-31
-        0,1,0,1,1,1,1,1,0,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0, //   32-63
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1, //   64-95
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,0, //  96-127
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 128-159
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 160-191
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 192-223
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 224-255
-];
-
-const VALID_VALUE_CHAR: &'static [u8] = &[
-        0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, //    0-31
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, //   32-63
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, //   64-95
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0, //  96-127
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // 128-159
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // 160-191
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // 192-223
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // 224-255
-];
-
-impl Node {
-    fn new(byte: u8, code: &[bool]) -> Box<Node> {
-        let mut node = Box::new(Node {
-            id: None,
-            left: None,
-            right: None,
-            terminal: None,
-            maybe_eos: false,
-            transitions: Default::default(),
-        });
-
-        node.insert(byte, code);
-        node
-    }
-
-    fn insert(&mut self, byte: u8, code: &[bool]) {
-        if code.is_empty() {
-            self.terminal = Some(byte);
-            return;
-        }
-
-        let (head, rest) = code.split_at(1);
-
-        if !head[0] {
-            match self.left {
-                Some(ref mut node) => {
-                    node.insert(byte, rest);
-                }
-                None => {
-                    self.left = Some(Node::new(byte, rest));
-                }
-            }
-        } else {
-            match self.right {
-                Some(ref mut node) => {
-                    node.insert(byte, rest);
-                }
-                None => {
-                    self.right = Some(Node::new(byte, rest));
-                }
-            }
-        }
-    }
-
-    fn set_id(&mut self, next_id: &mut usize, prefix: &mut Vec<bool>) {
-        if self.terminal.is_some() {
-            return;
-        }
-
-        if prefix.len() <= 7 && prefix.iter().all(|i| *i) {
-            self.maybe_eos = true;
-        }
-
-        let id = *next_id;
-        *next_id = id + 1;
-        self.id = Some(id);
-
-        if let Some(ref mut node) = self.left {
-            prefix.push(false);
-            node.set_id(next_id, prefix);
-            prefix.pop();
-        }
-
-        if let Some(ref mut node) = self.right {
-            prefix.push(true);
-            node.set_id(next_id, prefix);
-            prefix.pop();
-        }
-    }
-
-    fn compute_transitions(&self, root: &Node) {
-        self.compute_transition(None, self, root, 4);
-
-        if let Some(ref node) = self.left {
-            node.compute_transitions(root);
-        }
-
-        if let Some(ref node) = self.right {
-            node.compute_transitions(root);
-        }
-    }
-
-    fn compute_transition(&self,
-                          byte: Option<u8>,
-                          start: &Node,
-                          root: &Node,
-                          steps_remaining: usize)
-    {
-        let mut next = self;
-
-        if self.terminal.is_some() {
-            next = root;
-        }
-
-        if steps_remaining == 0 {
-            start.transitions.borrow_mut().push(Transition {
-                target: next.id.unwrap(),
-                byte: byte,
-                maybe_eos: next.maybe_eos,
-            });
-            return;
-        }
-
-        assert!(next.left.is_some());
-        assert!(next.right.is_some());
-
-        for node in &[next.left.as_ref().unwrap(), next.right.as_ref().unwrap()] {
-            let byte = match node.terminal {
-                Some(b) => {
-                    assert!(byte.is_none());
-                    Some(b)
-                }
-                None => byte,
-            };
-
-            node.compute_transition(byte, start, root, steps_remaining - 1);
-        }
-    }
-
-    fn print(&self) {
-        const NGHTTP2_HUFF_ACCEPTED: usize = 1;
-        const NGHTTP2_HUFF_SYM: usize = 1 << 1;
-        const NGHTTP2_HUFF_FAIL: usize = 1 << 2;
-        const NGHTTP2_HUFF_INVALID_FOR_HEADER_NAME: usize = 1 << 3;
-        const NGHTTP2_HUFF_INVALID_FOR_HEADER_VALUE: usize = 1 << 4;
-        const NGHTTP2_HUFF_UPPER_CASE_CHAR: usize = 1 << 5;
-
-        if self.terminal.is_some() {
-            return;
-        }
-
-        println!("    // {}", self.id.unwrap());
-        println!("    [");
-
-        for transition in self.transitions.borrow().iter() {
-            let mut flags = 0;
-            let mut out = 0;
-            let mut target = transition.target;
-
-            if let Some(byte) = transition.byte {
-                out = byte;
-                flags |= NGHTTP2_HUFF_SYM;
-
-                if VALID_NAME_CHAR[byte as usize] == 0 {
-                    flags |= NGHTTP2_HUFF_INVALID_FOR_HEADER_NAME;
-                }
-
-                if VALID_VALUE_CHAR[byte as usize] == 0 {
-                    flags |= NGHTTP2_HUFF_INVALID_FOR_HEADER_VALUE;
-                }
-
-                // TODO: Add other flags
-            }
-
-            if transition.maybe_eos {
-                flags |= NGHTTP2_HUFF_ACCEPTED;
-            }
-
-            println!("        HuffmanState {{");
-            println!("            next: {},", target);
-            println!("            byte: {},", out);
-            println!("            flags: {},", flags);
-            println!("        }},");
-        }
-
-        println!("    ],");
-
-        self.left.as_ref().unwrap().print();
-        self.right.as_ref().unwrap().print();
-    }
-}
-
-/// Returns root of tree
-fn load_table() -> Box<Node> {
-    let mut lines = TABLE.lines();
-    let mut root: Option<Box<Node>> = None;
-
-    // Skip the first line, which is empty
-    lines.next();
-
-    for (i, line) in lines.enumerate() {
-        let mut bits: Vec<bool> = vec![];
-
-        for &b in &line.as_bytes()[12..45] {
-            match b {
-                b'1' => bits.push(true),
-                b'0' => bits.push(false),
-                b'|' | b' ' => {}
-                _ => panic!("unexpected byte; {:?}", b),
-            }
-        }
-
-        match root {
-            Some(ref mut node) => {
-                node.insert(i as u8, &bits);
-            }
-            None => {
-                root = Some(Node::new(i as u8, &bits));
-            }
-        }
-    }
-
-    // Assign IDs to all state transition nodes
-    let mut root = root.unwrap();
-    let mut id = 0;
-    root.set_id(&mut id, &mut vec![]);
-
-    // Compute transitions for each node
-    root.compute_transitions(&root);
-
-    root
-}
-
-pub fn main() {
-    let table = load_table();
-
-    println!("// !!! DO NOT EDIT !!! Generated by src/bin/genhuff.rs");
-    println!("");
-
-    println!(r##"use super::huffman::HuffmanState;"##);
-    println!("");
-
-    println!("const HUFFMAN_DECODE_TABLE: [[HuffmanState; 16]; 256] = [");
-
-    table.print();
-
-    println!("];");
-}
