@@ -33,9 +33,8 @@ pub fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
         }
     }
 
-    if !decoder.maybe_eos {
-        // TODO: handle error
-        unimplemented!();
+    if !decoder.is_final() {
+        return Err(DecoderError::InvalidHuffmanCode);
     }
 
     Ok(dst)
@@ -70,6 +69,10 @@ impl Decoder {
 
         Ok(ret)
     }
+
+    fn is_final(&self) -> bool {
+        self.state == 0 || self.maybe_eos
+    }
 }
 
 #[cfg(test)]
@@ -78,42 +81,21 @@ mod test {
 
     #[test]
     fn decode_single_byte() {
-        let buf = [0b00111111];
+        assert_eq!("o", decode(&[0b00111111]).unwrap());
+        assert_eq!("0", decode(&[0x0 + 7]).unwrap());
+        assert_eq!("A", decode(&[(0x21 << 2) + 3]).unwrap());
+    }
 
-        let actual = decode(&buf).unwrap();
-        assert_eq!(actual, "o");
+    #[test]
+    fn single_char_multi_byte() {
+        assert_eq!("#", decode(&[255, 160 + 15]).unwrap());
+        assert_eq!("$", decode(&[255, 200 + 7]).unwrap());
+        assert_eq!("\x0a", decode(&[255, 255, 255, 240 + 3]).unwrap());
+    }
 
-        /*
-        let mut decoder = HuffmanDecoder::new();
-        // (The + (2^n - 1) at the final byte is to add the correct expected
-        // padding: 1s)
-        {
-            // We need to shift it by 3, since we need the top-order bytes to
-            // start the code point.
-            let hex_buffer = [(0x7 << 3) + 7];
-            let expected_result = vec![b'o'];
-
-            let result = decoder.decode(&hex_buffer).ok().unwrap();
-
-            assert_eq!(result, expected_result);
-        }
-        {
-            let hex_buffer = [0x0 + 7];
-            let expected_result = vec![b'0'];
-
-            let result = decoder.decode(&hex_buffer).ok().unwrap();
-
-            assert_eq!(result, expected_result);
-        }
-        {
-            // The length of the codepoint is 6, so we shift by two
-            let hex_buffer = [(0x21 << 2) + 3];
-            let expected_result = vec![b'A'];
-
-            let result = decoder.decode(&hex_buffer).ok().unwrap();
-
-            assert_eq!(result, expected_result);
-        }
-        */
+    #[test]
+    fn multi_char() {
+        assert_eq!("!0", decode(&[254, 1]).unwrap());
+        assert_eq!(" !", decode(&[0b01010011, 0b11111000]).unwrap());
     }
 }

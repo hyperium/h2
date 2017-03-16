@@ -1,6 +1,6 @@
-use super::Entry;
+use super::{huffman, Entry, Key};
 
-use tower::http::{HeaderName, StatusCode, Method, Str};
+use tower::http::{status, HeaderName, StatusCode, Method, Str, FromUtf8Error};
 use bytes::{Buf, Bytes};
 
 use std::io::Cursor;
@@ -20,8 +20,12 @@ pub enum DecoderError {
     InvalidRepresentation,
     InvalidIntegerPrefix,
     InvalidTableIndex,
+    InvalidHuffmanCode,
+    InvalidUtf8,
+    InvalidStatusCode,
     IntegerUnderflow,
     IntegerOverflow,
+    StringUnderflow,
 }
 
 enum Representation {
@@ -149,7 +153,11 @@ impl Decoder {
                     f(try!(self.decode_indexed(&mut buf)));
                 }
                 LiteralWithIndexing => {
-                    unimplemented!();
+                    let entry = try!(self.decode_literal(&mut buf, true));
+
+                    // TODO: Add entry to the table
+
+                    f(entry);
                 }
                 LiteralWithoutIndexing => {
                     unimplemented!();
@@ -166,12 +174,16 @@ impl Decoder {
         Ok(())
     }
 
-    fn decode_indexed(&self, buf: &mut Cursor<&Bytes>) -> Result<Entry, DecoderError> {
+    fn decode_indexed(&self, buf: &mut Cursor<&Bytes>)
+        -> Result<Entry, DecoderError>
+    {
         let index = try!(decode_int(buf, 7));
         self.table.get(index)
     }
 
-    fn decode_literal(&self, buf: &mut Cursor<&Bytes>, index: bool) -> Result<Entry, DecoderError> {
+    fn decode_literal(&self, buf: &mut Cursor<&Bytes>, index: bool)
+        -> Result<Entry, DecoderError>
+    {
         let prefix = if index {
             6
         } else {
@@ -181,7 +193,17 @@ impl Decoder {
         // Extract the table index for the name, or 0 if not indexed
         let table_idx = try!(decode_int(buf, prefix));
 
-        unimplemented!();
+        // First, read the header name
+        if table_idx == 0 {
+            // Read the name as a literal
+            let name = try!(decode_string(buf));
+
+            unimplemented!();
+        } else {
+            let e = try!(self.table.get(table_idx));
+            let value = try!(decode_string(buf));
+            e.key().into_entry(value)
+        }
     }
 }
 
@@ -270,8 +292,35 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     Err(DecoderError::IntegerUnderflow)
 }
 
+fn decode_string(buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
+    const HUFF_FLAG: u8 = 0b10000000;
+
+    let len = try!(decode_int(buf, 7));
+
+    if len > buf.remaining() {
+        return Err(DecoderError::StringUnderflow);
+    }
+
+    {
+        let raw = &buf.bytes()[..len];
+
+        if raw[0] & HUFF_FLAG == HUFF_FLAG {
+            return huffman::decode(raw).map(Into::into);
+        }
+    }
+
+    Ok(take(buf, len))
+}
+
 fn peek_u8<B: Buf>(buf: &mut B) -> u8 {
     buf.bytes()[0]
+}
+
+fn take(buf: &mut Cursor<&Bytes>, n: usize) -> Bytes {
+    let pos = buf.position() as usize;
+    let ret = buf.get_ref().slice(pos, pos + n);
+    buf.set_position((pos + n) as u64);
+    ret
 }
 
 // ===== impl Table =====
@@ -337,6 +386,14 @@ impl Table {
     }
 }
 
+// ===== impl DecoderError =====
+
+impl From<FromUtf8Error> for DecoderError {
+    fn from(src: FromUtf8Error) -> DecoderError {
+        DecoderError::InvalidUtf8
+    }
+}
+
 /// Get an entry from the static table
 pub fn get_static(idx: usize) -> Entry {
     use tower::http::StandardHeader::*;
@@ -349,13 +406,13 @@ pub fn get_static(idx: usize) -> Entry {
         5 => Entry::Path(Str::from_static("/index.html")),
         6 => Entry::Scheme(Str::from_static("http")),
         7 => Entry::Scheme(Str::from_static("https")),
-        8 => Entry::Status(StatusCode::Ok),
-        9 => Entry::Status(StatusCode::NoContent),
-        10 => Entry::Status(StatusCode::PartialContent),
-        11 => Entry::Status(StatusCode::NotModified),
-        12 => Entry::Status(StatusCode::BadRequest),
-        13 => Entry::Status(StatusCode::NotFound),
-        14 => Entry::Status(StatusCode::InternalServerError),
+        8 => Entry::Status(status::Ok),
+        9 => Entry::Status(status::NoContent),
+        10 => Entry::Status(status::PartialContent),
+        11 => Entry::Status(status::NotModified),
+        12 => Entry::Status(status::BadRequest),
+        13 => Entry::Status(status::NotFound),
+        14 => Entry::Status(status::InternalServerError),
         15 => Entry::Header {
             name: AcceptCharset.into(),
             value: Str::new(),
