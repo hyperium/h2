@@ -1,6 +1,7 @@
 use super::{huffman, Entry, Key};
+use util::byte_str::FromUtf8Error;
 
-use tower::http::{status, HeaderName, StatusCode, Method, Str, FromUtf8Error};
+use http::{method, header, StatusCode, Method};
 use bytes::{Buf, Bytes};
 
 use std::io::Cursor;
@@ -23,6 +24,8 @@ pub enum DecoderError {
     InvalidHuffmanCode,
     InvalidUtf8,
     InvalidStatusCode,
+    InvalidPseudoheader,
+    InvalidMaxDynamicSize,
     IntegerUnderflow,
     IntegerOverflow,
     StringUnderflow,
@@ -143,6 +146,7 @@ impl Decoder {
         use self::Representation::*;
 
         let mut buf = Cursor::new(src);
+        let mut can_resize = true;
 
         while buf.has_remaining() {
             // At this point we are always at the beginning of the next block
@@ -150,26 +154,63 @@ impl Decoder {
             // determined from the first byte.
             match try!(Representation::load(peek_u8(&mut buf))) {
                 Indexed => {
+                    can_resize = false;
                     f(try!(self.decode_indexed(&mut buf)));
                 }
                 LiteralWithIndexing => {
+                    can_resize = false;
                     let entry = try!(self.decode_literal(&mut buf, true));
 
-                    // TODO: Add entry to the table
+                    // Insert the header into the table
+                    self.table.insert(entry.clone());
 
                     f(entry);
                 }
                 LiteralWithoutIndexing => {
-                    unimplemented!();
+                    can_resize = false;
+                    let entry = try!(self.decode_literal(&mut buf, false));
+                    f(entry);
                 }
                 LiteralNeverIndexed => {
-                    unimplemented!();
+                    can_resize = false;
+                    let entry = try!(self.decode_literal(&mut buf, false));
+
+                    // TODO: Track that this should never be indexed
+
+                    f(entry);
                 }
                 SizeUpdate => {
-                    unimplemented!();
+                    let max = match self.max_size_update {
+                        Some(max) if can_resize => max,
+                        _ => {
+                            // Resize is too big or other frames have been read
+                            // before the resize.
+                            return Err(DecoderError::InvalidMaxDynamicSize);
+                        }
+                    };
+
+                    // Handle the dynamic table size update...
+                    try!(self.process_size_update(&mut buf, max))
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn process_size_update(&mut self, buf: &mut Cursor<&Bytes>, max: usize)
+        -> Result<(), DecoderError>
+    {
+        let new_size = try!(decode_int(buf, 5));
+
+        if new_size > max {
+            return Err(DecoderError::InvalidMaxDynamicSize);
+        }
+
+        debug!("Decoder changed max table size from {} to {}",
+               self.table.size(), new_size);
+
+        self.table.set_max_size(new_size);
 
         Ok(())
     }
@@ -197,8 +238,9 @@ impl Decoder {
         if table_idx == 0 {
             // Read the name as a literal
             let name = try!(decode_string(buf));
+            let value = try!(decode_string(buf));
 
-            unimplemented!();
+            Entry::new(name, value)
         } else {
             let e = try!(self.table.get(table_idx));
             let value = try!(decode_string(buf));
@@ -338,6 +380,9 @@ impl Table {
         self.max_size
     }
 
+    fn size(&self) -> usize {
+        self.size
+    }
 
     /// Returns the entry located at the given index.
     ///
@@ -374,6 +419,12 @@ impl Table {
         self.entries.push_front(entry);
     }
 
+    fn set_max_size(&mut self, size: usize) {
+        self.max_size = size;
+        // Make the table size fit within the new constraints.
+        self.consolidate();
+    }
+
     fn reserve(&mut self, size: usize) {
         debug_assert!(size <= self.max_size);
 
@@ -382,6 +433,25 @@ impl Table {
                 .expect("size of table != 0, but no headers left!");
 
             self.size -= last.len();
+        }
+    }
+
+    fn consolidate(&mut self) {
+        while self.size > self.max_size {
+            {
+                let last = match self.entries.back() {
+                    Some(x) => x,
+                    None => {
+                        // Can never happen as the size of the table must reach
+                        // 0 by the time we've exhausted all elements.
+                        panic!("Size of table != 0, but no headers left!");
+                    }
+                };
+
+                self.size -= last.len();
+            }
+
+            self.entries.pop_back();
         }
     }
 }
@@ -394,212 +464,234 @@ impl From<FromUtf8Error> for DecoderError {
     }
 }
 
+impl From<header::InvalidValueError> for DecoderError {
+    fn from(src: header::InvalidValueError) -> DecoderError {
+        // TODO: Better error?
+        DecoderError::InvalidUtf8
+    }
+}
+
+impl From<method::FromBytesError> for DecoderError {
+    fn from(src: method::FromBytesError) -> DecoderError {
+        // TODO: Better error
+        DecoderError::InvalidUtf8
+    }
+}
+
+impl From<header::FromBytesError> for DecoderError {
+    fn from(src: header::FromBytesError) -> DecoderError {
+        DecoderError::InvalidUtf8
+    }
+}
+
 /// Get an entry from the static table
 pub fn get_static(idx: usize) -> Entry {
-    use tower::http::StandardHeader::*;
+    use http::{status, method, header};
+    use http::header::HeaderValue;
+    use util::byte_str::ByteStr;
 
     match idx {
-        1 => Entry::Authority(Str::new()),
-        2 => Entry::Method(Method::Get),
-        3 => Entry::Method(Method::Post),
-        4 => Entry::Path(Str::from_static("/")),
-        5 => Entry::Path(Str::from_static("/index.html")),
-        6 => Entry::Scheme(Str::from_static("http")),
-        7 => Entry::Scheme(Str::from_static("https")),
-        8 => Entry::Status(status::Ok),
-        9 => Entry::Status(status::NoContent),
-        10 => Entry::Status(status::PartialContent),
-        11 => Entry::Status(status::NotModified),
-        12 => Entry::Status(status::BadRequest),
-        13 => Entry::Status(status::NotFound),
-        14 => Entry::Status(status::InternalServerError),
+        1 => Entry::Authority(ByteStr::from_static("")),
+        2 => Entry::Method(method::GET),
+        3 => Entry::Method(method::POST),
+        4 => Entry::Path(ByteStr::from_static("/")),
+        5 => Entry::Path(ByteStr::from_static("/index.html")),
+        6 => Entry::Scheme(ByteStr::from_static("http")),
+        7 => Entry::Scheme(ByteStr::from_static("https")),
+        8 => Entry::Status(status::OK),
+        9 => Entry::Status(status::NO_CONTENT),
+        10 => Entry::Status(status::PARTIAL_CONTENT),
+        11 => Entry::Status(status::NOT_MODIFIED),
+        12 => Entry::Status(status::BAD_REQUEST),
+        13 => Entry::Status(status::NOT_FOUND),
+        14 => Entry::Status(status::INTERNAL_SERVER_ERROR),
         15 => Entry::Header {
-            name: AcceptCharset.into(),
-            value: Str::new(),
+            name: header::ACCEPT_CHARSET,
+            value: HeaderValue::from_static(""),
         },
         16 => Entry::Header {
-            name: AcceptEncoding.into(),
-            value: Str::from_static("gzip, deflate"),
+            name: header::ACCEPT_ENCODING,
+            value: HeaderValue::from_static("gzip, deflate"),
         },
         17 => Entry::Header {
-            name: AcceptLanguage.into(),
-            value: Str::new(),
+            name: header::ACCEPT_LANGUAGE,
+            value: HeaderValue::from_static(""),
         },
         18 => Entry::Header {
-            name: AcceptRanges.into(),
-            value: Str::new(),
+            name: header::ACCEPT_RANGES,
+            value: HeaderValue::from_static(""),
         },
         19 => Entry::Header {
-            name: Accept.into(),
-            value: Str::new(),
+            name: header::ACCEPT,
+            value: HeaderValue::from_static(""),
         },
         20 => Entry::Header {
-            name: AccessControlAllowOrigin.into(),
-            value: Str::new(),
+            name: header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            value: HeaderValue::from_static(""),
         },
         21 => Entry::Header {
-            name: Age.into(),
-            value: Str::new(),
+            name: header::AGE,
+            value: HeaderValue::from_static(""),
         },
         22 => Entry::Header {
-            name: Allow.into(),
-            value: Str::new(),
+            name: header::ALLOW,
+            value: HeaderValue::from_static(""),
         },
         23 => Entry::Header {
-            name: Authorization.into(),
-            value: Str::new(),
+            name: header::AUTHORIZATION,
+            value: HeaderValue::from_static(""),
         },
         24 => Entry::Header {
-            name: CacheControl.into(),
-            value: Str::new(),
+            name: header::CACHE_CONTROL,
+            value: HeaderValue::from_static(""),
         },
         25 => Entry::Header {
-            name: ContentDisposition.into(),
-            value: Str::new(),
+            name: header::CONTENT_DISPOSITION,
+            value: HeaderValue::from_static(""),
         },
         26 => Entry::Header {
-            name: ContentEncoding.into(),
-            value: Str::new(),
+            name: header::CONTENT_ENCODING,
+            value: HeaderValue::from_static(""),
         },
         27 => Entry::Header {
-            name: ContentLanguage.into(),
-            value: Str::new(),
+            name: header::CONTENT_LANGUAGE,
+            value: HeaderValue::from_static(""),
         },
         28 => Entry::Header {
-            name: ContentLength.into(),
-            value: Str::new(),
+            name: header::CONTENT_LENGTH,
+            value: HeaderValue::from_static(""),
         },
         29 => Entry::Header {
-            name: ContentLocation.into(),
-            value: Str::new(),
+            name: header::CONTENT_LOCATION,
+            value: HeaderValue::from_static(""),
         },
         30 => Entry::Header {
-            name: ContentRange.into(),
-            value: Str::new(),
+            name: header::CONTENT_RANGE,
+            value: HeaderValue::from_static(""),
         },
         31 => Entry::Header {
-            name: ContentType.into(),
-            value: Str::new(),
+            name: header::CONTENT_TYPE,
+            value: HeaderValue::from_static(""),
         },
         32 => Entry::Header {
-            name: Cookie.into(),
-            value: Str::new(),
+            name: header::COOKIE,
+            value: HeaderValue::from_static(""),
         },
         33 => Entry::Header {
-            name: Date.into(),
-            value: Str::new(),
+            name: header::DATE,
+            value: HeaderValue::from_static(""),
         },
         34 => Entry::Header {
-            name: Etag.into(),
-            value: Str::new(),
+            name: header::ETAG,
+            value: HeaderValue::from_static(""),
         },
         35 => Entry::Header {
-            name: Expect.into(),
-            value: Str::new(),
+            name: header::EXPECT,
+            value: HeaderValue::from_static(""),
         },
         36 => Entry::Header {
-            name: Expires.into(),
-            value: Str::new(),
+            name: header::EXPIRES,
+            value: HeaderValue::from_static(""),
         },
         37 => Entry::Header {
-            name: From.into(),
-            value: Str::new(),
+            name: header::FROM,
+            value: HeaderValue::from_static(""),
         },
         38 => Entry::Header {
-            name: Host.into(),
-            value: Str::new(),
+            name: header::HOST,
+            value: HeaderValue::from_static(""),
         },
         39 => Entry::Header {
-            name: IfMatch.into(),
-            value: Str::new(),
+            name: header::IF_MATCH,
+            value: HeaderValue::from_static(""),
         },
         40 => Entry::Header {
-            name: IfModifiedSince.into(),
-            value: Str::new(),
+            name: header::IF_MODIFIED_SINCE,
+            value: HeaderValue::from_static(""),
         },
         41 => Entry::Header {
-            name: IfNoneMatch.into(),
-            value: Str::new(),
+            name: header::IF_NONE_MATCH,
+            value: HeaderValue::from_static(""),
         },
         42 => Entry::Header {
-            name: IfRange.into(),
-            value: Str::new(),
+            name: header::IF_RANGE,
+            value: HeaderValue::from_static(""),
         },
         43 => Entry::Header {
-            name: IfUnmodifiedSince.into(),
-            value: Str::new(),
+            name: header::IF_UNMODIFIED_SINCE,
+            value: HeaderValue::from_static(""),
         },
         44 => Entry::Header {
-            name: LastModified.into(),
-            value: Str::new(),
+            name: header::LAST_MODIFIED,
+            value: HeaderValue::from_static(""),
         },
         45 => Entry::Header {
-            name: Link.into(),
-            value: Str::new(),
+            name: header::LINK,
+            value: HeaderValue::from_static(""),
         },
         46 => Entry::Header {
-            name: Location.into(),
-            value: Str::new(),
+            name: header::LOCATION,
+            value: HeaderValue::from_static(""),
         },
         47 => Entry::Header {
-            name: MaxForwards.into(),
-            value: Str::new(),
+            name: header::MAX_FORWARDS,
+            value: HeaderValue::from_static(""),
         },
         48 => Entry::Header {
-            name: ProxyAuthenticate.into(),
-            value: Str::new(),
+            name: header::PROXY_AUTHENTICATE,
+            value: HeaderValue::from_static(""),
         },
         49 => Entry::Header {
-            name: ProxyAuthorization.into(),
-            value: Str::new(),
+            name: header::PROXY_AUTHORIZATION,
+            value: HeaderValue::from_static(""),
         },
         50 => Entry::Header {
-            name: Range.into(),
-            value: Str::new(),
+            name: header::RANGE,
+            value: HeaderValue::from_static(""),
         },
         51 => Entry::Header {
-            name: Referer.into(),
-            value: Str::new(),
+            name: header::REFERER,
+            value: HeaderValue::from_static(""),
         },
         52 => Entry::Header {
-            name: Refresh.into(),
-            value: Str::new(),
+            name: header::REFRESH,
+            value: HeaderValue::from_static(""),
         },
         53 => Entry::Header {
-            name: RetryAfter.into(),
-            value: Str::new(),
+            name: header::RETRY_AFTER,
+            value: HeaderValue::from_static(""),
         },
         54 => Entry::Header {
-            name: Server.into(),
-            value: Str::new(),
+            name: header::SERVER,
+            value: HeaderValue::from_static(""),
         },
         55 => Entry::Header {
-            name: SetCookie.into(),
-            value: Str::new(),
+            name: header::SET_COOKIE,
+            value: HeaderValue::from_static(""),
         },
         56 => Entry::Header {
-            name: StrictTransportSecurity.into(),
-            value: Str::new(),
+            name: header::STRICT_TRANSPORT_SECURITY,
+            value: HeaderValue::from_static(""),
         },
         57 => Entry::Header {
-            name: TransferEncoding.into(),
-            value: Str::new(),
+            name: header::TRANSFER_ENCODING,
+            value: HeaderValue::from_static(""),
         },
         58 => Entry::Header {
-            name: UserAgent.into(),
-            value: Str::new(),
+            name: header::USER_AGENT,
+            value: HeaderValue::from_static(""),
         },
         59 => Entry::Header {
-            name: Vary.into(),
-            value: Str::new(),
+            name: header::VARY,
+            value: HeaderValue::from_static(""),
         },
         60 => Entry::Header {
-            name: Via.into(),
-            value: Str::new(),
+            name: header::VIA,
+            value: HeaderValue::from_static(""),
         },
         61 => Entry::Header {
-            name: WwwAuthenticate.into(),
-            value: Str::new(),
+            name: header::WWW_AUTHENTICATE,
+            value: HeaderValue::from_static(""),
         },
         _ => unreachable!(),
     }

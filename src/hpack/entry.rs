@@ -1,6 +1,8 @@
 use super::DecoderError;
+use util::byte_str::{ByteStr, FromUtf8Error};
 
-use tower::http::{HeaderName, Method, StatusCode, Str};
+use http::{Method, StatusCode};
+use http::header::{HeaderName, HeaderValue};
 use bytes::Bytes;
 
 /// HPack table entry
@@ -8,12 +10,12 @@ use bytes::Bytes;
 pub enum Entry {
     Header {
         name: HeaderName,
-        value: Str,
+        value: HeaderValue,
     },
-    Authority(Str),
+    Authority(ByteStr),
     Method(Method),
-    Scheme(Str),
-    Path(Str),
+    Scheme(ByteStr),
+    Path(ByteStr),
     Status(StatusCode),
 }
 
@@ -28,6 +30,38 @@ pub enum Key<'a> {
 }
 
 impl Entry {
+    pub fn new(name: Bytes, value: Bytes) -> Result<Entry, DecoderError> {
+        if name[0] == b':' {
+            match &name[1..] {
+                b"authority" => {
+                    let value = try!(ByteStr::from_utf8(value));
+                    Ok(Entry::Authority(value))
+                }
+                b"method" => {
+                    let method = try!(Method::from_bytes(&value));
+                    Ok(Entry::Method(method))
+                }
+                b"scheme" => {
+                    unimplemented!();
+                }
+                b"path" => {
+                    unimplemented!();
+                }
+                b"status" => {
+                    unimplemented!();
+                }
+                _ => {
+                    Err(DecoderError::InvalidPseudoheader)
+                }
+            }
+        } else {
+            let name = try!(HeaderName::from_bytes(&name));
+            let value = try!(HeaderValue::try_from_slice(&value));
+
+            Ok(Entry::Header { name: name, value: value })
+        }
+    }
+
     pub fn len(&self) -> usize {
         match *self {
             Entry::Header { ref name, ref value } => {
@@ -70,25 +104,26 @@ impl<'a> Key<'a> {
             Key::Header(name) => {
                 Ok(Entry::Header {
                     name: name.clone(),
-                    value: try!(Str::from_utf8(value)),
+                    value: try!(HeaderValue::try_from_slice(&*value)),
                 })
             }
             Key::Authority => {
-                Ok(Entry::Authority(try!(Str::from_utf8(value))))
+                Ok(Entry::Authority(try!(ByteStr::from_utf8(value))))
             }
             Key::Method => {
-                Ok(Entry::Scheme(try!(Str::from_utf8(value))))
+                Ok(Entry::Scheme(try!(ByteStr::from_utf8(value))))
             }
             Key::Scheme => {
-                Ok(Entry::Scheme(try!(Str::from_utf8(value))))
+                Ok(Entry::Scheme(try!(ByteStr::from_utf8(value))))
             }
             Key::Path => {
-                Ok(Entry::Path(try!(Str::from_utf8(value))))
+                Ok(Entry::Path(try!(ByteStr::from_utf8(value))))
             }
             Key::Status => {
-                match StatusCode::parse(&value) {
-                    Some(status) => Ok(Entry::Status(status)),
-                    None => Err(DecoderError::InvalidStatusCode),
+                match StatusCode::from_slice(&value) {
+                    Ok(status) => Ok(Entry::Status(status)),
+                    // TODO: better error handling
+                    Err(_) => Err(DecoderError::InvalidStatusCode),
                 }
             }
         }
