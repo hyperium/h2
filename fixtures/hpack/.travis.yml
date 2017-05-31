@@ -1,0 +1,22 @@
+language: python
+python:
+  - "2.7"
+env:
+  global:
+    - GIT_COMMITTER_NAME=summerwind
+    - GIT_COMMITTER_EMAIL=summerwind.jp@gmail.com
+    - GIT_AUTHOR_NAME=summerwind
+    - GIT_AUTHOR_EMAIL=summerwind.jp@gmail.com
+    - secure: "NeSUtkrTDU542sI+csGovvV9wYLepVepBk0Kt2QTWZRxTxho/Undtb4oQIIH6MbgOi0iBzxuOypt3yCH5BTnM/Xmy3B4ikK387XOlYijy28xj5mMbK7Jf9bZaVVEwD9RIa1IjEnrY7shz3HYHi0NLeHt0mt86ag0QPO0x2KB4xo="
+before_script:
+    - git clone --quiet https://github.com/http2jp/hpack-test-case test
+    - git clone --quiet https://github.com/http2jp/hpack-test-case.wiki.git wiki
+script:
+    - pushd test
+    - python util/gen_ratio.py > "../wiki/Compression Ratio.md"
+    - popd
+after_success:
+    - cd wiki
+    - git add -A
+    - git commit -m 'Auto generated compression ratio'
+    - '[ $GH_TOKEN ] && git push --quiet https://$GH_TOKEN@github.com/http2jp/hpack-test-case.wiki.git master'

@@ -11,3 +11,9 @@ bytes = "0.4"
 http = { path = "/Users/carllerche/Code/Oss/Tokio/tower/http" }
 log = "0.3.8"
 # tower = { path = "/Users/carllerche/Code/Oss/Tokio/tower/tower-http" }
+
+[dev-dependencies]
+hex = "0.2.0"
+walkdir = "1.0.0"
+serde = "1.0.0"
+serde_json = "1.0.0"
