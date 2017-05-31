@@ -4,6 +4,7 @@ use util::byte_str::FromUtf8Error;
 use http::{method, header, status, StatusCode, Method};
 use bytes::{Buf, Bytes};
 
+use std::cmp;
 use std::io::Cursor;
 use std::collections::VecDeque;
 
@@ -139,6 +140,16 @@ impl Decoder {
         }
     }
 
+    /// Queues a potential size update
+    pub fn queue_size_update(&mut self, size: usize) {
+        let size = match self.max_size_update {
+            Some(v) => cmp::min(v, size),
+            None => size,
+        };
+
+        self.max_size_update = Some(size);
+    }
+
     /// Decodes the headers found in the given buffer.
     pub fn decode<F>(&mut self, src: &Bytes, mut f: F) -> Result<(), DecoderError>
         where F: FnMut(Entry)
@@ -180,7 +191,7 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
-                    let max = match self.max_size_update {
+                    let max = match self.max_size_update.take() {
                         Some(max) if can_resize => max,
                         _ => {
                             // Resize is too big or other frames have been read
@@ -238,13 +249,13 @@ impl Decoder {
         if table_idx == 0 {
             // Read the name as a literal
             let name = try!(decode_string(buf));
-
             let value = try!(decode_string(buf));
 
             Entry::new(name, value)
         } else {
             let e = try!(self.table.get(table_idx));
             let value = try!(decode_string(buf));
+
             e.key().into_entry(value)
         }
     }
@@ -264,7 +275,10 @@ impl Representation {
         const LITERAL_WITH_INDEXING: u8    = 0b01000000;
         const LITERAL_WITHOUT_INDEXING: u8 = 0b11110000;
         const LITERAL_NEVER_INDEXED: u8    = 0b00010000;
+        const SIZE_UPDATE_MASK: u8         = 0b11100000;
         const SIZE_UPDATE: u8              = 0b00100000;
+
+        // TODO: What did I even write here?
 
         if byte & INDEXED == INDEXED {
             Ok(Representation::Indexed)
@@ -272,9 +286,9 @@ impl Representation {
             Ok(Representation::LiteralWithIndexing)
         } else if byte & LITERAL_WITHOUT_INDEXING == 0 {
             Ok(Representation::LiteralWithoutIndexing)
-        } else if byte & LITERAL_NEVER_INDEXED == LITERAL_NEVER_INDEXED {
+        } else if byte & LITERAL_WITHOUT_INDEXING == LITERAL_NEVER_INDEXED {
             Ok(Representation::LiteralNeverIndexed)
-        } else if byte & SIZE_UPDATE == SIZE_UPDATE {
+        } else if byte & SIZE_UPDATE_MASK == SIZE_UPDATE {
             Ok(Representation::SizeUpdate)
         } else {
             Err(DecoderError::InvalidRepresentation)
@@ -328,7 +342,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
         ret += ((b & VARINT_MASK) as usize) << shift;
         shift += 7;
 
-        if b & VARINT_FLAG == VARINT_FLAG {
+        if b & VARINT_FLAG == 0 {
             return Ok(ret);
         }
 
@@ -344,25 +358,27 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
 fn decode_string(buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
     const HUFF_FLAG: u8 = 0b10000000;
 
+    // The first bit in the first byte contains the huffman encoded flag.
+    let huff = peek_u8(buf) & HUFF_FLAG == HUFF_FLAG;
+
+    // Decode the string length using 7 bit prefix
     let len = try!(decode_int(buf, 7));
 
     if len > buf.remaining() {
         return Err(DecoderError::StringUnderflow);
     }
 
-    {
-        if peek_u8(buf) & HUFF_FLAG == HUFF_FLAG {
-            let ret = {
-                let raw = &buf.bytes()[..len];
-                huffman::decode(raw).map(Into::into)
-            };
+    if huff {
+        let ret = {
+            let raw = &buf.bytes()[..len];
+            huffman::decode(raw).map(Into::into)
+        };
 
-            buf.advance(len);
-            return ret;
-        }
+        buf.advance(len);
+        return ret;
+    } else {
+        Ok(take(buf, len))
     }
-
-    Ok(take(buf, len))
 }
 
 fn peek_u8<B: Buf>(buf: &mut B) -> u8 {
