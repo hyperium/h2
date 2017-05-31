@@ -1,7 +1,7 @@
 use super::{huffman, Entry, Key};
 use util::byte_str::FromUtf8Error;
 
-use http::{method, header, StatusCode, Method};
+use http::{method, header, status, StatusCode, Method};
 use bytes::{Buf, Bytes};
 
 use std::io::Cursor;
@@ -132,10 +132,10 @@ struct Table {
 
 impl Decoder {
     /// Creates a new `Decoder` with all settings set to default values.
-    pub fn new() -> Decoder {
+    pub fn new(size: usize) -> Decoder {
         Decoder {
             max_size_update: None,
-            table: Table::new(4_096),
+            table: Table::new(size),
         }
     }
 
@@ -238,6 +238,7 @@ impl Decoder {
         if table_idx == 0 {
             // Read the name as a literal
             let name = try!(decode_string(buf));
+
             let value = try!(decode_string(buf));
 
             Entry::new(name, value)
@@ -246,6 +247,12 @@ impl Decoder {
             let value = try!(decode_string(buf));
             e.key().into_entry(value)
         }
+    }
+}
+
+impl Default for Decoder {
+    fn default() -> Decoder {
+        Decoder::new(4096)
     }
 }
 
@@ -264,7 +271,7 @@ impl Representation {
         } else if byte & LITERAL_WITH_INDEXING == LITERAL_WITH_INDEXING {
             Ok(Representation::LiteralWithIndexing)
         } else if byte & LITERAL_WITHOUT_INDEXING == 0 {
-            Ok(Representation::LiteralWithIndexing)
+            Ok(Representation::LiteralWithoutIndexing)
         } else if byte & LITERAL_NEVER_INDEXED == LITERAL_NEVER_INDEXED {
             Ok(Representation::LiteralNeverIndexed)
         } else if byte & SIZE_UPDATE == SIZE_UPDATE {
@@ -344,10 +351,14 @@ fn decode_string(buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
     }
 
     {
-        let raw = &buf.bytes()[..len];
+        if peek_u8(buf) & HUFF_FLAG == HUFF_FLAG {
+            let ret = {
+                let raw = &buf.bytes()[..len];
+                huffman::decode(raw).map(Into::into)
+            };
 
-        if raw[0] & HUFF_FLAG == HUFF_FLAG {
-            return huffman::decode(raw).map(Into::into);
+            buf.advance(len);
+            return ret;
         }
     }
 
@@ -480,6 +491,12 @@ impl From<method::FromBytesError> for DecoderError {
 
 impl From<header::FromBytesError> for DecoderError {
     fn from(src: header::FromBytesError) -> DecoderError {
+        DecoderError::InvalidUtf8
+    }
+}
+
+impl From<status::FromStrError> for DecoderError {
+    fn from(src: status::FromStrError) -> DecoderError {
         DecoderError::InvalidUtf8
     }
 }

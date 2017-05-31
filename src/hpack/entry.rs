@@ -42,13 +42,16 @@ impl Entry {
                     Ok(Entry::Method(method))
                 }
                 b"scheme" => {
-                    unimplemented!();
+                    let value = try!(ByteStr::from_utf8(value));
+                    Ok(Entry::Scheme(value))
                 }
                 b"path" => {
-                    unimplemented!();
+                    let value = try!(ByteStr::from_utf8(value));
+                    Ok(Entry::Path(value))
                 }
                 b"status" => {
-                    unimplemented!();
+                    let status = try!(StatusCode::from_slice(&value));
+                    Ok(Entry::Status(status))
                 }
                 _ => {
                     Err(DecoderError::InvalidPseudoheader)
