@@ -1,0 +1,6 @@
+[package]
+name = "genhuff"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[dependencies]
