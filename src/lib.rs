@@ -13,6 +13,9 @@ extern crate http;
 // Buffer utilities
 extern crate bytes;
 
+// Hash function used for HPACK encoding
+extern crate fnv;
+
 #[macro_use]
 extern crate log;
 

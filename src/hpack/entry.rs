@@ -20,6 +20,7 @@ pub enum Entry {
 }
 
 /// The name component of an Entry
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Key<'a> {
     Header(&'a HeaderName),
     Authority,
@@ -27,6 +28,11 @@ pub enum Key<'a> {
     Scheme,
     Path,
     Status,
+}
+
+pub fn len(name: &HeaderName, value: &HeaderValue) -> usize {
+    let n: &str = name.as_ref();
+    32 + n.len() + value.len()
 }
 
 impl Entry {
@@ -68,8 +74,7 @@ impl Entry {
     pub fn len(&self) -> usize {
         match *self {
             Entry::Header { ref name, ref value } => {
-                let n: &str = name.as_ref();
-                32 + n.len() + value.len()
+                len(name, value)
             }
             Entry::Authority(ref v) => {
                 32 + 10 + v.len()
@@ -97,6 +102,71 @@ impl Entry {
             Entry::Scheme(..) => Key::Scheme,
             Entry::Path(..) => Key::Path,
             Entry::Status(..) => Key::Status,
+        }
+    }
+
+    pub fn value_eq(&self, other: &Entry) -> bool {
+        match *self {
+            Entry::Header { ref value, .. } => {
+                let a = value;
+                match *other {
+                    Entry::Header { ref value, .. } => a == value,
+                    _ => false,
+                }
+            }
+            Entry::Authority(ref a) => {
+                match *other {
+                    Entry::Authority(ref b) => a == b,
+                    _ => false,
+                }
+            }
+            Entry::Method(ref a) => {
+                match *other {
+                    Entry::Method(ref b) => a == b,
+                    _ => false,
+                }
+            }
+            Entry::Scheme(ref a) => {
+                match *other {
+                    Entry::Scheme(ref b) => a == b,
+                    _ => false,
+                }
+            }
+            Entry::Path(ref a) => {
+                match *other {
+                    Entry::Path(ref b) => a == b,
+                    _ => false,
+                }
+            }
+            Entry::Status(ref a) => {
+                match *other {
+                    Entry::Status(ref b) => a == b,
+                    _ => false,
+                }
+            }
+        }
+    }
+
+    pub fn skip_value_index(&self) -> bool {
+        use http::header;
+
+        match *self {
+            Entry::Header { ref name, .. } => {
+                match *name {
+                    header::AGE |
+                        header::AUTHORIZATION |
+                        header::CONTENT_LENGTH |
+                        header::ETAG |
+                        header::IF_MODIFIED_SINCE |
+                        header::IF_NONE_MATCH |
+                        header::LOCATION |
+                        header::COOKIE |
+                        header::SET_COOKIE => true,
+                    _ => false,
+                }
+            }
+            Entry::Path(..) => true,
+            _ => false,
         }
     }
 }

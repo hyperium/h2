@@ -2,6 +2,7 @@ mod encoder;
 mod decoder;
 mod entry;
 mod huffman;
+mod table;
 
 #[cfg(test)]
 mod test;
