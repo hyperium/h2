@@ -1,4 +1,4 @@
-use super::Entry;
+use super::Header;
 
 use fnv::FnvHasher;
 use http::method;
@@ -22,22 +22,25 @@ pub struct Table {
 
 #[derive(Debug)]
 pub enum Index<'a> {
-    // The entry is already fully indexed
-    Indexed(usize),
+    // The header is already fully indexed
+    Indexed(usize, Header),
 
     // The name is indexed, but not the value
-    Name(usize, Entry),
+    Name(usize, Header),
 
-    // The full entry has been inserted into the table.
-    Inserted(&'a Entry),
+    // The full header has been inserted into the table.
+    Inserted(&'a Header),
 
-    // The entry is not indexed by this table
-    NotIndexed(Entry),
+    // Only the value has been inserted
+    InsertedValue(usize, Header),
+
+    // The header is not indexed by this table
+    NotIndexed(Header),
 }
 
 struct Slot {
     hash: HashValue,
-    entry: Entry,
+    header: Header,
     next: Option<usize>,
 }
 
@@ -94,33 +97,33 @@ impl Table {
         usable_capacity(self.indices.len())
     }
 
-    /// Index the entry in the HPACK table.
-    pub fn index(&mut self, entry: Entry) -> Index {
+    /// Index the header in the HPACK table.
+    pub fn index(&mut self, header: Header) -> Index {
         // Check the static table
-        let statik = index_static(&entry);
+        let statik = index_static(&header);
 
         // Don't index certain headers. This logic is borrowed from nghttp2.
-        if entry.skip_value_index() {
-            return Index::new(statik, entry);
+        if header.skip_value_index() {
+            return Index::new(statik, header);
         }
 
         // If the header is already indexed by the static table, return that
         if let Some((n, true)) = statik {
-            return Index::Indexed(n);
+            return Index::Indexed(n, header);
         }
 
         // Don't index large headers
-        if entry.len() * 4 > self.max_size * 3 {
-            return Index::new(statik, entry);
+        if header.len() * 4 > self.max_size * 3 {
+            return Index::new(statik, header);
         }
 
-        self.index_dynamic(entry, statik)
+        self.index_dynamic(header, statik)
     }
 
-    fn index_dynamic(&mut self, entry: Entry, statik: Option<(usize, bool)>) -> Index {
+    fn index_dynamic(&mut self, header: Header, statik: Option<(usize, bool)>) -> Index {
         self.reserve_one();
 
-        let hash = hash_entry(&entry);
+        let hash = hash_header(&header);
 
         let desired_pos = desired_pos(self.mask, hash);
         let mut probe = desired_pos;
@@ -135,20 +138,20 @@ impl Table {
 
                 if their_dist < dist {
                     // Index robinhood
-                    return self.index_vacant(entry, hash, desired_pos, probe);
-                } else if pos.hash == hash && self.slots[pos.index].entry.key() == entry.key() {
-                    // Matching key, check values
-                    return self.index_occupied(entry, pos.index, statik);
+                    return self.index_vacant(header, hash, desired_pos, probe);
+                } else if pos.hash == hash && self.slots[pos.index].header.name() == header.name() {
+                    // Matching name, check values
+                    return self.index_occupied(header, pos.index, statik);
                 }
             } else {
-                return self.index_vacant(entry, hash, desired_pos, probe);
+                return self.index_vacant(header, hash, desired_pos, probe);
             }
 
             dist += 1;
         });
     }
 
-    fn index_occupied(&mut self, entry: Entry, mut index: usize, statik: Option<(usize, bool)>)
+    fn index_occupied(&mut self, header: Header, mut index: usize, statik: Option<(usize, bool)>)
         -> Index
     {
         // There already is a match for the given header name. Check if a value
@@ -158,13 +161,13 @@ impl Table {
     }
 
     fn index_vacant(&mut self,
-                    entry: Entry,
+                    header: Header,
                     hash: HashValue,
                     desired: usize,
                     probe: usize)
         -> Index
     {
-        if self.maybe_evict(entry.len()) {
+        if self.maybe_evict(header.len()) {
             // Maybe step back
             unimplemented!();
         }
@@ -175,7 +178,7 @@ impl Table {
 
         self.slots.push_back(Slot {
             hash: hash,
-            entry: entry,
+            header: header,
             next: None,
         });
 
@@ -199,7 +202,7 @@ impl Table {
             });
         }
 
-        Index::Inserted(&self.slots[slot_idx].entry)
+        Index::Inserted(&self.slots[slot_idx].header)
     }
 
     fn maybe_evict(&mut self, len: usize) -> bool {
@@ -217,7 +220,7 @@ impl Table {
     fn evict(&mut self) {
         debug_assert!(!self.slots.is_empty());
 
-        // Remove the entry
+        // Remove the header
         let slot = self.slots.pop_front().unwrap();
         let mut probe = desired_pos(self.mask, slot.hash);
 
@@ -242,7 +245,7 @@ impl Table {
         self.evicted = self.evicted.wrapping_add(1);
     }
 
-    // Shifts all indices that were displaced by the entry that has just been
+    // Shifts all indices that were displaced by the header that has just been
     // removed.
     fn remove_phase_two(&mut self, probe: usize) {
         let mut last_probe = probe;
@@ -326,10 +329,10 @@ impl Table {
 }
 
 impl<'a> Index<'a> {
-    fn new(v: Option<(usize, bool)>, e: Entry) -> Index<'a> {
+    fn new(v: Option<(usize, bool)>, e: Header) -> Index<'a> {
         match v {
             None => Index::NotIndexed(e),
-            Some((n, true)) => Index::Indexed(n),
+            Some((n, true)) => Index::Indexed(n, e),
             Some((n, false)) => Index::Name(n, e),
         }
     }
@@ -355,19 +358,19 @@ fn probe_distance(mask: usize, hash: HashValue, current: usize) -> usize {
     current.wrapping_sub(desired_pos(mask, hash)) & mask as usize
 }
 
-fn hash_entry(entry: &Entry) -> HashValue {
+fn hash_header(header: &Header) -> HashValue {
     const MASK: u64 = (MAX_SIZE as u64) - 1;
 
     let mut h = FnvHasher::default();
-    entry.key().hash(&mut h);
+    header.name().hash(&mut h);
     HashValue((h.finish() & MASK) as usize)
 }
 
-/// Checks the static table for the entry. If found, returns the index and a
+/// Checks the static table for the header. If found, returns the index and a
 /// boolean representing if the value matched as well.
-fn index_static(entry: &Entry) -> Option<(usize, bool)> {
-    match *entry {
-        Entry::Header { ref name, ref value } => {
+fn index_static(header: &Header) -> Option<(usize, bool)> {
+    match *header {
+        Header::Field { ref name, ref value } => {
             match *name {
                 header::ACCEPT_CHARSET => Some((15, false)),
                 header::ACCEPT_ENCODING => {
@@ -425,29 +428,29 @@ fn index_static(entry: &Entry) -> Option<(usize, bool)> {
                 _ => None,
             }
         }
-        Entry::Authority(ref v) => Some((1, false)),
-        Entry::Method(ref v) => {
+        Header::Authority(ref v) => Some((1, false)),
+        Header::Method(ref v) => {
             match *v {
                 method::GET => Some((2, true)),
                 method::POST => Some((3, true)),
                 _ => Some((2, false)),
             }
         }
-        Entry::Scheme(ref v) => {
+        Header::Scheme(ref v) => {
             match &**v {
                 "http" => Some((6, true)),
                 "https" => Some((7, true)),
                 _ => Some((6, false)),
             }
         }
-        Entry::Path(ref v) => {
+        Header::Path(ref v) => {
             match &**v {
                 "/" => Some((4, true)),
                 "/index.html" => Some((5, true)),
                 _ => Some((4, false)),
             }
         }
-        Entry::Status(ref v) => {
+        Header::Status(ref v) => {
             match u16::from(*v) {
                 200 => Some((8, true)),
                 204 => Some((9, true)),

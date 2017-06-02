@@ -1,4 +1,4 @@
-use super::{huffman, Entry, Key};
+use super::{huffman, header as h2_header, Header};
 use util::byte_str::FromUtf8Error;
 
 use http::{method, header, status, StatusCode, Method};
@@ -124,7 +124,7 @@ enum Representation {
 }
 
 struct Table {
-    entries: VecDeque<Entry>,
+    entries: VecDeque<Header>,
     size: usize,
     max_size: usize,
 }
@@ -152,7 +152,7 @@ impl Decoder {
 
     /// Decodes the headers found in the given buffer.
     pub fn decode<F>(&mut self, src: &Bytes, mut f: F) -> Result<(), DecoderError>
-        where F: FnMut(Entry)
+        where F: FnMut(Header)
     {
         use self::Representation::*;
 
@@ -227,14 +227,14 @@ impl Decoder {
     }
 
     fn decode_indexed(&self, buf: &mut Cursor<&Bytes>)
-        -> Result<Entry, DecoderError>
+        -> Result<Header, DecoderError>
     {
         let index = try!(decode_int(buf, 7));
         self.table.get(index)
     }
 
     fn decode_literal(&self, buf: &mut Cursor<&Bytes>, index: bool)
-        -> Result<Entry, DecoderError>
+        -> Result<Header, DecoderError>
     {
         let prefix = if index {
             6
@@ -251,12 +251,12 @@ impl Decoder {
             let name = try!(decode_string(buf));
             let value = try!(decode_string(buf));
 
-            Entry::new(name, value)
+            Header::new(name, value)
         } else {
             let e = try!(self.table.get(table_idx));
             let value = try!(decode_string(buf));
 
-            e.key().into_entry(value)
+            e.name().into_entry(value)
         }
     }
 }
@@ -419,7 +419,7 @@ impl Table {
     ///
     /// This is according to the [HPACK spec, section 2.3.3.]
     /// (http://http2.github.io/http2-spec/compression.html#index.address.space)
-    pub fn get(&self, index: usize) -> Result<Entry, DecoderError> {
+    pub fn get(&self, index: usize) -> Result<Header, DecoderError> {
         if index == 0 {
             return Err(DecoderError::InvalidTableIndex);
         }
@@ -435,7 +435,7 @@ impl Table {
         }
     }
 
-    fn insert(&mut self, entry: Entry) {
+    fn insert(&mut self, entry: Header) {
         let len = entry.len();
 
         self.reserve(len);
@@ -518,211 +518,211 @@ impl From<status::FromStrError> for DecoderError {
 }
 
 /// Get an entry from the static table
-pub fn get_static(idx: usize) -> Entry {
+pub fn get_static(idx: usize) -> Header {
     use http::{status, method, header};
     use http::header::HeaderValue;
     use util::byte_str::ByteStr;
 
     match idx {
-        1 => Entry::Authority(ByteStr::from_static("")),
-        2 => Entry::Method(method::GET),
-        3 => Entry::Method(method::POST),
-        4 => Entry::Path(ByteStr::from_static("/")),
-        5 => Entry::Path(ByteStr::from_static("/index.html")),
-        6 => Entry::Scheme(ByteStr::from_static("http")),
-        7 => Entry::Scheme(ByteStr::from_static("https")),
-        8 => Entry::Status(status::OK),
-        9 => Entry::Status(status::NO_CONTENT),
-        10 => Entry::Status(status::PARTIAL_CONTENT),
-        11 => Entry::Status(status::NOT_MODIFIED),
-        12 => Entry::Status(status::BAD_REQUEST),
-        13 => Entry::Status(status::NOT_FOUND),
-        14 => Entry::Status(status::INTERNAL_SERVER_ERROR),
-        15 => Entry::Header {
+        1 => Header::Authority(ByteStr::from_static("")),
+        2 => Header::Method(method::GET),
+        3 => Header::Method(method::POST),
+        4 => Header::Path(ByteStr::from_static("/")),
+        5 => Header::Path(ByteStr::from_static("/index.html")),
+        6 => Header::Scheme(ByteStr::from_static("http")),
+        7 => Header::Scheme(ByteStr::from_static("https")),
+        8 => Header::Status(status::OK),
+        9 => Header::Status(status::NO_CONTENT),
+        10 => Header::Status(status::PARTIAL_CONTENT),
+        11 => Header::Status(status::NOT_MODIFIED),
+        12 => Header::Status(status::BAD_REQUEST),
+        13 => Header::Status(status::NOT_FOUND),
+        14 => Header::Status(status::INTERNAL_SERVER_ERROR),
+        15 => Header::Field {
             name: header::ACCEPT_CHARSET,
             value: HeaderValue::from_static(""),
         },
-        16 => Entry::Header {
+        16 => Header::Field {
             name: header::ACCEPT_ENCODING,
             value: HeaderValue::from_static("gzip, deflate"),
         },
-        17 => Entry::Header {
+        17 => Header::Field {
             name: header::ACCEPT_LANGUAGE,
             value: HeaderValue::from_static(""),
         },
-        18 => Entry::Header {
+        18 => Header::Field {
             name: header::ACCEPT_RANGES,
             value: HeaderValue::from_static(""),
         },
-        19 => Entry::Header {
+        19 => Header::Field {
             name: header::ACCEPT,
             value: HeaderValue::from_static(""),
         },
-        20 => Entry::Header {
+        20 => Header::Field {
             name: header::ACCESS_CONTROL_ALLOW_ORIGIN,
             value: HeaderValue::from_static(""),
         },
-        21 => Entry::Header {
+        21 => Header::Field {
             name: header::AGE,
             value: HeaderValue::from_static(""),
         },
-        22 => Entry::Header {
+        22 => Header::Field {
             name: header::ALLOW,
             value: HeaderValue::from_static(""),
         },
-        23 => Entry::Header {
+        23 => Header::Field {
             name: header::AUTHORIZATION,
             value: HeaderValue::from_static(""),
         },
-        24 => Entry::Header {
+        24 => Header::Field {
             name: header::CACHE_CONTROL,
             value: HeaderValue::from_static(""),
         },
-        25 => Entry::Header {
+        25 => Header::Field {
             name: header::CONTENT_DISPOSITION,
             value: HeaderValue::from_static(""),
         },
-        26 => Entry::Header {
+        26 => Header::Field {
             name: header::CONTENT_ENCODING,
             value: HeaderValue::from_static(""),
         },
-        27 => Entry::Header {
+        27 => Header::Field {
             name: header::CONTENT_LANGUAGE,
             value: HeaderValue::from_static(""),
         },
-        28 => Entry::Header {
+        28 => Header::Field {
             name: header::CONTENT_LENGTH,
             value: HeaderValue::from_static(""),
         },
-        29 => Entry::Header {
+        29 => Header::Field {
             name: header::CONTENT_LOCATION,
             value: HeaderValue::from_static(""),
         },
-        30 => Entry::Header {
+        30 => Header::Field {
             name: header::CONTENT_RANGE,
             value: HeaderValue::from_static(""),
         },
-        31 => Entry::Header {
+        31 => Header::Field {
             name: header::CONTENT_TYPE,
             value: HeaderValue::from_static(""),
         },
-        32 => Entry::Header {
+        32 => Header::Field {
             name: header::COOKIE,
             value: HeaderValue::from_static(""),
         },
-        33 => Entry::Header {
+        33 => Header::Field {
             name: header::DATE,
             value: HeaderValue::from_static(""),
         },
-        34 => Entry::Header {
+        34 => Header::Field {
             name: header::ETAG,
             value: HeaderValue::from_static(""),
         },
-        35 => Entry::Header {
+        35 => Header::Field {
             name: header::EXPECT,
             value: HeaderValue::from_static(""),
         },
-        36 => Entry::Header {
+        36 => Header::Field {
             name: header::EXPIRES,
             value: HeaderValue::from_static(""),
         },
-        37 => Entry::Header {
+        37 => Header::Field {
             name: header::FROM,
             value: HeaderValue::from_static(""),
         },
-        38 => Entry::Header {
+        38 => Header::Field {
             name: header::HOST,
             value: HeaderValue::from_static(""),
         },
-        39 => Entry::Header {
+        39 => Header::Field {
             name: header::IF_MATCH,
             value: HeaderValue::from_static(""),
         },
-        40 => Entry::Header {
+        40 => Header::Field {
             name: header::IF_MODIFIED_SINCE,
             value: HeaderValue::from_static(""),
         },
-        41 => Entry::Header {
+        41 => Header::Field {
             name: header::IF_NONE_MATCH,
             value: HeaderValue::from_static(""),
         },
-        42 => Entry::Header {
+        42 => Header::Field {
             name: header::IF_RANGE,
             value: HeaderValue::from_static(""),
         },
-        43 => Entry::Header {
+        43 => Header::Field {
             name: header::IF_UNMODIFIED_SINCE,
             value: HeaderValue::from_static(""),
         },
-        44 => Entry::Header {
+        44 => Header::Field {
             name: header::LAST_MODIFIED,
             value: HeaderValue::from_static(""),
         },
-        45 => Entry::Header {
+        45 => Header::Field {
             name: header::LINK,
             value: HeaderValue::from_static(""),
         },
-        46 => Entry::Header {
+        46 => Header::Field {
             name: header::LOCATION,
             value: HeaderValue::from_static(""),
         },
-        47 => Entry::Header {
+        47 => Header::Field {
             name: header::MAX_FORWARDS,
             value: HeaderValue::from_static(""),
         },
-        48 => Entry::Header {
+        48 => Header::Field {
             name: header::PROXY_AUTHENTICATE,
             value: HeaderValue::from_static(""),
         },
-        49 => Entry::Header {
+        49 => Header::Field {
             name: header::PROXY_AUTHORIZATION,
             value: HeaderValue::from_static(""),
         },
-        50 => Entry::Header {
+        50 => Header::Field {
             name: header::RANGE,
             value: HeaderValue::from_static(""),
         },
-        51 => Entry::Header {
+        51 => Header::Field {
             name: header::REFERER,
             value: HeaderValue::from_static(""),
         },
-        52 => Entry::Header {
+        52 => Header::Field {
             name: header::REFRESH,
             value: HeaderValue::from_static(""),
         },
-        53 => Entry::Header {
+        53 => Header::Field {
             name: header::RETRY_AFTER,
             value: HeaderValue::from_static(""),
         },
-        54 => Entry::Header {
+        54 => Header::Field {
             name: header::SERVER,
             value: HeaderValue::from_static(""),
         },
-        55 => Entry::Header {
+        55 => Header::Field {
             name: header::SET_COOKIE,
             value: HeaderValue::from_static(""),
         },
-        56 => Entry::Header {
+        56 => Header::Field {
             name: header::STRICT_TRANSPORT_SECURITY,
             value: HeaderValue::from_static(""),
         },
-        57 => Entry::Header {
+        57 => Header::Field {
             name: header::TRANSFER_ENCODING,
             value: HeaderValue::from_static(""),
         },
-        58 => Entry::Header {
+        58 => Header::Field {
             name: header::USER_AGENT,
             value: HeaderValue::from_static(""),
         },
-        59 => Entry::Header {
+        59 => Header::Field {
             name: header::VARY,
             value: HeaderValue::from_static(""),
         },
-        60 => Entry::Header {
+        60 => Header::Field {
             name: header::VIA,
             value: HeaderValue::from_static(""),
         },
-        61 => Entry::Header {
+        61 => Header::Field {
             name: header::WWW_AUTHENTICATE,
             value: HeaderValue::from_static(""),
         },

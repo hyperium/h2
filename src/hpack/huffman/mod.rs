@@ -42,8 +42,7 @@ pub fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
     Ok(dst)
 }
 
-// To avoid panics, the destination buffer must have src.len() remaining
-// capacity.
+// TODO: return error when there is not enough room to encode the value
 pub fn encode<B: BufMut>(src: &[u8], dst: &mut B) {
     let mut bits: u64 = 0;
     let mut bits_left = 40;

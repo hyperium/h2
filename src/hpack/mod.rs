@@ -1,6 +1,6 @@
 mod encoder;
 mod decoder;
-mod entry;
+mod header;
 mod huffman;
 mod table;
 
@@ -8,5 +8,5 @@ mod table;
 mod test;
 
 pub use self::encoder::Encoder;
-pub use self::entry::{Entry, Key};
+pub use self::header::Header;
 pub use self::decoder::{Decoder, DecoderError};

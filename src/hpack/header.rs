@@ -5,10 +5,10 @@ use http::{Method, StatusCode};
 use http::header::{HeaderName, HeaderValue};
 use bytes::Bytes;
 
-/// HPack table entry
+/// HTTP/2.0 Header
 #[derive(Debug, Clone)]
-pub enum Entry {
-    Header {
+pub enum Header {
+    Field {
         name: HeaderName,
         value: HeaderValue,
     },
@@ -19,10 +19,10 @@ pub enum Entry {
     Status(StatusCode),
 }
 
-/// The name component of an Entry
+/// The header field name
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum Key<'a> {
-    Header(&'a HeaderName),
+pub enum Name<'a> {
+    Field(&'a HeaderName),
     Authority,
     Method,
     Scheme,
@@ -35,29 +35,29 @@ pub fn len(name: &HeaderName, value: &HeaderValue) -> usize {
     32 + n.len() + value.len()
 }
 
-impl Entry {
-    pub fn new(name: Bytes, value: Bytes) -> Result<Entry, DecoderError> {
+impl Header {
+    pub fn new(name: Bytes, value: Bytes) -> Result<Header, DecoderError> {
         if name[0] == b':' {
             match &name[1..] {
                 b"authority" => {
                     let value = try!(ByteStr::from_utf8(value));
-                    Ok(Entry::Authority(value))
+                    Ok(Header::Authority(value))
                 }
                 b"method" => {
                     let method = try!(Method::from_bytes(&value));
-                    Ok(Entry::Method(method))
+                    Ok(Header::Method(method))
                 }
                 b"scheme" => {
                     let value = try!(ByteStr::from_utf8(value));
-                    Ok(Entry::Scheme(value))
+                    Ok(Header::Scheme(value))
                 }
                 b"path" => {
                     let value = try!(ByteStr::from_utf8(value));
-                    Ok(Entry::Path(value))
+                    Ok(Header::Path(value))
                 }
                 b"status" => {
                     let status = try!(StatusCode::from_slice(&value));
-                    Ok(Entry::Status(status))
+                    Ok(Header::Status(status))
                 }
                 _ => {
                     Err(DecoderError::InvalidPseudoheader)
@@ -67,91 +67,107 @@ impl Entry {
             let name = try!(HeaderName::from_bytes(&name));
             let value = try!(HeaderValue::try_from_slice(&value));
 
-            Ok(Entry::Header { name: name, value: value })
+            Ok(Header::Field { name: name, value: value })
         }
     }
 
     pub fn len(&self) -> usize {
         match *self {
-            Entry::Header { ref name, ref value } => {
+            Header::Field { ref name, ref value } => {
                 len(name, value)
             }
-            Entry::Authority(ref v) => {
+            Header::Authority(ref v) => {
                 32 + 10 + v.len()
             }
-            Entry::Method(ref v) => {
+            Header::Method(ref v) => {
                 32 + 7 + v.as_ref().len()
             }
-            Entry::Scheme(ref v) => {
+            Header::Scheme(ref v) => {
                 32 + 7 + v.len()
             }
-            Entry::Path(ref v) => {
+            Header::Path(ref v) => {
                 32 + 5 + v.len()
             }
-            Entry::Status(ref v) => {
+            Header::Status(ref v) => {
                 32 + 7 + 3
             }
         }
     }
 
-    pub fn key(&self) -> Key {
+    /// Returns the header name
+    pub fn name(&self) -> Name {
         match *self {
-            Entry::Header { ref name, .. } => Key::Header(name),
-            Entry::Authority(..) => Key::Authority,
-            Entry::Method(..) => Key::Method,
-            Entry::Scheme(..) => Key::Scheme,
-            Entry::Path(..) => Key::Path,
-            Entry::Status(..) => Key::Status,
+            Header::Field { ref name, .. } => Name::Field(name),
+            Header::Authority(..) => Name::Authority,
+            Header::Method(..) => Name::Method,
+            Header::Scheme(..) => Name::Scheme,
+            Header::Path(..) => Name::Path,
+            Header::Status(..) => Name::Status,
         }
     }
 
-    pub fn value_eq(&self, other: &Entry) -> bool {
+    pub fn value_slice(&self) -> &[u8] {
         match *self {
-            Entry::Header { ref value, .. } => {
+            Header::Field { ref value, .. } => value.as_ref(),
+            Header::Authority(ref v) => v.as_ref(),
+            Header::Method(ref v) => v.as_ref().as_ref(),
+            Header::Scheme(ref v) => v.as_ref(),
+            Header::Path(ref v) => v.as_ref(),
+            Header::Status(ref v) => v.as_str().as_ref(),
+        }
+    }
+
+    pub fn value_eq(&self, other: &Header) -> bool {
+        match *self {
+            Header::Field { ref value, .. } => {
                 let a = value;
                 match *other {
-                    Entry::Header { ref value, .. } => a == value,
+                    Header::Field { ref value, .. } => a == value,
                     _ => false,
                 }
             }
-            Entry::Authority(ref a) => {
+            Header::Authority(ref a) => {
                 match *other {
-                    Entry::Authority(ref b) => a == b,
+                    Header::Authority(ref b) => a == b,
                     _ => false,
                 }
             }
-            Entry::Method(ref a) => {
+            Header::Method(ref a) => {
                 match *other {
-                    Entry::Method(ref b) => a == b,
+                    Header::Method(ref b) => a == b,
                     _ => false,
                 }
             }
-            Entry::Scheme(ref a) => {
+            Header::Scheme(ref a) => {
                 match *other {
-                    Entry::Scheme(ref b) => a == b,
+                    Header::Scheme(ref b) => a == b,
                     _ => false,
                 }
             }
-            Entry::Path(ref a) => {
+            Header::Path(ref a) => {
                 match *other {
-                    Entry::Path(ref b) => a == b,
+                    Header::Path(ref b) => a == b,
                     _ => false,
                 }
             }
-            Entry::Status(ref a) => {
+            Header::Status(ref a) => {
                 match *other {
-                    Entry::Status(ref b) => a == b,
+                    Header::Status(ref b) => a == b,
                     _ => false,
                 }
             }
         }
+    }
+
+    pub fn is_sensitive(&self) -> bool {
+        false
     }
 
     pub fn skip_value_index(&self) -> bool {
         use http::header;
 
         match *self {
-            Entry::Header { ref name, .. } => {
+            Header::Field { ref name, .. } => {
                 match *name {
                     header::AGE |
                         header::AUTHORIZATION |
@@ -165,40 +181,51 @@ impl Entry {
                     _ => false,
                 }
             }
-            Entry::Path(..) => true,
+            Header::Path(..) => true,
             _ => false,
         }
     }
 }
 
-impl<'a> Key<'a> {
-    pub fn into_entry(self, value: Bytes) -> Result<Entry, DecoderError> {
+impl<'a> Name<'a> {
+    pub fn into_entry(self, value: Bytes) -> Result<Header, DecoderError> {
         match self {
-            Key::Header(name) => {
-                Ok(Entry::Header {
+            Name::Field(name) => {
+                Ok(Header::Field {
                     name: name.clone(),
                     value: try!(HeaderValue::try_from_slice(&*value)),
                 })
             }
-            Key::Authority => {
-                Ok(Entry::Authority(try!(ByteStr::from_utf8(value))))
+            Name::Authority => {
+                Ok(Header::Authority(try!(ByteStr::from_utf8(value))))
             }
-            Key::Method => {
-                Ok(Entry::Scheme(try!(ByteStr::from_utf8(value))))
+            Name::Method => {
+                Ok(Header::Scheme(try!(ByteStr::from_utf8(value))))
             }
-            Key::Scheme => {
-                Ok(Entry::Scheme(try!(ByteStr::from_utf8(value))))
+            Name::Scheme => {
+                Ok(Header::Scheme(try!(ByteStr::from_utf8(value))))
             }
-            Key::Path => {
-                Ok(Entry::Path(try!(ByteStr::from_utf8(value))))
+            Name::Path => {
+                Ok(Header::Path(try!(ByteStr::from_utf8(value))))
             }
-            Key::Status => {
+            Name::Status => {
                 match StatusCode::from_slice(&value) {
-                    Ok(status) => Ok(Entry::Status(status)),
+                    Ok(status) => Ok(Header::Status(status)),
                     // TODO: better error handling
                     Err(_) => Err(DecoderError::InvalidStatusCode),
                 }
             }
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        match *self {
+            Name::Field(ref name) => name.as_ref(),
+            Name::Authority => b":authority",
+            Name::Method => b":method",
+            Name::Scheme => b":scheme",
+            Name::Path => b":path",
+            Name::Status => b":status",
         }
     }
 }
