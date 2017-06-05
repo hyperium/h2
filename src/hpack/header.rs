@@ -56,7 +56,7 @@ impl Header {
                     Ok(Header::Path(value))
                 }
                 b"status" => {
-                    let status = try!(StatusCode::from_slice(&value));
+                    let status = try!(StatusCode::from_bytes(&value));
                     Ok(Header::Status(status))
                 }
                 _ => {
@@ -65,7 +65,7 @@ impl Header {
             }
         } else {
             let name = try!(HeaderName::from_bytes(&name));
-            let value = try!(HeaderValue::try_from_slice(&value));
+            let value = try!(HeaderValue::try_from_bytes(&value));
 
             Ok(Header::Field { name: name, value: value })
         }
@@ -160,7 +160,11 @@ impl Header {
     }
 
     pub fn is_sensitive(&self) -> bool {
-        false
+        match *self {
+            Header::Field { ref value, .. } => value.is_sensitive(),
+            // TODO: Technically these other header values can be sensitive too.
+            _ => false,
+        }
     }
 
     pub fn skip_value_index(&self) -> bool {
@@ -193,7 +197,7 @@ impl<'a> Name<'a> {
             Name::Field(name) => {
                 Ok(Header::Field {
                     name: name.clone(),
-                    value: try!(HeaderValue::try_from_slice(&*value)),
+                    value: try!(HeaderValue::try_from_bytes(&*value)),
                 })
             }
             Name::Authority => {
@@ -209,7 +213,7 @@ impl<'a> Name<'a> {
                 Ok(Header::Path(try!(ByteStr::from_utf8(value))))
             }
             Name::Status => {
-                match StatusCode::from_slice(&value) {
+                match StatusCode::from_bytes(&value) {
                     Ok(status) => Ok(Header::Status(status)),
                     // TODO: better error handling
                     Err(_) => Err(DecoderError::InvalidStatusCode),

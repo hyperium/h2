@@ -3,7 +3,7 @@ extern crate walkdir;
 extern crate serde;
 extern crate serde_json;
 
-use super::{Entry, Decoder};
+use super::{Header, Decoder};
 
 use self::hex::FromHex;
 use self::serde_json::Value;
@@ -111,24 +111,24 @@ struct Case {
     header_table_size: Option<usize>,
 }
 
-fn key_str(e: &Entry) -> &str {
+fn key_str(e: &Header) -> &str {
     match *e {
-        Entry::Header { ref name, .. } => name.as_str(),
-        Entry::Authority(..) => ":authority",
-        Entry::Method(..) => ":method",
-        Entry::Scheme(..) => ":scheme",
-        Entry::Path(..) => ":path",
-        Entry::Status(..) => ":status",
+        Header::Field { ref name, .. } => name.as_str(),
+        Header::Authority(..) => ":authority",
+        Header::Method(..) => ":method",
+        Header::Scheme(..) => ":scheme",
+        Header::Path(..) => ":path",
+        Header::Status(..) => ":status",
     }
 }
 
-fn value_str(e: &Entry) -> &str {
+fn value_str(e: &Header) -> &str {
     match *e {
-        Entry::Header { ref value, .. } => value.to_str().unwrap(),
-        Entry::Authority(ref v) => &**v,
-        Entry::Method(ref m) => m.as_str(),
-        Entry::Scheme(ref v) => &**v,
-        Entry::Path(ref v) => &**v,
-        Entry::Status(ref v) => v.as_str(),
+        Header::Field { ref value, .. } => value.to_str().unwrap(),
+        Header::Authority(ref v) => &**v,
+        Header::Method(ref m) => m.as_str(),
+        Header::Scheme(ref v) => &**v,
+        Header::Path(ref v) => &**v,
+        Header::Status(ref v) => v.as_str(),
     }
 }

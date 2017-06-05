@@ -4,7 +4,7 @@ use fnv::FnvHasher;
 use http::method;
 use http::header::{self, HeaderName, HeaderValue};
 
-use std::mem;
+use std::{cmp, mem};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
@@ -32,7 +32,7 @@ pub enum Index<'a> {
     Inserted(&'a Header),
 
     // Only the value has been inserted
-    InsertedValue(usize, Header),
+    InsertedValue(usize, &'a Header),
 
     // The header is not indexed by this table
     NotIndexed(Header),
@@ -75,19 +75,28 @@ macro_rules! probe_loop {
 }
 
 impl Table {
-    pub fn with_capacity(n: usize) -> Table {
-        if n == 0 {
-            unimplemented!();
+    pub fn new(max_size: usize, capacity: usize) -> Table {
+        if capacity == 0 {
+            Table {
+                mask: 0,
+                indices: vec![],
+                slots: VecDeque::new(),
+                evicted: 0,
+                size: 0,
+                max_size: max_size,
+            }
         } else {
-            let capacity = to_raw_capacity(n).next_power_of_two();
+            let capacity = cmp::max(
+                to_raw_capacity(capacity).next_power_of_two(),
+                8);
 
             Table {
                 mask: capacity.wrapping_sub(1),
                 indices: vec![None; capacity],
-                slots: VecDeque::with_capacity(n),
+                slots: VecDeque::with_capacity(usable_capacity(capacity)),
                 evicted: 0,
                 size: 0,
-                max_size: 4096,
+                max_size: max_size,
             }
         }
     }
@@ -121,7 +130,17 @@ impl Table {
     }
 
     fn index_dynamic(&mut self, header: Header, statik: Option<(usize, bool)>) -> Index {
-        self.reserve_one();
+        if header.len() + self.size < self.max_size || !header.is_sensitive() {
+            // Only grow internal storage if needed
+            self.reserve_one();
+        }
+
+        if self.indices.is_empty() {
+            // If `indices` is not empty, then it is impossible for all
+            // `indices` entries to be `Some`. So, we only need to check for the
+            // empty case.
+            return Index::new(statik, header);
+        }
 
         let hash = hash_header(&header);
 
@@ -136,15 +155,17 @@ impl Table {
                 // displacement.
                 let their_dist = probe_distance(self.mask, pos.hash, probe);
 
+                let slot_idx = pos.index.wrapping_sub(self.evicted);
+
                 if their_dist < dist {
                     // Index robinhood
-                    return self.index_vacant(header, hash, desired_pos, probe);
-                } else if pos.hash == hash && self.slots[pos.index].header.name() == header.name() {
+                    return self.index_vacant(header, hash, dist, probe, statik);
+                } else if pos.hash == hash && self.slots[slot_idx].header.name() == header.name() {
                     // Matching name, check values
                     return self.index_occupied(header, pos.index, statik);
                 }
             } else {
-                return self.index_vacant(header, hash, desired_pos, probe);
+                return self.index_vacant(header, hash, dist, probe, statik);
             }
 
             dist += 1;
@@ -157,19 +178,59 @@ impl Table {
         // There already is a match for the given header name. Check if a value
         // matches. The header will also only be inserted if the table is not at
         // capacity.
-        unimplemented!();
+        let mut n = 0;
+
+        while n < MAX_VALUES_PER_NAME {
+            // Compute the real index into the VecDeque
+            let real_idx = index.wrapping_sub(self.evicted);
+
+            if self.slots[real_idx].header.value_eq(&header) {
+                // We have a full match!
+                return Index::Indexed(real_idx + DYN_OFFSET, header);
+            }
+
+            if let Some(next) = self.slots[real_idx].next {
+                n = next;
+                continue;
+            }
+
+            if header.is_sensitive() {
+                return Index::Name(real_idx + DYN_OFFSET, header);
+            }
+
+            // Maybe index
+            unimplemented!();
+        }
+
+        Index::NotIndexed(header)
     }
 
     fn index_vacant(&mut self,
                     header: Header,
                     hash: HashValue,
-                    desired: usize,
-                    probe: usize)
+                    dist: usize,
+                    mut probe: usize,
+                    statik: Option<(usize, bool)>)
         -> Index
     {
-        if self.maybe_evict(header.len()) {
-            // Maybe step back
-            unimplemented!();
+        if header.is_sensitive() {
+            return Index::new(statik, header);
+        }
+
+        if self.update_size(header.len()) {
+            if dist != 0 {
+                let back = probe.wrapping_sub(1) & self.mask;
+
+                if let Some(pos) = self.indices[probe] {
+                    let their_dist = probe_distance(self.mask, pos.hash, probe);
+
+                    if their_dist < dist {
+                        probe = back;
+                    }
+                } else {
+                    probe = back;
+                }
+            }
         }
 
         // The index is offset by the current # of evicted elements
@@ -193,7 +254,6 @@ impl Table {
 
             probe_loop!(probe < self.indices.len(), {
                 let pos = &mut self.indices[probe as usize];
-                let p = mem::replace(pos, Some(prev));
 
                 prev = match mem::replace(pos, Some(prev)) {
                     Some(p) => p,
@@ -202,14 +262,18 @@ impl Table {
             });
         }
 
-        Index::Inserted(&self.slots[slot_idx].header)
+        if let Some((n, _)) = statik {
+            Index::InsertedValue(n, &self.slots[slot_idx].header)
+        } else {
+            Index::Inserted(&self.slots[slot_idx].header)
+        }
     }
 
-    fn maybe_evict(&mut self, len: usize) -> bool {
-        let target = self.max_size - len;
+    fn update_size(&mut self, len: usize) -> bool {
+        self.size += len;
         let mut ret = false;
 
-        while self.size > target {
+        while self.size > self.max_size {
             ret = true;
             self.evict();
         }
@@ -224,6 +288,10 @@ impl Table {
         let slot = self.slots.pop_front().unwrap();
         let mut probe = desired_pos(self.mask, slot.hash);
 
+        // Update the size
+        self.size -= slot.header.len();
+
+        // Equivalent to 0.wrapping_add(self.evicted);
         let pos_idx = self.evicted;
 
         // Find the associated position
@@ -325,6 +393,19 @@ impl Table {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+impl Table {
+    /// Returns the number of headers in the table
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Returns the table size
+    pub fn size(&self) -> usize {
+        self.size
     }
 }
 

@@ -16,9 +16,9 @@ pub enum EncoderError {
 }
 
 impl Encoder {
-    pub fn new() -> Encoder {
+    pub fn new(max_size: usize, capacity: usize) -> Encoder {
         Encoder {
-            table: Table::with_capacity(0),
+            table: Table::new(max_size, capacity),
             max_size_update: None,
         }
     }
@@ -41,35 +41,51 @@ impl Encoder {
     fn encode_header(&mut self, header: Header, dst: &mut BytesMut)
         -> Result<(), EncoderError>
     {
-        if header.is_sensitive() {
-            unimplemented!();
-        }
-
         match self.table.index(header) {
-            Index::Indexed(idx, _header) => {
+            Index::Indexed(idx, header) => {
+                assert!(!header.is_sensitive());
                 encode_int(idx, 7, 0x80, dst);
             }
             Index::Name(idx, header) => {
-                encode_int(idx, 4, 0, dst);
+                if header.is_sensitive() {
+                    encode_int(idx, 4, 0b10000, dst);
+                } else {
+                    encode_int(idx, 4, 0, dst);
+                }
+
                 encode_str(header.value_slice(), dst);
             }
             Index::Inserted(header) => {
+                assert!(!header.is_sensitive());
                 dst.put_u8(0b01000000);
                 encode_str(header.name().as_slice(), dst);
                 encode_str(header.value_slice(), dst);
             }
             Index::InsertedValue(idx, header) => {
+                assert!(!header.is_sensitive());
+
                 encode_int(idx, 6, 0b01000000, dst);
                 encode_str(header.value_slice(), dst);
             }
             Index::NotIndexed(header) => {
-                dst.put_u8(0);
+                if header.is_sensitive() {
+                    dst.put_u8(0b10000);
+                } else {
+                    dst.put_u8(0);
+                }
+
                 encode_str(header.name().as_slice(), dst);
                 encode_str(header.value_slice(), dst);
             }
         }
 
         Ok(())
+    }
+}
+
+impl Default for Encoder {
+    fn default() -> Encoder {
+        Encoder::new(4096, 0)
     }
 }
 
@@ -152,4 +168,242 @@ fn encode_int<B: BufMut>(
 /// Returns true if the in the int can be fully encoded in the first byte.
 fn encode_int_one_byte(value: usize, prefix_bits: usize) -> bool {
     value < (1 << prefix_bits) - 1
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use hpack::Header;
+    use http::*;
+
+    #[test]
+    fn test_encode_method_get() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![method("GET")]);
+        assert_eq!(*res, [0x80 | 2]);
+        assert_eq!(encoder.table.len(), 0);
+    }
+
+    #[test]
+    fn test_encode_method_post() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![method("POST")]);
+        assert_eq!(*res, [0x80 | 3]);
+        assert_eq!(encoder.table.len(), 0);
+    }
+
+    #[test]
+    fn test_encode_method_patch() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![method("PATCH")]);
+
+        assert_eq!(res[0], 0b01000000 | 2); // Incremental indexing w/ name pulled from table
+        assert_eq!(res[1], 0x80 | 5);       // header value w/ huffman coding
+
+        assert_eq!("PATCH", huff_decode(&res[2..7]));
+        assert_eq!(encoder.table.len(), 1);
+
+        let res = encode(&mut encoder, vec![method("PATCH")]);
+
+        assert_eq!(1 << 7 | 62, res[0]);
+        assert_eq!(1, res.len());
+    }
+
+    #[test]
+    fn test_repeated_headers_are_indexed() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header("foo", "hello")]);
+
+        assert_eq!(&[0b01000000, 0x80 | 2], &res[0..2]);
+        assert_eq!("foo", huff_decode(&res[2..4]));
+        assert_eq!(0x80 | 4, res[4]);
+        assert_eq!("hello", huff_decode(&res[5..]));
+        assert_eq!(9, res.len());
+
+        assert_eq!(1, encoder.table.len());
+
+        let res = encode(&mut encoder, vec![header("foo", "hello")]);
+        assert_eq!([0x80 | 62], *res);
+
+        assert_eq!(encoder.table.len(), 1);
+    }
+
+    #[test]
+    fn test_evicting_headers() {
+        let mut encoder = Encoder::default();
+
+        // Fill the table
+        for i in 0..64 {
+            let key = format!("x-hello-world-{:02}", i);
+            let res = encode(&mut encoder, vec![header(&key, &key)]);
+
+            assert_eq!(&[0b01000000, 0x80 | 12], &res[0..2]);
+            assert_eq!(key, huff_decode(&res[2..14]));
+            assert_eq!(0x80 | 12, res[14]);
+            assert_eq!(key, huff_decode(&res[15..]));
+            assert_eq!(27, res.len());
+
+            // Make sure the header can be found...
+            let res = encode(&mut encoder, vec![header(&key, &key)]);
+
+            // Only check that it is found
+            assert_eq!(0x80, res[0] & 0x80);
+        }
+
+        assert_eq!(4096, encoder.table.size());
+        assert_eq!(64, encoder.table.len());
+
+        // Find existing headers
+        for i in 0..64 {
+            let key = format!("x-hello-world-{:02}", i);
+            let res = encode(&mut encoder, vec![header(&key, &key)]);
+            assert_eq!(0x80, res[0] & 0x80);
+        }
+
+        // Insert a new header
+        let key = "x-hello-world-64";
+        let res = encode(&mut encoder, vec![header(key, key)]);
+
+        assert_eq!(&[0b01000000, 0x80 | 12], &res[0..2]);
+        assert_eq!(key, huff_decode(&res[2..14]));
+        assert_eq!(0x80 | 12, res[14]);
+        assert_eq!(key, huff_decode(&res[15..]));
+        assert_eq!(27, res.len());
+
+        assert_eq!(64, encoder.table.len());
+
+        // Now try encoding entries that should exist in the table
+        for i in 1..65 {
+            let key = format!("x-hello-world-{:02}", i);
+            let res = encode(&mut encoder, vec![header(&key, &key)]);
+            assert_eq!(0x80 | (i + 61), res[0]);
+        }
+    }
+
+    #[test]
+    fn test_large_headers_are_not_indexed() {
+        let mut encoder = Encoder::new(128, 0);
+        let key = "hello-world-hello-world-HELLO-zzz";
+
+        let res = encode(&mut encoder, vec![header(key, key)]);
+
+        assert_eq!(&[0, 0x80 | 25], &res[..2]);
+
+        assert_eq!(0, encoder.table.len());
+        assert_eq!(0, encoder.table.size());
+    }
+
+    #[test]
+    fn test_sensitive_headers_are_never_indexed() {
+        use http::header::{HeaderName, HeaderValue};
+
+        let name = "my-password".parse().unwrap();
+        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        value.set_sensitive(true);
+
+        let header = Header::Field { name: name, value: value };
+
+        // Now, try to encode the sensitive header
+
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header]);
+
+        assert_eq!(&[0b10000, 0x80 | 8], &res[..2]);
+        assert_eq!("my-password", huff_decode(&res[2..10]));
+        assert_eq!(0x80 | 4, res[10]);
+        assert_eq!("12345", huff_decode(&res[11..]));
+
+        // Now, try to encode a sensitive header w/ a name in the static table
+        let name = "authorization".parse().unwrap();
+        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        value.set_sensitive(true);
+
+        let header = Header::Field { name: name, value: value };
+
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header]);
+
+        assert_eq!(&[0b11111, 8], &res[..2]);
+        assert_eq!(0x80 | 4, res[2]);
+        assert_eq!("12345", huff_decode(&res[3..]));
+
+        // Using the name component of a previously indexed header (without
+        // sensitive flag set)
+
+        let _ = encode(&mut encoder, vec![self::header("my-password", "not-so-secret")]);
+
+        let name = "my-password".parse().unwrap();
+        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        value.set_sensitive(true);
+
+        let header = Header::Field { name: name, value: value };
+        let res = encode(&mut encoder, vec![header]);
+
+        assert_eq!(&[0b11111, 47], &res[..2]);
+        assert_eq!(0x80 | 4, res[2]);
+        assert_eq!("12345", huff_decode(&res[3..]));
+    }
+
+    #[test]
+    fn test_content_length_value_not_indexed() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header("content-length", "1234")]);
+
+        assert_eq!(&[15, 13, 0x80 | 3], &res[0..3]);
+        assert_eq!("1234", huff_decode(&res[3..]));
+        assert_eq!(6, res.len());
+    }
+
+    #[test]
+    fn test_at_most_two_values_per_name_indexed() {
+    }
+
+    #[test]
+    fn test_index_header_with_duplicate_name_does_not_evict() {
+    }
+
+    #[test]
+    fn test_max_size_zero() {
+    }
+
+    #[test]
+    fn test_increasing_table_size() {
+    }
+
+    #[test]
+    fn test_decreasing_table_size_without_eviction() {
+    }
+
+    #[test]
+    fn test_decreasing_table_size_with_eviction() {
+    }
+
+    #[test]
+    fn test_encoding_into_undersized_buf() {
+        // Test hitting end at multiple points.
+    }
+
+
+    fn encode(e: &mut Encoder, hdrs: Vec<Header>) -> BytesMut {
+        let mut dst = BytesMut::with_capacity(1024);
+        e.encode(hdrs, &mut dst);
+        dst
+    }
+
+    fn method(s: &str) -> Header {
+        Header::Method(Method::from_bytes(s.as_bytes()).unwrap())
+    }
+
+    fn header(name: &str, val: &str) -> Header {
+        use http::header::{HeaderName, HeaderValue};
+
+        let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
+        let value = HeaderValue::try_from_bytes(val.as_bytes()).unwrap();
+
+        Header::Field { name: name, value: value }
+    }
+
+    fn huff_decode(src: &[u8]) -> BytesMut {
+        huffman::decode(src).unwrap()
+    }
 }
