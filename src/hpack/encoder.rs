@@ -6,29 +6,74 @@ use bytes::{BytesMut, BufMut};
 
 pub struct Encoder {
     table: Table,
-
-    // The remote sent a max size update, we must shrink the table on next call
-    // to encode. This is in bytes
-    max_size_update: Option<usize>,
+    size_update: Option<SizeUpdate>,
 }
 
 pub enum EncoderError {
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum SizeUpdate {
+    One(usize),
+    Two(usize, usize), // min, max
 }
 
 impl Encoder {
     pub fn new(max_size: usize, capacity: usize) -> Encoder {
         Encoder {
             table: Table::new(max_size, capacity),
-            max_size_update: None,
+            size_update: None,
+        }
+    }
+
+    /// Queues a max size update.
+    ///
+    /// The next call to `encode` will include a dynamic size update frame.
+    pub fn update_max_size(&mut self, val: usize) {
+        match self.size_update {
+            Some(SizeUpdate::One(old)) => {
+                if val > old {
+                    if old > self.table.max_size() {
+                        self.size_update = Some(SizeUpdate::One(val));
+                    } else {
+                        self.size_update = Some(SizeUpdate::Two(old, val));
+                    }
+                } else {
+                    self.size_update = Some(SizeUpdate::One(val));
+                }
+            }
+            Some(SizeUpdate::Two(min, max)) => {
+                if val < min {
+                    self.size_update = Some(SizeUpdate::One(val));
+                } else {
+                    self.size_update = Some(SizeUpdate::Two(min, val));
+                }
+            }
+            None => {
+                if val != self.table.max_size() {
+                    // Don't bother writing a frame if the value already matches
+                    // the table's max size.
+                    self.size_update = Some(SizeUpdate::One(val));
+                }
+            }
         }
     }
 
     pub fn encode<'a, I>(&mut self, headers: I, dst: &mut BytesMut) -> Result<(), EncoderError>
         where I: IntoIterator<Item=Header>,
     {
-        if let Some(max_size_update) = self.max_size_update.take() {
-            // Write size update frame
-            unimplemented!();
+        match self.size_update.take() {
+            Some(SizeUpdate::One(val)) => {
+                self.table.resize(val);
+                encode_size_update(val, dst);
+            }
+            Some(SizeUpdate::Two(min, max)) => {
+                self.table.resize(min);
+                self.table.resize(max);
+                encode_size_update(min, dst);
+                encode_size_update(max, dst);
+            }
+            None => {}
         }
 
         for h in headers {
@@ -133,6 +178,10 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) {
         // Write an empty string
         dst.put_u8(0);
     }
+}
+
+fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) {
+    encode_int(val, 5, 0b00100000, dst)
 }
 
 /// Encode an integer into the given destination buffer
@@ -355,19 +404,128 @@ mod test {
     }
 
     #[test]
-    fn test_at_most_two_values_per_name_indexed() {
+    fn test_encoding_headers_with_same_name() {
+        let mut encoder = Encoder::default();
+        let name = "hello";
+
+        // Encode first one
+        let _ = encode(&mut encoder, vec![header(name, "one")]);
+
+        // Encode second one
+        let res = encode(&mut encoder, vec![header(name, "two")]);
+        assert_eq!(&[0x40 | 62, 0x80 | 3], &res[0..2]);
+        assert_eq!("two", huff_decode(&res[2..]));
+        assert_eq!(5, res.len());
+
+        // Encode the first one again
+        let res = encode(&mut encoder, vec![header(name, "one")]);
+        assert_eq!(&[0x80 | 62], &res[..]);
+
+        // Now the second one
+        let res = encode(&mut encoder, vec![header(name, "two")]);
+        assert_eq!(&[0x80 | 63], &res[..]);
     }
 
     #[test]
-    fn test_index_header_with_duplicate_name_does_not_evict() {
+    fn test_evicting_headers_when_multiple_of_same_name_are_in_table() {
+        // The encoder only has space for 2 headers
+        let mut encoder = Encoder::new(76, 0);
+
+        let _ = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(1, encoder.table.len());
+
+        let _ = encode(&mut encoder, vec![header("bar", "foo")]);
+        assert_eq!(2, encoder.table.len());
+
+        // This will evict the first header, while still referencing the header
+        // name
+        let res = encode(&mut encoder, vec![header("foo", "baz")]);
+        assert_eq!(&[0x40 | 62, 0x80 | 3], &res[..2]);
+        assert_eq!(2, encoder.table.len());
+
+        // Try adding the same header again
+        let res = encode(&mut encoder, vec![header("foo", "baz")]);
+        assert_eq!(&[0x80 | 63], &res[..]);
+        assert_eq!(2, encoder.table.len());
     }
 
     #[test]
     fn test_max_size_zero() {
+        // Static table only
+        let mut encoder = Encoder::new(0, 0);
+        let res = encode(&mut encoder, vec![method("GET")]);
+        assert_eq!(*res, [0x80 | 2]);
+        assert_eq!(encoder.table.len(), 0);
+
+        let res = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(&[0, 0x80 | 2], &res[..2]);
+        assert_eq!("foo", huff_decode(&res[2..4]));
+        assert_eq!(0x80 | 3, res[4]);
+        assert_eq!("bar", huff_decode(&res[5..8]));
+        assert_eq!(0, encoder.table.len());
+
+        // Encode a custom value
+        let res = encode(&mut encoder, vec![header("transfer-encoding", "chunked")]);
+        assert_eq!(&[15, 42, 0x80 | 6], &res[..3]);
+        assert_eq!("chunked", huff_decode(&res[3..]));
     }
 
     #[test]
-    fn test_increasing_table_size() {
+    fn test_update_max_size_combos() {
+        let mut encoder = Encoder::default();
+        assert!(encoder.size_update.is_none());
+        assert_eq!(4096, encoder.table.max_size());
+
+        encoder.update_max_size(4096); // Default size
+        assert!(encoder.size_update.is_none());
+
+        encoder.update_max_size(0);
+        assert_eq!(Some(SizeUpdate::One(0)), encoder.size_update);
+
+        encoder.update_max_size(100);
+        assert_eq!(Some(SizeUpdate::Two(0, 100)), encoder.size_update);
+
+        let mut encoder = Encoder::default();
+        encoder.update_max_size(8000);
+        assert_eq!(Some(SizeUpdate::One(8000)), encoder.size_update);
+
+        encoder.update_max_size(100);
+        assert_eq!(Some(SizeUpdate::One(100)), encoder.size_update);
+
+        encoder.update_max_size(8000);
+        assert_eq!(Some(SizeUpdate::Two(100, 8000)), encoder.size_update);
+
+        encoder.update_max_size(4000);
+        assert_eq!(Some(SizeUpdate::Two(100, 4000)), encoder.size_update);
+
+        encoder.update_max_size(50);
+        assert_eq!(Some(SizeUpdate::One(50)), encoder.size_update);
+    }
+
+    #[test]
+    fn test_resizing_table() {
+        let mut encoder = Encoder::default();
+
+        // Add a header
+        let _ = encode(&mut encoder, vec![header("foo", "bar")]);
+
+        encoder.update_max_size(1);
+        assert_eq!(1, encoder.table.len());
+
+        let res = encode(&mut encoder, vec![method("GET")]);
+        assert_eq!(&[32 | 1, 0x80 | 2], &res[..]);
+        assert_eq!(0, encoder.table.len());
+
+        let res = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(0, res[0]);
+
+        encoder.update_max_size(100);
+        let res = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(&[32 | 31, 69, 64], &res[..3]);
+
+        encoder.update_max_size(0);
+        let res = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(&[32, 0], &res[..2]);
     }
 
     #[test]

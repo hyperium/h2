@@ -4,7 +4,7 @@ use fnv::FnvHasher;
 use http::method;
 use http::header::{self, HeaderName, HeaderValue};
 
-use std::{cmp, mem};
+use std::{cmp, mem, usize};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
@@ -54,10 +54,6 @@ struct Pos {
 struct HashValue(usize);
 
 const MAX_SIZE: usize = (1 << 16);
-
-// Index at most this number of values for any given header name.
-const MAX_VALUES_PER_NAME: usize = 3;
-
 const DYN_OFFSET: usize = 62;
 
 macro_rules! probe_loop {
@@ -104,6 +100,10 @@ impl Table {
     #[inline]
     pub fn capacity(&self) -> usize {
         usable_capacity(self.indices.len())
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.max_size
     }
 
     /// Index the header in the HPACK table.
@@ -162,7 +162,7 @@ impl Table {
                     return self.index_vacant(header, hash, dist, probe, statik);
                 } else if pos.hash == hash && self.slots[slot_idx].header.name() == header.name() {
                     // Matching name, check values
-                    return self.index_occupied(header, pos.index, statik);
+                    return self.index_occupied(header, hash, pos.index, statik);
                 }
             } else {
                 return self.index_vacant(header, hash, dist, probe, statik);
@@ -172,15 +172,17 @@ impl Table {
         });
     }
 
-    fn index_occupied(&mut self, header: Header, mut index: usize, statik: Option<(usize, bool)>)
+    fn index_occupied(&mut self,
+                      header: Header,
+                      hash: HashValue,
+                      mut index: usize,
+                      statik: Option<(usize, bool)>)
         -> Index
     {
         // There already is a match for the given header name. Check if a value
         // matches. The header will also only be inserted if the table is not at
         // capacity.
-        let mut n = 0;
-
-        while n < MAX_VALUES_PER_NAME {
+        loop {
             // Compute the real index into the VecDeque
             let real_idx = index.wrapping_sub(self.evicted);
 
@@ -190,7 +192,7 @@ impl Table {
             }
 
             if let Some(next) = self.slots[real_idx].next {
-                n = next;
+                index = next;
                 continue;
             }
 
@@ -198,8 +200,34 @@ impl Table {
                 return Index::Name(real_idx + DYN_OFFSET, header);
             }
 
-            // Maybe index
-            unimplemented!();
+            self.update_size(header.len(), index);
+
+            let new_idx = self.slots.len();
+
+            // If `evicted` is greater than `index`, then the previous node in
+            // the linked list got evicted. The header we are about to insert is
+            // the new "head" of the list and `indices` has already been
+            // updated. So, all that is left to do is insert the header in the
+            // VecDeque.
+            //
+            // TODO: This logic isn't correct in the face of wrapping
+            if self.evicted <= index {
+                // Recompute `real_idx` since this could have been modified by
+                // entries being evicted
+                let real_idx = index.wrapping_sub(self.evicted);
+
+                self.slots[real_idx].next = Some(new_idx.wrapping_add(self.evicted));
+            }
+
+            self.slots.push_back(Slot {
+                hash: hash,
+                header: header,
+                next: None,
+            });
+
+            // Even if the previous header was evicted, we can still reference
+            // it when inserting the new one...
+            return Index::InsertedValue(real_idx + DYN_OFFSET, &self.slots[new_idx].header);
         }
 
         Index::NotIndexed(header)
@@ -217,7 +245,9 @@ impl Table {
             return Index::new(statik, header);
         }
 
-        if self.update_size(header.len()) {
+        // Passing in `usize::MAX` for prev_idx since there is no previous
+        // header in this case.
+        if self.update_size(header.len(), usize::MAX) {
             if dist != 0 {
                 let back = probe.wrapping_sub(1) & self.mask;
 
@@ -269,19 +299,40 @@ impl Table {
         }
     }
 
-    fn update_size(&mut self, len: usize) -> bool {
+    pub fn resize(&mut self, size: usize) {
+        self.max_size = size;
+
+        if size == 0 {
+            self.size = 0;
+
+            for i in &mut self.indices {
+                *i = None;
+            }
+
+            self.slots.clear();
+            self.evicted = 0;
+        } else {
+            self.converge(usize::MAX);
+        }
+    }
+
+    fn update_size(&mut self, len: usize, prev_idx: usize) -> bool {
         self.size += len;
+        self.converge(prev_idx)
+    }
+
+    fn converge(&mut self, prev_idx: usize) -> bool {
         let mut ret = false;
 
         while self.size > self.max_size {
             ret = true;
-            self.evict();
+            self.evict(prev_idx);
         }
 
         ret
     }
 
-    fn evict(&mut self) {
+    fn evict(&mut self, prev_idx: usize) {
         debug_assert!(!self.slots.is_empty());
 
         // Remove the header
@@ -302,7 +353,11 @@ impl Table {
                 if let Some(idx) = slot.next {
                     pos.index = idx;
                     self.indices[probe] = Some(pos);
+                } else if pos.index == prev_idx {
+                    pos.index = (self.slots.len() + 1).wrapping_add(self.evicted);
+                    self.indices[probe] = Some(pos);
                 } else {
+                    self.indices[probe] = None;
                     self.remove_phase_two(probe);
                 }
 
