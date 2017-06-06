@@ -530,10 +530,16 @@ mod test {
 
     #[test]
     fn test_decreasing_table_size_without_eviction() {
-    }
+        let mut encoder = Encoder::default();
 
-    #[test]
-    fn test_decreasing_table_size_with_eviction() {
+        // Add a header
+        let _ = encode(&mut encoder, vec![header("foo", "bar")]);
+
+        encoder.update_max_size(100);
+        assert_eq!(1, encoder.table.len());
+
+        let res = encode(&mut encoder, vec![header("foo", "bar")]);
+        assert_eq!(&[32 | 31, 69, 0x80 | 62], &res[..]);
     }
 
     #[test]
