@@ -6,7 +6,7 @@ use http::header::{HeaderName, HeaderValue};
 use bytes::Bytes;
 
 /// HTTP/2.0 Header
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Header {
     Field {
         name: HeaderName,

@@ -9,6 +9,7 @@ pub struct Encoder {
     size_update: Option<SizeUpdate>,
 }
 
+#[derive(Debug)]
 pub enum EncoderError {
 }
 
@@ -166,7 +167,9 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) {
 
             // Shift the header forward
             for i in 0..huff_len {
-                dst[idx + head_len + (huff_len - i)] = dst[idx + 1 + (huff_len - 1)];
+                let src_i = idx + 1 + (huff_len - (i+1));
+                let dst_i = idx + head_len + (huff_len - (i+1));
+                dst[dst_i] = dst[src_i];
             }
 
             // Copy in the head
@@ -325,7 +328,7 @@ mod test {
         for i in 1..65 {
             let key = format!("x-hello-world-{:02}", i);
             let res = encode(&mut encoder, vec![header(&key, &key)]);
-            assert_eq!(0x80 | (i + 61), res[0]);
+            assert_eq!(0x80 | (61 + (65-i)), res[0]);
         }
     }
 
@@ -419,11 +422,11 @@ mod test {
 
         // Encode the first one again
         let res = encode(&mut encoder, vec![header(name, "one")]);
-        assert_eq!(&[0x80 | 62], &res[..]);
+        assert_eq!(&[0x80 | 63], &res[..]);
 
         // Now the second one
         let res = encode(&mut encoder, vec![header(name, "two")]);
-        assert_eq!(&[0x80 | 63], &res[..]);
+        assert_eq!(&[0x80 | 62], &res[..]);
     }
 
     #[test]
@@ -440,12 +443,12 @@ mod test {
         // This will evict the first header, while still referencing the header
         // name
         let res = encode(&mut encoder, vec![header("foo", "baz")]);
-        assert_eq!(&[0x40 | 62, 0x80 | 3], &res[..2]);
+        assert_eq!(&[0x40 | 63, 0, 0x80 | 3], &res[..3]);
         assert_eq!(2, encoder.table.len());
 
         // Try adding the same header again
         let res = encode(&mut encoder, vec![header("foo", "baz")]);
-        assert_eq!(&[0x80 | 63], &res[..]);
+        assert_eq!(&[0x80 | 62], &res[..]);
         assert_eq!(2, encoder.table.len());
     }
 
@@ -547,6 +550,10 @@ mod test {
         // Test hitting end at multiple points.
     }
 
+    #[test]
+    fn test_evicted_overflow() {
+        // Not sure what the best way to do this is.
+    }
 
     fn encode(e: &mut Encoder, hdrs: Vec<Header>) -> BytesMut {
         let mut dst = BytesMut::with_capacity(1024);

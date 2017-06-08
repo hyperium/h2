@@ -1,10 +1,12 @@
+extern crate bytes;
 extern crate hex;
 extern crate walkdir;
 extern crate serde;
 extern crate serde_json;
 
-use super::{Header, Decoder};
+use super::{Header, Decoder, Encoder};
 
+use self::bytes::BytesMut;
 use self::hex::FromHex;
 use self::serde_json::Value;
 use self::walkdir::WalkDir;
@@ -36,6 +38,14 @@ fn hpack_fixtures() {
                 continue;
             }
         }
+
+        println!("");
+        println!("");
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        println!("~~~ {:?} ~~~", entry.path());
+        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        println!("");
+        println!("");
 
         test_fixture(entry.path());
     }
@@ -86,6 +96,7 @@ fn test_story(story: Value) {
 
         let mut decoder = Decoder::default();
 
+        // First, check decoding against the fixtures
         for case in &cases {
             let mut expect = case.expect.clone();
 
@@ -100,6 +111,31 @@ fn test_story(story: Value) {
             }).unwrap();
 
             assert_eq!(0, expect.len());
+        }
+
+        let mut encoder = Encoder::default();
+        let mut decoder = Decoder::default();
+
+        // Now, encode the headers
+        for case in &cases {
+            let mut buf = BytesMut::with_capacity(64 * 1024);
+
+            if let Some(size) = case.header_table_size {
+                encoder.update_max_size(size);
+                decoder.queue_size_update(size);
+            }
+
+            let mut input: Vec<_> = case.expect.iter().map(|&(ref name, ref value)| {
+                Header::new(name.clone().into(), value.clone().into()).unwrap()
+            }).collect();
+
+            encoder.encode(input.clone(), &mut buf).unwrap();
+
+            decoder.decode(&buf.into(), |e| {
+                assert_eq!(e, input.remove(0));
+            }).unwrap();
+
+            assert_eq!(0, input.len());
         }
     }
 }
