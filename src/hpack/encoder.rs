@@ -9,8 +9,14 @@ pub struct Encoder {
     size_update: Option<SizeUpdate>,
 }
 
-#[derive(Debug)]
+pub enum Encode {
+    Full,
+    Partial(Index),
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum EncoderError {
+    BufferOverflow,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -60,68 +66,125 @@ impl Encoder {
         }
     }
 
-    pub fn encode<'a, I>(&mut self, headers: I, dst: &mut BytesMut) -> Result<(), EncoderError>
-        where I: IntoIterator<Item=Header>,
+    /// Encode a set of headers into the provide buffer
+    pub fn encode<I>(&mut self, resume: Option<Index>, headers: &mut I, dst: &mut BytesMut)
+        -> Result<Encode, EncoderError>
+        where I: Iterator<Item=Header>,
     {
+        let len = dst.len();
+
+        if let Err(e) = self.encode_size_updates(dst) {
+            if e == EncoderError::BufferOverflow {
+                dst.truncate(len);
+            }
+
+            return Err(e);
+        }
+
+        if let Some(index) = resume {
+            let len = dst.len();
+
+            match self.encode_header(&index, dst) {
+                Err(EncoderError::BufferOverflow) => {
+                    dst.truncate(len);
+                    return Ok(Encode::Partial(index));
+                }
+                Err(e) => return Err(e),
+                Ok(_) => {}
+            }
+        }
+
+        for header in headers {
+            let len = dst.len();
+            let index = self.table.index(header);
+
+            match self.encode_header(&index, dst) {
+                Err(EncoderError::BufferOverflow) => {
+                    dst.truncate(len);
+                    return Ok(Encode::Partial(index));
+                }
+                Err(e) => return Err(e),
+                Ok(_) => {}
+            }
+        }
+
+        Ok(Encode::Full)
+    }
+
+    fn encode_size_updates(&mut self, dst: &mut BytesMut) -> Result<(), EncoderError> {
         match self.size_update.take() {
             Some(SizeUpdate::One(val)) => {
                 self.table.resize(val);
-                encode_size_update(val, dst);
+                try!(encode_size_update(val, dst));
             }
             Some(SizeUpdate::Two(min, max)) => {
                 self.table.resize(min);
                 self.table.resize(max);
-                encode_size_update(min, dst);
-                encode_size_update(max, dst);
+                try!(encode_size_update(min, dst));
+                try!(encode_size_update(max, dst));
             }
             None => {}
-        }
-
-        for h in headers {
-            try!(self.encode_header(h, dst));
         }
 
         Ok(())
     }
 
-    fn encode_header(&mut self, header: Header, dst: &mut BytesMut)
+    fn encode_header(&mut self, index: &Index, dst: &mut BytesMut)
         -> Result<(), EncoderError>
     {
-        match self.table.index(header) {
-            Index::Indexed(idx, header) => {
-                assert!(!header.is_sensitive());
-                encode_int(idx, 7, 0x80, dst);
+        match *index {
+            Index::Indexed(idx, _) => {
+                let header = self.table.resolve(&index);
+                try!(encode_int(idx, 7, 0x80, dst));
             }
-            Index::Name(idx, header) => {
+            Index::Name(idx, _) => {
+                let header = self.table.resolve(&index);
+
                 if header.is_sensitive() {
-                    encode_int(idx, 4, 0b10000, dst);
+                    try!(encode_int(idx, 4, 0b10000, dst));
                 } else {
-                    encode_int(idx, 4, 0, dst);
+                    try!(encode_int(idx, 4, 0, dst));
                 }
 
-                encode_str(header.value_slice(), dst);
+                try!(encode_str(header.value_slice(), dst));
             }
-            Index::Inserted(header) => {
-                assert!(!header.is_sensitive());
-                dst.put_u8(0b01000000);
-                encode_str(header.name().as_slice(), dst);
-                encode_str(header.value_slice(), dst);
-            }
-            Index::InsertedValue(idx, header) => {
+            Index::Inserted(idx) => {
+                let header = self.table.resolve(&index);
+
                 assert!(!header.is_sensitive());
 
-                encode_int(idx, 6, 0b01000000, dst);
-                encode_str(header.value_slice(), dst);
+                if !dst.has_remaining_mut() {
+                    return Err(EncoderError::BufferOverflow);
+                }
+
+                dst.put_u8(0b01000000);
+
+                try!(encode_str(header.name().as_slice(), dst));
+                try!(encode_str(header.value_slice(), dst));
             }
-            Index::NotIndexed(header) => {
+            Index::InsertedValue(idx, _) => {
+                let header = self.table.resolve(&index);
+
+                assert!(!header.is_sensitive());
+
+                try!(encode_int(idx, 6, 0b01000000, dst));
+                try!(encode_str(header.value_slice(), dst));
+            }
+            Index::NotIndexed(_) => {
+                let header = self.table.resolve(&index);
+
+                if !dst.has_remaining_mut() {
+                    return Err(EncoderError::BufferOverflow);
+                }
+
                 if header.is_sensitive() {
                     dst.put_u8(0b10000);
                 } else {
                     dst.put_u8(0);
                 }
 
-                encode_str(header.name().as_slice(), dst);
-                encode_str(header.value_slice(), dst);
+                try!(encode_str(header.name().as_slice(), dst));
+                try!(encode_str(header.value_slice(), dst));
             }
         }
 
@@ -135,8 +198,12 @@ impl Default for Encoder {
     }
 }
 
-fn encode_str(val: &[u8], dst: &mut BytesMut) {
+fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
     use std::io::Cursor;
+
+    if !dst.has_remaining_mut() {
+        return Err(EncoderError::BufferOverflow);
+    }
 
     if val.len() != 0 {
         let idx = dst.len();
@@ -145,7 +212,7 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) {
         dst.put_u8(0);
 
         // Encode with huffman
-        huffman::encode(val, dst);
+        try!(huffman::encode(val, dst));
 
         let huff_len = dst.len() - (idx + 1);
 
@@ -161,6 +228,10 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) {
                 encode_int(huff_len, 7, 0x80, &mut head_dst);
                 head_dst.position() as usize
             };
+
+            if dst.remaining_mut() < head_len {
+                return Err(EncoderError::BufferOverflow);
+            }
 
             // This is just done to reserve space in the destination
             dst.put_slice(&buf[1..head_len]);
@@ -181,9 +252,11 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) {
         // Write an empty string
         dst.put_u8(0);
     }
+
+    Ok(())
 }
 
-fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) {
+fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) -> Result<(), EncoderError> {
     encode_int(val, 5, 0b00100000, dst)
 }
 
@@ -193,10 +266,17 @@ fn encode_int<B: BufMut>(
     prefix_bits: usize, // The number of bits in the prefix
     first_byte: u8,     // The base upon which to start encoding the int
     dst: &mut B)        // The destination buffer
+    -> Result<(), EncoderError>
 {
+    let mut rem = dst.remaining_mut();
+
+    if rem == 0 {
+        return Err(EncoderError::BufferOverflow);
+    }
+
     if encode_int_one_byte(value, prefix_bits) {
         dst.put_u8(first_byte | value as u8);
-        return;
+        return Ok(());
     }
 
     let low = (1 << prefix_bits) - 1;
@@ -208,13 +288,27 @@ fn encode_int<B: BufMut>(
     }
 
     dst.put_u8(first_byte | low as u8);
+    rem -= 1;
 
     while value >= 128 {
+        if rem == 0 {
+            return Err(EncoderError::BufferOverflow);
+        }
+
         dst.put_u8(0b10000000 | value as u8);
+        rem -= 1;
+
         value = value >> 7;
     }
 
+    if rem == 0 {
+        return Err(EncoderError::BufferOverflow);
+    }
+
     dst.put_u8(value as u8);
+    rem -= 1;
+
+    Ok(())
 }
 
 /// Returns true if the in the int can be fully encoded in the first byte.
@@ -546,18 +640,13 @@ mod test {
     }
 
     #[test]
-    fn test_encoding_into_undersized_buf() {
-        // Test hitting end at multiple points.
-    }
-
-    #[test]
     fn test_evicted_overflow() {
         // Not sure what the best way to do this is.
     }
 
     fn encode(e: &mut Encoder, hdrs: Vec<Header>) -> BytesMut {
         let mut dst = BytesMut::with_capacity(1024);
-        e.encode(hdrs, &mut dst);
+        e.encode(None, &mut hdrs.into_iter(), &mut dst);
         dst
     }
 

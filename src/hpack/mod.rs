@@ -7,6 +7,7 @@ mod table;
 #[cfg(test)]
 mod test;
 
-pub use self::encoder::Encoder;
+pub use self::encoder::{Encoder, Encode, EncoderError};
 pub use self::header::Header;
 pub use self::decoder::{Decoder, DecoderError};
+pub use self::table::Index;

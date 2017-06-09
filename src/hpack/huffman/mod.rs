@@ -1,7 +1,7 @@
 mod table;
 
 use self::table::{ENCODE_TABLE, DECODE_TABLE};
-use hpack::DecoderError;
+use hpack::{DecoderError, EncoderError};
 
 use bytes::{BytesMut, BufMut};
 
@@ -43,9 +43,10 @@ pub fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
 }
 
 // TODO: return error when there is not enough room to encode the value
-pub fn encode<B: BufMut>(src: &[u8], dst: &mut B) {
+pub fn encode<B: BufMut>(src: &[u8], dst: &mut B) -> Result<(), EncoderError> {
     let mut bits: u64 = 0;
     let mut bits_left = 40;
+    let mut rem = dst.remaining_mut();
 
     for &b in src {
         let (nbits, code) = ENCODE_TABLE[b as usize];
@@ -54,17 +55,29 @@ pub fn encode<B: BufMut>(src: &[u8], dst: &mut B) {
         bits_left -= nbits;
 
         while (bits_left <= 32) {
+            if rem == 0 {
+                return Err(EncoderError::BufferOverflow);
+            }
+
             dst.put_u8((bits >> 32) as u8);
+
             bits <<= 8;
             bits_left += 8;
+            rem -= 1;
         }
     }
 
     if bits_left != 40 {
+        if rem == 0 {
+            return Err(EncoderError::BufferOverflow);
+        }
+
         // This writes the EOS token
         bits |= (1 << bits_left) - 1;
         dst.put_u8((bits >> 32) as u8);
     }
+
+    Ok(())
 }
 
 impl Decoder {

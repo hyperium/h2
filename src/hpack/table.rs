@@ -8,6 +8,7 @@ use std::{cmp, mem, usize};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
+/// HPACK encoder table
 pub struct Table {
     mask: usize,
     indices: Vec<Option<Pos>>,
@@ -19,7 +20,7 @@ pub struct Table {
 }
 
 #[derive(Debug)]
-pub enum Index<'a> {
+pub enum Index {
     // The header is already fully indexed
     Indexed(usize, Header),
 
@@ -27,10 +28,10 @@ pub enum Index<'a> {
     Name(usize, Header),
 
     // The full header has been inserted into the table.
-    Inserted(&'a Header),
+    Inserted(usize),
 
-    // Only the value has been inserted
-    InsertedValue(usize, &'a Header),
+    // Only the value has been inserted (hpack table idx, slots idx)
+    InsertedValue(usize, usize),
 
     // The header is not indexed by this table
     NotIndexed(Header),
@@ -102,6 +103,19 @@ impl Table {
 
     pub fn max_size(&self) -> usize {
         self.max_size
+    }
+
+    /// Gets the header stored in the table
+    pub fn resolve<'a>(&'a self, index: &'a Index) -> &'a Header {
+        use self::Index::*;
+
+        match *index {
+            Indexed(_, ref h) => h,
+            Name(_, ref h) => h,
+            Inserted(idx) => &self.slots[idx].header,
+            InsertedValue(_, idx) => &self.slots[idx].header,
+            NotIndexed(ref h) => h,
+        }
     }
 
     /// Index the header in the HPACK table.
@@ -219,7 +233,7 @@ impl Table {
 
             // Even if the previous header was evicted, we can still reference
             // it when inserting the new one...
-            return Index::InsertedValue(real_idx + DYN_OFFSET, &self.slots[0].header);
+            return Index::InsertedValue(real_idx + DYN_OFFSET, 0);
         }
 
         Index::NotIndexed(header)
@@ -279,9 +293,9 @@ impl Table {
         }
 
         if let Some((n, _)) = statik {
-            Index::InsertedValue(n, &self.slots[0].header)
+            Index::InsertedValue(n, 0)
         } else {
-            Index::Inserted(&self.slots[0].header)
+            Index::Inserted(0)
         }
     }
 
@@ -455,8 +469,8 @@ impl Table {
     }
 }
 
-impl<'a> Index<'a> {
-    fn new(v: Option<(usize, bool)>, e: Header) -> Index<'a> {
+impl Index {
+    fn new(v: Option<(usize, bool)>, e: Header) -> Index {
         match v {
             None => Index::NotIndexed(e),
             Some((n, true)) => Index::Indexed(n, e),
