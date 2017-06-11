@@ -43,7 +43,7 @@ struct Slot {
     next: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct Pos {
     index: usize,
     hash: HashValue,
@@ -145,6 +145,8 @@ impl Table {
     }
 
     fn index_dynamic(&mut self, header: Header, statik: Option<(usize, bool)>) -> Index {
+        debug_assert!(self.assert_valid_state("one"));
+
         if header.len() + self.size < self.max_size || !header.is_sensitive() {
             // Only grow internal storage if needed
             self.reserve_one();
@@ -231,6 +233,8 @@ impl Table {
                 self.slots[new_real_idx].next = Some(idx);
             }
 
+            debug_assert!(self.assert_valid_state("bottom"));
+
             // Even if the previous header was evicted, we can still reference
             // it when inserting the new one...
             return Index::InsertedValue(real_idx + DYN_OFFSET, 0);
@@ -251,16 +255,20 @@ impl Table {
             return Index::new(statik, header);
         }
 
+        debug_assert!(self.assert_valid_state("top"));
+        debug_assert!(dist == 0 || self.indices[probe.wrapping_sub(1) & self.mask].is_some());
+
         // Passing in `usize::MAX` for prev_idx since there is no previous
         // header in this case.
         if self.update_size(header.len(), None) {
+            // TODO: This probably should have to walk back more than one time
             if dist != 0 {
                 let back = probe.wrapping_sub(1) & self.mask;
 
-                if let Some(pos) = self.indices[probe] {
+                if let Some(pos) = self.indices[back] {
                     let their_dist = probe_distance(self.mask, pos.hash, probe);
 
-                    if their_dist < dist {
+                    if their_dist < (dist - 1) {
                         probe = back;
                     }
                 } else {
@@ -268,6 +276,8 @@ impl Table {
                 }
             }
         }
+
+        debug_assert!(self.assert_valid_state("after update"));
 
         self.insert(header, hash);
 
@@ -291,6 +301,8 @@ impl Table {
                 };
             });
         }
+
+        debug_assert!(self.assert_valid_state("bottom"));
 
         if let Some((n, _)) = statik {
             Index::InsertedValue(n, 0)
@@ -345,6 +357,9 @@ impl Table {
     fn evict(&mut self, prev_idx: Option<usize>) {
         let pos_idx = (self.slots.len() - 1).wrapping_sub(self.inserted);
 
+        debug_assert!(!self.slots.is_empty());
+        debug_assert!(self.assert_valid_state("one"));
+
         // Remove the header
         let slot = self.slots.pop_back().unwrap();
         let mut probe = desired_pos(self.mask, slot.hash);
@@ -352,8 +367,16 @@ impl Table {
         // Update the size
         self.size -= slot.header.len();
 
+        debug_assert_eq!(
+            self.indices.iter().filter_map(|p| *p)
+                .filter(|p| p.index == pos_idx)
+                .count(),
+            1);
+
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
+            debug_assert!(!self.indices[probe].is_none());
+
             let mut pos = self.indices[probe].unwrap();
 
             if pos.index == pos_idx {
@@ -371,6 +394,8 @@ impl Table {
                 break;
             }
         });
+
+        debug_assert!(self.assert_valid_state("two"));
     }
 
     // Shifts all indices that were displaced by the header that has just been
@@ -392,6 +417,8 @@ impl Table {
 
             last_probe = probe;
         });
+
+        debug_assert!(self.assert_valid_state("two"));
     }
 
     fn reserve_one(&mut self) {
@@ -453,6 +480,92 @@ impl Table {
                 }
             });
         }
+    }
+
+    /// Checks that the internal map state is correct
+    fn assert_valid_state(&self, msg: &'static str) -> bool {
+        // Ensure all hash codes in indices match the associated slot
+        for pos in &self.indices {
+            if let Some(pos) = *pos {
+                let real_idx = pos.index.wrapping_add(self.inserted);
+
+                if real_idx.wrapping_add(1) != 0 {
+                    assert!(real_idx < self.slots.len(),
+                            "out of index; real={}; len={}, msg={}",
+                            real_idx, self.slots.len(), msg);
+
+                    assert_eq!(pos.hash, self.slots[real_idx].hash,
+                               "index hash does not match slot; msg={}", msg);
+                }
+            }
+        }
+
+        // Every index is only available once
+        for i in 0..self.indices.len() {
+            if self.indices[i].is_none() {
+                continue;
+            }
+
+            for j in i+1..self.indices.len() {
+                assert_ne!(self.indices[i], self.indices[j],
+                            "duplicate indices; msg={}", msg);
+            }
+        }
+
+        for (index, slot) in self.slots.iter().enumerate() {
+            let mut indexed = false;
+
+            // First, see if the slot is indexed
+            for pos in &self.indices {
+                if let Some(pos) = *pos {
+                    let real_idx = pos.index.wrapping_add(self.inserted);
+                    if real_idx == index {
+                        indexed = true;
+                        // Already know that there is no dup, so break
+                        break;
+                    }
+                }
+            }
+
+            if indexed {
+                // Ensure that it is accessible..
+                let desired = desired_pos(self.mask, slot.hash);
+                let mut probe = desired;
+                let mut dist = 0;
+
+                probe_loop!(probe < self.indices.len(), {
+                    assert!(self.indices[probe].is_some(),
+                            "unexpected empty slot; probe={}; hash={:?}; msg={}",
+                            probe, slot.hash, msg);
+
+                    let pos = self.indices[probe].unwrap();
+
+                    let their_dist = probe_distance(self.mask, pos.hash, probe);
+                    let real_idx = pos.index.wrapping_add(self.inserted);
+
+                    if real_idx == index {
+                        break;
+                    }
+
+                    assert!(dist <= their_dist,
+                            "could not find entry; desired={}; dist={}; their_dist={}; index={}; msg={}",
+                            desired, dist, their_dist, index.wrapping_sub(self.inserted), msg);
+
+                    dist += 1;
+                });
+            } else {
+                // There is exactly one next link
+                let cnt = self.slots.iter().map(|s| s.next)
+                    .filter(|n| *n == Some(index.wrapping_sub(self.inserted)))
+                    .count();
+
+                assert_eq!(1, cnt, "more than one node pointing here; msg={}", msg);
+            }
+        }
+
+        // TODO: Ensure linked lists are correct: no cycles, etc...
+
+        true
     }
 }
 

@@ -204,7 +204,7 @@ impl<'a> Name<'a> {
                 Ok(Header::Authority(try!(ByteStr::from_utf8(value))))
             }
             Name::Method => {
-                Ok(Header::Scheme(try!(ByteStr::from_utf8(value))))
+                Ok(Header::Method(try!(Method::from_bytes(&*value))))
             }
             Name::Scheme => {
                 Ok(Header::Scheme(try!(ByteStr::from_utf8(value))))
