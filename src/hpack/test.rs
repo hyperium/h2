@@ -61,6 +61,13 @@ fn hpack_failing_5() {
 }
 
 #[test]
+fn hpack_failing_6() {
+    FuzzHpack::new_reduced([
+        7970045195656406858, 7319095306567062282, 8226114865494971289, 10649653503082373659,
+    ], 147).run();
+}
+
+#[test]
 fn hpack_fuzz() {
     fn prop(fuzz: FuzzHpack) -> TestResult {
         fuzz.run();
@@ -68,7 +75,7 @@ fn hpack_fuzz() {
     }
 
     QuickCheck::new()
-        .tests(5000)
+        .tests(100)
         .quickcheck(prop as fn(FuzzHpack) -> TestResult)
 }
 
@@ -90,7 +97,11 @@ struct FuzzHpack {
 impl FuzzHpack {
     fn new_reduced(seed: [usize; 4], i: usize) -> FuzzHpack {
         let mut ret = FuzzHpack::new(seed);
-        ret.headers.drain(i..);
+
+        if i < ret.headers.len() {
+            ret.headers.drain(i..);
+        }
+
         ret
     }
 

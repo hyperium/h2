@@ -196,6 +196,8 @@ impl Table {
                       statik: Option<(usize, bool)>)
         -> Index
     {
+        debug_assert!(self.assert_valid_state("top"));
+
         // There already is a match for the given header name. Check if a value
         // matches. The header will also only be inserted if the table is not at
         // capacity.
@@ -246,7 +248,7 @@ impl Table {
     fn index_vacant(&mut self,
                     header: Header,
                     hash: HashValue,
-                    dist: usize,
+                    mut dist: usize,
                     mut probe: usize,
                     statik: Option<(usize, bool)>)
         -> Index
@@ -261,18 +263,21 @@ impl Table {
         // Passing in `usize::MAX` for prev_idx since there is no previous
         // header in this case.
         if self.update_size(header.len(), None) {
-            // TODO: This probably should have to walk back more than one time
-            if dist != 0 {
+            while dist != 0 {
                 let back = probe.wrapping_sub(1) & self.mask;
 
                 if let Some(pos) = self.indices[back] {
-                    let their_dist = probe_distance(self.mask, pos.hash, probe);
+                    let their_dist = probe_distance(self.mask, pos.hash, back);
 
                     if their_dist < (dist - 1) {
                         probe = back;
+                        dist -= 1;
+                    } else {
+                        break;
                     }
                 } else {
                     probe = back;
+                    dist -= 1;
                 }
             }
         }
@@ -441,12 +446,14 @@ impl Table {
         // This path can never be reached when handling the first allocation in
         // the map.
 
+        debug_assert!(self.assert_valid_state("top"));
+
         // find first ideally placed element -- start of cluster
         let mut first_ideal = 0;
 
         for (i, pos) in self.indices.iter().enumerate() {
             if let Some(pos) = *pos {
-                if 0 == probe_distance(self.mask, pos.hash, pos.index) {
+                if 0 == probe_distance(self.mask, pos.hash, i) {
                     first_ideal = i;
                     break;
                 }
@@ -465,6 +472,8 @@ impl Table {
         for &pos in &old_indices[..first_ideal] {
             self.reinsert_entry_in_order(pos);
         }
+
+        debug_assert!(self.assert_valid_state("bottom"));
     }
 
     fn reinsert_entry_in_order(&mut self, pos: Option<Pos>) {
@@ -473,17 +482,26 @@ impl Table {
             let mut probe = desired_pos(self.mask, pos.hash);
 
             probe_loop!(probe < self.indices.len(), {
-                if self.indices[probe as usize].is_none() {
+                if self.indices[probe].is_none() {
                     // empty bucket, insert here
-                    self.indices[probe as usize] = Some(pos);
+                    self.indices[probe] = Some(pos);
                     return;
                 }
+
+                debug_assert!({
+                    let them = self.indices[probe].unwrap();
+                    let their_distance = probe_distance(self.mask, them.hash, probe);
+                    let our_distance = probe_distance(self.mask, pos.hash, probe);
+
+                    their_distance >= our_distance
+                });
             });
         }
     }
 
     /// Checks that the internal map state is correct
     fn assert_valid_state(&self, msg: &'static str) -> bool {
+        /*
         // Ensure all hash codes in indices match the associated slot
         for pos in &self.indices {
             if let Some(pos) = *pos {
@@ -513,21 +531,21 @@ impl Table {
         }
 
         for (index, slot) in self.slots.iter().enumerate() {
-            let mut indexed = false;
+            let mut indexed = None;
 
             // First, see if the slot is indexed
-            for pos in &self.indices {
+            for (i, pos) in self.indices.iter().enumerate() {
                 if let Some(pos) = *pos {
                     let real_idx = pos.index.wrapping_add(self.inserted);
                     if real_idx == index {
-                        indexed = true;
+                        indexed = Some(i);
                         // Already know that there is no dup, so break
                         break;
                     }
                 }
             }
 
-            if indexed {
+            if let Some(actual) = indexed {
                 // Ensure that it is accessible..
                 let desired = desired_pos(self.mask, slot.hash);
                 let mut probe = desired;
@@ -548,8 +566,8 @@ impl Table {
                     }
 
                     assert!(dist <= their_dist,
-                            "could not find entry; desired={}; dist={}; their_dist={}; index={}; msg={}",
-                            desired, dist, their_dist, index.wrapping_sub(self.inserted), msg);
+                            "could not find entry; actual={}; desired={}; probe={}, dist={}; their_dist={}; index={}; msg={}",
+                            actual, desired, probe, dist, their_dist, index.wrapping_sub(self.inserted), msg);
 
                     dist += 1;
                 });
@@ -564,6 +582,7 @@ impl Table {
         }
 
         // TODO: Ensure linked lists are correct: no cycles, etc...
+        */
 
         true
     }
