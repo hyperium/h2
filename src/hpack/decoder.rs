@@ -2,7 +2,7 @@ use super::{huffman, header as h2_header, Header};
 use util::byte_str::FromUtf8Error;
 
 use http::{method, header, status, StatusCode, Method};
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 
 use std::cmp;
 use std::io::Cursor;
@@ -14,6 +14,7 @@ pub struct Decoder {
     max_size_update: Option<usize>,
     last_max_update: usize,
     table: Table,
+    buffer: BytesMut,
 }
 
 /// Represents all errors that can be encountered while performing the decoding
@@ -139,6 +140,7 @@ impl Decoder {
             max_size_update: None,
             last_max_update: size,
             table: Table::new(size),
+            buffer: BytesMut::with_capacity(4096),
         }
     }
 
@@ -234,7 +236,7 @@ impl Decoder {
         self.table.get(index)
     }
 
-    fn decode_literal(&self, buf: &mut Cursor<&Bytes>, index: bool)
+    fn decode_literal(&mut self, buf: &mut Cursor<&Bytes>, index: bool)
         -> Result<Header, DecoderError>
     {
         let prefix = if index {
@@ -249,15 +251,41 @@ impl Decoder {
         // First, read the header name
         if table_idx == 0 {
             // Read the name as a literal
-            let name = try!(decode_string(buf));
-            let value = try!(decode_string(buf));
+            let name = try!(self.decode_string(buf));
+            let value = try!(self.decode_string(buf));
 
             Header::new(name, value)
         } else {
             let e = try!(self.table.get(table_idx));
-            let value = try!(decode_string(buf));
+            let value = try!(self.decode_string(buf));
 
             e.name().into_entry(value)
+        }
+    }
+
+    fn decode_string(&mut self, buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
+        const HUFF_FLAG: u8 = 0b10000000;
+
+        // The first bit in the first byte contains the huffman encoded flag.
+        let huff = peek_u8(buf) & HUFF_FLAG == HUFF_FLAG;
+
+        // Decode the string length using 7 bit prefix
+        let len = try!(decode_int(buf, 7));
+
+        if len > buf.remaining() {
+            return Err(DecoderError::StringUnderflow);
+        }
+
+        if huff {
+            let ret = {
+                let raw = &buf.bytes()[..len];
+                huffman::decode(raw, &mut self.buffer).map(Into::into)
+            };
+
+            buf.advance(len);
+            return ret;
+        } else {
+            Ok(take(buf, len))
         }
     }
 }
@@ -354,32 +382,6 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     }
 
     Err(DecoderError::IntegerUnderflow)
-}
-
-fn decode_string(buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
-    const HUFF_FLAG: u8 = 0b10000000;
-
-    // The first bit in the first byte contains the huffman encoded flag.
-    let huff = peek_u8(buf) & HUFF_FLAG == HUFF_FLAG;
-
-    // Decode the string length using 7 bit prefix
-    let len = try!(decode_int(buf, 7));
-
-    if len > buf.remaining() {
-        return Err(DecoderError::StringUnderflow);
-    }
-
-    if huff {
-        let ret = {
-            let raw = &buf.bytes()[..len];
-            huffman::decode(raw).map(Into::into)
-        };
-
-        buf.advance(len);
-        return ret;
-    } else {
-        Ok(take(buf, len))
-    }
 }
 
 fn peek_u8<B: Buf>(buf: &mut B) -> u8 {

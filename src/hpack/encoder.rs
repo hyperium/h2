@@ -664,6 +664,7 @@ mod test {
     }
 
     fn huff_decode(src: &[u8]) -> BytesMut {
-        huffman::decode(src).unwrap()
+        let mut buf = BytesMut::new();
+        huffman::decode(src, &mut buf).unwrap()
     }
 }

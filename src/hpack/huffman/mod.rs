@@ -17,21 +17,19 @@ const MAYBE_EOS: u8 = 1;
 const DECODED: u8 = 2;
 const ERROR: u8 = 4;
 
-pub fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
-    // TODO: This should not allocate and instead take a dst
-
+pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> {
     let mut decoder = Decoder::new();
 
     // Max compression ratio is >= 0.5
-    let mut dst = BytesMut::with_capacity(src.len() << 1);
+    buf.reserve(src.len() << 1);
 
     for b in src {
         if let Some(b) = try!(decoder.decode4(b >> 4)) {
-            dst.put_u8(b);
+            buf.put_u8(b);
         }
 
         if let Some(b) = try!(decoder.decode4(b & 0xf)) {
-            dst.put_u8(b);
+            buf.put_u8(b);
         }
     }
 
@@ -39,7 +37,7 @@ pub fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
         return Err(DecoderError::InvalidHuffmanCode);
     }
 
-    Ok(dst)
+    Ok(buf.take())
 }
 
 // TODO: return error when there is not enough room to encode the value
@@ -118,6 +116,11 @@ impl Decoder {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
+        let mut buf = BytesMut::new();
+        super::decode(src, &mut buf)
+    }
 
     #[test]
     fn decode_single_byte() {
