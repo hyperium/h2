@@ -134,6 +134,7 @@ impl Encoder {
     {
         match *index {
             Index::Indexed(idx, _) => {
+                debug_assert!(self.table.len() + 62 > idx, "table={}; index={}", self.table.len(), idx);
                 let header = self.table.resolve(&index);
                 try!(encode_int(idx, 7, 0x80, dst));
             }
@@ -163,6 +164,7 @@ impl Encoder {
                 try!(encode_str(header.value_slice(), dst));
             }
             Index::InsertedValue(idx, _) => {
+                debug_assert!(self.table.len() + 62 > idx, "table={}; index={}", self.table.len(), idx);
                 let header = self.table.resolve(&index);
 
                 assert!(!header.is_sensitive());

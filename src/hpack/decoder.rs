@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 pub struct Decoder {
     // Protocol indicated that the max table size will update
     max_size_update: Option<usize>,
+    last_max_update: usize,
     table: Table,
 }
 
@@ -136,6 +137,7 @@ impl Decoder {
     pub fn new(size: usize) -> Decoder {
         Decoder {
             max_size_update: None,
+            last_max_update: size,
             table: Table::new(size),
         }
     }
@@ -143,7 +145,7 @@ impl Decoder {
     /// Queues a potential size update
     pub fn queue_size_update(&mut self, size: usize) {
         let size = match self.max_size_update {
-            Some(v) => cmp::min(v, size),
+            Some(v) => cmp::max(v, size),
             None => size,
         };
 
@@ -158,6 +160,10 @@ impl Decoder {
 
         let mut buf = Cursor::new(src);
         let mut can_resize = true;
+
+        if let Some(size) = self.max_size_update.take() {
+            self.last_max_update = size;
+        }
 
         while buf.has_remaining() {
             // At this point we are always at the beginning of the next block
@@ -191,17 +197,12 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
-                    let max = match self.max_size_update.take() {
-                        Some(max) if can_resize => max,
-                        _ => {
-                            // Resize is too big or other frames have been read
-                            // before the resize.
-                            return Err(DecoderError::InvalidMaxDynamicSize);
-                        }
-                    };
+                    if !can_resize {
+                        return Err(DecoderError::InvalidMaxDynamicSize);
+                    }
 
-                    // Handle the dynamic table size update...
-                    try!(self.process_size_update(&mut buf, max))
+                    // Handle the dynamic table size update
+                    try!(self.process_size_update(&mut buf));
                 }
             }
         }
@@ -209,12 +210,12 @@ impl Decoder {
         Ok(())
     }
 
-    fn process_size_update(&mut self, buf: &mut Cursor<&Bytes>, max: usize)
+    fn process_size_update(&mut self, buf: &mut Cursor<&Bytes>)
         -> Result<(), DecoderError>
     {
         let new_size = try!(decode_int(buf, 5));
 
-        if new_size > max {
+        if new_size > self.last_max_update {
             return Err(DecoderError::InvalidMaxDynamicSize);
         }
 

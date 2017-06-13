@@ -68,6 +68,20 @@ fn hpack_failing_6() {
 }
 
 #[test]
+fn hpack_failing_7() {
+    FuzzHpack::new_reduced([
+        7990149962280599924, 6223290743332495022, 5461160958499241043, 157399552951946949,
+    ], 31).run();
+}
+
+#[test]
+fn hpack_failing_8() {
+    FuzzHpack::new_reduced([
+        5719253325816917205, 15546677577651198340, 11565363105171925122, 12844885905471928303,
+    ], 110).run();
+}
+
+#[test]
 fn hpack_fuzz() {
     fn prop(fuzz: FuzzHpack) -> TestResult {
         fuzz.run();
@@ -85,7 +99,7 @@ struct FuzzHpack {
     seed: [usize; 4],
 
     // The set of headers to encode / decode
-    headers: Vec<Header>,
+    frames: Vec<HeaderFrame>,
 
     // The list of chunk sizes to do it in
     chunks: Vec<usize>,
@@ -94,15 +108,15 @@ struct FuzzHpack {
     reduced: usize,
 }
 
+#[derive(Debug, Clone)]
+struct HeaderFrame {
+    resizes: Vec<usize>,
+    headers: Vec<Header>,
+}
+
 impl FuzzHpack {
     fn new_reduced(seed: [usize; 4], i: usize) -> FuzzHpack {
-        let mut ret = FuzzHpack::new(seed);
-
-        if i < ret.headers.len() {
-            ret.headers.drain(i..);
-        }
-
-        ret
+        FuzzHpack::new(seed)
     }
 
     fn new(seed: [usize; 4]) -> FuzzHpack {
@@ -117,17 +131,45 @@ impl FuzzHpack {
         }
 
         // Actual test run headers
-        let num: usize = rng.gen_range(40, 300);
-        let mut actual: Vec<Header> = vec![];
+        let num: usize = rng.gen_range(40, 500);
+
+        let mut frames: Vec<HeaderFrame> = vec![];
+        let mut added = 0;
 
         let skew: i32 = rng.gen_range(1, 5);
 
-        while actual.len() < num {
-            let x: f64 = rng.gen_range(0.0, 1.0);
-            let x = x.powi(skew);
+        // Rough number of headers to add
+        while added < num {
+            let mut frame = HeaderFrame {
+                resizes: vec![],
+                headers: vec![],
+            };
 
-            let i = (x * source.len() as f64) as usize;
-            actual.push(source[i].clone());
+            match rng.gen_range(0, 20) {
+                0 => {
+                    // Two resizes
+                    let high = rng.gen_range(128, MAX_CHUNK * 2);
+                    let low = rng.gen_range(0, high);
+
+                    frame.resizes.extend(&[low, high]);
+                }
+                1...3 => {
+                    frame.resizes.push(rng.gen_range(128, MAX_CHUNK * 2));
+                }
+                _ => {}
+            }
+
+            for _ in 0..rng.gen_range(1, (num - added) + 1) {
+                added += 1;
+
+                let x: f64 = rng.gen_range(0.0, 1.0);
+                let x = x.powi(skew);
+
+                let i = (x * source.len() as f64) as usize;
+                frame.headers.push(source[i].clone());
+            }
+
+            frames.push(frame);
         }
 
         // Now, generate the buffer sizes used to encode
@@ -139,7 +181,7 @@ impl FuzzHpack {
 
         FuzzHpack {
             seed: seed,
-            headers: actual,
+            frames: frames,
             chunks: chunks,
             reduced: 0,
         }
@@ -147,38 +189,51 @@ impl FuzzHpack {
 
     fn run(mut self) {
         let mut chunks = self.chunks;
-        let mut headers = self.headers;
-        let mut expect = headers.clone();
-
-        let mut encoded = vec![];
-        let mut buf = BytesMut::with_capacity(
-            chunks.pop().unwrap_or(MAX_CHUNK));
-
-        let mut index = None;
-        let mut input = headers.into_iter();
+        let mut frames = self.frames;
+        let mut expect = vec![];
 
         let mut encoder = Encoder::default();
         let mut decoder = Decoder::default();
 
-        loop {
-            match encoder.encode(index.take(), &mut input, &mut buf).unwrap() {
-                Encode::Full => break,
-                Encode::Partial(i) => {
-                    index = Some(i);
-                    encoded.push(buf);
-                    buf = BytesMut::with_capacity(
-                        chunks.pop().unwrap_or(MAX_CHUNK));
+        for frame in frames {
+            expect.extend(frame.headers.clone());
+
+            let mut index = None;
+            let mut input = frame.headers.into_iter();
+
+            let mut buf = BytesMut::with_capacity(
+                chunks.pop().unwrap_or(MAX_CHUNK));
+
+            if let Some(max) = frame.resizes.iter().max() {
+                decoder.queue_size_update(*max);
+            }
+
+            // Apply resizes
+            for resize in &frame.resizes {
+                encoder.update_max_size(*resize);
+            }
+
+            loop {
+                match encoder.encode(index.take(), &mut input, &mut buf).unwrap() {
+                    Encode::Full => break,
+                    Encode::Partial(i) => {
+                        index = Some(i);
+
+                        // Decode the chunk!
+                        decoder.decode(&buf.into(), |e| {
+                            assert_eq!(e, expect.remove(0));
+                        }).unwrap();
+
+                        buf = BytesMut::with_capacity(
+                            chunks.pop().unwrap_or(MAX_CHUNK));
+                    }
                 }
             }
-        }
 
-        encoded.push(buf);
-
-        // Decode
-        for buf in encoded {
+            // Decode the chunk!
             decoder.decode(&buf.into(), |e| {
                 assert_eq!(e, expect.remove(0));
-            });
+            }).unwrap();
         }
 
         assert_eq!(0, expect.len());
@@ -188,19 +243,6 @@ impl FuzzHpack {
 impl Arbitrary for FuzzHpack {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
         FuzzHpack::new(quickcheck::Rng::gen(g))
-    }
-
-    fn shrink(&self) -> Box<Iterator<Item=FuzzHpack>> {
-        let s = self.clone();
-
-        let iter = (1..self.headers.len()).map(move |i| {
-            let mut r = s.clone();
-            r.headers.drain(i..);
-            r.reduced = i;
-            r
-        });
-
-        Box::new(iter)
     }
 }
 
@@ -276,8 +318,85 @@ fn gen_header_name(g: &mut StdRng) -> HeaderName {
 
     if g.gen_weighted_bool(2) {
         g.choose(&[
-            // TODO: more headers
             header::ACCEPT,
+            header::ACCEPT_CHARSET,
+            header::ACCEPT_ENCODING,
+            header::ACCEPT_LANGUAGE,
+            header::ACCEPT_PATCH,
+            header::ACCEPT_RANGES,
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            header::ACCESS_CONTROL_MAX_AGE,
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+            header::ACCESS_CONTROL_REQUEST_METHOD,
+            header::AGE,
+            header::ALLOW,
+            header::ALT_SVC,
+            header::AUTHORIZATION,
+            header::CACHE_CONTROL,
+            header::CONNECTION,
+            header::CONTENT_DISPOSITION,
+            header::CONTENT_ENCODING,
+            header::CONTENT_LANGUAGE,
+            header::CONTENT_LENGTH,
+            header::CONTENT_LOCATION,
+            header::CONTENT_MD5,
+            header::CONTENT_RANGE,
+            header::CONTENT_SECURITY_POLICY,
+            header::CONTENT_SECURITY_POLICY_REPORT_ONLY,
+            header::CONTENT_TYPE,
+            header::COOKIE,
+            header::DNT,
+            header::DATE,
+            header::ETAG,
+            header::EXPECT,
+            header::EXPIRES,
+            header::FORWARDED,
+            header::FROM,
+            header::HOST,
+            header::IF_MATCH,
+            header::IF_MODIFIED_SINCE,
+            header::IF_NONE_MATCH,
+            header::IF_RANGE,
+            header::IF_UNMODIFIED_SINCE,
+            header::LAST_MODIFIED,
+            header::KEEP_ALIVE,
+            header::LINK,
+            header::LOCATION,
+            header::MAX_FORWARDS,
+            header::ORIGIN,
+            header::PRAGMA,
+            header::PROXY_AUTHENTICATE,
+            header::PROXY_AUTHORIZATION,
+            header::PUBLIC_KEY_PINS,
+            header::PUBLIC_KEY_PINS_REPORT_ONLY,
+            header::RANGE,
+            header::REFERER,
+            header::REFERRER_POLICY,
+            header::REFRESH,
+            header::RETRY_AFTER,
+            header::SERVER,
+            header::SET_COOKIE,
+            header::STRICT_TRANSPORT_SECURITY,
+            header::TE,
+            header::TK,
+            header::TRAILER,
+            header::TRANSFER_ENCODING,
+            header::TSV,
+            header::USER_AGENT,
+            header::UPGRADE,
+            header::UPGRADE_INSECURE_REQUESTS,
+            header::VARY,
+            header::VIA,
+            header::WARNING,
+            header::WWW_AUTHENTICATE,
+            header::X_CONTENT_TYPE_OPTIONS,
+            header::X_DNS_PREFETCH_CONTROL,
+            header::X_FRAME_OPTIONS,
+            header::X_XSS_PROTECTION,
         ]).unwrap().clone()
     } else {
         let value = gen_string(g, 1, 25);
