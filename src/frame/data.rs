@@ -1,6 +1,7 @@
-use frame::{util, Head, Error, StreamId};
-use bytes::Bytes;
+use frame::{util, Head, Error, StreamId, Kind};
+use bytes::{BufMut, Bytes};
 
+#[derive(Debug)]
 pub struct Data {
     stream_id: StreamId,
     data: Bytes,
@@ -33,6 +34,23 @@ impl Data {
             pad_len: pad_len,
         })
     }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn encode<T: BufMut>(&self, dst: &mut T) {
+        self.head().encode(self.len(), dst);
+        dst.put(&self.data);
+    }
+
+    pub fn head(&self) -> Head {
+        Head::new(Kind::Data, self.flags.into(), self.stream_id)
+    }
+
+    pub fn into_payload(self) -> Bytes {
+        self.data
+    }
 }
 
 
@@ -55,5 +73,11 @@ impl DataFlag {
 
     pub fn is_padded(&self) -> bool {
         self.0 & PADDED == PADDED
+    }
+}
+
+impl From<DataFlag> for u8 {
+    fn from(src: DataFlag) -> u8 {
+        src.0
     }
 }

@@ -1,5 +1,6 @@
-use ConnectionError;
+use {hpack, ConnectionError};
 use frame::{self, Frame, Kind};
+use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
 
 use tokio_io::AsyncWrite;
 
@@ -12,7 +13,7 @@ pub struct FramedRead<T> {
     inner: T,
 
     // hpack decoder state
-    // hpack: hpack::Decoder,
+    hpack: hpack::Decoder,
 
 }
 
@@ -23,6 +24,7 @@ impl<T> FramedRead<T>
     pub fn new(inner: T) -> FramedRead<T> {
         FramedRead {
             inner: inner,
+            hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
         }
     }
 }
@@ -46,10 +48,7 @@ impl<T> FramedRead<T> {
             Kind::GoAway => unimplemented!(),
             Kind::WindowUpdate => unimplemented!(),
             Kind::Continuation => unimplemented!(),
-            Kind::Unknown => {
-                let _ = bytes.split_to(frame::HEADER_LEN);
-                frame::Unknown::new(head, bytes).into()
-            }
+            Kind::Unknown => return Ok(None),
         };
 
         Ok(Some(frame))

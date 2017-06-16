@@ -37,6 +37,9 @@ pub struct SettingsFlag(u8);
 const ACK: u8 = 0x1;
 const ALL: u8 = ACK;
 
+pub const DEFAULT_SETTINGS_HEADER_TABLE_SIZE: usize = 4_096;
+pub const DEFAULT_MAX_FRAME_SIZE: usize = 16_384;
+
 // ===== impl Settings =====
 
 impl Settings {
@@ -111,27 +114,21 @@ impl Settings {
         Ok(settings)
     }
 
-    pub fn encode_len(&self) -> usize {
-        super::HEADER_LEN + self.payload_len()
-    }
-
     fn payload_len(&self) -> usize {
         let mut len = 0;
         self.for_each(|_| len += 6);
         len
     }
 
-    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), Error> {
+    pub fn encode(&self, dst: &mut BytesMut) {
         // Create & encode an appropriate frame head
         let head = Head::new(Kind::Settings, self.flag.into(), 0);
         let payload_len = self.payload_len();
 
-        try!(head.encode(payload_len, dst));
+        head.encode(payload_len, dst);
 
         // Encode the settings
         self.for_each(|setting| setting.encode(dst));
-
-        Ok(())
     }
 
     fn for_each<F: FnMut(Setting)>(&self, mut f: F) {

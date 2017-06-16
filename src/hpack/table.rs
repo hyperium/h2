@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
 /// HPACK encoder table
+#[derive(Debug)]
 pub struct Table {
     mask: usize,
     indices: Vec<Option<Pos>>,
@@ -37,6 +38,7 @@ pub enum Index {
     NotIndexed(Header),
 }
 
+#[derive(Debug)]
 struct Slot {
     hash: HashValue,
     header: Header,

@@ -26,31 +26,29 @@ macro_rules! unpack_octets_4 {
 
 mod data;
 mod head;
+mod headers;
 mod settings;
-mod unknown;
 mod util;
 
 pub use self::data::Data;
 pub use self::head::{Head, Kind, StreamId};
+pub use self::headers::{Headers, PushPromise};
 pub use self::settings::{Settings, SettingSet};
-pub use self::unknown::Unknown;
+
+// Re-export some constants
+pub use self::settings::{
+    DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
+    DEFAULT_MAX_FRAME_SIZE,
+};
 
 pub const HEADER_LEN: usize = 9;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug /*, Clone, PartialEq */)]
 pub enum Frame {
-    /*
-    Data(DataFrame<'a>),
-    HeadersFrame(HeadersFrame<'a>),
-    RstStreamFrame(RstStreamFrame),
-    SettingsFrame(SettingsFrame),
-    PingFrame(PingFrame),
-    GoawayFrame(GoawayFrame<'a>),
-    WindowUpdateFrame(WindowUpdateFrame),
-    UnknownFrame(RawFrame<'a>),
-    */
+    Data(Data),
+    Headers(Headers),
+    PushPromise(PushPromise),
     Settings(Settings),
-    Unknown(Unknown),
 }
 
 /// Errors that can occur during parsing an HTTP/2 frame.
@@ -99,40 +97,6 @@ pub enum Error {
 // ===== impl Frame ======
 
 impl Frame {
-    pub fn load(mut frame: Bytes) -> Result<Frame, Error> {
-        let head = Head::parse(&frame);
-
-        // Extract the payload from the frame
-        let _ = frame.drain_to(HEADER_LEN);
-
-        match head.kind() {
-            Kind::Unknown => {
-                let unknown = Unknown::new(head, frame);
-                Ok(Frame::Unknown(unknown))
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    pub fn encode_len(&self) -> usize {
-        use self::Frame::*;
-
-        match *self {
-            Settings(ref frame) => frame.encode_len(),
-            Unknown(ref frame) => frame.encode_len(),
-        }
-    }
-
-    pub fn encode(&self, dst: &mut BytesMut) -> Result<(), Error> {
-        use self::Frame::*;
-
-        debug_assert!(dst.remaining_mut() >= self.encode_len());
-
-        match *self {
-            Settings(ref frame) => frame.encode(dst),
-            Unknown(ref frame) => frame.encode(dst),
-        }
-    }
 }
 
 // ===== impl Error =====

@@ -4,15 +4,20 @@ use super::table::{Table, Index};
 use http::header::{HeaderName, HeaderValue};
 use bytes::{BytesMut, BufMut};
 
+#[derive(Debug)]
 pub struct Encoder {
     table: Table,
     size_update: Option<SizeUpdate>,
 }
 
+#[derive(Debug)]
 pub enum Encode {
     Full,
-    Partial(Index),
+    Partial(EncodeState),
 }
+
+#[derive(Debug)]
+pub struct EncodeState(Index);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EncoderError {
@@ -67,7 +72,7 @@ impl Encoder {
     }
 
     /// Encode a set of headers into the provide buffer
-    pub fn encode<I>(&mut self, resume: Option<Index>, headers: &mut I, dst: &mut BytesMut)
+    pub fn encode<I>(&mut self, resume: Option<EncodeState>, headers: &mut I, dst: &mut BytesMut)
         -> Result<Encode, EncoderError>
         where I: Iterator<Item=Header>,
     {
@@ -81,13 +86,13 @@ impl Encoder {
             return Err(e);
         }
 
-        if let Some(index) = resume {
+        if let Some(resume) = resume {
             let len = dst.len();
 
-            match self.encode_header(&index, dst) {
+            match self.encode_header(&resume.0, dst) {
                 Err(EncoderError::BufferOverflow) => {
                     dst.truncate(len);
-                    return Ok(Encode::Partial(index));
+                    return Ok(Encode::Partial(resume));
                 }
                 Err(e) => return Err(e),
                 Ok(_) => {}
@@ -101,7 +106,7 @@ impl Encoder {
             match self.encode_header(&index, dst) {
                 Err(EncoderError::BufferOverflow) => {
                     dst.truncate(len);
-                    return Ok(Encode::Partial(index));
+                    return Ok(Encode::Partial(EncodeState(index)));
                 }
                 Err(e) => return Err(e),
                 Ok(_) => {}

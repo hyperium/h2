@@ -65,7 +65,7 @@ impl Head {
         super::HEADER_LEN
     }
 
-    pub fn encode<T: BufMut>(&self, payload_len: usize, dst: &mut T) -> Result<(), Error> {
+    pub fn encode<T: BufMut>(&self, payload_len: usize, dst: &mut T) {
         debug_assert_eq!(self.encode_len(), dst.remaining_mut());
         debug_assert!(self.stream_id & STREAM_ID_MASK == 0);
 
@@ -73,7 +73,6 @@ impl Head {
         dst.put_u8(self.kind as u8);
         dst.put_u8(self.flag);
         dst.put_u32::<BigEndian>(self.stream_id);
-        Ok(())
     }
 }
 
