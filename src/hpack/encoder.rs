@@ -17,7 +17,10 @@ pub enum Encode {
 }
 
 #[derive(Debug)]
-pub struct EncodeState(Index);
+pub struct EncodeState {
+    index: Index,
+    value: Option<HeaderValue>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EncoderError {
@@ -74,7 +77,7 @@ impl Encoder {
     /// Encode a set of headers into the provide buffer
     pub fn encode<I>(&mut self, resume: Option<EncodeState>, headers: &mut I, dst: &mut BytesMut)
         -> Result<Encode, EncoderError>
-        where I: Iterator<Item=Header>,
+        where I: Iterator<Item=Header<Option<HeaderName>>>,
     {
         let len = dst.len();
 
@@ -89,28 +92,62 @@ impl Encoder {
         if let Some(resume) = resume {
             let len = dst.len();
 
-            match self.encode_header(&resume.0, dst) {
-                Err(EncoderError::BufferOverflow) => {
-                    dst.truncate(len);
-                    return Ok(Encode::Partial(resume));
+            if let Some(ref value) = resume.value {
+                unimplemented!();
+            } else {
+                // Encode the header
+                match self.encode_header(&resume.index, dst) {
+                    Err(EncoderError::BufferOverflow) => {
+                        dst.truncate(len);
+                        return Ok(Encode::Partial(resume));
+                    }
+                    Err(e) => return Err(e),
+                    Ok(_) => {}
                 }
-                Err(e) => return Err(e),
-                Ok(_) => {}
             }
         }
 
+        let mut last_index = None;
+
         for header in headers {
             let len = dst.len();
-            let index = self.table.index(header);
 
-            match self.encode_header(&index, dst) {
-                Err(EncoderError::BufferOverflow) => {
-                    dst.truncate(len);
-                    return Ok(Encode::Partial(EncodeState(index)));
+            match header.reify() {
+                // The header has an associated name. In which case, try to
+                // index it in the table.
+                Ok(header) => {
+                    let index = self.table.index(header);
+                    let res = self.encode_header(&index, dst);
+
+                    if try!(is_buffer_overflow(res)) {
+                        dst.truncate(len);
+                        return Ok(Encode::Partial(EncodeState {
+                            index: index,
+                            value: None,
+                        }));
+                    }
+
+                    last_index = Some(index);
                 }
-                Err(e) => return Err(e),
-                Ok(_) => {}
-            }
+                // The header does not have an associated name. This means that
+                // the name is the same as the previously yielded header. In
+                // which case, we skip table lookup and just use the same index
+                // as the previous entry.
+                Err(value) => {
+                    let res = self.encode_header_without_name(
+                        last_index.as_ref().unwrap(),
+                        &value,
+                        dst);
+
+                    if try!(is_buffer_overflow(res)) {
+                        dst.truncate(len);
+                        return Ok(Encode::Partial(EncodeState {
+                            index: last_index.unwrap(),
+                            value: Some(value),
+                        }));
+                    }
+                }
+            };
         }
 
         Ok(Encode::Full)
@@ -145,13 +182,11 @@ impl Encoder {
             Index::Name(idx, _) => {
                 let header = self.table.resolve(&index);
 
-                if header.is_sensitive() {
-                    try!(encode_int(idx, 4, 0b10000, dst));
-                } else {
-                    try!(encode_int(idx, 4, 0, dst));
-                }
-
-                try!(encode_str(header.value_slice(), dst));
+                try!(encode_not_indexed(
+                        idx,
+                        header.value_slice(),
+                        header.is_sensitive(),
+                        dst));
             }
             Index::Inserted(idx) => {
                 let header = self.table.resolve(&index);
@@ -178,18 +213,41 @@ impl Encoder {
             Index::NotIndexed(_) => {
                 let header = self.table.resolve(&index);
 
-                if !dst.has_remaining_mut() {
-                    return Err(EncoderError::BufferOverflow);
-                }
+                try!(encode_not_indexed2(
+                        header.name().as_slice(),
+                        header.value_slice(),
+                        header.is_sensitive(),
+                        dst));
+            }
+        }
 
-                if header.is_sensitive() {
-                    dst.put_u8(0b10000);
-                } else {
-                    dst.put_u8(0);
-                }
+        Ok(())
+    }
 
-                try!(encode_str(header.name().as_slice(), dst));
-                try!(encode_str(header.value_slice(), dst));
+    fn encode_header_without_name(&mut self, last: &Index,
+                                  value: &HeaderValue, dst: &mut BytesMut)
+        -> Result<(), EncoderError>
+    {
+        match *last {
+            Index::Indexed(idx, ..) |
+                Index::Name(idx, ..) |
+                Index::Inserted(idx) |
+                Index::InsertedValue(idx, ..) =>
+            {
+                try!(encode_not_indexed(
+                        idx,
+                        value.as_ref(),
+                        value.is_sensitive(),
+                        dst));
+            }
+            Index::NotIndexed(_) => {
+                let last = self.table.resolve(last);
+
+                try!(encode_not_indexed2(
+                        last.name().as_slice(),
+                        value.as_ref(),
+                        value.is_sensitive(),
+                        dst));
             }
         }
 
@@ -201,6 +259,43 @@ impl Default for Encoder {
     fn default() -> Encoder {
         Encoder::new(4096, 0)
     }
+}
+
+fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) -> Result<(), EncoderError> {
+    encode_int(val, 5, 0b00100000, dst)
+}
+
+fn encode_not_indexed(name: usize, value: &[u8],
+                      sensitive: bool, dst: &mut BytesMut)
+    -> Result<(), EncoderError>
+{
+    if sensitive {
+        try!(encode_int(name, 4, 0b10000, dst));
+    } else {
+        try!(encode_int(name, 4, 0, dst));
+    }
+
+    try!(encode_str(value, dst));
+    Ok(())
+}
+
+fn encode_not_indexed2(name: &[u8], value: &[u8],
+                       sensitive: bool, dst: &mut BytesMut)
+    -> Result<(), EncoderError>
+{
+    if !dst.has_remaining_mut() {
+        return Err(EncoderError::BufferOverflow);
+    }
+
+    if sensitive {
+        dst.put_u8(0b10000);
+    } else {
+        dst.put_u8(0);
+    }
+
+    try!(encode_str(name, dst));
+    try!(encode_str(value, dst));
+    Ok(())
 }
 
 fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
@@ -261,10 +356,6 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
     Ok(())
 }
 
-fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) -> Result<(), EncoderError> {
-    encode_int(val, 5, 0b00100000, dst)
-}
-
 /// Encode an integer into the given destination buffer
 fn encode_int<B: BufMut>(
     mut value: usize,   // The integer to encode
@@ -319,6 +410,14 @@ fn encode_int<B: BufMut>(
 /// Returns true if the in the int can be fully encoded in the first byte.
 fn encode_int_one_byte(value: usize, prefix_bits: usize) -> bool {
     value < (1 << prefix_bits) - 1
+}
+
+fn is_buffer_overflow(res: Result<(), EncoderError>) -> Result<bool, EncoderError> {
+    match res {
+        Err(EncoderError::BufferOverflow) => Ok(true),
+        Err(e) => Err(e),
+        Ok(_) => Ok(false),
+    }
 }
 
 #[cfg(test)]
@@ -452,7 +551,7 @@ mod test {
         let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: name, value: value };
+        let header = Header::Field { name: Some(name), value: value };
 
         // Now, try to encode the sensitive header
 
@@ -469,7 +568,7 @@ mod test {
         let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: name, value: value };
+        let header = Header::Field { name: Some(name), value: value };
 
         let mut encoder = Encoder::default();
         let res = encode(&mut encoder, vec![header]);
@@ -487,7 +586,7 @@ mod test {
         let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: name, value: value };
+        let header = Header::Field { name: Some(name), value: value };
         let res = encode(&mut encoder, vec![header]);
 
         assert_eq!(&[0b11111, 47], &res[..2]);
@@ -649,23 +748,23 @@ mod test {
         // Not sure what the best way to do this is.
     }
 
-    fn encode(e: &mut Encoder, hdrs: Vec<Header>) -> BytesMut {
+    fn encode(e: &mut Encoder, hdrs: Vec<Header<Option<HeaderName>>>) -> BytesMut {
         let mut dst = BytesMut::with_capacity(1024);
         e.encode(None, &mut hdrs.into_iter(), &mut dst);
         dst
     }
 
-    fn method(s: &str) -> Header {
+    fn method(s: &str) -> Header<Option<HeaderName>> {
         Header::Method(Method::from_bytes(s.as_bytes()).unwrap())
     }
 
-    fn header(name: &str, val: &str) -> Header {
+    fn header(name: &str, val: &str) -> Header<Option<HeaderName>> {
         use http::header::{HeaderName, HeaderValue};
 
         let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
         let value = HeaderValue::try_from_bytes(val.as_bytes()).unwrap();
 
-        Header::Field { name: name, value: value }
+        Header::Field { name: Some(name), value: value }
     }
 
     fn huff_decode(src: &[u8]) -> BytesMut {

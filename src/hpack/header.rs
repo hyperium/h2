@@ -7,9 +7,9 @@ use bytes::Bytes;
 
 /// HTTP/2.0 Header
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Header {
+pub enum Header<T = HeaderName> {
     Field {
-        name: HeaderName,
+        name: T,
         value: HeaderValue,
     },
     Authority(ByteStr),
@@ -33,6 +33,22 @@ pub enum Name<'a> {
 pub fn len(name: &HeaderName, value: &HeaderValue) -> usize {
     let n: &str = name.as_ref();
     32 + n.len() + value.len()
+}
+
+impl Header<Option<HeaderName>> {
+    pub fn reify(self) -> Result<Header, HeaderValue> {
+        use self::Header::*;
+
+        Ok(match self {
+            Field { name: Some(n), value } => Field { name: n, value: value },
+            Field { name: None, value } => return Err(value),
+            Authority(v) => Authority(v),
+            Method(v) => Method(v),
+            Scheme(v) => Scheme(v),
+            Path(v) => Path(v),
+            Status(v) => Status(v),
+        })
+    }
 }
 
 impl Header {
@@ -187,6 +203,20 @@ impl Header {
             }
             Header::Path(..) => true,
             _ => false,
+        }
+    }
+}
+
+// Mostly for tests
+impl From<Header> for Header<Option<HeaderName>> {
+    fn from(src: Header) -> Self {
+        match src {
+            Header::Field { name, value } => Header::Field { name: Some(name), value },
+            Header::Authority(v) => Header::Authority(v),
+            Header::Method(v) => Header::Method(v),
+            Header::Scheme(v) => Header::Scheme(v),
+            Header::Path(v) => Header::Path(v),
+            Header::Status(v) => Header::Status(v),
         }
     }
 }

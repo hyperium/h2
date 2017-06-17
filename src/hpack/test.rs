@@ -111,7 +111,7 @@ struct FuzzHpack {
 #[derive(Debug, Clone)]
 struct HeaderFrame {
     resizes: Vec<usize>,
-    headers: Vec<Header>,
+    headers: Vec<Header<Option<HeaderName>>>,
 }
 
 impl FuzzHpack {
@@ -124,7 +124,7 @@ impl FuzzHpack {
         let mut rng = StdRng::from_seed(&seed);
 
         // Generates a bunch of source headers
-        let mut source: Vec<Header> = vec![];
+        let mut source: Vec<Header<Option<HeaderName>>> = vec![];
 
         for _ in 0..2000 {
             source.push(gen_header(&mut rng));
@@ -221,7 +221,7 @@ impl FuzzHpack {
 
                         // Decode the chunk!
                         decoder.decode(&buf.into(), |e| {
-                            assert_eq!(e, expect.remove(0));
+                            assert_eq!(e, expect.remove(0).reify().unwrap());
                         }).unwrap();
 
                         buf = BytesMut::with_capacity(
@@ -232,7 +232,7 @@ impl FuzzHpack {
 
             // Decode the chunk!
             decoder.decode(&buf.into(), |e| {
-                assert_eq!(e, expect.remove(0));
+                assert_eq!(e, expect.remove(0).reify().unwrap());
             }).unwrap();
         }
 
@@ -246,7 +246,7 @@ impl Arbitrary for FuzzHpack {
     }
 }
 
-fn gen_header(g: &mut StdRng) -> Header {
+fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
     use http::StatusCode;
     use http::method::{self, Method};
 
@@ -309,7 +309,7 @@ fn gen_header(g: &mut StdRng) -> Header {
             value.set_sensitive(true);
         }
 
-        Header::Field { name: name, value: value }
+        Header::Field { name: Some(name), value: value }
     }
 }
 
@@ -528,13 +528,13 @@ fn test_story(story: Value) {
             }
 
             let mut input: Vec<_> = case.expect.iter().map(|&(ref name, ref value)| {
-                Header::new(name.clone().into(), value.clone().into()).unwrap()
+                Header::new(name.clone().into(), value.clone().into()).unwrap().into()
             }).collect();
 
             encoder.encode(None, &mut input.clone().into_iter(), &mut buf).unwrap();
 
             decoder.decode(&buf.into(), |e| {
-                assert_eq!(e, input.remove(0));
+                assert_eq!(e, input.remove(0).reify().unwrap());
             }).unwrap();
 
             assert_eq!(0, input.len());
