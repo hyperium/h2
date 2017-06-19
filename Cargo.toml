@@ -9,6 +9,7 @@ tokio-io = "0.1"
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 bytes = "0.4"
 http = { path = "/Users/carllerche/Code/Oss/Tokio/tower/http" }
+byteorder = "1.0"
 log = "0.3.8"
 # tower = { path = "/Users/carllerche/Code/Oss/Tokio/tower/tower-http" }
 fnv = "1.0.5"

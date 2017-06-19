@@ -214,7 +214,7 @@ impl FuzzHpack {
             }
 
             loop {
-                match encoder.encode(index.take(), &mut input, &mut buf).unwrap() {
+                match encoder.encode(index.take(), &mut input, &mut buf) {
                     Encode::Full => break,
                     Encode::Partial(i) => {
                         index = Some(i);
@@ -531,7 +531,7 @@ fn test_story(story: Value) {
                 Header::new(name.clone().into(), value.clone().into()).unwrap().into()
             }).collect();
 
-            encoder.encode(None, &mut input.clone().into_iter(), &mut buf).unwrap();
+            encoder.encode(None, &mut input.clone().into_iter(), &mut buf);
 
             decoder.decode(&buf.into(), |e| {
                 assert_eq!(e, input.remove(0).reify().unwrap());

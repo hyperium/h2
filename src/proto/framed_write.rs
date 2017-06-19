@@ -1,5 +1,5 @@
 use {ConnectionError, Reason};
-use frame::{self, Data, Frame, Error, Headers, PushPromise, Settings};
+use frame::{self, Frame, Error};
 use hpack;
 
 use futures::*;
@@ -19,10 +19,7 @@ pub struct FramedWrite<T> {
     hpack: hpack::Encoder,
 
     /// Write buffer
-    buf: BytesMut,
-
-    /// Position in the frame
-    pos: usize,
+    buf: Cursor<BytesMut>,
 
     /// Next frame to encode
     next: Option<Next>,
@@ -40,16 +37,7 @@ enum Next {
         /// Data frame to encode
         data: frame::Data
     },
-    Continuation {
-        /// Stream ID of continuation frame
-        stream_id: frame::StreamId,
-
-        /// Argument to pass to the HPACK encoder to resume encoding
-        resume: hpack::EncodeState,
-
-        /// remaining headers to encode
-        rem: header::IntoIter<HeaderValue>,
-    },
+    Continuation(frame::Continuation),
 }
 
 /// Initialze the connection with this amount of write buffer.
@@ -68,18 +56,21 @@ impl<T: AsyncWrite> FramedWrite<T> {
         FramedWrite {
             inner: inner,
             hpack: hpack::Encoder::default(),
-            buf: BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY),
-            pos: 0,
+            buf: Cursor::new(BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY)),
             next: None,
             max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
         }
     }
 
     fn has_capacity(&self) -> bool {
-        self.next.is_none() && self.buf.remaining_mut() >= MIN_BUFFER_CAPACITY
+        self.next.is_none() && self.buf.get_ref().remaining_mut() >= MIN_BUFFER_CAPACITY
     }
 
-    fn frame_len(&self, data: &Data) -> usize {
+    fn is_empty(&self) -> bool {
+        self.next.is_none() && self.buf.has_remaining()
+    }
+
+    fn frame_len(&self, data: &frame::Data) -> usize {
         cmp::min(self.max_frame_size, data.len())
     }
 }
@@ -105,7 +96,7 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
                     let len = self.frame_len(&v);
 
                     // Encode the frame head to the buffer
-                    head.encode(len, &mut self.buf);
+                    head.encode(len, self.buf.get_mut());
 
                     // Save the data frame
                     self.next = Some(Next::Data {
@@ -113,17 +104,19 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
                         data: v,
                     });
                 } else {
-                    v.encode(&mut self.buf);
+                    v.encode(self.buf.get_mut());
                 }
             }
             Frame::Headers(v) => {
-                unimplemented!();
+                if let Some(continuation) = v.encode(&mut self.hpack, self.buf.get_mut()) {
+                    self.next = Some(Next::Continuation(continuation));
+                }
             }
             Frame::PushPromise(v) => {
                 unimplemented!();
             }
             Frame::Settings(v) => {
-                v.encode(&mut self.buf);
+                v.encode(self.buf.get_mut());
             }
         }
 
@@ -131,7 +124,22 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        unimplemented!();
+        // TODO: implement
+        match self.next {
+            Some(Next::Data { .. }) => unimplemented!(),
+            _ => {}
+        }
+
+        // As long as there is data to write, try to write it!
+        while !self.is_empty() {
+            try_ready!(self.inner.write_buf(&mut self.buf));
+        }
+
+        // Clear internal buffer
+        self.buf.set_position(0);
+        self.buf.get_mut().clear();
+
+        Ok(Async::Ready(()))
     }
 
     fn close(&mut self) -> Poll<(), ConnectionError> {

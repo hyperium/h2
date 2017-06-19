@@ -76,7 +76,7 @@ impl Encoder {
 
     /// Encode a set of headers into the provide buffer
     pub fn encode<I>(&mut self, resume: Option<EncodeState>, headers: &mut I, dst: &mut BytesMut)
-        -> Result<Encode, EncoderError>
+        -> Encode
         where I: Iterator<Item=Header<Option<HeaderName>>>,
     {
         let len = dst.len();
@@ -86,7 +86,7 @@ impl Encoder {
                 dst.truncate(len);
             }
 
-            return Err(e);
+            unreachable!();
         }
 
         if let Some(resume) = resume {
@@ -104,9 +104,9 @@ impl Encoder {
                 }
             };
 
-            if try!(is_buffer_overflow(res)) {
+            if res.is_err() {
                 dst.truncate(len);
-                return Ok(Encode::Partial(resume));
+                return Encode::Partial(resume);
             }
         }
 
@@ -122,12 +122,12 @@ impl Encoder {
                     let index = self.table.index(header);
                     let res = self.encode_header(&index, dst);
 
-                    if try!(is_buffer_overflow(res)) {
+                    if res.is_err() {
                         dst.truncate(len);
-                        return Ok(Encode::Partial(EncodeState {
+                        return Encode::Partial(EncodeState {
                             index: index,
                             value: None,
-                        }));
+                        });
                     }
 
                     last_index = Some(index);
@@ -142,18 +142,18 @@ impl Encoder {
                         &value,
                         dst);
 
-                    if try!(is_buffer_overflow(res)) {
+                    if res.is_err() {
                         dst.truncate(len);
-                        return Ok(Encode::Partial(EncodeState {
+                        return Encode::Partial(EncodeState {
                             index: last_index.unwrap(),
                             value: Some(value),
-                        }));
+                        });
                     }
                 }
             };
         }
 
-        Ok(Encode::Full)
+        Encode::Full
     }
 
     fn encode_size_updates(&mut self, dst: &mut BytesMut) -> Result<(), EncoderError> {
@@ -415,14 +415,6 @@ fn encode_int<B: BufMut>(
 /// Returns true if the in the int can be fully encoded in the first byte.
 fn encode_int_one_byte(value: usize, prefix_bits: usize) -> bool {
     value < (1 << prefix_bits) - 1
-}
-
-fn is_buffer_overflow(res: Result<(), EncoderError>) -> Result<bool, EncoderError> {
-    match res {
-        Err(EncoderError::BufferOverflow) => Ok(true),
-        Err(e) => Err(e),
-        Ok(_) => Ok(false),
-    }
 }
 
 #[cfg(test)]
@@ -789,7 +781,7 @@ mod test {
             },
         ].into_iter();
 
-        let resume = match encoder.encode(None, &mut input, &mut dst).unwrap() {
+        let resume = match encoder.encode(None, &mut input, &mut dst) {
             Encode::Partial(r) => r,
             _ => panic!(),
         };
@@ -801,7 +793,7 @@ mod test {
 
         dst.clear();
 
-        match encoder.encode(Some(resume), &mut input, &mut dst).unwrap() {
+        match encoder.encode(Some(resume), &mut input, &mut dst) {
             Encode::Full => {}
             _ => panic!(),
         }

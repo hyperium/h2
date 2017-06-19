@@ -1,8 +1,13 @@
 use super::StreamId;
+use {frame, hpack};
+use frame::{Head, Kind};
 use util::byte_str::ByteStr;
 
 use http::{Method, StatusCode};
-use http::header::{self, HeaderMap, HeaderValue};
+use http::header::{self, HeaderMap, HeaderName, HeaderValue};
+
+use bytes::BytesMut;
+use byteorder::{BigEndian, ByteOrder};
 
 /// Header frame
 ///
@@ -39,6 +44,18 @@ pub struct PushPromise {
 
     /// The associated flags
     flags: HeadersFlag,
+}
+
+#[derive(Debug)]
+pub struct Continuation {
+    /// Stream ID of continuation frame
+    stream_id: StreamId,
+
+    /// Argument to pass to the HPACK encoder to resume encoding
+    hpack: hpack::EncodeState,
+
+    /// remaining headers to encode
+    headers: Iter,
 }
 
 #[derive(Debug)]
@@ -85,6 +102,90 @@ const ALL: u8 = END_STREAM
               | PADDED
               | PRIORITY;
 
+// ===== impl Headers =====
+
+impl Headers {
+    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
+        -> Option<Continuation>
+    {
+        let head = self.head();
+        let pos = dst.len();
+
+        // At this point, we don't know how big the h2 frame will be.
+        // So, we write the head with length 0, then write the body, and
+        // finally write the length once we know the size.
+        head.encode(0, dst);
+
+        // Encode the frame
+        let mut headers = Iter {
+            pseudo: Some(self.pseudo),
+            headers: self.headers.into_iter(),
+        };
+
+        let ret = match encoder.encode(None, &mut headers, dst) {
+            hpack::Encode::Full => None,
+            hpack::Encode::Partial(state) => {
+                Some(Continuation {
+                    stream_id: self.stream_id,
+                    hpack: state,
+                    headers: headers,
+                })
+            }
+        };
+
+        // Compute the frame length
+        let len = (dst.len() - pos) - frame::HEADER_LEN;
+
+        // Write the frame length
+        BigEndian::write_u32(&mut dst[pos..pos+3], len as u32);
+
+        ret
+    }
+
+    fn head(&self) -> Head {
+        Head::new(Kind::Data, self.flags.into(), self.stream_id)
+    }
+}
+
+// ===== impl Iter =====
+
+impl Iterator for Iter {
+    type Item = hpack::Header<Option<HeaderName>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use hpack::Header::*;
+
+        if let Some(ref mut pseudo) = self.pseudo {
+            if let Some(method) = pseudo.method.take() {
+                return Some(Method(method));
+            }
+
+            if let Some(scheme) = pseudo.scheme.take() {
+                return Some(Scheme(scheme));
+            }
+
+            if let Some(authority) = pseudo.authority.take() {
+                return Some(Authority(authority));
+            }
+
+            if let Some(path) = pseudo.path.take() {
+                return Some(Path(path));
+            }
+
+            if let Some(status) = pseudo.status.take() {
+                return Some(Status(status));
+            }
+        }
+
+        self.pseudo = None;
+
+        self.headers.next()
+            .map(|(name, value)| {
+                Field { name: name, value: value}
+            })
+    }
+}
+
 // ===== impl HeadersFlag =====
 
 impl HeadersFlag {
@@ -110,5 +211,11 @@ impl HeadersFlag {
 
     pub fn is_priority(&self) -> bool {
         self.0 & PRIORITY == PRIORITY
+    }
+}
+
+impl From<HeadersFlag> for u8 {
+    fn from(src: HeadersFlag) -> u8 {
+        src.0
     }
 }

@@ -16,6 +16,8 @@ extern crate bytes;
 // Hash function used for HPACK encoding
 extern crate fnv;
 
+extern crate byteorder;
+
 #[macro_use]
 extern crate log;
 
