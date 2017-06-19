@@ -92,18 +92,21 @@ impl Encoder {
         if let Some(resume) = resume {
             let len = dst.len();
 
-            if let Some(ref value) = resume.value {
-                unimplemented!();
-            } else {
-                // Encode the header
-                match self.encode_header(&resume.index, dst) {
-                    Err(EncoderError::BufferOverflow) => {
-                        dst.truncate(len);
-                        return Ok(Encode::Partial(resume));
-                    }
-                    Err(e) => return Err(e),
-                    Ok(_) => {}
+            let res = match resume.value {
+                Some(ref value) => {
+                    self.encode_header_without_name(
+                        &resume.index,
+                        value,
+                        dst)
                 }
+                None => {
+                    self.encode_header(&resume.index, dst)
+                }
+            };
+
+            if try!(is_buffer_overflow(res)) {
+                dst.truncate(len);
+                return Ok(Encode::Partial(resume));
             }
         }
 
@@ -229,11 +232,13 @@ impl Encoder {
         -> Result<(), EncoderError>
     {
         match *last {
-            Index::Indexed(idx, ..) |
-                Index::Name(idx, ..) |
-                Index::Inserted(idx) |
-                Index::InsertedValue(idx, ..) =>
+            Index::Indexed(..) |
+                Index::Name(..) |
+                Index::Inserted(..) |
+                Index::InsertedValue(..) =>
             {
+                let idx = self.table.resolve_idx(last);
+
                 try!(encode_not_indexed(
                         idx,
                         value.as_ref(),
@@ -744,6 +749,70 @@ mod test {
     }
 
     #[test]
+    fn test_nameless_header() {
+        let mut encoder = Encoder::default();
+
+        let res = encode(&mut encoder, vec![
+            Header::Field {
+                name: Some("hello".parse().unwrap()),
+                value: HeaderValue::try_from_bytes(b"world").unwrap(),
+            },
+            Header::Field {
+                name: None,
+                value: HeaderValue::try_from_bytes(b"zomg").unwrap(),
+            },
+        ]);
+
+        assert_eq!(&[0x40, 0x80 | 4], &res[0..2]);
+        assert_eq!("hello", huff_decode(&res[2..6]));
+        assert_eq!(0x80 | 4, res[6]);
+        assert_eq!("world", huff_decode(&res[7..11]));
+
+        // Next is not indexed
+        assert_eq!(&[15, 47, 0x80 | 3], &res[11..14]);
+        assert_eq!("zomg", huff_decode(&res[14..]));
+    }
+
+    #[test]
+    fn test_nameless_header_at_resume() {
+        let mut encoder = Encoder::default();
+        let mut dst = BytesMut::from(Vec::with_capacity(11));
+
+        let mut input = vec![
+            Header::Field {
+                name: Some("hello".parse().unwrap()),
+                value: HeaderValue::try_from_bytes(b"world").unwrap(),
+            },
+            Header::Field {
+                name: None,
+                value: HeaderValue::try_from_bytes(b"zomg").unwrap(),
+            },
+        ].into_iter();
+
+        let resume = match encoder.encode(None, &mut input, &mut dst).unwrap() {
+            Encode::Partial(r) => r,
+            _ => panic!(),
+        };
+
+        assert_eq!(&[0x40, 0x80 | 4], &dst[0..2]);
+        assert_eq!("hello", huff_decode(&dst[2..6]));
+        assert_eq!(0x80 | 4, dst[6]);
+        assert_eq!("world", huff_decode(&dst[7..11]));
+
+        dst.clear();
+
+        match encoder.encode(Some(resume), &mut input, &mut dst).unwrap() {
+            Encode::Full => {}
+            _ => panic!(),
+        }
+
+        // Next is not indexed
+        assert_eq!(&[15, 47, 0x80 | 3], &dst[0..3]);
+        assert_eq!("zomg", huff_decode(&dst[3..]));
+    }
+
+    #[test]
+    #[ignore]
     fn test_evicted_overflow() {
         // Not sure what the best way to do this is.
     }

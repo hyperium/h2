@@ -120,6 +120,18 @@ impl Table {
         }
     }
 
+    pub fn resolve_idx(&self, index: &Index) -> usize {
+        use self::Index::*;
+
+        match *index {
+            Indexed(idx, ..) => idx,
+            Name(idx, ..) => idx,
+            Inserted(idx) => idx + DYN_OFFSET,
+            InsertedValue(idx, _) => idx,
+            NotIndexed(_) => panic!("cannot resolve index"),
+        }
+    }
+
     /// Index the header in the HPACK table.
     pub fn index(&mut self, header: Header) -> Index {
         // Check the static table
