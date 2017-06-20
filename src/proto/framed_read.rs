@@ -7,7 +7,7 @@ use tokio_io::AsyncWrite;
 use futures::*;
 use bytes::{Bytes, BytesMut, Buf};
 
-use std::io::{self, Write};
+use std::io::{self, Write, Cursor};
 
 pub struct FramedRead<T> {
     inner: T,
@@ -15,6 +15,13 @@ pub struct FramedRead<T> {
     // hpack decoder state
     hpack: hpack::Decoder,
 
+    partial: Option<Partial>,
+}
+
+/// Partially loaded headers frame
+enum Partial {
+    Headers(frame::Headers),
+    PushPromise(frame::PushPromise),
 }
 
 impl<T> FramedRead<T>
@@ -25,6 +32,7 @@ impl<T> FramedRead<T>
         FramedRead {
             inner: inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
+            partial: None,
         }
     }
 }
@@ -34,9 +42,20 @@ impl<T> FramedRead<T> {
         // Parse the head
         let head = frame::Head::parse(&bytes);
 
+        if self.partial.is_some() && head.kind() != Kind::Continuation {
+            unimplemented!();
+        }
+
         let frame = match head.kind() {
             Kind::Data => unimplemented!(),
-            Kind::Headers => unimplemented!(),
+            Kind::Headers => {
+                let mut buf = Cursor::new(bytes);
+                buf.set_position(frame::HEADER_LEN as u64);
+
+                // TODO: Change to drain: carllerche/bytes#130
+                let frame = try!(frame::Headers::load(head, &mut buf, &mut self.hpack));
+                frame.into()
+            }
             Kind::Priority => unimplemented!(),
             Kind::Reset => unimplemented!(),
             Kind::Settings => {

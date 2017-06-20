@@ -1,13 +1,16 @@
 use super::StreamId;
-use {frame, hpack};
-use frame::{Head, Kind};
+use hpack;
+use error::Reason;
+use frame::{self, Frame, Head, Kind, Error};
 use util::byte_str::ByteStr;
 
 use http::{Method, StatusCode};
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
 
-use bytes::BytesMut;
+use bytes::{BytesMut, Bytes};
 use byteorder::{BigEndian, ByteOrder};
+
+use std::io::Cursor;
 
 /// Header frame
 ///
@@ -20,8 +23,8 @@ pub struct Headers {
     /// The stream dependency information, if any.
     stream_dep: Option<StreamDependency>,
 
-    /// The decoded headers
-    headers: HeaderMap<HeaderValue>,
+    /// The decoded header fields
+    fields: HeaderMap<HeaderValue>,
 
     /// Pseudo headers, these are broken out as they must be sent as part of the
     /// headers frame.
@@ -72,7 +75,7 @@ pub struct StreamDependency {
     is_exclusive: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Pseudo {
     // Request
     method: Option<Method>,
@@ -89,8 +92,8 @@ pub struct Iter {
     /// Pseudo headers
     pseudo: Option<Pseudo>,
 
-    /// Headers
-    headers: header::IntoIter<HeaderValue>,
+    /// Header fields
+    fields: header::IntoIter<HeaderValue>,
 }
 
 const END_STREAM: u8 = 0x1;
@@ -105,6 +108,60 @@ const ALL: u8 = END_STREAM
 // ===== impl Headers =====
 
 impl Headers {
+    pub fn load(head: Head, src: &mut Cursor<Bytes>, decoder: &mut hpack::Decoder)
+        -> Result<Self, Error>
+    {
+        let flags = HeadersFlag(head.flag());
+
+        assert!(!flags.is_priority(), "unimplemented stream priority");
+
+        let mut pseudo = Pseudo::default();
+        let mut fields = HeaderMap::new();
+        let mut err = false;
+
+        macro_rules! set_pseudo {
+            ($field:ident, $val:expr) => {{
+                if pseudo.$field.is_some() {
+                    err = true;
+                } else {
+                    pseudo.$field = Some($val);
+                }
+            }}
+        }
+
+        // At this point, we're going to assume that the hpack encoded headers
+        // contain the entire payload. Later, we need to check for stream
+        // priority.
+        //
+        // TODO: Provide a way to abort decoding if an error is hit.
+        try!(decoder.decode(src, |header| {
+            use hpack::Header::*;
+
+            match header {
+                Field { name, value } => {
+                    fields.append(name, value);
+                }
+                Authority(v) => set_pseudo!(authority, v),
+                Method(v) => set_pseudo!(method, v),
+                Scheme(v) => set_pseudo!(scheme, v),
+                Path(v) => set_pseudo!(path, v),
+                Status(v) => set_pseudo!(status, v),
+            }
+        }));
+
+        if err {
+            return Err(hpack::DecoderError::RepeatedPseudo.into());
+        }
+
+        Ok(Headers {
+            stream_id: head.stream_id(),
+            stream_dep: None,
+            fields: fields,
+            pseudo: pseudo,
+            flags: flags,
+        })
+    }
+
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
         -> Option<Continuation>
     {
@@ -119,7 +176,7 @@ impl Headers {
         // Encode the frame
         let mut headers = Iter {
             pseudo: Some(self.pseudo),
-            headers: self.headers.into_iter(),
+            fields: self.fields.into_iter(),
         };
 
         let ret = match encoder.encode(None, &mut headers, dst) {
@@ -144,6 +201,12 @@ impl Headers {
 
     fn head(&self) -> Head {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
+    }
+}
+
+impl From<Headers> for Frame {
+    fn from(src: Headers) -> Frame {
+        Frame::Headers(src)
     }
 }
 
@@ -179,7 +242,7 @@ impl Iterator for Iter {
 
         self.pseudo = None;
 
-        self.headers.next()
+        self.fields.next()
             .map(|(name, value)| {
                 Field { name: name, value: value}
             })

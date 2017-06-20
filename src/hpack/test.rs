@@ -20,6 +20,7 @@ use self::rand::{StdRng, Rng, SeedableRng};
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::Cursor;
 use std::path::Path;
 use std::str;
 
@@ -220,7 +221,7 @@ impl FuzzHpack {
                         index = Some(i);
 
                         // Decode the chunk!
-                        decoder.decode(&buf.into(), |e| {
+                        decoder.decode(&mut Cursor::new(buf.into()), |e| {
                             assert_eq!(e, expect.remove(0).reify().unwrap());
                         }).unwrap();
 
@@ -231,7 +232,7 @@ impl FuzzHpack {
             }
 
             // Decode the chunk!
-            decoder.decode(&buf.into(), |e| {
+            decoder.decode(&mut Cursor::new(buf.into()), |e| {
                 assert_eq!(e, expect.remove(0).reify().unwrap());
             }).unwrap();
         }
@@ -506,7 +507,7 @@ fn test_story(story: Value) {
                 decoder.queue_size_update(size);
             }
 
-            decoder.decode(&case.wire.clone().into(), |e| {
+            decoder.decode(&mut Cursor::new(case.wire.clone().into()), |e| {
                 let (name, value) = expect.remove(0);
                 assert_eq!(name, key_str(&e));
                 assert_eq!(value, value_str(&e));
@@ -533,7 +534,7 @@ fn test_story(story: Value) {
 
             encoder.encode(None, &mut input.clone().into_iter(), &mut buf);
 
-            decoder.decode(&buf.into(), |e| {
+            decoder.decode(&mut Cursor::new(buf.into()), |e| {
                 assert_eq!(e, input.remove(0).reify().unwrap());
             }).unwrap();
 

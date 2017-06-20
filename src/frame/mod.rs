@@ -1,4 +1,6 @@
+use hpack;
 use error::{ConnectionError, Reason};
+
 use bytes::{Bytes, BytesMut, BufMut};
 
 use std::io;
@@ -92,6 +94,9 @@ pub enum Error {
     /// This is returned if a settings frame is received with a stream
     /// identifier other than zero.
     InvalidStreamId,
+
+    /// Failed to perform HPACK decoding
+    Hpack(hpack::DecoderError),
 }
 
 // ===== impl Frame ======

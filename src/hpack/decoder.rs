@@ -1,4 +1,5 @@
 use super::{huffman, header as h2_header, Header};
+use frame;
 use util::byte_str::FromUtf8Error;
 
 use http::{method, header, status, StatusCode, Method};
@@ -19,7 +20,7 @@ pub struct Decoder {
 
 /// Represents all errors that can be encountered while performing the decoding
 /// of an HPACK header set.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DecoderError {
     InvalidRepresentation,
     InvalidIntegerPrefix,
@@ -32,6 +33,7 @@ pub enum DecoderError {
     IntegerUnderflow,
     IntegerOverflow,
     StringUnderflow,
+    RepeatedPseudo,
 }
 
 enum Representation {
@@ -155,30 +157,29 @@ impl Decoder {
     }
 
     /// Decodes the headers found in the given buffer.
-    pub fn decode<F>(&mut self, src: &Bytes, mut f: F) -> Result<(), DecoderError>
+    pub fn decode<F>(&mut self, src: &mut Cursor<Bytes>, mut f: F) -> Result<(), DecoderError>
         where F: FnMut(Header)
     {
         use self::Representation::*;
 
-        let mut buf = Cursor::new(src);
         let mut can_resize = true;
 
         if let Some(size) = self.max_size_update.take() {
             self.last_max_update = size;
         }
 
-        while buf.has_remaining() {
+        while src.has_remaining() {
             // At this point we are always at the beginning of the next block
             // within the HPACK data. The type of the block can always be
             // determined from the first byte.
-            match try!(Representation::load(peek_u8(&mut buf))) {
+            match try!(Representation::load(peek_u8(src))) {
                 Indexed => {
                     can_resize = false;
-                    f(try!(self.decode_indexed(&mut buf)));
+                    f(try!(self.decode_indexed(src)));
                 }
                 LiteralWithIndexing => {
                     can_resize = false;
-                    let entry = try!(self.decode_literal(&mut buf, true));
+                    let entry = try!(self.decode_literal(src, true));
 
                     // Insert the header into the table
                     self.table.insert(entry.clone());
@@ -187,12 +188,12 @@ impl Decoder {
                 }
                 LiteralWithoutIndexing => {
                     can_resize = false;
-                    let entry = try!(self.decode_literal(&mut buf, false));
+                    let entry = try!(self.decode_literal(src, false));
                     f(entry);
                 }
                 LiteralNeverIndexed => {
                     can_resize = false;
-                    let entry = try!(self.decode_literal(&mut buf, false));
+                    let entry = try!(self.decode_literal(src, false));
 
                     // TODO: Track that this should never be indexed
 
@@ -204,7 +205,7 @@ impl Decoder {
                     }
 
                     // Handle the dynamic table size update
-                    try!(self.process_size_update(&mut buf));
+                    try!(self.process_size_update(src));
                 }
             }
         }
@@ -212,7 +213,7 @@ impl Decoder {
         Ok(())
     }
 
-    fn process_size_update(&mut self, buf: &mut Cursor<&Bytes>)
+    fn process_size_update(&mut self, buf: &mut Cursor<Bytes>)
         -> Result<(), DecoderError>
     {
         let new_size = try!(decode_int(buf, 5));
@@ -229,14 +230,14 @@ impl Decoder {
         Ok(())
     }
 
-    fn decode_indexed(&self, buf: &mut Cursor<&Bytes>)
+    fn decode_indexed(&self, buf: &mut Cursor<Bytes>)
         -> Result<Header, DecoderError>
     {
         let index = try!(decode_int(buf, 7));
         self.table.get(index)
     }
 
-    fn decode_literal(&mut self, buf: &mut Cursor<&Bytes>, index: bool)
+    fn decode_literal(&mut self, buf: &mut Cursor<Bytes>, index: bool)
         -> Result<Header, DecoderError>
     {
         let prefix = if index {
@@ -263,7 +264,7 @@ impl Decoder {
         }
     }
 
-    fn decode_string(&mut self, buf: &mut Cursor<&Bytes>) -> Result<Bytes, DecoderError> {
+    fn decode_string(&mut self, buf: &mut Cursor<Bytes>) -> Result<Bytes, DecoderError> {
         const HUFF_FLAG: u8 = 0b10000000;
 
         // The first bit in the first byte contains the huffman encoded flag.
@@ -388,7 +389,7 @@ fn peek_u8<B: Buf>(buf: &mut B) -> u8 {
     buf.bytes()[0]
 }
 
-fn take(buf: &mut Cursor<&Bytes>, n: usize) -> Bytes {
+fn take(buf: &mut Cursor<Bytes>, n: usize) -> Bytes {
     let pos = buf.position() as usize;
     let ret = buf.get_ref().slice(pos, pos + n);
     buf.set_position((pos + n) as u64);
@@ -517,6 +518,12 @@ impl From<header::FromBytesError> for DecoderError {
 impl From<status::FromStrError> for DecoderError {
     fn from(src: status::FromStrError) -> DecoderError {
         DecoderError::InvalidUtf8
+    }
+}
+
+impl From<DecoderError> for frame::Error {
+    fn from(src: DecoderError) -> Self {
+        frame::Error::Hpack(src)
     }
 }
 
