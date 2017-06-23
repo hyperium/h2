@@ -54,6 +54,13 @@ impl<T> FramedRead<T> {
 
                 // TODO: Change to drain: carllerche/bytes#130
                 let frame = try!(frame::Headers::load(head, &mut buf, &mut self.hpack));
+
+                if !frame.is_end_headers() {
+                    // Wait for continuation frames
+                    self.partial = Some(Partial::Headers(frame));
+                    return Ok(None);
+                }
+
                 frame.into()
             }
             Kind::Priority => unimplemented!(),
@@ -88,6 +95,7 @@ impl<T> Stream for FramedRead<T>
             };
 
             if let Some(frame) = try!(self.decode_frame(bytes)) {
+                debug!("poll; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));
             }
         }

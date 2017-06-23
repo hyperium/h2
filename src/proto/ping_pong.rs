@@ -1,5 +1,6 @@
 use ConnectionError;
 use frame::Frame;
+use proto::ReadySink;
 
 use futures::*;
 
@@ -43,5 +44,15 @@ impl<T> Sink for PingPong<T>
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         self.inner.poll_complete()
+    }
+}
+
+impl<T> ReadySink for PingPong<T>
+    where T: Stream<Item = Frame, Error = ConnectionError>,
+          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: ReadySink,
+{
+    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+        self.inner.poll_ready()
     }
 }

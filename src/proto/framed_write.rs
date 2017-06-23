@@ -1,6 +1,6 @@
-use {ConnectionError, Reason};
+use {hpack, ConnectionError, Reason};
 use frame::{self, Frame, Error};
-use hpack;
+use proto::ReadySink;
 
 use futures::*;
 use tokio_io::AsyncWrite;
@@ -67,7 +67,7 @@ impl<T: AsyncWrite> FramedWrite<T> {
     }
 
     fn is_empty(&self) -> bool {
-        self.next.is_none() && self.buf.has_remaining()
+        self.next.is_none() && !self.buf.has_remaining()
     }
 
     fn frame_len(&self, data: &frame::Data) -> usize {
@@ -80,13 +80,10 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
     type SinkError = ConnectionError;
 
     fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
-        if self.has_capacity() {
-            // Try flushing
-            try!(self.poll_complete());
+        debug!("start_send; frame={:?}", item);
 
-            if self.has_capacity() {
-                return Ok(AsyncSink::NotReady(item));
-            }
+        if !try!(self.poll_ready()).is_ready() {
+            return Ok(AsyncSink::NotReady(item));
         }
 
         match item {
@@ -117,6 +114,7 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
             }
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
+                trace!("encoded settings; rem={:?}", self.buf.remaining());
             }
         }
 
@@ -124,6 +122,8 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        trace!("FramedWrite::poll_complete");
+
         // TODO: implement
         match self.next {
             Some(Next::Data { .. }) => unimplemented!(),
@@ -132,8 +132,13 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
 
         // As long as there is data to write, try to write it!
         while !self.is_empty() {
+            trace!("writing buffer; next={:?}; rem={:?}", self.next, self.buf.remaining());
             try_ready!(self.inner.write_buf(&mut self.buf));
         }
+
+        trace!("flushing buffer");
+        // Flush the upstream
+        try_nb!(self.inner.flush());
 
         // Clear internal buffer
         self.buf.set_position(0);
@@ -145,6 +150,21 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
     fn close(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_complete());
         self.inner.shutdown().map_err(Into::into)
+    }
+}
+
+impl<T: AsyncWrite> ReadySink for FramedWrite<T> {
+    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
+        if !self.has_capacity() {
+            // Try flushing
+            try!(self.poll_complete());
+
+            if !self.has_capacity() {
+                return Ok(Async::NotReady);
+            }
+        }
+
+        Ok(Async::Ready(()))
     }
 }
 

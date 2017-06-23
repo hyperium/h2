@@ -34,7 +34,7 @@ pub struct Headers {
     flags: HeadersFlag,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct HeadersFlag(u8);
 
 #[derive(Debug)]
@@ -108,6 +108,16 @@ const ALL: u8 = END_STREAM
 // ===== impl Headers =====
 
 impl Headers {
+    pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap<HeaderValue>) -> Self {
+        Headers {
+            stream_id: stream_id,
+            stream_dep: None,
+            fields: fields,
+            pseudo: pseudo,
+            flags: HeadersFlag::default(),
+        }
+    }
+
     pub fn load(head: Head, src: &mut Cursor<Bytes>, decoder: &mut hpack::Decoder)
         -> Result<Self, Error>
     {
@@ -162,6 +172,10 @@ impl Headers {
         })
     }
 
+    pub fn is_end_headers(&self) -> bool {
+        self.flags.is_end_headers()
+    }
+
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
         -> Option<Continuation>
     {
@@ -207,6 +221,28 @@ impl Headers {
 impl From<Headers> for Frame {
     fn from(src: Headers) -> Frame {
         Frame::Headers(src)
+    }
+}
+
+// ===== impl Pseudo =====
+
+impl Pseudo {
+    pub fn request(method: Method, path: ByteStr) -> Self {
+        Pseudo {
+            method: Some(method),
+            scheme: None,
+            authority: None,
+            path: Some(path),
+            status: None,
+        }
+    }
+
+    pub fn set_scheme(&mut self, scheme: ByteStr) {
+        self.scheme = Some(scheme);
+    }
+
+    pub fn set_authority(&mut self, authority: ByteStr) {
+        self.authority = Some(authority);
     }
 }
 
@@ -264,6 +300,10 @@ impl HeadersFlag {
         self.0 & END_STREAM == END_STREAM
     }
 
+    pub fn set_end_stream(&mut self) {
+        self.0 |= END_STREAM
+    }
+
     pub fn is_end_headers(&self) -> bool {
         self.0 & END_HEADERS == END_HEADERS
     }
@@ -274,6 +314,13 @@ impl HeadersFlag {
 
     pub fn is_priority(&self) -> bool {
         self.0 & PRIORITY == PRIORITY
+    }
+}
+
+impl Default for HeadersFlag {
+    /// Returns a `HeadersFlag` value with `END_HEADERS` set.
+    fn default() -> Self {
+        HeadersFlag(END_HEADERS)
     }
 }
 

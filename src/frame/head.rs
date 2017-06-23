@@ -66,7 +66,7 @@ impl Head {
     }
 
     pub fn encode<T: BufMut>(&self, payload_len: usize, dst: &mut T) {
-        debug_assert_eq!(self.encode_len(), dst.remaining_mut());
+        debug_assert!(self.encode_len() <= dst.remaining_mut());
         debug_assert!(self.stream_id & STREAM_ID_MASK == 0);
 
         dst.put_uint::<BigEndian>(payload_len as u64, 3);
