@@ -36,6 +36,7 @@ pub use frame::{StreamId};
 pub use proto::Connection;
 
 /// An H2 connection frame
+#[derive(Debug)]
 pub enum Frame<T> {
     Message {
         id: StreamId,

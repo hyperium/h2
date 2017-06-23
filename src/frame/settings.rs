@@ -3,7 +3,7 @@ use bytes::{Bytes, BytesMut, BufMut, BigEndian};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Settings {
-    flag: SettingsFlag,
+    flags: SettingsFlags,
     // Fields
     values: SettingSet,
 }
@@ -32,7 +32,7 @@ pub enum Setting {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
-pub struct SettingsFlag(u8);
+pub struct SettingsFlags(u8);
 
 const ACK: u8 = 0x1;
 const ALL: u8 = ACK;
@@ -45,16 +45,24 @@ pub const DEFAULT_MAX_FRAME_SIZE: usize = 16_384;
 impl Settings {
     pub fn ack() -> Settings {
         Settings {
-            flag: SettingsFlag::ack(),
+            flags: SettingsFlags::ack(),
             .. Settings::default()
         }
     }
 
     pub fn new(values: SettingSet) -> Settings {
         Settings {
-            flag: SettingsFlag::empty(),
+            flags: SettingsFlags::empty(),
             values: values,
         }
+    }
+
+    pub fn is_ack(&self) -> bool {
+        self.flags.is_ack()
+    }
+
+    pub fn into_set(self) -> SettingSet {
+        self.values
     }
 
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
@@ -67,7 +75,7 @@ impl Settings {
         }
 
         // Load the flag
-        let flag = SettingsFlag::load(head.flag());
+        let flag = SettingsFlags::load(head.flag());
 
         if flag.is_ack() {
             // Ensure that the payload is empty
@@ -86,7 +94,7 @@ impl Settings {
         }
 
         let mut settings = Settings::default();
-        debug_assert!(!settings.flag.is_ack());
+        debug_assert!(!settings.flags.is_ack());
 
         for raw in payload.chunks(6) {
             match Setting::load(raw) {
@@ -123,7 +131,7 @@ impl Settings {
 
     pub fn encode(&self, dst: &mut BytesMut) {
         // Create & encode an appropriate frame head
-        let head = Head::new(Kind::Settings, self.flag.into(), 0);
+        let head = Head::new(Kind::Settings, self.flags.into(), 0);
         let payload_len = self.payload_len();
 
         head.encode(payload_len, dst);
@@ -221,19 +229,19 @@ impl Setting {
     }
 }
 
-// ===== impl SettingsFlag =====
+// ===== impl SettingsFlags =====
 
-impl SettingsFlag {
-    pub fn empty() -> SettingsFlag {
-        SettingsFlag(0)
+impl SettingsFlags {
+    pub fn empty() -> SettingsFlags {
+        SettingsFlags(0)
     }
 
-    pub fn load(bits: u8) -> SettingsFlag {
-        SettingsFlag(bits & ALL)
+    pub fn load(bits: u8) -> SettingsFlags {
+        SettingsFlags(bits & ALL)
     }
 
-    pub fn ack() -> SettingsFlag {
-        SettingsFlag(ACK)
+    pub fn ack() -> SettingsFlags {
+        SettingsFlags(ACK)
     }
 
     pub fn is_ack(&self) -> bool {
@@ -241,8 +249,8 @@ impl SettingsFlag {
     }
 }
 
-impl From<SettingsFlag> for u8 {
-    fn from(src: SettingsFlag) -> u8 {
+impl From<SettingsFlags> for u8 {
+    fn from(src: SettingsFlags) -> u8 {
         src.0
     }
 }

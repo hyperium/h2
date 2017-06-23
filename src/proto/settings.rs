@@ -78,7 +78,23 @@ impl<T> Stream for Settings<T>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        self.inner.poll()
+        loop {
+            match try_ready!(self.inner.poll()) {
+                Some(Frame::Settings(v)) => {
+                    if v.is_ack() {
+                        debug!("received remote settings ack");
+                        // TODO: Handle acks
+                    } else {
+                        // Received new settings, queue an ACK
+                        self.remaining_acks += 1;
+
+                        // Save off the settings
+                        self.remote = v.into_set();
+                    }
+                }
+                v => return Ok(Async::Ready(v)),
+            }
+        }
     }
 }
 

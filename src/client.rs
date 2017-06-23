@@ -83,7 +83,7 @@ impl Peer for Client {
 
         // TODO: Factor in trailers
         if !body {
-            frame.set_end_stream();
+            // frame.set_end_stream();
         } else {
             unimplemented!();
         }
