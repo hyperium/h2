@@ -6,7 +6,7 @@ authors = ["Carl Lerche <me@carllerche.com>"]
 [dependencies]
 futures = "0.1"
 tokio-io = "0.1"
-tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
+tokio-timer = "0.1"
 bytes = "0.4"
 http = { git = "https://github.com/carllerche/http" }
 byteorder = "1.0"
