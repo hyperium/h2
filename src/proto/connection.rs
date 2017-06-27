@@ -22,29 +22,16 @@ pub struct Connection<T, P> {
     peer: PhantomData<P>,
 }
 
-impl<T, P> From<proto::Inner<T>> for Connection<T, P>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-{
-    fn from(src: proto::Inner<T>) -> Self {
-        Connection {
-            inner: src,
-            streams: StreamMap::default(),
-            peer: PhantomData,
-        }
-    }
-}
-
 type StreamMap<T> = OrderMap<StreamId, T, BuildHasherDefault<FnvHasher>>;
 
-impl<T, P> Connection<T, P>
+pub fn new<T, P>(transport: proto::Inner<T>) -> Connection<T, P>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
 {
-    /// Completes when the connection has terminated
-    pub fn poll_shutdown(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_complete());
-        Ok(Async::NotReady)
+    Connection {
+        inner: transport,
+        streams: StreamMap::default(),
+        peer: PhantomData,
     }
 }
 

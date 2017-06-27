@@ -22,7 +22,7 @@ pub type Connection<T> = super::Connection<T, Client>;
 ///
 /// Returns a future which resolves to the connection value once the H2
 /// handshake has been completed.
-pub fn bind<T>(io: T) -> Handshake<T>
+pub fn handshake<T>(io: T) -> Handshake<T>
     where T: AsyncRead + AsyncWrite + 'static,
 {
     use tokio_io::io;
@@ -30,12 +30,11 @@ pub fn bind<T>(io: T) -> Handshake<T>
     debug!("binding client connection");
 
     let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-        .then(|res| {
-            let (io, _) = res.unwrap();
+        .map(|(io, _)| {
             debug!("client connection bound");
 
             // Use default local settings for now
-            proto::Handshake::new(io, Default::default())
+            proto::from_io(io, Default::default())
         })
         .map_err(ConnectionError::from);
 

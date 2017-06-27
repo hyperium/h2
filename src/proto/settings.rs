@@ -20,19 +20,23 @@ pub struct Settings<T> {
 
     // True when the local settings must be flushed to the remote
     is_dirty: bool,
+
+    // True when we have received a settings frame from the remote.
+    received_remote: bool,
 }
 
 impl<T> Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T, local: frame::SettingSet, remote: frame::SettingSet) -> Settings<T> {
+    pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
         Settings {
             inner: inner,
             local: local,
-            remote: remote,
-            remaining_acks: 1,
-            is_dirty: false,
+            remote: frame::SettingSet::default(),
+            remaining_acks: 0,
+            is_dirty: true,
+            received_remote: false,
         }
     }
 

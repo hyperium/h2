@@ -1,17 +1,20 @@
 use {hpack, ConnectionError};
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
-
-use tokio_io::AsyncWrite;
+use proto::ReadySink;
 
 use futures::*;
+
 use bytes::{Bytes, BytesMut, Buf};
+
+use tokio_io::{AsyncRead};
+use tokio_io::codec::length_delimited;
 
 use std::io::{self, Write, Cursor};
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
-    inner: T,
+    inner: length_delimited::FramedRead<T>,
 
     // hpack decoder state
     hpack: hpack::Decoder,
@@ -27,10 +30,10 @@ enum Partial {
 }
 
 impl<T> FramedRead<T>
-    where T: Stream<Item = BytesMut, Error = io::Error>,
-          T: AsyncWrite,
+    where T: AsyncRead,
+          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T) -> FramedRead<T> {
+    pub fn new(inner: length_delimited::FramedRead<T>) -> FramedRead<T> {
         FramedRead {
             inner: inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
@@ -103,7 +106,7 @@ impl<T> FramedRead<T> {
 }
 
 impl<T> Stream for FramedRead<T>
-    where T: Stream<Item = BytesMut, Error = io::Error>,
+    where T: AsyncRead,
 {
     type Item = Frame;
     type Error = ConnectionError;
@@ -128,30 +131,26 @@ impl<T: Sink> Sink for FramedRead<T> {
     type SinkError = T::SinkError;
 
     fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
-        self.inner.start_send(item)
+        self.inner.get_mut().start_send(item)
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
-        self.inner.poll_complete()
+        self.inner.get_mut().poll_complete()
+    }
+}
+
+impl<T: ReadySink> ReadySink for FramedRead<T> {
+    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
+        self.inner.get_mut().poll_ready()
     }
 }
 
 impl<T: io::Write> io::Write for FramedRead<T> {
     fn write(&mut self, src: &[u8]) -> io::Result<usize> {
-        self.inner.write(src)
+        self.inner.get_mut().write(src)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl<T: AsyncWrite> AsyncWrite for FramedRead<T> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.inner.shutdown()
-    }
-
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        self.inner.write_buf(buf)
+        self.inner.get_mut().flush()
     }
 }

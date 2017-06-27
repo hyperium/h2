@@ -3,7 +3,7 @@ use frame::{self, Frame, Error};
 use proto::ReadySink;
 
 use futures::*;
-use tokio_io::AsyncWrite;
+use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, BytesMut, Buf, BufMut};
 use http::header::{self, HeaderValue};
 
@@ -174,5 +174,23 @@ impl<T: Stream> Stream for FramedWrite<T> {
 
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
         self.inner.poll()
+    }
+}
+
+impl<T: io::Read> io::Read for FramedWrite<T> {
+    fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(dst)
+    }
+}
+
+impl<T: AsyncRead> AsyncRead for FramedWrite<T> {
+    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error>
+        where Self: Sized,
+    {
+        self.inner.read_buf(buf)
+    }
+
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+        self.inner.prepare_uninitialized_buffer(buf)
     }
 }
