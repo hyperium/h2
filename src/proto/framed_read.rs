@@ -9,6 +9,7 @@ use bytes::{Bytes, BytesMut, Buf};
 
 use std::io::{self, Write, Cursor};
 
+#[derive(Debug)]
 pub struct FramedRead<T> {
     inner: T,
 
@@ -19,6 +20,7 @@ pub struct FramedRead<T> {
 }
 
 /// Partially loaded headers frame
+#[derive(Debug)]
 enum Partial {
     Headers(frame::Headers),
     PushPromise(frame::PushPromise),
@@ -71,9 +73,15 @@ impl<T> FramedRead<T> {
             }
             Kind::PushPromise => unimplemented!(),
             Kind::Ping => unimplemented!(),
-            Kind::GoAway => unimplemented!(),
+            Kind::GoAway => {
+                let frame = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
+                debug!("decoded; frame={:?}", frame);
+                unimplemented!();
+            }
             Kind::WindowUpdate => unimplemented!(),
-            Kind::Continuation => unimplemented!(),
+            Kind::Continuation => {
+                unimplemented!();
+            }
             Kind::Unknown => return Ok(None),
         };
 

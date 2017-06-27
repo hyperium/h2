@@ -10,6 +10,7 @@ use std::io::Cursor;
 use std::collections::VecDeque;
 
 /// Decodes headers using HPACK
+#[derive(Debug)]
 pub struct Decoder {
     // Protocol indicated that the max table size will update
     max_size_update: Option<usize>,
@@ -127,6 +128,7 @@ enum Representation {
     SizeUpdate,
 }
 
+#[derive(Debug)]
 struct Table {
     entries: VecDeque<Header>,
     size: usize,

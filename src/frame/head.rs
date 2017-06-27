@@ -81,7 +81,8 @@ impl Head {
 /// octet is ignored and the rest interpreted as a network-endian 31-bit
 /// integer.
 #[inline]
-fn parse_stream_id(buf: &[u8]) -> StreamId {
+pub fn parse_stream_id(buf: &[u8]) -> StreamId {
+    /// TODO: Move this onto the StreamId type?
     let unpacked = unpack_octets_4!(buf, 0, u32);
     // Now clear the most significant bit, as that is reserved and MUST be ignored when received.
     unpacked & !STREAM_ID_MASK

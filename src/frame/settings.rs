@@ -22,6 +22,7 @@ pub struct SettingSet {
 /// frame.
 ///
 /// Each setting has a value that is a 32 bit unsigned integer (6.5.1.).
+#[derive(Debug)]
 pub enum Setting {
     HeaderTableSize(u32),
     EnablePush(u32),
@@ -134,10 +135,15 @@ impl Settings {
         let head = Head::new(Kind::Settings, self.flags.into(), 0);
         let payload_len = self.payload_len();
 
+        trace!("encoding SETTINGS; len={}", payload_len);
+
         head.encode(payload_len, dst);
 
         // Encode the settings
-        self.for_each(|setting| setting.encode(dst));
+        self.for_each(|setting| {
+            trace!("encoding setting; val={:?}", setting);
+            setting.encode(dst)
+        });
     }
 
     fn for_each<F: FnMut(Setting)>(&self, mut f: F) {

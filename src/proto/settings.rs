@@ -4,6 +4,7 @@ use proto::ReadySink;
 
 use futures::*;
 
+#[derive(Debug)]
 pub struct Settings<T> {
     // Upstream transport
     inner: T,
@@ -21,22 +22,17 @@ pub struct Settings<T> {
     is_dirty: bool,
 }
 
-/*
- * TODO:
- * - Settings ack timeout for connection error
- */
-
 impl<T> Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
+    pub fn new(inner: T, local: frame::SettingSet, remote: frame::SettingSet) -> Settings<T> {
         Settings {
             inner: inner,
             local: local,
-            remote: frame::SettingSet::default(),
-            remaining_acks: 0,
-            is_dirty: true,
+            remote: remote,
+            remaining_acks: 1,
+            is_dirty: false,
         }
     }
 
@@ -60,7 +56,8 @@ impl<T> Settings<T>
 
     fn try_send(&mut self, item: frame::Settings) -> Poll<(), ConnectionError> {
         if let AsyncSink::NotReady(_) = try!(self.inner.start_send(item.into())) {
-            // Ensure that call to `poll_complete` guarantee is called to satisfied
+            // TODO: I don't think this is needed actually... It was originally
+            // done to "satisfy the start_send" contract...
             try!(self.inner.poll_complete());
 
             return Ok(Async::NotReady);
@@ -117,14 +114,12 @@ impl<T> Sink for Settings<T>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        try_ready!(self.try_send_pending());
         self.inner.poll_complete()
     }
 
     fn close(&mut self) -> Poll<(), ConnectionError> {
-        if !try!(self.try_send_pending()).is_ready() {
-            return Ok(Async::NotReady);
-        }
-
+        try_ready!(self.try_send_pending());
         self.inner.close()
     }
 }

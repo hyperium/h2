@@ -176,6 +176,10 @@ impl Headers {
         self.flags.is_end_headers()
     }
 
+    pub fn set_end_stream(&mut self) {
+        self.flags.set_end_stream()
+    }
+
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
         -> Option<Continuation>
     {
@@ -208,13 +212,13 @@ impl Headers {
         let len = (dst.len() - pos) - frame::HEADER_LEN;
 
         // Write the frame length
-        BigEndian::write_u32(&mut dst[pos..pos+3], len as u32);
+        BigEndian::write_uint(&mut dst[pos..pos+3], len as u64, 3);
 
         ret
     }
 
     fn head(&self) -> Head {
-        Head::new(Kind::Data, self.flags.into(), self.stream_id)
+        Head::new(Kind::Headers, self.flags.into(), self.stream_id)
     }
 }
 

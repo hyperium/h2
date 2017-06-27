@@ -13,6 +13,7 @@ pub struct Handshake<T> {
 }
 
 /// Marker type indicating a client peer
+#[derive(Debug)]
 pub struct Client;
 
 pub type Connection<T> = super::Connection<T, Client>;
@@ -29,9 +30,12 @@ pub fn bind<T>(io: T) -> Handshake<T>
     debug!("binding client connection");
 
     let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-        .map(|(io, _)| {
+        .then(|res| {
+            let (io, _) = res.unwrap();
             debug!("client connection bound");
-            proto::new_connection(io)
+
+            // Use default local settings for now
+            proto::Handshake::new(io, Default::default())
         })
         .map_err(ConnectionError::from);
 
@@ -55,19 +59,23 @@ impl Peer for Client {
 
     fn convert_send_message(
         id: StreamId,
-        message: Self::Send,
-        body: bool) -> proto::SendMessage
+        headers: Self::Send,
+        end_of_stream: bool) -> frame::Headers
     {
         use http::request::Head;
 
         // Extract the components of the HTTP request
-        let Head { method, uri, headers, .. } = message;
+        let Head { method, uri, headers, .. } = headers;
+
+        // TODO: Ensure that the version is set to H2
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
         let mut pseudo = frame::Pseudo::request(method, uri.path().into());
 
         // If the URI includes a scheme component, add it to the pseudo headers
+        //
+        // TODO: Scheme must be set...
         if let Some(scheme) = uri.scheme() {
             pseudo.set_scheme(scheme.into());
         }
@@ -81,18 +89,14 @@ impl Peer for Client {
         // Create the HEADERS frame
         let mut frame = frame::Headers::new(id, pseudo, headers);
 
-        // TODO: Factor in trailers
-        if !body {
-            // frame.set_end_stream();
-        } else {
-            unimplemented!();
+        if end_of_stream {
+            frame.set_end_stream()
         }
 
-        // Return the `SendMessage`
-        proto::SendMessage::new(frame)
+        frame
     }
 
-    fn convert_poll_message(message: proto::PollMessage) -> Frame<Self::Poll> {
+    fn convert_poll_message(headers: frame::Headers) -> Frame<Self::Poll> {
         unimplemented!();
     }
 }

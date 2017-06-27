@@ -18,6 +18,7 @@ use std::io;
 /// ```
 #[macro_escape]
 macro_rules! unpack_octets_4 {
+    // TODO: Get rid of this macro
     ($buf:expr, $offset:expr, $tip:ty) => (
         (($buf[$offset + 0] as $tip) << 24) |
         (($buf[$offset + 1] as $tip) << 16) |
@@ -27,12 +28,14 @@ macro_rules! unpack_octets_4 {
 }
 
 mod data;
+mod go_away;
 mod head;
 mod headers;
 mod settings;
 mod util;
 
 pub use self::data::Data;
+pub use self::go_away::GoAway;
 pub use self::head::{Head, Kind, StreamId};
 pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
 pub use self::settings::{Settings, SettingSet};

@@ -4,6 +4,7 @@ use proto::ReadySink;
 
 use futures::*;
 
+#[derive(Debug)]
 pub struct PingPong<T> {
     inner: T,
 }

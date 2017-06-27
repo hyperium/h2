@@ -1,5 +1,6 @@
 #![allow(warnings)]
 
+#[macro_use]
 extern crate futures;
 
 #[macro_use]
@@ -38,19 +39,28 @@ pub use proto::Connection;
 /// An H2 connection frame
 #[derive(Debug)]
 pub enum Frame<T> {
-    Message {
+    Headers {
         id: StreamId,
-        message: T,
-        body: bool,
+        headers: T,
+        end_of_stream: bool,
     },
     Body {
         id: StreamId,
-        chunk: Option<()>,
+        chunk: (),
+        end_of_stream: bool,
+    },
+    Trailers {
+        id: StreamId,
+        headers: (),
+    },
+    PushPromise {
+        id: StreamId,
+        promise: (),
     },
     Error {
         id: StreamId,
         error: (),
-    }
+    },
 }
 
 /// Either a Client or a Server
@@ -66,9 +76,9 @@ pub trait Peer {
     #[doc(hidden)]
     fn convert_send_message(
         id: StreamId,
-        message: Self::Send,
-        body: bool) -> proto::SendMessage;
+        headers: Self::Send,
+        end_of_stream: bool) -> frame::Headers;
 
     #[doc(hidden)]
-    fn convert_poll_message(message: proto::PollMessage) -> Frame<Self::Poll>;
+    fn convert_poll_message(headers: frame::Headers) -> Frame<Self::Poll>;
 }
