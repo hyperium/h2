@@ -27,13 +27,14 @@ impl<T> Stream for PingPong<T>
     type Item = Frame;
     type Error = ConnectionError;
 
+    /// Reads the next frame from the underlying socket.
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
         // returns from socek to application
         self.inner.poll() // inner frame?
-            // match on ping without ack.
-            // send pong on inner:
-            // self.inner.start_send(Pong) ....
-            // what happens when sending pong isn't ready?
+        // match on ping without ack.
+        // send pong on inner:
+        // self.inner.start_send(Pong) ....
+        // what happens when sending pong isn't ready?
     }
 }
 

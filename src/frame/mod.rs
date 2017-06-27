@@ -52,6 +52,7 @@ pub enum Frame {
     Headers(Headers),
     PushPromise(PushPromise),
     Settings(Settings),
+    Ping(Ping)
 }
 
 /// Errors that can occur during parsing an HTTP/2 frame.
