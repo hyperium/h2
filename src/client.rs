@@ -96,8 +96,8 @@ impl Peer for Client {
         frame
     }
 
-    fn convert_poll_message(headers: frame::Headers) -> Frame<Self::Poll> {
-        unimplemented!();
+    fn convert_poll_message(headers: frame::Headers) -> Self::Poll {
+        headers.into_response()
     }
 }
 

@@ -49,7 +49,11 @@ impl<T> FramedRead<T> {
         }
 
         let frame = match head.kind() {
-            Kind::Data => unimplemented!(),
+            Kind::Data => {
+                let _ = bytes.split_to(frame::HEADER_LEN);
+                let frame = try!(frame::Data::load(head, bytes));
+                frame.into()
+            }
             Kind::Headers => {
                 let mut buf = Cursor::new(bytes);
                 buf.set_position(frame::HEADER_LEN as u64);
@@ -66,12 +70,21 @@ impl<T> FramedRead<T> {
                 frame.into()
             }
             Kind::Priority => unimplemented!(),
-            Kind::Reset => unimplemented!(),
+            Kind::Reset => {
+                let frame = try!(frame::Reset::load(head, &bytes[frame::HEADER_LEN..]));
+                debug!("decoded; frame={:?}", frame);
+                // TODO: implement
+                return Ok(None);
+            }
             Kind::Settings => {
                 let frame = try!(frame::Settings::load(head, &bytes[frame::HEADER_LEN..]));
                 frame.into()
             }
-            Kind::PushPromise => unimplemented!(),
+            Kind::PushPromise => {
+                debug!("received PUSH_PROMISE");
+                // TODO: implement
+                return Ok(None);
+            }
             Kind::Ping => unimplemented!(),
             Kind::GoAway => {
                 let frame = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));

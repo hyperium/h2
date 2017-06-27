@@ -79,15 +79,36 @@ impl<T, P> Stream for Connection<T, P>
         // buffer is clear, `poll_complete` is called here.
         let _ = try!(self.poll_complete());
 
-        match try_ready!(self.inner.poll()) {
+        let frame = match try_ready!(self.inner.poll()) {
             Some(Headers(v)) => {
-                debug!("poll; frame={:?}", v);
-                unimplemented!();
+                // TODO: Update stream state
+                let stream_id = v.stream_id();
+                let end_of_stream = v.is_end_stream();
+
+                Frame::Headers {
+                    id: stream_id,
+                    headers: P::convert_poll_message(v),
+                    end_of_stream: end_of_stream,
+                }
+            }
+            Some(Data(v)) => {
+                // TODO: Validate frame
+
+                let stream_id = v.stream_id();
+                let end_of_stream = v.is_end_stream();
+
+                Frame::Body {
+                    id: stream_id,
+                    chunk: v.into_payload(),
+                    end_of_stream: end_of_stream,
+                }
             }
             Some(frame) => panic!("unexpected frame; frame={:?}", frame),
             None => return Ok(Async::Ready(None)),
             _ => unimplemented!(),
-        }
+        };
+
+        Ok(Async::Ready(Some(frame)))
     }
 }
 

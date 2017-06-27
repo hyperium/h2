@@ -31,6 +31,7 @@ mod data;
 mod go_away;
 mod head;
 mod headers;
+mod reset;
 mod settings;
 mod util;
 
@@ -38,6 +39,7 @@ pub use self::data::Data;
 pub use self::go_away::GoAway;
 pub use self::head::{Head, Kind, StreamId};
 pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
+pub use self::reset::Reset;
 pub use self::settings::{Settings, SettingSet};
 
 // Re-export some constants

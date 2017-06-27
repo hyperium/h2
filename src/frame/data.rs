@@ -1,4 +1,4 @@
-use frame::{util, Head, Error, StreamId, Kind};
+use frame::{util, Frame, Head, Error, StreamId, Kind};
 use bytes::{BufMut, Bytes};
 
 #[derive(Debug)]
@@ -35,8 +35,16 @@ impl Data {
         })
     }
 
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    pub fn is_end_stream(&self) -> bool {
+        self.flags.is_end_stream()
     }
 
     pub fn encode<T: BufMut>(&self, dst: &mut T) {
@@ -53,6 +61,13 @@ impl Data {
     }
 }
 
+impl From<Data> for Frame {
+    fn from(src: Data) -> Frame {
+        Frame::Data(src)
+    }
+}
+
+// ===== impl DataFlag =====
 
 impl DataFlag {
     pub fn load(bits: u8) -> DataFlag {

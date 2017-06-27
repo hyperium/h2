@@ -36,6 +36,8 @@ pub use error::{ConnectionError, StreamError, Reason};
 pub use frame::{StreamId};
 pub use proto::Connection;
 
+use bytes::Bytes;
+
 /// An H2 connection frame
 #[derive(Debug)]
 pub enum Frame<T> {
@@ -46,7 +48,7 @@ pub enum Frame<T> {
     },
     Body {
         id: StreamId,
-        chunk: (),
+        chunk: Bytes,
         end_of_stream: bool,
     },
     Trailers {
@@ -80,5 +82,5 @@ pub trait Peer {
         end_of_stream: bool) -> frame::Headers;
 
     #[doc(hidden)]
-    fn convert_poll_message(headers: frame::Headers) -> Frame<Self::Poll>;
+    fn convert_poll_message(headers: frame::Headers) -> Self::Poll;
 }

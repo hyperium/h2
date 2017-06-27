@@ -4,7 +4,7 @@ use error::Reason;
 use frame::{self, Frame, Head, Kind, Error};
 use util::byte_str::ByteStr;
 
-use http::{Method, StatusCode};
+use http::{request, response, Method, StatusCode};
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
@@ -172,12 +172,33 @@ impl Headers {
         })
     }
 
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
     pub fn is_end_headers(&self) -> bool {
         self.flags.is_end_headers()
     }
 
+    pub fn is_end_stream(&self) -> bool {
+        self.flags.is_end_stream()
+    }
+
     pub fn set_end_stream(&mut self) {
         self.flags.set_end_stream()
+    }
+
+    pub fn into_response(self) -> response::Head {
+        let mut response = response::Head::default();
+
+        if let Some(status) = self.pseudo.status {
+            response.status = status;
+        } else {
+            unimplemented!();
+        }
+
+        response.headers = self.fields;
+        response
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
