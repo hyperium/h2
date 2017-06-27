@@ -1,5 +1,5 @@
 use frame::{Frame, Error, Head, Kind};
-use bytes::{Bytes, BytesMut, BufMut, BigEndian};
+use bytes::{BytesMut, BufMut, BigEndian};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Settings {

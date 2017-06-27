@@ -1,5 +1,5 @@
 use super::DecoderError;
-use util::byte_str::{ByteStr, FromUtf8Error};
+use util::byte_str::ByteStr;
 
 use http::{Method, StatusCode};
 use http::header::{HeaderName, HeaderValue};
@@ -104,7 +104,7 @@ impl Header {
             Header::Path(ref v) => {
                 32 + 5 + v.len()
             }
-            Header::Status(ref v) => {
+            Header::Status(_) => {
                 32 + 7 + 3
             }
         }

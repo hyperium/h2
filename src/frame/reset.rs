@@ -1,5 +1,5 @@
 use frame::{Head, Error};
-use super::{head, StreamId};
+use super::{StreamId};
 
 #[derive(Debug)]
 pub struct Reset {

@@ -1,6 +1,5 @@
 use super::StreamId;
 use hpack;
-use error::Reason;
 use frame::{self, Frame, Head, Kind, Error};
 use util::byte_str::ByteStr;
 
@@ -199,6 +198,10 @@ impl Headers {
 
         response.headers = self.fields;
         response
+    }
+
+    pub fn into_request(self) -> request::Head {
+        unimplemented!();
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)

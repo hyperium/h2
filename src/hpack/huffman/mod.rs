@@ -52,7 +52,7 @@ pub fn encode<B: BufMut>(src: &[u8], dst: &mut B) -> Result<(), EncoderError> {
         bits |= code << (bits_left - nbits);
         bits_left -= nbits;
 
-        while (bits_left <= 32) {
+        while bits_left <= 32 {
             if rem == 0 {
                 return Err(EncoderError::BufferOverflow);
             }

@@ -1,10 +1,6 @@
 use hpack;
 use error::{ConnectionError, Reason};
 
-use bytes::{Bytes, BytesMut, BufMut};
-
-use std::io;
-
 /// A helper macro that unpacks a sequence of 4 bytes found in the buffer with
 /// the given identifier, starting at the given offset, into the given integer
 /// type. Obviously, the integer type should be able to support at least 4
@@ -113,8 +109,6 @@ impl Frame {
 
 impl From<Error> for ConnectionError {
     fn from(src: Error) -> ConnectionError {
-        use self::Error::*;
-
         match src {
             // TODO: implement
             _ => ConnectionError::Proto(Reason::ProtocolError),

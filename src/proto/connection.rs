@@ -4,7 +4,7 @@ use proto::{self, ReadySink, State};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 
-use http::{self, request, response};
+use http::{request};
 
 use futures::*;
 
@@ -92,7 +92,6 @@ impl<T, P> Stream for Connection<T, P>
             }
             Some(frame) => panic!("unexpected frame; frame={:?}", frame),
             None => return Ok(Async::Ready(None)),
-            _ => unimplemented!(),
         };
 
         Ok(Async::Ready(Some(frame)))
@@ -144,6 +143,7 @@ impl<T, P> Sink for Connection<T, P>
 
                 Ok(AsyncSink::Ready)
             }
+            /*
             Frame::Trailers { id, headers } => {
                 unimplemented!();
             }
@@ -156,6 +156,8 @@ impl<T, P> Sink for Connection<T, P>
             Frame::Error { id, error } => {
                 unimplemented!();
             }
+            */
+            _ => unimplemented!(),
         }
     }
 

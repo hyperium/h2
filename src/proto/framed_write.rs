@@ -1,11 +1,10 @@
-use {hpack, ConnectionError, Reason};
-use frame::{self, Frame, Error};
+use {hpack, ConnectionError};
+use frame::{self, Frame};
 use proto::ReadySink;
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, BytesMut, Buf, BufMut};
-use http::header::{self, HeaderValue};
+use bytes::{BytesMut, Buf, BufMut};
 
 use std::cmp;
 use std::io::{self, Cursor};
@@ -110,6 +109,7 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
                 }
             }
             Frame::PushPromise(v) => {
+                debug!("unimplemented PUSH_PROMISE write; frame={:?}", v);
                 unimplemented!();
             }
             Frame::Settings(v) => {

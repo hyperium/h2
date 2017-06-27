@@ -57,7 +57,7 @@ impl Encoder {
                     self.size_update = Some(SizeUpdate::One(val));
                 }
             }
-            Some(SizeUpdate::Two(min, max)) => {
+            Some(SizeUpdate::Two(min, _)) => {
                 if val < min {
                     self.size_update = Some(SizeUpdate::One(val));
                 } else {
@@ -179,7 +179,6 @@ impl Encoder {
     {
         match *index {
             Index::Indexed(idx, _) => {
-                let header = self.table.resolve(&index);
                 try!(encode_int(idx, 7, 0x80, dst));
             }
             Index::Name(idx, _) => {
@@ -191,7 +190,7 @@ impl Encoder {
                         header.is_sensitive(),
                         dst));
             }
-            Index::Inserted(idx) => {
+            Index::Inserted(_) => {
                 let header = self.table.resolve(&index);
 
                 assert!(!header.is_sensitive());
@@ -323,14 +322,14 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
 
         if encode_int_one_byte(huff_len, 7) {
             // Write the string head
-            dst[idx] = (0x80 | huff_len as u8);
+            dst[idx] = 0x80 | huff_len as u8;
         } else {
             // Write the head to a placeholer
             let mut buf = [0; 8];
 
             let head_len = {
                 let mut head_dst = Cursor::new(&mut buf);
-                encode_int(huff_len, 7, 0x80, &mut head_dst);
+                try!(encode_int(huff_len, 7, 0x80, &mut head_dst));
                 head_dst.position() as usize
             };
 
@@ -407,7 +406,6 @@ fn encode_int<B: BufMut>(
     }
 
     dst.put_u8(value as u8);
-    rem -= 1;
 
     Ok(())
 }

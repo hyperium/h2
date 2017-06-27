@@ -9,6 +9,7 @@ pub enum ConnectionError {
     Io(io::Error),
 }
 
+#[derive(Debug)]
 pub struct StreamError(Reason);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

@@ -1,8 +1,7 @@
 use super::Header;
 
 use fnv::FnvHasher;
-use http::method;
-use http::header::{self, HeaderName, HeaderValue};
+use http::{method, header};
 
 use std::{cmp, mem, usize};
 use std::collections::VecDeque;
@@ -193,7 +192,7 @@ impl Table {
                     return self.index_vacant(header, hash, dist, probe, statik);
                 } else if pos.hash == hash && self.slots[slot_idx].header.name() == header.name() {
                     // Matching name, check values
-                    return self.index_occupied(header, hash, pos.index, statik);
+                    return self.index_occupied(header, hash, pos.index);
                 }
             } else {
                 return self.index_vacant(header, hash, dist, probe, statik);
@@ -206,8 +205,7 @@ impl Table {
     fn index_occupied(&mut self,
                       header: Header,
                       hash: HashValue,
-                      mut index: usize,
-                      statik: Option<(usize, bool)>)
+                      mut index: usize)
         -> Index
     {
         debug_assert!(self.assert_valid_state("top"));
@@ -255,8 +253,6 @@ impl Table {
             // it when inserting the new one...
             return Index::InsertedValue(real_idx + DYN_OFFSET, 0);
         }
-
-        Index::NotIndexed(header)
     }
 
     fn index_vacant(&mut self,
@@ -302,7 +298,7 @@ impl Table {
 
         let pos_idx = 0usize.wrapping_sub(self.inserted);
 
-        let mut prev = mem::replace(&mut self.indices[probe], Some(Pos {
+        let prev = mem::replace(&mut self.indices[probe], Some(Pos {
             index: pos_idx,
             hash: hash,
         }));
@@ -513,9 +509,15 @@ impl Table {
         }
     }
 
-    /// Checks that the internal map state is correct
+    #[cfg(not(test))]
+    fn assert_valid_state(&self, _: &'static str) -> bool {
+        true
+    }
+
+    #[cfg(test)]
     fn assert_valid_state(&self, msg: &'static str) -> bool {
-        /*
+        // Checks that the internal map structure is valid
+        //
         // Ensure all hash codes in indices match the associated slot
         for pos in &self.indices {
             if let Some(pos) = *pos {
@@ -596,7 +598,6 @@ impl Table {
         }
 
         // TODO: Ensure linked lists are correct: no cycles, etc...
-        */
 
         true
     }
@@ -715,7 +716,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
                 _ => None,
             }
         }
-        Header::Authority(ref v) => Some((1, false)),
+        Header::Authority(_) => Some((1, false)),
         Header::Method(ref v) => {
             match *v {
                 method::GET => Some((2, true)),

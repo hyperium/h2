@@ -1,5 +1,3 @@
-use super::Error;
-
 use bytes::{BufMut, BigEndian};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

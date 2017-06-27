@@ -5,12 +5,12 @@ use proto::ReadySink;
 
 use futures::*;
 
-use bytes::{Bytes, BytesMut, Buf};
+use bytes::Bytes;
 
 use tokio_io::{AsyncRead};
 use tokio_io::codec::length_delimited;
 
-use std::io::{self, Write, Cursor};
+use std::io::{self, Cursor};
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
@@ -26,7 +26,7 @@ pub struct FramedRead<T> {
 #[derive(Debug)]
 enum Partial {
     Headers(frame::Headers),
-    PushPromise(frame::PushPromise),
+    // PushPromise(frame::PushPromise),
 }
 
 impl<T> FramedRead<T>
@@ -113,7 +113,7 @@ impl<T> Stream for FramedRead<T>
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
         loop {
-            let mut bytes = match try_ready!(self.inner.poll()) {
+            let bytes = match try_ready!(self.inner.poll()) {
                 Some(bytes) => bytes.freeze(),
                 None => return Ok(Async::Ready(None)),
             };

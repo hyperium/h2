@@ -8,9 +8,9 @@ pub struct ByteStr {
     bytes: Bytes,
 }
 
+#[derive(Debug)]
 pub struct FromUtf8Error {
     err: Utf8Error,
-    val: Bytes,
 }
 
 impl ByteStr {
@@ -28,7 +28,6 @@ impl ByteStr {
         if let Err(e) = str::from_utf8(&bytes[..]) {
             return Err(FromUtf8Error {
                 err: e,
-                val: bytes,
             });
         }
 

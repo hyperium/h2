@@ -1,10 +1,10 @@
-use {frame, proto, Frame, Peer, ConnectionError, StreamId};
+use {frame, proto, Peer, ConnectionError, StreamId};
 
 use http;
-
 use futures::{Future, Poll};
-
 use tokio_io::{AsyncRead, AsyncWrite};
+
+use std::fmt;
 
 /// In progress H2 connection binding
 pub struct Handshake<T> {
@@ -106,5 +106,11 @@ impl<T> Future for Handshake<T> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.inner.poll()
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Handshake<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "Handshake")
     }
 }

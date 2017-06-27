@@ -1,8 +1,8 @@
-use super::{huffman, header as h2_header, Header};
+use super::{huffman, Header};
 use frame;
 use util::byte_str::FromUtf8Error;
 
-use http::{method, header, status, StatusCode, Method};
+use http::{method, header, status};
 use bytes::{Buf, Bytes, BytesMut};
 
 use std::cmp;
@@ -409,10 +409,6 @@ impl Table {
         }
     }
 
-    fn max_size(&self) -> usize {
-        self.max_size
-    }
-
     fn size(&self) -> usize {
         self.size
     }
@@ -492,33 +488,36 @@ impl Table {
 // ===== impl DecoderError =====
 
 impl From<FromUtf8Error> for DecoderError {
-    fn from(src: FromUtf8Error) -> DecoderError {
+    fn from(_: FromUtf8Error) -> DecoderError {
+        // TODO: Better error?
         DecoderError::InvalidUtf8
     }
 }
 
 impl From<header::InvalidValueError> for DecoderError {
-    fn from(src: header::InvalidValueError) -> DecoderError {
+    fn from(_: header::InvalidValueError) -> DecoderError {
         // TODO: Better error?
         DecoderError::InvalidUtf8
     }
 }
 
 impl From<method::FromBytesError> for DecoderError {
-    fn from(src: method::FromBytesError) -> DecoderError {
+    fn from(_: method::FromBytesError) -> DecoderError {
         // TODO: Better error
         DecoderError::InvalidUtf8
     }
 }
 
 impl From<header::FromBytesError> for DecoderError {
-    fn from(src: header::FromBytesError) -> DecoderError {
+    fn from(_: header::FromBytesError) -> DecoderError {
+        // TODO: Better error
         DecoderError::InvalidUtf8
     }
 }
 
 impl From<status::FromStrError> for DecoderError {
-    fn from(src: status::FromStrError) -> DecoderError {
+    fn from(_: status::FromStrError) -> DecoderError {
+        // TODO: Better error
         DecoderError::InvalidUtf8
     }
 }
