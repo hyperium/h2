@@ -39,21 +39,22 @@ impl<T> Stream for PingPong<T>
     /// If a PING frame is received without the ACK flag, the frame is returned the remote
     /// with the ACK flag.
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        match self.inner.poll() {
-            Ok(Async::Ready(Some(Frame::Ping(ping)))) => {
-                if !ping.is_ack() {
-                    let pong = Ping::pong(ping.into_payload());
-                    if !self.pending_pongs.is_empty() {
-                        self.pending_pongs.push_back(pong.into());
-                    } else if let AsyncSink::NotReady(pong) = self.start_send(pong.into())? {
-                        self.pending_pongs.push_back(pong.into());
+        loop {
+            match self.inner.poll() {
+                Ok(Async::Ready(Some(Frame::Ping(ping)))) => {
+                    if !ping.is_ack() {
+                        let pong = Ping::pong(ping.into_payload());
+                        if !self.pending_pongs.is_empty() {
+                            self.pending_pongs.push_back(pong.into());
+                        } else if let AsyncSink::NotReady(pong) = self.start_send(pong.into())? {
+                            self.pending_pongs.push_back(pong.into());
+                        }
+                        continue;
                     }
-                    self.poll()
-                } else {
-                    Ok(Async::Ready(Some(Frame::Ping(ping)))) 
+                    return Ok(Async::Ready(Some(Frame::Ping(ping))));
                 }
+                poll => return poll,
             }
-            poll => poll,
         }
     }
 }

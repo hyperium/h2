@@ -1,7 +1,6 @@
 mod connection;
 mod framed_read;
 mod framed_write;
-mod keep_alive;
 mod ping_pong;
 mod ready;
 mod settings;
@@ -10,7 +9,6 @@ mod state;
 pub use self::connection::{Connection};
 pub use self::framed_read::FramedRead;
 pub use self::framed_write::FramedWrite;
-pub use self::keep_alive::KeepAlive;
 pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
