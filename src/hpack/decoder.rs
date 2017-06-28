@@ -287,9 +287,9 @@ impl Decoder {
 
             buf.advance(len);
             return ret;
-        } else {
-            Ok(take(buf, len))
         }
+
+        Ok(take(buf, len))
     }
 }
 
