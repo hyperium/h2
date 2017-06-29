@@ -27,4 +27,4 @@ tokio-core = "0.1"
 openssl = { version = "0.9.14", "features" = ["v102"] }
 tokio-openssl = "0.1.3"
 env_logger = "0.4.3"
-io-dump = { path = "/Users/carllerche/Code/Oss/Tokio/util/io-dump" }
+io-dump = { git = "https://github.com/carllerche/io-dump" }
