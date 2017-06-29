@@ -136,7 +136,7 @@ mod test {
 
         {
             let mut trans = trans.0.borrow_mut();
-            let ping = Ping::ping(Bytes::from_static(b"buoyant!"));
+            let ping = Ping::ping(*b"buoyant!");
             trans.from_socket.push_back(ping.into());
         }
 
@@ -152,7 +152,7 @@ mod test {
             match trans.to_socket.pop_front().unwrap() {
                 Frame::Ping(pong) => {
                     assert!(pong.is_ack());
-                    assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                    assert_eq!(&pong.into_payload(), b"buoyant!");
                 }
                 f => panic!("unexpected frame: {:?}", f),
             }
@@ -171,7 +171,7 @@ mod test {
 
         {
             let mut trans = trans.0.borrow_mut();
-            let ping = Ping::ping(Bytes::from_static(b"buoyant!"));
+            let ping = Ping::ping(*b"buoyant!");
             trans.from_socket.push_back(ping.into());
         }
 
@@ -182,7 +182,7 @@ mod test {
 
         {
             let mut trans = trans.0.borrow_mut();
-            let ping = Ping::ping(Bytes::from_static(b"buoyant!"));
+            let ping = Ping::ping(*b"buoyant!");
             trans.from_socket.push_back(ping.into());
         }
 
@@ -212,14 +212,14 @@ mod test {
             match trans.to_socket.pop_front().unwrap() {
                 Frame::Ping(pong) => {
                     assert!(pong.is_ack());
-                    assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                    assert_eq!(&pong.into_payload(), b"buoyant!");
                 }
                 f => panic!("unexpected frame: {:?}", f),
             }
             match trans.to_socket.pop_front().unwrap() {
                 Frame::Ping(pong) => {
                     assert!(pong.is_ack());
-                    assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                    assert_eq!(&pong.into_payload(), b"buoyant!");
                 }
                 f => panic!("unexpected frame: {:?}", f),
             }
@@ -233,14 +233,14 @@ mod test {
 
         {
             let mut trans = trans.0.borrow_mut();
-            let pong = Ping::pong(Bytes::from_static(b"buoyant!"));
+            let pong = Ping::pong(*b"buoyant!");
             trans.from_socket.push_back(pong.into());
         }
 
         match ping_pong.poll().unwrap() {
             Async::Ready(Some(Frame::Ping(pong))) => {
                 assert!(pong.is_ack());
-                assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                assert_eq!(&pong.into_payload(), b"buoyant!");
             }
             f => panic!("unexpected frame: {:?}", f),
         }

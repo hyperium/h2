@@ -1,20 +1,22 @@
-use bytes::{Bytes, BufMut};
+use bytes::{Buf, BufMut, Bytes, IntoBuf};
 use frame::{Frame, Head, Kind, Error};
 
 const ACK_FLAG: u8 = 0x1;
 
+pub type Payload = [u8; 8];
+
 #[derive(Debug)]
 pub struct Ping {
     ack: bool,
-    payload: Bytes,
+    payload: Payload,
 }
 
 impl Ping {
-    pub fn ping(payload: Bytes) -> Ping {
+    pub fn ping(payload: Payload) -> Ping {
         Ping { ack: false, payload }
     }
 
-    pub fn pong(payload: Bytes) -> Ping {
+    pub fn pong(payload: Payload) -> Ping {
         Ping { ack: true, payload }
     }
 
@@ -22,12 +24,12 @@ impl Ping {
         self.ack
     }
 
-    pub fn into_payload(self) -> Bytes {
+    pub fn into_payload(self) -> Payload {
         self.payload
     }
 
     /// Builds a `Ping` frame from a 
-    pub fn load(head: Head, payload: Bytes) -> Result<Ping, Error> {
+    pub fn load(head: Head, bytes: Bytes) -> Result<Ping, Error> {
         debug_assert_eq!(head.kind(), ::frame::Kind::Ping);
 
         // PING frames are not associated with any individual stream. If a PING
@@ -40,9 +42,11 @@ impl Ping {
 
         // In addition to the frame header, PING frames MUST contain 8 octets of opaque
         // data in the payload.
-        if payload.len() != 8 {
+        if bytes.len() != 8 {
             return Err(Error::BadFrameSize);
         }
+        let mut payload = [0; 8];
+        bytes.into_buf().copy_to_slice(&mut payload);
 
         // The PING frame defines the following flags:
         //
@@ -62,7 +66,7 @@ impl Ping {
         let head = Head::new(Kind::Ping, flags, 0);
 
         head.encode(sz, dst);
-        dst.put(&self.payload);
+        dst.put_slice(&self.payload);
     }
 
 }
