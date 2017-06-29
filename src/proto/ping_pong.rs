@@ -50,10 +50,8 @@ impl<T> Stream for PingPong<T>
                     // We received a ping request. Try to it send it immediately.  If we
                     // can't send it, save it to be sent (by Sink::poll_complete).
                     let pong = Ping::pong(ping.into_payload());
-                    if !self.pending_pongs.is_empty() {
-                        self.pending_pongs.push_back(pong.into());
-                    } else if let AsyncSink::NotReady(pong) = self.start_send(pong.into())? {
-                        self.pending_pongs.push_back(pong.into());
+                    if let AsyncSink::NotReady(pong) = self.start_send(pong.into())? {
+                        self.pending_pongs.push_back(pong);
                     }
 
                     // There's nothing to return yet. Poll the underlying stream again to
