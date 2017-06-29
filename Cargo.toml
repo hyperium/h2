@@ -8,7 +8,7 @@ futures = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.1"
 bytes = "0.4"
-http = { path = "../http" }
+http = { git = "https://github.com/carllerche/http" }
 byteorder = "1.0"
 log = "0.3.8"
 fnv = "1.0.5"
@@ -27,4 +27,4 @@ tokio-core = "0.1"
 openssl = { version = "0.9.14", "features" = ["v102"] }
 tokio-openssl = "0.1.3"
 env_logger = "0.4.3"
-io-dump = { path = "..//io-dump" }
+io-dump = { git = "https://github.com/carllerche/io-dump" }
