@@ -160,6 +160,73 @@ mod test {
     }
 
     #[test]
+    fn responds_to_ping_even_when_blocked() {
+        let trans = Transport::default();
+        let mut ping_pong = PingPong::new(trans.clone());
+
+        {
+            let mut trans = trans.0.borrow_mut();
+            trans.start_send_blocked = true;
+        }
+
+        {
+            let mut trans = trans.0.borrow_mut();
+            let ping = Ping::ping(Bytes::from_static(b"buoyant!"));
+            trans.from_socket.push_back(ping.into());
+        }
+
+        match ping_pong.poll() {
+            Ok(Async::NotReady) => {} // cool
+            rsp => panic!("unexpected poll result: {:?}", rsp),
+        }
+
+        {
+            let mut trans = trans.0.borrow_mut();
+            let ping = Ping::ping(Bytes::from_static(b"buoyant!"));
+            trans.from_socket.push_back(ping.into());
+        }
+
+        match ping_pong.poll() {
+            Ok(Async::NotReady) => {} // cool
+            rsp => panic!("unexpected poll result: {:?}", rsp),
+        }
+        assert!(ping_pong.poll_complete().unwrap().is_not_ready());
+
+        {
+            let mut trans = trans.0.borrow_mut();
+            assert!(trans.to_socket.is_empty());
+
+            trans.start_send_blocked = false;
+        }
+
+        match ping_pong.poll() {
+            Ok(Async::NotReady) => {} // cool
+            rsp => panic!("unexpected poll result: {:?}", rsp),
+        }
+        assert!(ping_pong.poll_complete().unwrap().is_not_ready());
+
+
+        {
+            let mut trans = trans.0.borrow_mut();
+            assert_eq!(trans.to_socket.len(), 2);
+            match trans.to_socket.pop_front().unwrap() {
+                Frame::Ping(pong) => {
+                    assert!(pong.is_ack());
+                    assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                }
+                f => panic!("unexpected frame: {:?}", f),
+            }
+            match trans.to_socket.pop_front().unwrap() {
+                Frame::Ping(pong) => {
+                    assert!(pong.is_ack());
+                    assert_eq!(pong.into_payload(), Bytes::from_static(b"buoyant!"));
+                }
+                f => panic!("unexpected frame: {:?}", f),
+            }
+        }
+    }
+
+    #[test]
     fn pong_passes_through() {
         let trans = Transport::default();
         let mut ping_pong = PingPong::new(trans.clone());
@@ -196,7 +263,7 @@ mod test {
         from_socket: VecDeque<Frame>,
         to_socket: VecDeque<Frame>,
         read_blocked: bool,
-        send_start_blocked: bool,
+        start_send_blocked: bool,
         closing: bool,
     }
 
@@ -220,7 +287,7 @@ mod test {
 
         fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
             let mut trans = self.0.borrow_mut();
-            if trans.closing || trans.send_start_blocked {
+            if trans.closing || trans.start_send_blocked {
                 Ok(AsyncSink::NotReady(item))
             } else {
                 trans.to_socket.push_back(item);
