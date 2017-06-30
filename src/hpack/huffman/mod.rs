@@ -146,15 +146,15 @@ mod test {
     fn encode_single_byte() {
         let mut dst = Vec::with_capacity(1);
 
-        encode(b"o", &mut dst);
+        encode(b"o", &mut dst).unwrap();
         assert_eq!(&dst[..], &[0b00111111]);
 
         dst.clear();
-        encode(b"0", &mut dst);
+        encode(b"0", &mut dst).unwrap();
         assert_eq!(&dst[..], &[0x0 + 7]);
 
         dst.clear();
-        encode(b"A", &mut dst);
+        encode(b"A", &mut dst).unwrap();
         assert_eq!(&dst[..], &[(0x21 << 2) + 3]);
     }
 
@@ -170,7 +170,7 @@ mod test {
         for s in DATA {
             let mut dst = Vec::with_capacity(s.len());
 
-            encode(s.as_bytes(), &mut dst);
+            encode(s.as_bytes(), &mut dst).unwrap();
 
             let decoded = decode(&dst).unwrap();
 
@@ -187,7 +187,7 @@ mod test {
         for s in DATA {
             let mut dst = Vec::with_capacity(s.len());
 
-            encode(s, &mut dst);
+            encode(s, &mut dst).unwrap();
 
             let decoded = decode(&dst).unwrap();
 

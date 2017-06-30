@@ -1,0 +1,7 @@
+[package]
+name = "genfixture"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[dependencies]
+walkdir = "1.0.0"

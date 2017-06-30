@@ -92,8 +92,7 @@ impl<T> Stream for Settings<T>
                         // Save off the settings
                         self.remote = v.into_set();
 
-                        // TODO: uncomment?
-                        // let _ = try!(self.try_send_pending());
+                        let _ = try!(self.try_send_pending());
                     }
                 }
                 v => return Ok(Async::Ready(v)),
@@ -121,6 +120,7 @@ impl<T> Sink for Settings<T>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        trace!("Settings::poll_complete");
         try_ready!(self.try_send_pending());
         self.inner.poll_complete()
     }
