@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 #[derive(Debug)]
 pub struct PingPong<T> {
     inner: T,
-    pending_pongs: VecDeque<Frame>,
+    is_closed: bool,
+    sending_pongs: VecDeque<Frame>,
 }
 
 impl<T> PingPong<T>
@@ -18,8 +19,25 @@ impl<T> PingPong<T>
     pub fn new(inner: T) -> PingPong<T> {
         PingPong {
             inner,
-            pending_pongs: VecDeque::new(),
+            is_closed: false,
+            sending_pongs: VecDeque::new(),
         }
+    }
+
+    fn send_pongs(&mut self) -> Poll<(), ConnectionError> {
+        if self.sending_pongs.is_empty() {
+            return Ok(Async::Ready(()));
+        }
+
+        while let Some(pong) = self.sending_pongs.pop_front() {
+            if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
+                // If the pong can't be sent, save it..
+                self.sending_pongs.push_front(pong);
+                return Ok(Async::NotReady);
+            }
+        }
+
+        self.inner.poll_complete()
     }
 }
 
@@ -39,20 +57,22 @@ impl<T> Stream for PingPong<T>
     /// If a PING is received without the ACK flag, the frame is sent to the remote with
     /// its ACK flag set.
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
+        if self.is_closed {
+            return Ok(Async::Ready(None));
+        }
+
         loop {
-            match self.inner.poll() {
-                Ok(Async::Ready(Some(Frame::Ping(ping)))) => {
+            match self.inner.poll()? {
+                Async::Ready(Some(Frame::Ping(ping))) => {
                     if ping.is_ack() {
                         // If we received an ACK, pass it on (nothing to be done here).
-                        return Ok(Async::Ready(Some(Frame::Ping(ping))));
+                        return Ok(Async::Ready(Some(ping.into())));
                     }
 
-                    // We received a ping request. Try to it send it immediately.  If we
-                    // can't send it, save it to be sent (by Sink::poll_complete).
+                    // Save a pong to be sent when there is nothing more to be returned
+                    // from the stream or when frames are sent to the sink..
                     let pong = Ping::pong(ping.into_payload());
-                    if let AsyncSink::NotReady(pong) = self.start_send(pong.into())? {
-                        self.pending_pongs.push_back(pong);
-                    }
+                    self.sending_pongs.push_back(pong.into());
 
                     // There's nothing to return yet. Poll the underlying stream again to
                     // determine how to proceed.
@@ -60,7 +80,20 @@ impl<T> Stream for PingPong<T>
                 }
 
                 // Anything other than ping gets passed through.
-                poll => return poll,
+                f @ Async::Ready(Some(_)) => {
+                    return Ok(f);
+                }
+
+                f @ Async::NotReady |
+                f @ Async::Ready(None) => {
+                    if let Async::Ready(None) = f {
+                        self.is_closed = true;
+                    }
+                    // If poll won't necessarily be called again, try to send pending pong
+                    // frames.
+                    self.send_pongs()?;
+                    return Ok(f);
+                }
             }
         }
     }
@@ -74,38 +107,25 @@ impl<T> Sink for PingPong<T>
     type SinkError = ConnectionError;
 
     fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
-        // If there are pongs to be sent, try to flush them out before proceeding.
-        if !self.pending_pongs.is_empty() {
-            self.poll_complete()?;
-            if self.pending_pongs.is_empty() {
-                /// Couldn't flush pongs, so won't be able to send the item.
-                return Ok(AsyncSink::NotReady(item));
-            }
+        // Pings _SHOULD_ have priority over other messages, so attempt to send pending ping frames before attempting to send the 
+        if self.send_pongs()?.is_not_ready() {
+            return Ok(AsyncSink::NotReady(item));
         }
 
         self.inner.start_send(item)
     }
 
+    /// Polls the underlying sink before
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         // Try to flush the underlying sink.
         let poll = self.inner.poll_complete()?;
-        if self.pending_pongs.is_empty() {
+        if self.sending_pongs.is_empty() {
             return Ok(poll);
         }
 
         // Then, try to flush pending pongs. Even if poll is not ready, we may be able to
         // start sending pongs.
-        while let Some(pong) = self.pending_pongs.pop_front() {
-            if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
-                // If we can't flush all of the pongs, we're not ready. Save the pong to
-                // be sent next time.
-                self.pending_pongs.push_front(pong);
-                return Ok(Async::NotReady);
-            }
-        }
-
-        // Because we've invoked start_send, poll_complete needs to be invoked again.
-        self.inner.poll_complete()
+        self.send_pongs()
     }
 }
 
@@ -115,7 +135,7 @@ impl<T> ReadySink for PingPong<T>
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        if !self.pending_pongs.is_empty() {
+        if !self.sending_pongs.is_empty() {
             return Ok(Async::NotReady);
         }
         self.inner.poll_ready()
@@ -136,7 +156,7 @@ mod test {
 
         {
             let mut trans = trans.0.borrow_mut();
-            let ping = Ping::ping(*b"buoyant!");
+            let ping = Ping::ping(*b"buoyant_");
             trans.from_socket.push_back(ping.into());
         }
 
@@ -145,14 +165,13 @@ mod test {
             rsp => panic!("unexpected poll result: {:?}", rsp),
         }
 
-        assert!(ping_pong.poll_complete().is_ok());
         {
             let mut trans = trans.0.borrow_mut();
             assert_eq!(trans.to_socket.len(), 1);
             match trans.to_socket.pop_front().unwrap() {
                 Frame::Ping(pong) => {
                     assert!(pong.is_ack());
-                    assert_eq!(&pong.into_payload(), b"buoyant!");
+                    assert_eq!(&pong.into_payload(), b"buoyant_");
                 }
                 f => panic!("unexpected frame: {:?}", f),
             }
@@ -164,34 +183,29 @@ mod test {
         let trans = Transport::default();
         let mut ping_pong = PingPong::new(trans.clone());
 
+        // Configure the transport so that writes can't proceed.
         {
             let mut trans = trans.0.borrow_mut();
             trans.start_send_blocked = true;
         }
 
+        // The transport receives a ping but can't send it immediately.
+        {
+            let mut trans = trans.0.borrow_mut();
+            let ping = Ping::ping(*b"buoyant?");
+            trans.from_socket.push_back(ping.into());
+        }
+        assert!(ping_pong.poll().unwrap().is_not_ready());
+
+        // The transport receives another ping but can't send it immediately.
         {
             let mut trans = trans.0.borrow_mut();
             let ping = Ping::ping(*b"buoyant!");
             trans.from_socket.push_back(ping.into());
         }
+        assert!(ping_pong.poll().unwrap().is_not_ready());
 
-        match ping_pong.poll() {
-            Ok(Async::NotReady) => {} // cool
-            rsp => panic!("unexpected poll result: {:?}", rsp),
-        }
-
-        {
-            let mut trans = trans.0.borrow_mut();
-            let ping = Ping::ping(*b"buoyant!");
-            trans.from_socket.push_back(ping.into());
-        }
-
-        match ping_pong.poll() {
-            Ok(Async::NotReady) => {} // cool
-            rsp => panic!("unexpected poll result: {:?}", rsp),
-        }
-        assert!(ping_pong.poll_complete().unwrap().is_not_ready());
-
+        // At this point, ping_pong is holding two pongs that it cannot send.
         {
             let mut trans = trans.0.borrow_mut();
             assert!(trans.to_socket.is_empty());
@@ -199,20 +213,16 @@ mod test {
             trans.start_send_blocked = false;
         }
 
-        match ping_pong.poll() {
-            Ok(Async::NotReady) => {} // cool
-            rsp => panic!("unexpected poll result: {:?}", rsp),
-        }
-        assert!(ping_pong.poll_complete().unwrap().is_not_ready());
-
-
+        // Now that start_send_blocked is disabled, the next poll will successfully send
+        // the pongs on the transport.
+        assert!(ping_pong.poll().unwrap().is_not_ready());
         {
             let mut trans = trans.0.borrow_mut();
             assert_eq!(trans.to_socket.len(), 2);
             match trans.to_socket.pop_front().unwrap() {
                 Frame::Ping(pong) => {
                     assert!(pong.is_ack());
-                    assert_eq!(&pong.into_payload(), b"buoyant!");
+                    assert_eq!(&pong.into_payload(), b"buoyant?");
                 }
                 f => panic!("unexpected frame: {:?}", f),
             }
@@ -245,7 +255,6 @@ mod test {
             f => panic!("unexpected frame: {:?}", f),
         }
 
-        assert!(ping_pong.poll_complete().is_ok());
         {
             let trans = trans.0.borrow();
             assert_eq!(trans.to_socket.len(), 0);
