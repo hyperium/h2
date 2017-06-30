@@ -28,7 +28,7 @@ impl Ping {
         self.payload
     }
 
-    /// Builds a `Ping` frame from a 
+    /// Builds a `Ping` frame from a raw frame.
     pub fn load(head: Head, bytes: Bytes) -> Result<Ping, Error> {
         debug_assert_eq!(head.kind(), ::frame::Kind::Ping);
 

@@ -33,11 +33,11 @@ impl<T> PingPong<T>
             if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
                 // If the pong can't be sent, save it..
                 self.sending_pongs.push_front(pong);
-                return Ok(Async::NotReady);
+                return; // Ok(Async::NotReady);
             }
         }
 
-        self.inner.poll_complete()
+        //self.inner.poll_complete()
     }
 }
 
