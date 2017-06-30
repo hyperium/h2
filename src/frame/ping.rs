@@ -1,4 +1,4 @@
-use bytes::{Buf, BufMut, Bytes, IntoBuf};
+use bytes::{Buf, BufMut};
 use frame::{Frame, Head, Kind, Error};
 
 const ACK_FLAG: u8 = 0x1;
@@ -29,7 +29,7 @@ impl Ping {
     }
 
     /// Builds a `Ping` frame from a raw frame.
-    pub fn load(head: Head, bytes: Bytes) -> Result<Ping, Error> {
+    pub fn load<B: Buf>(head: Head, mut buf: B) -> Result<Ping, Error> {
         debug_assert_eq!(head.kind(), ::frame::Kind::Ping);
 
         // PING frames are not associated with any individual stream. If a PING
@@ -42,11 +42,11 @@ impl Ping {
 
         // In addition to the frame header, PING frames MUST contain 8 octets of opaque
         // data in the payload.
-        if bytes.len() != 8 {
+        if buf.remaining() != 8 {
             return Err(Error::BadFrameSize);
         }
         let mut payload = [0; 8];
-        bytes.into_buf().copy_to_slice(&mut payload);
+        buf.copy_to_slice(&mut payload);
 
         // The PING frame defines the following flags:
         //
@@ -68,9 +68,7 @@ impl Ping {
         head.encode(sz, dst);
         dst.put_slice(&self.payload);
     }
-
 }
-
 
 impl From<Ping> for Frame {
     fn from(src: Ping) -> Frame {
