@@ -2,14 +2,12 @@ use ConnectionError;
 use frame::{Frame, Ping};
 use futures::*;
 use proto::ReadySink;
-use std::collections::VecDeque;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
 pub struct PingPong<T> {
     inner: T,
-    is_closed: bool,
-    sending_pongs: VecDeque<Frame>,
+    pong: Option<Frame>,
 }
 
 impl<T> PingPong<T>
@@ -19,25 +17,20 @@ impl<T> PingPong<T>
     pub fn new(inner: T) -> PingPong<T> {
         PingPong {
             inner,
-            is_closed: false,
-            sending_pongs: VecDeque::new(),
+            pong: None,
         }
     }
 
-    fn send_pongs(&mut self) -> Poll<(), ConnectionError> {
-        if self.sending_pongs.is_empty() {
-            return Ok(Async::Ready(()));
-        }
-
-        while let Some(pong) = self.sending_pongs.pop_front() {
+    fn try_send_pong(&mut self) -> Poll<(), ConnectionError> {
+        if let Some(pong) = self.pong.take() {
             if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
-                // If the pong can't be sent, save it..
-                self.sending_pongs.push_front(pong);
-                return; // Ok(Async::NotReady);
+                // If the pong can't be sent, save it.
+                self.pong = Some(pong);
+                return Ok(Async::NotReady);
             }
         }
 
-        //self.inner.poll_complete()
+        Ok(Async::Ready(()))
     }
 }
 
@@ -57,11 +50,10 @@ impl<T> Stream for PingPong<T>
     /// If a PING is received without the ACK flag, the frame is sent to the remote with
     /// its ACK flag set.
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        if self.is_closed {
-            return Ok(Async::Ready(None));
-        }
-
         loop {
+            // Don't read any frames until `inner` accepts any pending pong.
+            try_ready!(self.try_send_pong());
+
             match self.inner.poll()? {
                 Async::Ready(Some(Frame::Ping(ping))) => {
                     if ping.is_ack() {
@@ -70,29 +62,13 @@ impl<T> Stream for PingPong<T>
                     }
 
                     // Save a pong to be sent when there is nothing more to be returned
-                    // from the stream or when frames are sent to the sink..
+                    // from the stream or when frames are sent to the sink.
                     let pong = Ping::pong(ping.into_payload());
-                    self.sending_pongs.push_back(pong.into());
-
-                    // There's nothing to return yet. Poll the underlying stream again to
-                    // determine how to proceed.
-                    continue;
+                    self.pong = Some(pong.into());
                 }
 
                 // Everything other than ping gets passed through.
-                f @ Async::Ready(Some(_)) => {
-                    return Ok(f);
-                }
-
-                // If poll won't necessarily be called again, try to send pending pong
-                // frames.
-                f @ Async::Ready(None) => {
-                    self.is_closed = true;
-                    self.send_pongs()?;
-                    return Ok(f);
-                }
-                f @ Async::NotReady => {
-                    self.send_pongs()?;
+                f => {
                     return Ok(f);
                 }
             }
@@ -109,8 +85,8 @@ impl<T> Sink for PingPong<T>
 
     fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
         // Pings _SHOULD_ have priority over other messages, so attempt to send pending
-        // ping frames before attempting to send the 
-        if self.send_pongs()?.is_not_ready() {
+        // ping frames before attempting to send `item`.
+        if self.try_send_pong()?.is_not_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
 
@@ -119,15 +95,8 @@ impl<T> Sink for PingPong<T>
 
     /// Polls the underlying sink and tries to flush pending pong frames.
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        // Try to flush the underlying sink.
-        let poll = self.inner.poll_complete()?;
-        if self.sending_pongs.is_empty() {
-            return Ok(poll);
-        }
-
-        // Then, try to flush pending pongs. Even if poll is not ready, we may be able to
-        // start sending pongs.
-        self.send_pongs()
+        try_ready!(self.try_send_pong());
+        self.inner.poll_complete()
     }
 }
 
@@ -137,9 +106,7 @@ impl<T> ReadySink for PingPong<T>
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        if !self.sending_pongs.is_empty() {
-            return Ok(Async::NotReady);
-        }
+        try_ready!(self.try_send_pong());
         self.inner.poll_ready()
     }
 }
@@ -147,8 +114,8 @@ impl<T> ReadySink for PingPong<T>
 #[cfg(test)]
 mod test {
     use super::*;
-    use bytes::Bytes;
     use std::cell::RefCell;
+    use std::collections::VecDeque;
     use std::rc::Rc;
 
     #[test]
