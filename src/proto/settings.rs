@@ -92,8 +92,7 @@ impl<T> Stream for Settings<T>
                         // Save off the settings
                         self.remote = v.into_set();
 
-                        // TODO: uncomment?
-                        // let _ = try!(self.try_send_pending());
+                        let _ = try!(self.try_send_pending());
                     }
                 }
                 v => return Ok(Async::Ready(v)),

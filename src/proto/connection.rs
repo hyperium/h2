@@ -62,11 +62,17 @@ impl<T, P> Stream for Connection<T, P>
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
         use frame::Frame::*;
 
-        // Because receiving new frames may depend on ensuring that the write
-        // buffer is clear, `poll_complete` is called here.
-        let _ = try!(self.poll_complete());
+        let frame = match try!(self.inner.poll()) {
+            Async::Ready(f) => f,
+            Async::NotReady => {
+                // Because receiving new frames may depend on ensuring that the
+                // write buffer is clear, `poll_complete` is called here.
+                let _ = try!(self.poll_complete());
+                return Ok(Async::NotReady);
+            }
+        };
 
-        let frame = match try_ready!(self.inner.poll()) {
+        let frame = match frame {
             Some(Headers(v)) => {
                 // TODO: Update stream state
                 let stream_id = v.stream_id();
