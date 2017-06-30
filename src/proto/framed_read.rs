@@ -5,7 +5,7 @@ use proto::ReadySink;
 
 use futures::*;
 
-use bytes::{Bytes, IntoBuf};
+use bytes::Bytes;
 
 use tokio_io::{AsyncRead};
 use tokio_io::codec::length_delimited;
@@ -89,8 +89,7 @@ impl<T> FramedRead<T> {
                 return Ok(None);
             }
             Kind::Ping => {
-                let buf = &bytes[frame::HEADER_LEN..];
-                try!(frame::Ping::load(head, buf.into_buf())).into()
+                try!(frame::Ping::load(head, &bytes[frame::HEADER_LEN..])).into()
             }
             Kind::GoAway => {
                 let frame = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
