@@ -116,6 +116,10 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
                 v.encode(self.buf.get_mut());
                 trace!("encoded settings; rem={:?}", self.buf.remaining());
             }
+            Frame::Ping(v) => {
+                v.encode(self.buf.get_mut());
+                trace!("encoded ping; rem={:?}", self.buf.remaining());
+            }
         }
 
         Ok(AsyncSink::Ready)

@@ -90,7 +90,7 @@ pub fn parse_stream_id(buf: &[u8]) -> StreamId {
 
 impl Kind {
     pub fn new(byte: u8) -> Kind {
-        return match byte {
+        match byte {
             0 => Kind::Data,
             1 => Kind::Headers,
             2 => Kind::Priority,

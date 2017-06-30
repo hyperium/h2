@@ -88,7 +88,9 @@ impl<T> FramedRead<T> {
                 // TODO: implement
                 return Ok(None);
             }
-            Kind::Ping => unimplemented!(),
+            Kind::Ping => {
+                try!(frame::Ping::load(head, &bytes[frame::HEADER_LEN..])).into()
+            }
             Kind::GoAway => {
                 let frame = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
                 debug!("decoded; frame={:?}", frame);

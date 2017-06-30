@@ -46,7 +46,7 @@ pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
     // Map to `Frame` types
     let framed = FramedRead::new(framed_read);
 
-    // Add ping/pong handler
+    // Add ping/pong responder.
     let ping_pong = PingPong::new(framed);
 
     // Add settings handler
