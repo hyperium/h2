@@ -47,11 +47,11 @@ pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
     let framed = FramedRead::new(framed_read);
 
     // Add ping/pong responder.
-    let ponger = PingPong::new(framed);
+    let ping_pong = PingPong::new(framed);
 
     // Add settings handler
     let settings = Settings::new(
-        ponger, settings);
+        ping_pong, settings);
 
     // Finally, return the constructed `Connection`
     connection::new(settings)
