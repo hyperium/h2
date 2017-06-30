@@ -3,6 +3,10 @@ use frame::{self, Frame};
 use proto::ReadySink;
 
 use futures::*;
+use tokio_io::AsyncRead;
+use bytes::BufMut;
+
+use std::io;
 
 #[derive(Debug)]
 pub struct Settings<T> {
@@ -26,8 +30,7 @@ pub struct Settings<T> {
 }
 
 impl<T> Settings<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
     pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
         Settings {
@@ -37,6 +40,20 @@ impl<T> Settings<T>
             remaining_acks: 0,
             is_dirty: true,
             received_remote: false,
+        }
+    }
+
+    /// Swap the inner transport while maintaining the current state.
+    pub fn swap_inner<U, F: FnOnce(T) -> U>(self, f: F) -> Settings<U> {
+        let inner = f(self.inner);
+
+        Settings {
+            inner: inner,
+            local: self.local,
+            remote: self.remote,
+            remaining_acks: self.remaining_acks,
+            is_dirty: self.is_dirty,
+            received_remote: self.received_remote,
         }
     }
 
@@ -102,8 +119,7 @@ impl<T> Stream for Settings<T>
 }
 
 impl<T> Sink for Settings<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
 {
     type SinkItem = Frame;
     type SinkError = ConnectionError;
@@ -132,8 +148,7 @@ impl<T> Sink for Settings<T>
 }
 
 impl<T> ReadySink for Settings<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
@@ -142,5 +157,23 @@ impl<T> ReadySink for Settings<T>
         }
 
         Ok(Async::NotReady)
+    }
+}
+
+impl<T: io::Read> io::Read for Settings<T> {
+    fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(dst)
+    }
+}
+
+impl<T: AsyncRead> AsyncRead for Settings<T> {
+    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error>
+        where Self: Sized,
+    {
+        self.inner.read_buf(buf)
+    }
+
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+        self.inner.prepare_uninitialized_buffer(buf)
     }
 }

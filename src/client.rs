@@ -111,6 +111,6 @@ impl<T> Future for Handshake<T> {
 
 impl<T: fmt::Debug> fmt::Debug for Handshake<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "Handshake")
+        write!(fmt, "client::Handshake")
     }
 }

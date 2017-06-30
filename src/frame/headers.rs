@@ -265,6 +265,16 @@ impl Pseudo {
         }
     }
 
+    pub fn response(status: StatusCode) -> Self {
+        Pseudo {
+            method: None,
+            scheme: None,
+            authority: None,
+            path: None,
+            status: Some(status),
+        }
+    }
+
     pub fn set_scheme(&mut self, scheme: ByteStr) {
         self.scheme = Some(scheme);
     }

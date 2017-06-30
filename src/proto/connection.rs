@@ -62,6 +62,8 @@ impl<T, P> Stream for Connection<T, P>
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
         use frame::Frame::*;
 
+        trace!("Connection::poll");
+
         let frame = match try!(self.inner.poll()) {
             Async::Ready(f) => f,
             Async::NotReady => {
@@ -71,6 +73,8 @@ impl<T, P> Stream for Connection<T, P>
                 return Ok(Async::NotReady);
             }
         };
+
+        trace!("received; frame={:?}", frame);
 
         let frame = match frame {
             Some(Headers(v)) => {

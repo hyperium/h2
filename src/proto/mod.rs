@@ -28,6 +28,9 @@ type Framed<T> =
     FramedRead<
         FramedWrite<T>>;
 
+/// Create a full H2 transport from an I/O handle.
+///
+/// This is called as the final step of the client handshake future.
 pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
     -> Connection<T, P>
     where T: AsyncRead + AsyncWrite,
@@ -35,23 +38,49 @@ pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
 {
     let framed_write = FramedWrite::new(io);
 
-    // Delimit the frames
-    let framed_read = length_delimited::Builder::new()
-        .big_endian()
-        .length_field_length(3)
-        .length_adjustment(9)
-        .num_skip(0) // Don't skip the header
-        .new_read(framed_write);
-
-    // Map to `Frame` types
-    let framed = FramedRead::new(framed_read);
-
-    // Add ping/pong responder.
-    let ping_pong = PingPong::new(framed);
-
-    // Add settings handler
+    // To avoid code duplication, we're going to go this route. It is a bit
+    // weird, but oh well...
     let settings = Settings::new(
-        ping_pong, settings);
+        framed_write, settings);
+
+    from_server_handshaker(settings)
+}
+
+/// Create a transport prepared to handle the server handshake.
+///
+/// When the server is performing the handshake, it is able to only send
+/// `Settings` frames and is expected to receive the client preface as a byte
+/// stream. To represent this, `Settings<FramedWrite<T>>` is returned.
+pub fn server_handshaker<T>(io: T, settings: frame::SettingSet)
+    -> Settings<FramedWrite<T>>
+    where T: AsyncRead + AsyncWrite,
+{
+    let framed_write = FramedWrite::new(io);
+
+    Settings::new(framed_write, settings)
+}
+
+/// Create a full H2 transport from the server handshaker
+pub fn from_server_handshaker<T, P>(transport: Settings<FramedWrite<T>>)
+    -> Connection<T, P>
+    where T: AsyncRead + AsyncWrite,
+          P: Peer,
+{
+    let settings = transport.swap_inner(|io| {
+        // Delimit the frames
+        let framed_read = length_delimited::Builder::new()
+            .big_endian()
+            .length_field_length(3)
+            .length_adjustment(9)
+            .num_skip(0) // Don't skip the header
+            .new_read(io);
+
+        // Map to `Frame` types
+        let framed = FramedRead::new(framed_read);
+
+        // Add ping/pong responder.
+        PingPong::new(framed)
+    });
 
     // Finally, return the constructed `Connection`
     connection::new(settings)

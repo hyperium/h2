@@ -30,6 +30,7 @@ pub mod error;
 pub mod hpack;
 pub mod proto;
 pub mod frame;
+pub mod server;
 
 mod util;
 
