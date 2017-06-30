@@ -540,7 +540,7 @@ mod test {
 
     #[test]
     fn test_sensitive_headers_are_never_indexed() {
-        use http::header::{HeaderName, HeaderValue};
+        use http::header::HeaderValue;
 
         let name = "my-password".parse().unwrap();
         let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
