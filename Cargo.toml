@@ -15,12 +15,17 @@ fnv = "1.0.5"
 ordermap = "0.2.10"
 
 [dev-dependencies]
+mock-io = { git = "https://github.com/carllerche/mock-io" }
+
+# Fuzzing
+quickcheck = "0.4.1"
+rand = "0.3.15"
+
+# HPACK fixtures
 hex = "0.2.0"
 walkdir = "1.0.0"
 serde = "1.0.0"
 serde_json = "1.0.0"
-quickcheck = "0.4.1"
-rand = "0.3.15"
 
 # Akamai example
 tokio-core = "0.1"

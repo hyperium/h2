@@ -120,6 +120,7 @@ impl<T> Sink for Settings<T>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        trace!("Settings::poll_complete");
         try_ready!(self.try_send_pending());
         self.inner.poll_complete()
     }
