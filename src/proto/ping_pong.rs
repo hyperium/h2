@@ -79,18 +79,19 @@ impl<T> Stream for PingPong<T>
                     continue;
                 }
 
-                // Anything other than ping gets passed through.
+                // Everything other than ping gets passed through.
                 f @ Async::Ready(Some(_)) => {
                     return Ok(f);
                 }
 
-                f @ Async::NotReady |
+                // If poll won't necessarily be called again, try to send pending pong
+                // frames.
                 f @ Async::Ready(None) => {
-                    if let Async::Ready(None) = f {
-                        self.is_closed = true;
-                    }
-                    // If poll won't necessarily be called again, try to send pending pong
-                    // frames.
+                    self.is_closed = true;
+                    self.send_pongs()?;
+                    return Ok(f);
+                }
+                f @ Async::NotReady => {
                     self.send_pongs()?;
                     return Ok(f);
                 }
@@ -107,7 +108,8 @@ impl<T> Sink for PingPong<T>
     type SinkError = ConnectionError;
 
     fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
-        // Pings _SHOULD_ have priority over other messages, so attempt to send pending ping frames before attempting to send the 
+        // Pings _SHOULD_ have priority over other messages, so attempt to send pending
+        // ping frames before attempting to send the 
         if self.send_pongs()?.is_not_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
@@ -115,7 +117,7 @@ impl<T> Sink for PingPong<T>
         self.inner.start_send(item)
     }
 
-    /// Polls the underlying sink before
+    /// Polls the underlying sink and tries to flush pending pong frames.
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         // Try to flush the underlying sink.
         let poll = self.inner.poll_complete()?;
