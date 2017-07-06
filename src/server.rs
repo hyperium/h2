@@ -80,7 +80,7 @@ impl<T: AsyncRead> Future for ReadPreface<T> {
 
     fn poll(&mut self) -> Poll<T, Self::Error> {
         let mut buf = [0; 24];
-        let rem = PREFACE.len() - self.pos;
+        let mut rem = PREFACE.len() - self.pos;
 
         while rem > 0 {
             let n = try_nb!(self.inner.as_mut().unwrap().read(&mut buf[..rem]));
@@ -91,6 +91,7 @@ impl<T: AsyncRead> Future for ReadPreface<T> {
             }
 
             self.pos += n;
+            rem -= n; // TODO test
         }
 
         Ok(Async::Ready(self.inner.take().unwrap()))
