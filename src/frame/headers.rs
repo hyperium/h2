@@ -3,7 +3,7 @@ use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use util::byte_str::ByteStr;
 
-use http::{request, response, Method, StatusCode};
+use http::{request, response, version, uri, Method, StatusCode};
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
@@ -201,7 +201,43 @@ impl Headers {
     }
 
     pub fn into_request(self) -> request::Head {
-        unimplemented!();
+        let mut request = request::Head::default();
+
+        // TODO: should we distinguish between HTTP_2 and HTTP_2C?
+        // carllerche/http#42
+        request.version = version::HTTP_2;
+
+        if let Some(method) = self.pseudo.method {
+            request.method = method;
+        } else {
+            // TODO: invalid request
+            unimplemented!();
+        }
+
+        // Convert the URI
+        let mut parts = uri::Parts::default();
+
+        if let Some(scheme) = self.pseudo.scheme {
+            // TODO: Don't unwrap
+            parts.scheme = Some(uri::Scheme::try_from_shared(scheme.into()).unwrap());
+        }
+
+        if let Some(authority) = self.pseudo.authority {
+            // TODO: Don't unwrap
+            parts.authority = Some(uri::Authority::try_from_shared(authority.into()).unwrap());
+        }
+
+        if let Some(path) = self.pseudo.path {
+            // TODO: Don't unwrap
+            parts.origin_form = Some(uri::OriginForm::try_from_shared(path.into()).unwrap());
+        }
+
+        request.uri = parts.into();
+
+        // Set the header fields
+        request.headers = self.fields;
+
+        request
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)

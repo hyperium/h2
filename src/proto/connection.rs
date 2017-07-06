@@ -1,10 +1,11 @@
 use {frame, Frame, ConnectionError, Peer, StreamId};
 use client::Client;
+use server::Server;
 use proto::{self, ReadySink, State};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 
-use http::{request};
+use http::{request, response};
 
 use futures::*;
 
@@ -47,6 +48,23 @@ impl<T> Connection<T, Client>
         self.send(Frame::Headers {
             id: id,
             headers: request,
+            end_of_stream: end_of_stream,
+        })
+    }
+}
+
+impl<T> Connection<T, Server>
+    where T: AsyncRead + AsyncWrite,
+{
+    pub fn send_response(self,
+                        id: StreamId, // TODO: Generate one internally?
+                        response: response::Head,
+                        end_of_stream: bool)
+        -> sink::Send<Self>
+    {
+        self.send(Frame::Headers {
+            id: id,
+            headers: response,
             end_of_stream: end_of_stream,
         })
     }
@@ -126,7 +144,9 @@ impl<T, P> Sink for Connection<T, P>
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
                 // Ensure ID is valid
-                try!(P::check_initiating_id(id));
+                // TODO: This check should only be done **if** this is a new
+                // stream ID
+                // try!(P::check_initiating_id(id));
 
                 // TODO: Ensure available capacity for a new stream
                 // This won't be as simple as self.streams.len() as closed

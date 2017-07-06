@@ -8,6 +8,8 @@ extern crate env_logger;
 
 use h2::server;
 
+use http::{response, status};
+
 use futures::*;
 
 use tokio_core::reactor;
@@ -34,10 +36,17 @@ pub fn main() {
 
                 println!("H2 connection bound");
 
-                conn.for_each(|frame| {
-                    println!("RX: {:?}", frame);
-                    Ok(())
-                })
+                // Receive a request
+                conn.into_future()
+                    .then(|res| {
+                        let (frame, conn) = res.unwrap();
+                        println!("Zomg frame; {:?}", frame);
+
+                        let mut response = response::Head::default();
+                        response.status = status::NO_CONTENT;
+
+                        conn.send_response(1, response, true)
+                    })
             })
             .then(|res| {
                 let _ = res.unwrap();
