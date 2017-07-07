@@ -1,4 +1,4 @@
-use frame::{Frame, Error, Head, Kind};
+use frame::{Frame, Error, Head, Kind, StreamId};
 use bytes::{BytesMut, BufMut, BigEndian};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -71,7 +71,7 @@ impl Settings {
 
         debug_assert_eq!(head.kind(), ::frame::Kind::Settings);
 
-        if head.stream_id() != 0 {
+        if !head.stream_id().is_zero() {
             return Err(Error::InvalidStreamId);
         }
 
@@ -132,7 +132,7 @@ impl Settings {
 
     pub fn encode(&self, dst: &mut BytesMut) {
         // Create & encode an appropriate frame head
-        let head = Head::new(Kind::Settings, self.flags.into(), 0);
+        let head = Head::new(Kind::Settings, self.flags.into(), StreamId::zero());
         let payload_len = self.payload_len();
 
         trace!("encoding SETTINGS; len={}", payload_len);

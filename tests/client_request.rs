@@ -11,10 +11,11 @@ use futures::*;
 
 #[test]
 fn handshake() {
-    let _ = ::env_logger::init().unwrap();
+    let _ = ::env_logger::init();
 
     let mock = mock_io::Builder::new()
-        .client_handshake()
+        .handshake()
+        .write(SETTINGS_ACK)
         .build();
 
     let mut h2 = client::handshake(mock)
@@ -25,36 +26,35 @@ fn handshake() {
 }
 
 #[test]
-#[ignore] // Not working yet
-fn hello_world() {
-    let _ = ::env_logger::init().unwrap();
+fn get_with_204_response() {
+    let _ = ::env_logger::init();
 
     let mock = mock_io::Builder::new()
-        .client_handshake()
-        // GET https://example.com/ HEADERS frame
-        .write(&[0, 0, 13, 1, 5, 0, 0, 0, 1, 130, 135, 65, 136, 47, 145, 211, 93, 5, 92, 135, 167, 132])
-        // .read(&[0, 0, 0, 1, 5, 0, 0, 0, 1])
+        .handshake()
+        // Write GET /
+        .write(&[
+               0, 0, 0x10, 1, 5, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29,
+                0xAC, 0x4B, 0x8F, 0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84,
+        ])
+        .write(SETTINGS_ACK)
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
     let mut h2 = client::handshake(mock)
         .wait().unwrap();
 
-    let mut request = request::Head::default();
-    request.uri = "https://example.com/".parse().unwrap();
-    // request.version = version::H2;
-
-    println!("~~~ SEND REQUEST ~~~");
     // Send the request
-    let mut h2 = h2.send_request(1, request, true).wait().unwrap();
+    let mut request = request::Head::default();
+    request.uri = "https://http2.akamai.com/".parse().unwrap();
+    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
 
-    println!("~~~ WAIT FOR RESPONSE ~~~");
-    // Iterate the response frames
-    let mut h2 = Stream::wait(h2);
+    // Get the response
+    let (resp, h2) = h2.into_future().wait().unwrap();
 
-    let headers = h2.next().unwrap();
+    println!("RESP: {:?}", resp);
 
-    // At this point, the connection should be closed
-    assert!(h2.next().is_none());
+    assert!(Stream::wait(h2).next().is_none());
 }
 
 #[test]
@@ -67,23 +67,29 @@ fn request_without_scheme() {
 fn request_with_h1_version() {
 }
 
+#[test]
+#[ignore]
+fn invalid_client_stream_id() {
+}
+
+#[test]
+#[ignore]
+fn invalid_server_stream_id() {
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 trait MockH2 {
-    fn client_handshake(&mut self) -> &mut Self;
+    fn handshake(&mut self) -> &mut Self;
 }
 
 impl MockH2 for mock_io::Builder {
-    fn client_handshake(&mut self) -> &mut Self {
+    fn handshake(&mut self) -> &mut Self {
         self.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
             // Settings frame
             .write(SETTINGS)
-            /*
-            .read(&[0, 0, 0, 4, 0, 0, 0, 0, 0])
-            // Settings ACK
-            .write(&[0, 0, 0, 4, 1, 0, 0, 0, 0])
-            .read(&[0, 0, 0, 4, 1, 0, 0, 0, 0])
-            */
+            .read(SETTINGS)
+            .read(SETTINGS_ACK)
     }
 }

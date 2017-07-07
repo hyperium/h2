@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, IntoBuf};
-use frame::{Frame, Head, Kind, Error};
+use frame::{Frame, Head, Kind, Error, StreamId};
 
 const ACK_FLAG: u8 = 0x1;
 
@@ -36,7 +36,7 @@ impl Ping {
         // frame is received with a stream identifier field value other than
         // 0x0, the recipient MUST respond with a connection error
         // (Section 5.4.1) of type PROTOCOL_ERROR.
-        if head.stream_id() != 0 {
+        if !head.stream_id().is_zero() {
             return Err(Error::InvalidStreamId);
         }
 
@@ -45,6 +45,7 @@ impl Ping {
         if bytes.len() != 8 {
             return Err(Error::BadFrameSize);
         }
+
         let mut payload = [0; 8];
         bytes.into_buf().copy_to_slice(&mut payload);
 
@@ -63,7 +64,7 @@ impl Ping {
         trace!("encoding PING; ack={} len={}", self.ack, sz);
 
         let flags = if self.ack { ACK_FLAG } else { 0 };
-        let head = Head::new(Kind::Ping, flags, 0);
+        let head = Head::new(Kind::Ping, flags, StreamId::zero());
 
         head.encode(sz, dst);
         dst.put_slice(&self.payload);
