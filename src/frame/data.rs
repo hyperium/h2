@@ -1,10 +1,10 @@
 use frame::{util, Frame, Head, Error, StreamId, Kind};
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, Buf};
 
 #[derive(Debug)]
-pub struct Data {
+pub struct Data<T = Bytes> {
     stream_id: StreamId,
-    data: Bytes,
+    data: T,
     flags: DataFlag,
     pad_len: Option<u8>,
 }
@@ -16,8 +16,8 @@ const END_STREAM: u8 = 0x1;
 const PADDED: u8 = 0x8;
 const ALL: u8 = END_STREAM | PADDED;
 
-impl Data {
-    pub fn load(head: Head, mut payload: Bytes) -> Result<Data, Error> {
+impl Data<Bytes> {
+    pub fn load(head: Head, mut payload: Bytes) -> Result<Self, Error> {
         let flags = DataFlag::load(head.flag());
 
         let pad_len = if flags.is_padded() {
@@ -34,35 +34,56 @@ impl Data {
             pad_len: pad_len,
         })
     }
+}
+
+impl<T> Data<T> {
+    pub fn new(stream_id: StreamId, data: T) -> Self {
+        Data {
+            stream_id: stream_id,
+            data: data,
+            flags: DataFlag::default(),
+            pad_len: None,
+        }
+    }
 
     pub fn stream_id(&self) -> StreamId {
         self.stream_id
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
     }
 
     pub fn is_end_stream(&self) -> bool {
         self.flags.is_end_stream()
     }
 
-    pub fn encode<T: BufMut>(&self, dst: &mut T) {
-        self.head().encode(self.len(), dst);
-        dst.put(&self.data);
+    pub fn set_end_stream(&mut self) {
+        self.flags.set_end_stream()
     }
 
     pub fn head(&self) -> Head {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
 
-    pub fn into_payload(self) -> Bytes {
+    pub fn into_payload(self) -> T {
         self.data
     }
 }
 
-impl From<Data> for Frame {
-    fn from(src: Data) -> Frame {
+impl<T: Buf> Data<T> {
+    pub fn len(&self) -> usize {
+        self.data.remaining()
+    }
+
+    pub fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {
+        if self.len() > dst.remaining_mut() {
+            unimplemented!();
+        }
+
+        self.head().encode(self.len(), dst);
+        dst.put(&mut self.data);
+    }
+}
+
+impl<T> From<Data<T>> for Frame<T> {
+    fn from(src: Data<T>) -> Self {
         Frame::Data(src)
     }
 }
@@ -86,8 +107,19 @@ impl DataFlag {
         self.0 & END_STREAM == END_STREAM
     }
 
+    pub fn set_end_stream(&mut self) {
+        self.0 |= END_STREAM
+    }
+
     pub fn is_padded(&self) -> bool {
         self.0 & PADDED == PADDED
+    }
+}
+
+impl Default for DataFlag {
+    /// Returns a `HeadersFlag` value with `END_HEADERS` set.
+    fn default() -> Self {
+        DataFlag(0)
     }
 }
 

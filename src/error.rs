@@ -3,14 +3,24 @@ use std::{error, fmt, io};
 /// The error type for HTTP/2 operations
 #[derive(Debug)]
 pub enum ConnectionError {
-    /// The HTTP/2 stream was reset
+    /// An error caused by an action taken by the remote peer.
+    ///
+    /// This is either an error received by the peer or caused by an invalid
+    /// action taken by the peer (i.e. a protocol error).
     Proto(Reason),
+
     /// An `io::Error` occurred while trying to read or write.
     Io(io::Error),
+
+    /// An error resulting from an invalid action taken by the user of this
+    /// library.
+    User(User),
+
+    // TODO: reserve additional variants
 }
 
 #[derive(Debug)]
-pub struct StreamError(Reason);
+pub struct Stream(Reason);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Reason {
@@ -29,27 +39,60 @@ pub enum Reason {
     InadequateSecurity,
     Http11Required,
     Other(u32),
+    // TODO: reserve additional variants
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum User {
+    /// The specified stream ID is invalid.
+    ///
+    /// For example, using a stream ID reserved for a push promise from the
+    /// client or using a non-zero stream ID for settings.
+    InvalidStreamId,
+
+    /// The stream ID is no longer accepting frames.
+    InactiveStreamId,
+
+    /// The stream is not currently expecting a frame of this type.
+    UnexpectedFrameType,
+
+    // TODO: reserve additional variants
 }
 
 macro_rules! reason_desc {
     ($reason:expr) => (reason_desc!($reason, ""));
     ($reason:expr, $prefix:expr) => ({
+        use self::Reason::*;
+
         match $reason {
-            Reason::NoError => concat!($prefix, "not a result of an error"),
-            Reason::ProtocolError => concat!($prefix, "unspecific protocol error detected"),
-            Reason::InternalError => concat!($prefix, "unexpected internal error encountered"),
-            Reason::FlowControlError => concat!($prefix, "flow-control protocol violated"),
-            Reason::SettingsTimeout => concat!($prefix, "settings ACK not received in timely manner"),
-            Reason::StreamClosed => concat!($prefix, "received frame when stream half-closed"),
-            Reason::FrameSizeError => concat!($prefix, "frame sent with invalid size"),
-            Reason::RefusedStream => concat!($prefix, "refused stream before processing any application logic"),
-            Reason::Cancel => concat!($prefix, "stream no longer needed"),
-            Reason::CompressionError => concat!($prefix, "unable to maintain the header compression context"),
-            Reason::ConnectError => concat!($prefix, "connection established in response to a CONNECT request was reset or abnormally closed"),
-            Reason::EnhanceYourCalm => concat!($prefix, "detected excessive load generating behavior"),
-            Reason::InadequateSecurity => concat!($prefix, "security properties do not meet minimum requirements"),
-            Reason::Http11Required => concat!($prefix, "endpoint requires HTTP/1.1"),
-            Reason::Other(_) => concat!($prefix, "other reason"),
+            NoError => concat!($prefix, "not a result of an error"),
+            ProtocolError => concat!($prefix, "unspecific protocol error detected"),
+            InternalError => concat!($prefix, "unexpected internal error encountered"),
+            FlowControlError => concat!($prefix, "flow-control protocol violated"),
+            SettingsTimeout => concat!($prefix, "settings ACK not received in timely manner"),
+            StreamClosed => concat!($prefix, "received frame when stream half-closed"),
+            FrameSizeError => concat!($prefix, "frame sent with invalid size"),
+            RefusedStream => concat!($prefix, "refused stream before processing any application logic"),
+            Cancel => concat!($prefix, "stream no longer needed"),
+            CompressionError => concat!($prefix, "unable to maintain the header compression context"),
+            ConnectError => concat!($prefix, "connection established in response to a CONNECT request was reset or abnormally closed"),
+            EnhanceYourCalm => concat!($prefix, "detected excessive load generating behavior"),
+            InadequateSecurity => concat!($prefix, "security properties do not meet minimum requirements"),
+            Http11Required => concat!($prefix, "endpoint requires HTTP/1.1"),
+            Other(_) => concat!($prefix, "other reason (ain't no tellin')"),
+        }
+    });
+}
+
+macro_rules! user_desc {
+    ($reason:expr) => (user_desc!($reason, ""));
+    ($reason:expr, $prefix:expr) => ({
+        use self::User::*;
+
+        match $reason {
+            InvalidStreamId => concat!($prefix, "invalid stream ID"),
+            InactiveStreamId => concat!($prefix, "inactive stream ID"),
+            UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
         }
     });
 }
@@ -68,6 +111,12 @@ impl From<Reason> for ConnectionError {
     }
 }
 
+impl From<User> for ConnectionError {
+    fn from(src: User) -> ConnectionError {
+        ConnectionError::User(src)
+    }
+}
+
 impl From<ConnectionError> for io::Error {
     fn from(src: ConnectionError) -> io::Error {
         io::Error::new(io::ErrorKind::Other, src)
@@ -81,6 +130,7 @@ impl fmt::Display for ConnectionError {
         match *self {
             Proto(reason) => write!(fmt, "protocol error: {}", reason),
             Io(ref e) => fmt::Display::fmt(e, fmt),
+            User(e) => write!(fmt, "user error: {}", e),
         }
     }
 }
@@ -92,6 +142,7 @@ impl error::Error for ConnectionError {
         match *self {
             Io(ref e) => error::Error::description(e),
             Proto(reason) => reason_desc!(reason, "protocol error: "),
+            User(user) => user_desc!(user, "user error: "),
         }
     }
 }
@@ -153,6 +204,20 @@ impl From<Reason> for u32 {
 }
 
 impl fmt::Display for Reason {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", self.description())
+    }
+}
+
+// ===== impl User =====
+
+impl User {
+    pub fn description(&self) -> &str {
+        user_desc!(*self)
+    }
+}
+
+impl fmt::Display for User {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "{}", self.description())
     }

@@ -1,4 +1,7 @@
-use {ConnectionError, Reason, Peer};
+use Peer;
+use error::ConnectionError;
+use error::Reason::*;
+use error::User::*;
 
 /// Represents the state of an H2 stream
 ///
@@ -83,7 +86,7 @@ impl State {
                 Ok(true)
             }
             Open { local, remote } => {
-                try!(remote.check_is_headers(Reason::ProtocolError));
+                try!(remote.check_is_headers(ProtocolError.into()));
 
                 *self = if eos {
                     HalfClosedRemote(local)
@@ -95,7 +98,7 @@ impl State {
                 Ok(false)
             }
             HalfClosedLocal(remote) => {
-                try!(remote.check_is_headers(Reason::ProtocolError));
+                try!(remote.check_is_headers(ProtocolError.into()));
 
                 *self = if eos {
                     Closed
@@ -106,7 +109,36 @@ impl State {
                 Ok(false)
             }
             Closed | HalfClosedRemote(..) => {
-                Err(Reason::ProtocolError.into())
+                Err(ProtocolError.into())
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn recv_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
+        use self::State::*;
+
+        match *self {
+            Open { local, remote } => {
+                try!(remote.check_is_data(ProtocolError.into()));
+
+                if eos {
+                    *self = HalfClosedRemote(local);
+                }
+
+                Ok(())
+            }
+            HalfClosedLocal(remote) => {
+                try!(remote.check_is_data(ProtocolError.into()));
+
+                if eos {
+                    *self = Closed;
+                }
+
+                Ok(())
+            }
+            Closed | HalfClosedRemote(..) => {
+                Err(ProtocolError.into())
             }
             _ => unimplemented!(),
         }
@@ -134,7 +166,7 @@ impl State {
                 Ok(true)
             }
             Open { local, remote } => {
-                try!(local.check_is_headers(Reason::InternalError));
+                try!(local.check_is_headers(UnexpectedFrameType.into()));
 
                 *self = if eos {
                     HalfClosedLocal(remote)
@@ -146,7 +178,7 @@ impl State {
                 Ok(false)
             }
             HalfClosedRemote(local) => {
-                try!(local.check_is_headers(Reason::InternalError));
+                try!(local.check_is_headers(UnexpectedFrameType.into()));
 
                 *self = if eos {
                     Closed
@@ -157,7 +189,36 @@ impl State {
                 Ok(false)
             }
             Closed | HalfClosedLocal(..) => {
-                Err(Reason::InternalError.into())
+                Err(UnexpectedFrameType.into())
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn send_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
+        use self::State::*;
+
+        match *self {
+            Open { local, remote } => {
+                try!(local.check_is_data(UnexpectedFrameType.into()));
+
+                if eos {
+                    *self = HalfClosedLocal(remote);
+                }
+
+                Ok(())
+            }
+            HalfClosedRemote(local) => {
+                try!(local.check_is_data(UnexpectedFrameType.into()));
+
+                if eos {
+                    *self = Closed;
+                }
+
+                Ok(())
+            }
+            Closed | HalfClosedLocal(..) => {
+                Err(UnexpectedFrameType.into())
             }
             _ => unimplemented!(),
         }
@@ -166,12 +227,21 @@ impl State {
 
 impl PeerState {
     #[inline]
-    fn check_is_headers(&self, err: Reason) -> Result<(), ConnectionError> {
+    fn check_is_headers(&self, err: ConnectionError) -> Result<(), ConnectionError> {
         use self::PeerState::*;
 
         match *self {
             Headers => Ok(()),
-            _ => Err(err.into()),
+            _ => Err(err),
+        }
+    }
+
+    fn check_is_data(&self, err: ConnectionError) -> Result<(), ConnectionError> {
+        use self::PeerState::*;
+
+        match *self {
+            Data => Ok(()),
+            _ => Err(err),
         }
     }
 }
