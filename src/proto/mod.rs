@@ -5,6 +5,7 @@ mod ping_pong;
 mod ready;
 mod settings;
 mod state;
+mod window_update;
 
 pub use self::connection::{Connection};
 pub use self::framed_read::FramedRead;
@@ -13,6 +14,7 @@ pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
 pub use self::state::State;
+pub use self::window_update::WindowUpdate;
 
 use {frame, Peer};
 
@@ -83,5 +85,5 @@ pub fn from_server_handshaker<T, P>(transport: Settings<FramedWrite<T>>)
     });
 
     // Finally, return the constructed `Connection`
-    connection::new(settings)
+    connection::new(settings, 65_535, 65_535)
 }

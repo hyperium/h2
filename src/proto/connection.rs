@@ -1,7 +1,8 @@
-use {frame, Frame, ConnectionError, Peer, StreamId};
+use {Frame, ConnectionError, Peer, StreamId};
 use client::Client;
+use frame::{Frame as WireFrame};
 use server::Server;
-use proto::{self, ReadySink, State};
+use proto::{self, ReadySink, State, WindowUpdate};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -15,17 +16,60 @@ use fnv::FnvHasher;
 use std::marker::PhantomData;
 use std::hash::BuildHasherDefault;
 
+pub struct FlowControlViolation;
+
+#[derive(Debug)]
+struct FlowController {
+    window_size: u32,
+    underflow: u32,
+}
+
+impl FlowController {
+    pub fn new(window_size: u32) -> FlowController {
+        FlowController {
+            window_size,
+            underflow: 0,
+        }
+    }
+
+    pub fn shrink(&mut self, mut sz: u32) {
+        self.underflow += sz;
+    }
+
+    pub fn consume(&mut self, mut sz: u32) -> Result<(), FlowControlViolation> {
+        if sz < self.window_size {
+            self.underflow -= sz;
+            return Err(FlowControlViolation);
+        }
+
+        self.window_size -= sz;
+        Ok(())
+    }
+
+    pub fn increment(&mut self, mut sz: u32) {
+        if sz <= self.underflow {
+            self.underflow -= sz;
+            return;
+        }
+
+        sz -= self.underflow;
+        self.window_size += sz;
+    }
+}
+
 /// An H2 connection
 #[derive(Debug)]
 pub struct Connection<T, P> {
     inner: proto::Inner<T>,
     streams: StreamMap<State>,
     peer: PhantomData<P>,
+    local_flow_controller: FlowController,
+        remote_flow_controller: FlowController,
 }
 
 type StreamMap<T> = OrderMap<StreamId, T, BuildHasherDefault<FnvHasher>>;
 
-pub fn new<T, P>(transport: proto::Inner<T>) -> Connection<T, P>
+pub fn new<T, P>(transport: proto::Inner<T>, initial_local_window_size: u32, initial_remote_window_size: u32) -> Connection<T, P>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
 {
@@ -33,15 +77,35 @@ pub fn new<T, P>(transport: proto::Inner<T>) -> Connection<T, P>
         inner: transport,
         streams: StreamMap::default(),
         peer: PhantomData,
+        local_flow_controller: FlowController::new(initial_local_window_size),
+        remote_flow_controller: FlowController::new(initial_remote_window_size),
     }
 }
 
 impl<T, P> Connection<T, P> {
-    pub fn increment_local_window_size(&mut self, id: StreamId, increment: usize) {
+    /// Publishes stream window updates to the remote.
+    ///
+    /// Connection window updates (StreamId=0) and stream window updates are published
+    /// distinctly.
+    pub fn increment_local_window(&mut self, up: WindowUpdate) {
+        let incr = up.increment();
+        let flow = match up {
+            WindowUpdate::Connection { .. } => Some(&self.local_flow_controller),
+            WindowUpdate::Stream { id, .. } => {
+                self.streams.get(&id).map(|s| s.local_flow_controller())
+            }
+        };
+        if let Some(flow) = flow {
+            flow.increment(incr);
+        }
         unimplemented!()
     }
 
-    pub fn poll_remote_window_size(&mut self, id: StreamId) -> Poll<usize, ()> {
+    /// Advertises stream window updates from the remote.
+    ///
+    /// Connection window updates (StreamId=0) and stream window updates are advertised
+    /// distinctly.
+    pub fn poll_remote_window(&mut self) -> Poll<WindowUpdate, ()> {
         unimplemented!()
     }
 }
@@ -88,8 +152,6 @@ impl<T, P> Stream for Connection<T, P>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
-        use frame::Frame::*;
-
         trace!("Connection::poll");
 
         let frame = match try!(self.inner.poll()) {
@@ -105,7 +167,7 @@ impl<T, P> Stream for Connection<T, P>
         trace!("received; frame={:?}", frame);
 
         let frame = match frame {
-            Some(Headers(v)) => {
+            Some(WireFrame::Headers(v)) => {
                 // TODO: Update stream state
                 let stream_id = v.stream_id();
                 let end_of_stream = v.is_end_stream();
@@ -130,7 +192,7 @@ impl<T, P> Stream for Connection<T, P>
                     end_of_stream: end_of_stream,
                 }
             }
-            Some(Data(v)) => {
+            Some(WireFrame::Data(v)) => {
                 // TODO: Validate frame
 
                 let stream_id = v.stream_id();
@@ -189,7 +251,7 @@ impl<T, P> Sink for Connection<T, P>
 
                 // We already ensured that the upstream can handle the frame, so
                 // panic if it gets rejected.
-                let res = try!(self.inner.start_send(frame::Frame::Headers(frame)));
+                let res = try!(self.inner.start_send(WireFrame::Headers(frame)));
 
                 // This is a one-way conversion. By checking `poll_ready` first,
                 // it's already been determined that the inner `Sink` can accept
