@@ -36,6 +36,16 @@ pub fn new<T, P>(transport: proto::Inner<T>) -> Connection<T, P>
     }
 }
 
+impl<T, P> Connection<T, P> {
+    pub fn increment_local_window_size(&mut self, id: StreamId, increment: usize) {
+        unimplemented!()
+    }
+
+    pub fn poll_remote_window_size(&mut self, id: StreamId) -> Poll<usize, ()> {
+        unimplemented!()
+    }
+}
+
 impl<T> Connection<T, Client>
     where T: AsyncRead + AsyncWrite,
 {
