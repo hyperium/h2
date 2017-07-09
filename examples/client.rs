@@ -37,7 +37,7 @@ pub fn main() {
         request.uri = "https://http2.akamai.com/".parse().unwrap();
         // request.version = version::H2;
 
-        conn.send_request(1, request, true)
+        conn.send_request(1.into(), request, true)
     })
     .then(|res| {
         let conn = res.unwrap();

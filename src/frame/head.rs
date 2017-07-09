@@ -1,3 +1,5 @@
+use super::StreamId;
+
 use bytes::{BufMut, BigEndian};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -23,10 +25,6 @@ pub enum Kind {
     Unknown,
 }
 
-pub type StreamId = u32;
-
-const STREAM_ID_MASK: StreamId = 0x80000000;
-
 // ===== impl Head =====
 
 impl Head {
@@ -43,11 +41,11 @@ impl Head {
         Head {
             kind: Kind::new(header[3]),
             flag: header[4],
-            stream_id: parse_stream_id(&header[5..]),
+            stream_id: StreamId::parse(&header[5..]),
         }
     }
 
-    pub fn stream_id(&self) -> u32 {
+    pub fn stream_id(&self) -> StreamId {
         self.stream_id
     }
 
@@ -65,25 +63,12 @@ impl Head {
 
     pub fn encode<T: BufMut>(&self, payload_len: usize, dst: &mut T) {
         debug_assert!(self.encode_len() <= dst.remaining_mut());
-        debug_assert!(self.stream_id & STREAM_ID_MASK == 0);
 
         dst.put_uint::<BigEndian>(payload_len as u64, 3);
         dst.put_u8(self.kind as u8);
         dst.put_u8(self.flag);
-        dst.put_u32::<BigEndian>(self.stream_id);
+        dst.put_u32::<BigEndian>(self.stream_id.into());
     }
-}
-
-/// Parse the next 4 octets in the given buffer, assuming they represent an
-/// HTTP/2 stream ID.  This means that the most significant bit of the first
-/// octet is ignored and the rest interpreted as a network-endian 31-bit
-/// integer.
-#[inline]
-pub fn parse_stream_id(buf: &[u8]) -> StreamId {
-    /// TODO: Move this onto the StreamId type?
-    let unpacked = unpack_octets_4!(buf, 0, u32);
-    // Now clear the most significant bit, as that is reserved and MUST be ignored when received.
-    unpacked & !STREAM_ID_MASK
 }
 
 // ===== impl Kind =====

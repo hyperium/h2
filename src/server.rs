@@ -102,15 +102,12 @@ impl Peer for Server {
     type Send = http::response::Head;
     type Poll = http::request::Head;
 
-    fn check_initiating_id(id: StreamId) -> Result<(), ConnectionError> {
-        if id % 2 == 1 {
-            // Server stream identifiers must be even
-            unimplemented!();
-        }
+    fn is_valid_local_stream_id(id: StreamId) -> bool {
+        id.is_server_initiated()
+    }
 
-        // TODO: Ensure the `id` doesn't overflow u31
-
-        Ok(())
+    fn is_valid_remote_stream_id(id: StreamId) -> bool {
+        id.is_client_initiated()
     }
 
     fn convert_send_message(

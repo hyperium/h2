@@ -75,7 +75,13 @@ pub trait Peer {
     /// Message type polled from the transport
     type Poll;
 
-    fn check_initiating_id(id: StreamId) -> Result<(), ConnectionError>;
+    /// Returns `true` if `id` is a valid StreamId for a stream initiated by the
+    /// local node.
+    fn is_valid_local_stream_id(id: StreamId) -> bool;
+
+    /// Returns `true` if `id` is a valid StreamId for a stream initiated by the
+    /// remote node.
+    fn is_valid_remote_stream_id(id: StreamId) -> bool;
 
     #[doc(hidden)]
     fn convert_send_message(

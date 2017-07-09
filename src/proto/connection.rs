@@ -110,6 +110,20 @@ impl<T, P> Stream for Connection<T, P>
                 let stream_id = v.stream_id();
                 let end_of_stream = v.is_end_stream();
 
+                let stream_initialized = try!(self.streams.entry(stream_id)
+                     .or_insert(State::default())
+                     .recv_headers::<P>(end_of_stream));
+
+                if stream_initialized {
+                    // TODO: Ensure available capacity for a new stream
+                    // This won't be as simple as self.streams.len() as closed
+                    // connections should not be factored.
+
+                    if !P::is_valid_remote_stream_id(stream_id) {
+                        unimplemented!();
+                    }
+                }
+
                 Frame::Headers {
                     id: stream_id,
                     headers: P::convert_poll_message(v),
@@ -153,22 +167,23 @@ impl<T, P> Sink for Connection<T, P>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
-                // Ensure ID is valid
-                // TODO: This check should only be done **if** this is a new
-                // stream ID
-                // try!(P::check_initiating_id(id));
-
-                // TODO: Ensure available capacity for a new stream
-                // This won't be as simple as self.streams.len() as closed
-                // connections should not be factored.
-
                 // Transition the stream state, creating a new entry if needed
                 //
                 // TODO: Response can send multiple headers frames before body
                 // (1xx responses).
-                try!(self.streams.entry(id)
+                let stream_initialized = try!(self.streams.entry(id)
                      .or_insert(State::default())
-                     .send_headers());
+                     .send_headers::<P>(end_of_stream));
+
+                if stream_initialized {
+                    // TODO: Ensure available capacity for a new stream
+                    // This won't be as simple as self.streams.len() as closed
+                    // connections should not be factored.
+                    //
+                    if !P::is_valid_local_stream_id(id) {
+                        unimplemented!();
+                    }
+                }
 
                 let frame = P::convert_send_message(id, headers, end_of_stream);
 

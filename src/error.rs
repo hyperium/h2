@@ -62,6 +62,12 @@ impl From<io::Error> for ConnectionError {
     }
 }
 
+impl From<Reason> for ConnectionError {
+    fn from(src: Reason) -> ConnectionError {
+        ConnectionError::Proto(src)
+    }
+}
+
 impl From<ConnectionError> for io::Error {
     fn from(src: ConnectionError) -> io::Error {
         io::Error::new(io::ErrorKind::Other, src)

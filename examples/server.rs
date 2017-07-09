@@ -45,7 +45,7 @@ pub fn main() {
                         let mut response = response::Head::default();
                         response.status = status::NO_CONTENT;
 
-                        conn.send_response(1, response, true)
+                        conn.send_response(1.into(), response, true)
                     })
             })
             .then(|res| {

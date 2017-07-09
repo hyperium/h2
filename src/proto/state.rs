@@ -1,4 +1,4 @@
-use ConnectionError;
+use {ConnectionError, Reason, Peer};
 
 /// Represents the state of an H2 stream
 ///
@@ -45,23 +45,134 @@ pub enum State {
     Idle,
     ReservedLocal,
     ReservedRemote,
-    Open,
-    HalfClosedLocal,
-    HalfClosedRemote,
+    Open {
+        local: PeerState,
+        remote: PeerState,
+    },
+    HalfClosedLocal(PeerState),
+    HalfClosedRemote(PeerState),
     Closed,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PeerState {
+    Headers,
+    Data,
+}
+
 impl State {
+    /// Transition the state to represent headers being received.
+    ///
+    /// Returns true if this state transition results in iniitializing the
+    /// stream id. `Err` is returned if this is an invalid state transition.
+    pub fn recv_headers<P: Peer>(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+        use self::State::*;
+        use self::PeerState::*;
+
+        match *self {
+            Idle => {
+                *self = if eos {
+                    HalfClosedRemote(Headers)
+                } else {
+                    Open {
+                        local: Headers,
+                        remote: Data,
+                    }
+                };
+
+                Ok(true)
+            }
+            Open { local, remote } => {
+                try!(remote.check_is_headers(Reason::ProtocolError));
+
+                *self = if eos {
+                    HalfClosedRemote(local)
+                } else {
+                    let remote = Data;
+                    Open { local, remote }
+                };
+
+                Ok(false)
+            }
+            HalfClosedLocal(remote) => {
+                try!(remote.check_is_headers(Reason::ProtocolError));
+
+                *self = if eos {
+                    Closed
+                } else {
+                    HalfClosedLocal(Data)
+                };
+
+                Ok(false)
+            }
+            Closed | HalfClosedRemote(..) => {
+                Err(Reason::ProtocolError.into())
+            }
+            _ => unimplemented!(),
+        }
+    }
+
     /// Transition the state to represent headers being sent.
     ///
-    /// Returns an error if this is an invalid state transition.
-    pub fn send_headers(&mut self) -> Result<(), ConnectionError> {
-        if *self != State::Idle {
-            unimplemented!();
-        }
+    /// Returns true if this state transition results in initializing the stream
+    /// id. `Err` is returned if this is an invalid state transition.
+    pub fn send_headers<P: Peer>(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+        use self::State::*;
+        use self::PeerState::*;
 
-        *self = State::Open;
-        Ok(())
+        match *self {
+            Idle => {
+                *self = if eos {
+                    HalfClosedLocal(Headers)
+                } else {
+                    Open {
+                        local: Data,
+                        remote: Headers,
+                    }
+                };
+
+                Ok(true)
+            }
+            Open { local, remote } => {
+                try!(local.check_is_headers(Reason::InternalError));
+
+                *self = if eos {
+                    HalfClosedLocal(remote)
+                } else {
+                    let local = Data;
+                    Open { local, remote }
+                };
+
+                Ok(false)
+            }
+            HalfClosedRemote(local) => {
+                try!(local.check_is_headers(Reason::InternalError));
+
+                *self = if eos {
+                    Closed
+                } else {
+                    HalfClosedRemote(Data)
+                };
+
+                Ok(false)
+            }
+            Closed | HalfClosedLocal(..) => {
+                Err(Reason::InternalError.into())
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl PeerState {
+    #[inline]
+    fn check_is_headers(&self, err: Reason) -> Result<(), ConnectionError> {
+        use self::PeerState::*;
+
+        match *self {
+            Headers => Ok(()),
+            _ => Err(err.into()),
+        }
     }
 }
 

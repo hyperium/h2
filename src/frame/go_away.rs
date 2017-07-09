@@ -1,5 +1,4 @@
-use frame::Error;
-use super::{head, StreamId};
+use frame::{Error, StreamId};
 
 #[derive(Debug)]
 pub struct GoAway {
@@ -15,7 +14,7 @@ impl GoAway {
             unimplemented!();
         }
 
-        let last_stream_id = head::parse_stream_id(&payload[..4]);
+        let last_stream_id = StreamId::parse(&payload[..4]);
         let error_code = unpack_octets_4!(payload, 4, u32);
 
         Ok(GoAway {
