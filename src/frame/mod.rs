@@ -34,6 +34,7 @@ mod reset;
 mod settings;
 mod stream_id;
 mod util;
+mod window_update;
 
 pub use self::data::Data;
 pub use self::go_away::GoAway;
@@ -43,6 +44,7 @@ pub use self::ping::Ping;
 pub use self::reset::Reset;
 pub use self::settings::{Settings, SettingSet};
 pub use self::stream_id::StreamId;
+pub use self::window_update::WindowUpdate;
 
 // Re-export some constants
 pub use self::settings::{

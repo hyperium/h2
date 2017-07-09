@@ -91,7 +91,12 @@ impl<T> FramedRead<T> {
                 debug!("decoded; frame={:?}", frame);
                 unimplemented!();
             }
-            Kind::WindowUpdate => unimplemented!(),
+            Kind::WindowUpdate => {
+                // TODO: IMPLEMENT
+                let frame = try!(frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]));
+                debug!("decoded; frame={:?}", frame);
+                return Ok(None);
+            },
             Kind::Continuation => {
                 unimplemented!();
             }
