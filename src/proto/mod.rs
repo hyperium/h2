@@ -1,4 +1,5 @@
 mod connection;
+mod flow_control;
 mod framed_read;
 mod framed_write;
 mod ping_pong;
@@ -7,13 +8,14 @@ mod settings;
 mod state;
 mod window_update;
 
-pub use self::connection::{Connection};
+pub use self::connection::Connection;
+pub use self::flow_control::FlowController;
 pub use self::framed_read::FramedRead;
 pub use self::framed_write::FramedWrite;
 pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
-pub use self::state::State;
+pub use self::state::{PeerState, State};
 pub use self::window_update::WindowUpdate;
 
 use {frame, Peer};

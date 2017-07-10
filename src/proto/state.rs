@@ -1,4 +1,5 @@
 use {ConnectionError, Reason, Peer};
+use proto::FlowController;
 
 /// Represents the state of an H2 stream
 ///
@@ -40,7 +41,7 @@ use {ConnectionError, Reason, Peer};
 ///        ES: END_STREAM flag
 ///        R:  RST_STREAM frame
 /// ```
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub enum State {
     Idle,
     ReservedLocal,
@@ -54,18 +55,35 @@ pub enum State {
     Closed,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 pub enum PeerState {
     Headers,
-    Data,
+    Data(FlowController),
 }
 
 impl State {
+    pub fn increment_local_window_size(&mut self, incr: u32) {
+        use self::State::*;
+        use self::PeerState::*;
+
+        *self = match *self {
+            Open { local: Data(mut local), remote } => {
+                local.increment(incr);
+                Open { local: Data(local), remote }
+            }
+            HalfClosedRemote(Data(mut local)) => {
+                local.increment(incr);
+                HalfClosedRemote(Data(local))
+            }
+            s => s,
+        }
+    }
+
     /// Transition the state to represent headers being received.
     ///
     /// Returns true if this state transition results in iniitializing the
     /// stream id. `Err` is returned if this is an invalid state transition.
-    pub fn recv_headers<P: Peer>(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+    pub fn recv_headers<P: Peer>(&mut self, eos: bool, remote_window_size: u32) -> Result<bool, ConnectionError> {
         use self::State::*;
         use self::PeerState::*;
 
@@ -76,7 +94,7 @@ impl State {
                 } else {
                     Open {
                         local: Headers,
-                        remote: Data,
+                        remote: Data(FlowController::new(remote_window_size)),
                     }
                 };
 
@@ -88,7 +106,7 @@ impl State {
                 *self = if eos {
                     HalfClosedRemote(local)
                 } else {
-                    let remote = Data;
+                    let remote = Data(FlowController::new(remote_window_size));
                     Open { local, remote }
                 };
 
@@ -100,7 +118,7 @@ impl State {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedLocal(Data)
+                    HalfClosedLocal(Data(FlowController::new(remote_window_size)))
                 };
 
                 Ok(false)
@@ -116,7 +134,7 @@ impl State {
     ///
     /// Returns true if this state transition results in initializing the stream
     /// id. `Err` is returned if this is an invalid state transition.
-    pub fn send_headers<P: Peer>(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+    pub fn send_headers<P: Peer>(&mut self, eos: bool, local_window_size: u32) -> Result<bool, ConnectionError> {
         use self::State::*;
         use self::PeerState::*;
 
@@ -126,7 +144,7 @@ impl State {
                     HalfClosedLocal(Headers)
                 } else {
                     Open {
-                        local: Data,
+                        local: Data(FlowController::new(local_window_size)),
                         remote: Headers,
                     }
                 };
@@ -139,7 +157,7 @@ impl State {
                 *self = if eos {
                     HalfClosedLocal(remote)
                 } else {
-                    let local = Data;
+                    let local = Data(FlowController::new(local_window_size));
                     Open { local, remote }
                 };
 
@@ -151,7 +169,7 @@ impl State {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedRemote(Data)
+                    HalfClosedRemote(Data(FlowController::new(local_window_size)))
                 };
 
                 Ok(false)

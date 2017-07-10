@@ -1,8 +1,8 @@
 use {Frame, ConnectionError, Peer, StreamId};
 use client::Client;
 use frame::{Frame as WireFrame};
+use proto::{self, FlowController, ReadySink, PeerState, State, WindowUpdate};
 use server::Server;
-use proto::{self, ReadySink, State, WindowUpdate};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -13,49 +13,11 @@ use futures::*;
 use ordermap::OrderMap;
 use fnv::FnvHasher;
 
-use std::marker::PhantomData;
+use std::collections::VecDeque;
 use std::hash::BuildHasherDefault;
+use std::marker::PhantomData;
 
-pub struct FlowControlViolation;
-
-#[derive(Debug)]
-struct FlowController {
-    window_size: u32,
-    underflow: u32,
-}
-
-impl FlowController {
-    pub fn new(window_size: u32) -> FlowController {
-        FlowController {
-            window_size,
-            underflow: 0,
-        }
-    }
-
-    pub fn shrink(&mut self, mut sz: u32) {
-        self.underflow += sz;
-    }
-
-    pub fn consume(&mut self, mut sz: u32) -> Result<(), FlowControlViolation> {
-        if sz < self.window_size {
-            self.underflow -= sz;
-            return Err(FlowControlViolation);
-        }
-
-        self.window_size -= sz;
-        Ok(())
-    }
-
-    pub fn increment(&mut self, mut sz: u32) {
-        if sz <= self.underflow {
-            self.underflow -= sz;
-            return;
-        }
-
-        sz -= self.underflow;
-        self.window_size += sz;
-    }
-}
+// TODO get window size from `inner`.
 
 /// An H2 connection
 #[derive(Debug)]
@@ -63,13 +25,24 @@ pub struct Connection<T, P> {
     inner: proto::Inner<T>,
     streams: StreamMap<State>,
     peer: PhantomData<P>,
+
+    /// Tracks connection-level flow control.
     local_flow_controller: FlowController,
-        remote_flow_controller: FlowController,
+    initial_local_window_size: u32,
+    pending_local_window_updates: VecDeque<WindowUpdate>,
+
+    remote_flow_controller: FlowController,
+    initial_remote_window_size: u32,
+    pending_remote_window_updates: VecDeque<WindowUpdate>,
+    blocked_remote_window_update: Option<task::Task>
 }
 
 type StreamMap<T> = OrderMap<StreamId, T, BuildHasherDefault<FnvHasher>>;
 
-pub fn new<T, P>(transport: proto::Inner<T>, initial_local_window_size: u32, initial_remote_window_size: u32) -> Connection<T, P>
+pub fn new<T, P>(transport: proto::Inner<T>,
+                 initial_local_window_size: u32,
+                 initial_remote_window_size: u32)
+    -> Connection<T, P>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
 {
@@ -77,35 +50,70 @@ pub fn new<T, P>(transport: proto::Inner<T>, initial_local_window_size: u32, ini
         inner: transport,
         streams: StreamMap::default(),
         peer: PhantomData,
+
         local_flow_controller: FlowController::new(initial_local_window_size),
+        initial_local_window_size,
+        pending_local_window_updates: VecDeque::default(),
+
         remote_flow_controller: FlowController::new(initial_remote_window_size),
+        initial_remote_window_size,
+        pending_remote_window_updates: VecDeque::default(),
+        blocked_remote_window_update: None,
     }
 }
 
 impl<T, P> Connection<T, P> {
-    /// Publishes stream window updates to the remote.
+    /// Publishes local stream window updates to the remote.
     ///
-    /// Connection window updates (StreamId=0) and stream window updates are published
+    /// Connection window updates (StreamId=0) and stream window must be published
     /// distinctly.
     pub fn increment_local_window(&mut self, up: WindowUpdate) {
-        let incr = up.increment();
-        let flow = match up {
-            WindowUpdate::Connection { .. } => Some(&self.local_flow_controller),
-            WindowUpdate::Stream { id, .. } => {
-                self.streams.get(&id).map(|s| s.local_flow_controller())
+        let added = match &up {
+            &WindowUpdate::Connection { increment } => {
+                if increment == 0 {
+                    false
+                } else {
+                    self.local_flow_controller.increment(increment);
+                    true
+                }
+            }
+            &WindowUpdate::Stream { id, increment } => {
+                if increment == 0 {
+                    false
+                } else {
+                    match self.streams.get_mut(&id) {
+                        Some(&mut State::Open { local: PeerState::Data(ref mut fc), .. }) |
+                        Some(&mut State::HalfClosedRemote(PeerState::Data(ref mut fc))) => {
+                            fc.increment(increment);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
             }
         };
-        if let Some(flow) = flow {
-            flow.increment(incr);
+
+        if added {
+            self.pending_local_window_updates.push_back(up);
         }
-        unimplemented!()
     }
 
-    /// Advertises stream window updates from the remote.
+    /// Advertises the remote's stream window updates.
     ///
     /// Connection window updates (StreamId=0) and stream window updates are advertised
     /// distinctly.
-    pub fn poll_remote_window(&mut self) -> Poll<WindowUpdate, ()> {
+    fn increment_remote_window(&mut self, id: StreamId, incr: u32) {
+        if id.is_zero() {
+            self.remote_flow_controller.increment(incr);
+        } else {
+            match self.streams.get_mut(&id) {
+                Some(&mut State::Open { remote: PeerState::Data(ref mut fc), .. }) |
+                Some(&mut State::HalfClosedLocal(PeerState::Data(ref mut fc))) => {
+                    fc.increment(incr);
+                }
+                _ => {}
+            }
+        }
         unimplemented!()
     }
 }
@@ -154,61 +162,70 @@ impl<T, P> Stream for Connection<T, P>
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
         trace!("Connection::poll");
 
-        let frame = match try!(self.inner.poll()) {
-            Async::Ready(f) => f,
-            Async::NotReady => {
-                // Because receiving new frames may depend on ensuring that the
-                // write buffer is clear, `poll_complete` is called here.
-                let _ = try!(self.poll_complete());
-                return Ok(Async::NotReady);
-            }
-        };
+    loop {
+            let frame = match try!(self.inner.poll()) {
+                Async::Ready(f) => f,
+                Async::NotReady => {
+                    // Because receiving new frames may depend on ensuring that the
+                    // write buffer is clear, `poll_complete` is called here.
+                    let _ = try!(self.poll_complete());
+                    return Ok(Async::NotReady);
+                }
+            };
 
-        trace!("received; frame={:?}", frame);
+            trace!("received; frame={:?}", frame);
 
-        let frame = match frame {
-            Some(WireFrame::Headers(v)) => {
-                // TODO: Update stream state
-                let stream_id = v.stream_id();
-                let end_of_stream = v.is_end_stream();
+            let frame = match frame {
+                Some(WireFrame::Headers(v)) => {
+                    // TODO: Update stream state
+                    let stream_id = v.stream_id();
+                    let end_of_stream = v.is_end_stream();
 
-                let stream_initialized = try!(self.streams.entry(stream_id)
-                     .or_insert(State::default())
-                     .recv_headers::<P>(end_of_stream));
+                    // TODO load window size from settings.
+                    let init_window_size = 65_535;
 
-                if stream_initialized {
-                    // TODO: Ensure available capacity for a new stream
-                    // This won't be as simple as self.streams.len() as closed
-                    // connections should not be factored.
+                    let stream_initialized = try!(self.streams.entry(stream_id)
+                        .or_insert(State::default())
+                        .recv_headers::<P>(end_of_stream, init_window_size));
 
-                    if !P::is_valid_remote_stream_id(stream_id) {
-                        unimplemented!();
+                    if stream_initialized {
+                        // TODO: Ensure available capacity for a new stream
+                        // This won't be as simple as self.streams.len() as closed
+                        // connections should not be factored.
+
+                        if !P::is_valid_remote_stream_id(stream_id) {
+                            unimplemented!();
+                        }
+                    }
+
+                    Frame::Headers {
+                        id: stream_id,
+                        headers: P::convert_poll_message(v),
+                        end_of_stream: end_of_stream,
                     }
                 }
+                Some(WireFrame::Data(v)) => {
+                    // TODO: Validate frame
 
-                Frame::Headers {
-                    id: stream_id,
-                    headers: P::convert_poll_message(v),
-                    end_of_stream: end_of_stream,
+                    let stream_id = v.stream_id();
+                    let end_of_stream = v.is_end_stream();
+
+                    Frame::Body {
+                        id: stream_id,
+                        chunk: v.into_payload(),
+                        end_of_stream: end_of_stream,
+                    }
                 }
-            }
-            Some(WireFrame::Data(v)) => {
-                // TODO: Validate frame
-
-                let stream_id = v.stream_id();
-                let end_of_stream = v.is_end_stream();
-
-                Frame::Body {
-                    id: stream_id,
-                    chunk: v.into_payload(),
-                    end_of_stream: end_of_stream,
+                Some(WireFrame::WindowUpdate(v)) => {
+                    self.increment_remote_window(v.stream_id(), v.increment());
+                    continue;
                 }
-            }
-            Some(frame) => panic!("unexpected frame; frame={:?}", frame),
-            None => return Ok(Async::Ready(None)),
-        };
+                Some(frame) => panic!("unexpected frame; frame={:?}", frame),
+                None => return Ok(Async::Ready(None)),
+            };
 
-        Ok(Async::Ready(Some(frame)))
+            return Ok(Async::Ready(Some(frame)));
+        }
     }
 }
 
@@ -229,13 +246,15 @@ impl<T, P> Sink for Connection<T, P>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
+                // TODO load window size from settings.
+                let init_window_size = 65_535;
+
                 // Transition the stream state, creating a new entry if needed
-                //
                 // TODO: Response can send multiple headers frames before body
                 // (1xx responses).
                 let stream_initialized = try!(self.streams.entry(id)
                      .or_insert(State::default())
-                     .send_headers::<P>(end_of_stream));
+                     .send_headers::<P>(end_of_stream, init_window_size));
 
                 if stream_initialized {
                     // TODO: Ensure available capacity for a new stream

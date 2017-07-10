@@ -14,6 +14,13 @@ pub struct WindowUpdate {
 }
 
 impl WindowUpdate {
+    pub fn new(stream_id: StreamId, increment: Increment) -> WindowUpdate {
+        WindowUpdate {
+            stream_id,
+            increment,
+        }
+    }
+
     pub fn stream_id(&self) -> StreamId {
         self.stream_id
     }
@@ -22,13 +29,13 @@ impl WindowUpdate {
         self.increment
     }
 
-        /// Builds a `Ping` frame from a raw frame.
+    /// Builds a `WindowUpdate` frame from a raw frame.
     pub fn load(head: Head, bytes: &[u8]) -> Result<WindowUpdate, Error> {
         debug_assert_eq!(head.kind(), ::frame::Kind::WindowUpdate);
         Ok(WindowUpdate {
             stream_id: head.stream_id(),
-            // Clear the most significant bit, as that is reserved and MUST be ignored when
-            // received.
+            // Clear the most significant bit, as that is reserved and MUST be ignored
+            // when received.
             increment: NetworkEndian::read_u32(bytes) & !INCREMENT_MASK,
         })
     }
