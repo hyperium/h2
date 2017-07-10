@@ -1,6 +1,8 @@
 use hpack;
 use error::{ConnectionError, Reason};
 
+use bytes::Bytes;
+
 /// A helper macro that unpacks a sequence of 4 bytes found in the buffer with
 /// the given identifier, starting at the given offset, into the given integer
 /// type. Obviously, the integer type should be able to support at least 4
@@ -53,8 +55,8 @@ pub use self::settings::{
 pub const HEADER_LEN: usize = 9;
 
 #[derive(Debug /*, Clone, PartialEq */)]
-pub enum Frame {
-    Data(Data),
+pub enum Frame<T = Bytes> {
+    Data(Data<T>),
     Headers(Headers),
     PushPromise(PushPromise),
     Settings(Settings),

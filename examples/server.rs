@@ -43,9 +43,21 @@ pub fn main() {
                         println!("Zomg frame; {:?}", frame);
 
                         let mut response = response::Head::default();
-                        response.status = status::NO_CONTENT;
+                        response.status = status::OK;
 
-                        conn.send_response(1.into(), response, true)
+                        conn.send_response(1.into(), response, false)
+                    })
+                    .then(|res| {
+                        let conn = res.unwrap();
+                        println!("... sending data frame");
+
+                        conn.send_data(1.into(), "hello".into(), false)
+                    })
+                    .then(|res| {
+                        let conn = res.unwrap();
+                        println!("... sending next frame");
+
+                        conn.send_data(1.into(), "world".into(), true)
                     })
             })
             .then(|res| {

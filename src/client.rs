@@ -3,26 +3,33 @@ use {frame, proto, Peer, ConnectionError, StreamId};
 use http;
 use futures::{Future, Poll};
 use tokio_io::{AsyncRead, AsyncWrite};
+use bytes::{Bytes, IntoBuf};
 
 use std::fmt;
 
 /// In progress H2 connection binding
-pub struct Handshake<T> {
+pub struct Handshake<T, B: IntoBuf = Bytes> {
     // TODO: unbox
-    inner: Box<Future<Item = Connection<T>, Error = ConnectionError>>,
+    inner: Box<Future<Item = Connection<T, B>, Error = ConnectionError>>,
 }
 
 /// Marker type indicating a client peer
 #[derive(Debug)]
 pub struct Client;
 
-pub type Connection<T> = super::Connection<T, Client>;
+pub type Connection<T, B = Bytes> = super::Connection<T, Client, B>;
+
+pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+    where T: AsyncRead + AsyncWrite + 'static,
+{
+    handshake2(io)
+}
 
 /// Bind an H2 client connection.
 ///
 /// Returns a future which resolves to the connection value once the H2
 /// handshake has been completed.
-pub fn handshake<T>(io: T) -> Handshake<T>
+pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
 {
     use tokio_io::io;
@@ -97,8 +104,8 @@ impl Peer for Client {
     }
 }
 
-impl<T> Future for Handshake<T> {
-    type Item = Connection<T>;
+impl<T, B: IntoBuf> Future for Handshake<T, B> {
+    type Item = Connection<T, B>;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -106,7 +113,10 @@ impl<T> Future for Handshake<T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Handshake<T> {
+impl<T, B> fmt::Debug for Handshake<T, B>
+    where T: fmt::Debug,
+          B: fmt::Debug + IntoBuf,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "client::Handshake")
     }

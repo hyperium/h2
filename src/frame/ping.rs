@@ -71,8 +71,8 @@ impl Ping {
     }
 }
 
-impl From<Ping> for Frame {
-    fn from(src: Ping) -> Frame {
+impl<T> From<Ping> for Frame<T> {
+    fn from(src: Ping) -> Frame<T> {
         Frame::Ping(src)
     }
 }

@@ -3,20 +3,21 @@ use {frame, proto, Peer, ConnectionError, StreamId};
 use http;
 use futures::{Future, Sink, Poll, Async};
 use tokio_io::{AsyncRead, AsyncWrite};
+use bytes::{Bytes, IntoBuf};
 
 use std::fmt;
 
 /// In progress H2 connection binding
-pub struct Handshake<T> {
+pub struct Handshake<T, B: IntoBuf = Bytes> {
     // TODO: unbox
-    inner: Box<Future<Item = Connection<T>, Error = ConnectionError>>,
+    inner: Box<Future<Item = Connection<T, B>, Error = ConnectionError>>,
 }
 
 /// Marker type indicating a client peer
 #[derive(Debug)]
 pub struct Server;
 
-pub type Connection<T> = super::Connection<T, Server>;
+pub type Connection<T, B = Bytes> = super::Connection<T, Server, B>;
 
 /// Flush a Sink
 struct Flush<T> {
@@ -31,12 +32,19 @@ struct ReadPreface<T> {
 
 const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
+pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+    where T: AsyncRead + AsyncWrite + 'static,
+{
+    handshake2(io)
+}
+
 /// Bind an H2 server connection.
 ///
 /// Returns a future which resolves to the connection value once the H2
 /// handshake has been completed.
-pub fn handshake<T>(io: T) -> Handshake<T>
+pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
+          B: 'static, // TODO: Why is this required but not in client?
 {
     let transport = proto::server_handshaker(io, Default::default());
 
@@ -141,8 +149,8 @@ impl Peer for Server {
     }
 }
 
-impl<T> Future for Handshake<T> {
-    type Item = Connection<T>;
+impl<T, B: IntoBuf> Future for Handshake<T, B> {
+    type Item = Connection<T, B>;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -150,7 +158,10 @@ impl<T> Future for Handshake<T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Handshake<T> {
+impl<T, B> fmt::Debug for Handshake<T, B>
+    where T: fmt::Debug,
+          B: fmt::Debug + IntoBuf,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "server::Handshake")
     }

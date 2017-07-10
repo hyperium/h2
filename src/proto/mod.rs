@@ -23,24 +23,28 @@ use {frame, Peer};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
-type Inner<T> =
+use bytes::{Buf, IntoBuf};
+
+type Inner<T, B> =
     Settings<
         PingPong<
-            Framed<T>>>;
+            Framed<T, B>,
+            B>>;
 
-type Framed<T> =
+type Framed<T, B> =
     FramedRead<
-        FramedWrite<T>>;
+        FramedWrite<T, B>>;
 
 /// Create a full H2 transport from an I/O handle.
 ///
 /// This is called as the final step of the client handshake future.
-pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
-    -> Connection<T, P>
+pub fn from_io<T, P, B>(io: T, settings: frame::SettingSet)
+    -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
+          B: IntoBuf,
 {
-    let framed_write = FramedWrite::new(io);
+    let framed_write: FramedWrite<_, B::Buf> = FramedWrite::new(io);
 
     // To avoid code duplication, we're going to go this route. It is a bit
     // weird, but oh well...
@@ -55,9 +59,10 @@ pub fn from_io<T, P>(io: T, settings: frame::SettingSet)
 /// When the server is performing the handshake, it is able to only send
 /// `Settings` frames and is expected to receive the client preface as a byte
 /// stream. To represent this, `Settings<FramedWrite<T>>` is returned.
-pub fn server_handshaker<T>(io: T, settings: frame::SettingSet)
-    -> Settings<FramedWrite<T>>
+pub fn server_handshaker<T, B>(io: T, settings: frame::SettingSet)
+    -> Settings<FramedWrite<T, B>>
     where T: AsyncRead + AsyncWrite,
+          B: Buf,
 {
     let framed_write = FramedWrite::new(io);
 
@@ -65,10 +70,11 @@ pub fn server_handshaker<T>(io: T, settings: frame::SettingSet)
 }
 
 /// Create a full H2 transport from the server handshaker
-pub fn from_server_handshaker<T, P>(transport: Settings<FramedWrite<T>>)
-    -> Connection<T, P>
+pub fn from_server_handshaker<T, P, B>(transport: Settings<FramedWrite<T, B::Buf>>)
+    -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
+          B: IntoBuf,
 {
     let settings = transport.swap_inner(|io| {
         // Delimit the frames

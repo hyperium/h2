@@ -175,8 +175,8 @@ impl Settings {
     }
 }
 
-impl From<Settings> for Frame {
-    fn from(src: Settings) -> Frame {
+impl<T> From<Settings> for Frame<T> {
+    fn from(src: Settings) -> Frame<T> {
         Frame::Settings(src)
     }
 }

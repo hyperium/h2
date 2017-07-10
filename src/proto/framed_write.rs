@@ -10,7 +10,7 @@ use std::cmp;
 use std::io::{self, Cursor};
 
 #[derive(Debug)]
-pub struct FramedWrite<T> {
+pub struct FramedWrite<T, B> {
     /// Upstream `AsyncWrite`
     inner: T,
 
@@ -21,20 +21,20 @@ pub struct FramedWrite<T> {
     buf: Cursor<BytesMut>,
 
     /// Next frame to encode
-    next: Option<Next>,
+    next: Option<Next<B>>,
 
     /// Max frame size, this is specified by the peer
     max_frame_size: usize,
 }
 
 #[derive(Debug)]
-enum Next {
+enum Next<B> {
     Data {
         /// Length of the current frame being written
         frame_len: usize,
 
         /// Data frame to encode
-        data: frame::Data
+        data: frame::Data<B>,
     },
     Continuation(frame::Continuation),
 }
@@ -50,8 +50,12 @@ const MIN_BUFFER_CAPACITY: usize = frame::HEADER_LEN + CHAIN_THRESHOLD;
 /// than 16kb, so not even close).
 const CHAIN_THRESHOLD: usize = 256;
 
-impl<T: AsyncWrite> FramedWrite<T> {
-    pub fn new(inner: T) -> FramedWrite<T> {
+// TODO: Make generic
+impl<T, B> FramedWrite<T, B>
+    where T: AsyncWrite,
+          B: Buf,
+{
+    pub fn new(inner: T) -> FramedWrite<T, B> {
         FramedWrite {
             inner: inner,
             hpack: hpack::Encoder::default(),
@@ -69,24 +73,27 @@ impl<T: AsyncWrite> FramedWrite<T> {
         self.next.is_none() && !self.buf.has_remaining()
     }
 
-    fn frame_len(&self, data: &frame::Data) -> usize {
+    fn frame_len(&self, data: &frame::Data<B>) -> usize {
         cmp::min(self.max_frame_size, data.len())
     }
 }
 
-impl<T: AsyncWrite> Sink for FramedWrite<T> {
-    type SinkItem = Frame;
+impl<T, B> Sink for FramedWrite<T, B>
+    where T: AsyncWrite,
+          B: Buf,
+{
+    type SinkItem = Frame<B>;
     type SinkError = ConnectionError;
 
-    fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
-        debug!("start_send; frame={:?}", item);
-
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> StartSend<Self::SinkItem, ConnectionError>
+    {
         if !try!(self.poll_ready()).is_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
 
         match item {
-            Frame::Data(v) => {
+            Frame::Data(mut v) => {
                 if v.len() >= CHAIN_THRESHOLD {
                     let head = v.head();
                     let len = self.frame_len(&v);
@@ -100,7 +107,11 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
                         data: v,
                     });
                 } else {
-                    v.encode(self.buf.get_mut());
+                    v.encode_chunk(self.buf.get_mut());
+
+                    // The chunk has been fully encoded, so there is no need to
+                    // keep it around
+                    assert_eq!(v.len(), 0, "chunk not fully encoded");
                 }
             }
             Frame::Headers(v) => {
@@ -140,7 +151,6 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
 
         // As long as there is data to write, try to write it!
         while !self.is_empty() {
-            trace!("writing buffer; next={:?}; rem={:?}", self.next, self.buf.remaining());
             try_ready!(self.inner.write_buf(&mut self.buf));
         }
 
@@ -161,7 +171,10 @@ impl<T: AsyncWrite> Sink for FramedWrite<T> {
     }
 }
 
-impl<T: AsyncWrite> ReadySink for FramedWrite<T> {
+impl<T, B> ReadySink for FramedWrite<T, B>
+    where T: AsyncWrite,
+          B: Buf,
+{
     fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
         if !self.has_capacity() {
             // Try flushing
@@ -176,7 +189,7 @@ impl<T: AsyncWrite> ReadySink for FramedWrite<T> {
     }
 }
 
-impl<T: Stream> Stream for FramedWrite<T> {
+impl<T: Stream, B> Stream for FramedWrite<T, B> {
     type Item = T::Item;
     type Error = T::Error;
 
@@ -185,14 +198,14 @@ impl<T: Stream> Stream for FramedWrite<T> {
     }
 }
 
-impl<T: io::Read> io::Read for FramedWrite<T> {
+impl<T: io::Read, B> io::Read for FramedWrite<T, B> {
     fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
         self.inner.read(dst)
     }
 }
 
-impl<T: AsyncRead> AsyncRead for FramedWrite<T> {
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error>
+impl<T: AsyncRead, B> AsyncRead for FramedWrite<T, B> {
+    fn read_buf<B2: BufMut>(&mut self, buf: &mut B2) -> Poll<usize, io::Error>
         where Self: Sized,
     {
         self.inner.read_buf(buf)

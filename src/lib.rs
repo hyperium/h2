@@ -34,7 +34,7 @@ pub mod server;
 
 mod util;
 
-pub use error::{ConnectionError, StreamError, Reason};
+pub use error::ConnectionError;
 pub use frame::{StreamId};
 pub use proto::Connection;
 
@@ -42,15 +42,15 @@ use bytes::Bytes;
 
 /// An H2 connection frame
 #[derive(Debug)]
-pub enum Frame<T> {
+pub enum Frame<T, B = Bytes> {
     Headers {
         id: StreamId,
         headers: T,
         end_of_stream: bool,
     },
-    Body {
+    Data {
         id: StreamId,
-        chunk: Bytes,
+        data: B,
         end_of_stream: bool,
     },
     Trailers {

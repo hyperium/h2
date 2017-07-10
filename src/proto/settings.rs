@@ -29,8 +29,8 @@ pub struct Settings<T> {
     received_remote: bool,
 }
 
-impl<T> Settings<T>
-    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+impl<T, U> Settings<T>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
         Settings {
@@ -44,7 +44,7 @@ impl<T> Settings<T>
     }
 
     /// Swap the inner transport while maintaining the current state.
-    pub fn swap_inner<U, F: FnOnce(T) -> U>(self, f: F) -> Settings<U> {
+    pub fn swap_inner<T2, F: FnOnce(T) -> T2>(self, f: F) -> Settings<T2> {
         let inner = f(self.inner);
 
         Settings {
@@ -88,9 +88,9 @@ impl<T> Settings<T>
     }
 }
 
-impl<T> Stream for Settings<T>
+impl<T, U> Stream for Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     type Item = Frame;
     type Error = ConnectionError;
@@ -118,13 +118,15 @@ impl<T> Stream for Settings<T>
     }
 }
 
-impl<T> Sink for Settings<T>
-    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+impl<T, U> Sink for Settings<T>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
-    type SinkItem = Frame;
+    type SinkItem = Frame<U>;
     type SinkError = ConnectionError;
 
-    fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> StartSend<Self::SinkItem, Self::SinkError>
+    {
         // Settings frames take priority, so `item` cannot be sent if there are
         // any pending acks OR the local settings have been changed w/o sending
         // an associated frame.
@@ -147,8 +149,8 @@ impl<T> Sink for Settings<T>
     }
 }
 
-impl<T> ReadySink for Settings<T>
-    where T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+impl<T, U> ReadySink for Settings<T>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {

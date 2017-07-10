@@ -5,16 +5,16 @@ use proto::ReadySink;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
-pub struct PingPong<T> {
+pub struct PingPong<T, U> {
     inner: T,
-    pong: Option<Frame>,
+    pong: Option<Frame<U>>,
 }
 
-impl<T> PingPong<T>
+impl<T, U> PingPong<T, U>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T) -> PingPong<T> {
+    pub fn new(inner: T) -> Self {
         PingPong {
             inner,
             pong: None,
@@ -38,9 +38,9 @@ impl<T> PingPong<T>
 /// > a PING frame with the ACK flag set in response, with an identical
 /// > payload. PING responses SHOULD be given higher priority than any
 /// > other frame.
-impl<T> Stream for PingPong<T>
+impl<T, U> Stream for PingPong<T, U>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     type Item = Frame;
     type Error = ConnectionError;
@@ -76,14 +76,16 @@ impl<T> Stream for PingPong<T>
     }
 }
 
-impl<T> Sink for PingPong<T>
+impl<T, U> Sink for PingPong<T, U>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
-    type SinkItem = Frame;
+    type SinkItem = Frame<U>;
     type SinkError = ConnectionError;
 
-    fn start_send(&mut self, item: Frame) -> StartSend<Frame, ConnectionError> {
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> StartSend<Self::SinkItem, Self::SinkError>
+    {
         // Pings _SHOULD_ have priority over other messages, so attempt to send pending
         // ping frames before attempting to send `item`.
         if self.try_send_pong()?.is_not_ready() {
@@ -100,9 +102,9 @@ impl<T> Sink for PingPong<T>
     }
 }
 
-impl<T> ReadySink for PingPong<T>
+impl<T, U> ReadySink for PingPong<T, U>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {

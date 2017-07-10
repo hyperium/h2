@@ -29,10 +29,7 @@ enum Partial {
     // PushPromise(frame::PushPromise),
 }
 
-impl<T> FramedRead<T>
-    where T: AsyncRead,
-          T: Sink<SinkItem = Frame, SinkError = ConnectionError>,
-{
+impl<T> FramedRead<T> {
     pub fn new(inner: length_delimited::FramedRead<T>) -> FramedRead<T> {
         FramedRead {
             inner: inner,
@@ -40,9 +37,7 @@ impl<T> FramedRead<T>
             partial: None,
         }
     }
-}
 
-impl<T> FramedRead<T> {
     fn decode_frame(&mut self, mut bytes: Bytes) -> Result<Option<Frame>, ConnectionError> {
         // Parse the head
         let head = frame::Head::parse(&bytes);
@@ -97,9 +92,11 @@ impl<T> FramedRead<T> {
                 unimplemented!();
             }
             Kind::WindowUpdate => {
+                // TODO: IMPLEMENT
                 let frame = try!(frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]));
-                frame.into()
-            }
+                debug!("decoded; frame={:?}", frame);
+                return Ok(None);
+            },
             Kind::Continuation => {
                 unimplemented!();
             }
