@@ -42,16 +42,16 @@ pub fn main() {
                         let (frame, conn) = res.unwrap();
                         println!("Zomg frame; {:?}", frame);
 
+                        conn.into_future()
+                    })
+                    .then(|res| {
+                        let (frame, conn) = res.unwrap();
+                        println!("Zomg frame; {:?}", frame);
+
                         let mut response = response::Head::default();
                         response.status = status::OK;
 
                         conn.send_response(1.into(), response, false)
-                    })
-                    .then(|res| {
-                        let conn = res.unwrap();
-                        println!("... sending data frame");
-
-                        conn.send_data(1.into(), "hello".into(), false)
                     })
                     .then(|res| {
                         let conn = res.unwrap();

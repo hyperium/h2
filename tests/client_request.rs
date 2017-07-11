@@ -6,7 +6,7 @@ extern crate env_logger;
 extern crate bytes;
 
 use h2::{client, Frame};
-use http::{request, status};
+use http::*;
 
 use futures::*;
 use bytes::Bytes;
@@ -159,6 +159,68 @@ fn request_with_zero_stream_id() {
 }
 
 #[test]
+fn post_with_200_response() {
+    let _ = ::env_logger::init();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(&[
+               // POST /
+               0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
+               172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
+        ])
+        .write(&[
+               // DATA
+               0, 0, 5, 0, 1, 0, 0, 0, 1, 104, 101, 108, 108, 111,
+        ])
+        .write(SETTINGS_ACK)
+        // Read response
+        .read(&[
+              // HEADERS
+              0, 0, 1, 1, 4, 0, 0, 0, 1, 136,
+              // DATA
+              0, 0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100
+        ])
+        .build();
+
+    let h2 = client::handshake(mock)
+        .wait().unwrap();
+
+    // Send the request
+    let mut request = request::Head::default();
+    request.method = method::POST;
+    request.uri = "https://http2.akamai.com/".parse().unwrap();
+    let h2 = h2.send_request(1.into(), request, false).wait().unwrap();
+
+    // Send the data
+    let h2 = h2.send_data(1.into(), "hello".into(), true).wait().unwrap();
+
+    // Get the response headers
+    let (resp, h2) = h2.into_future().wait().unwrap();
+
+    match resp.unwrap() {
+        Frame::Headers { headers, .. } => {
+            assert_eq!(headers.status, status::OK);
+        }
+        _ => panic!("unexpected frame"),
+    }
+
+    // Get the response body
+    let (data, h2) = h2.into_future().wait().unwrap();
+
+    match data.unwrap() {
+        Frame::Data { id, data, end_of_stream } => {
+            assert_eq!(id, 1.into());
+            assert_eq!(data, &b"world"[..]);
+            assert!(end_of_stream);
+        }
+        _ => panic!("unexpected frame"),
+    }
+
+    assert!(Stream::wait(h2).next().is_none());
+}
+
+#[test]
 fn request_with_server_stream_id() {
     let mock = mock_io::Builder::new()
         .handshake()
@@ -220,8 +282,31 @@ fn send_data_without_headers() {
 }
 
 #[test]
-#[ignore]
 fn send_data_after_headers_eos() {
+    let _ = ::env_logger::init();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+               // GET /, no EOS
+               0, 0, 16, 1, 5, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172,
+               75, 143, 168, 233, 25, 151, 33, 233, 132
+        ])
+        .build();
+
+    let h2 = client::handshake(mock)
+        .wait().unwrap();
+
+    // Send the request
+    let mut request = request::Head::default();
+    request.method = method::POST;
+    request.uri = "https://http2.akamai.com/".parse().unwrap();
+    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
+
+    // Send the data
+    let err = h2.send_data(1.into(), "hello".into(), true).wait().unwrap_err();
+    assert_user_err!(err, UnexpectedFrameType);
 }
 
 #[test]
@@ -235,8 +320,24 @@ fn request_with_h1_version() {
 }
 
 #[test]
-#[ignore]
 fn invalid_client_stream_id() {
+    let _ = ::env_logger::init();
+
+    for &id in &[0, 2] {
+        let mock = mock_io::Builder::new()
+            .handshake()
+            .build();
+
+        let h2 = client::handshake(mock)
+            .wait().unwrap();
+
+        // Send the request
+        let mut request = request::Head::default();
+        request.uri = "https://http2.akamai.com/".parse().unwrap();
+        let err = h2.send_request(id.into(), request, true).wait().unwrap_err();
+
+        assert_user_err!(err, InvalidStreamId);
+    }
 }
 
 #[test]

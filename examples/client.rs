@@ -8,7 +8,7 @@ extern crate env_logger;
 
 use h2::client;
 
-use http::request;
+use http::*;
 
 use futures::*;
 
@@ -34,11 +34,19 @@ pub fn main() {
         println!("sending request");
 
         let mut request = request::Head::default();
+        request.method = method::POST;
         request.uri = "https://http2.akamai.com/".parse().unwrap();
         // request.version = version::H2;
 
         conn.send_request(1.into(), request, true)
     })
+    /*
+    .then(|res| {
+        let conn = res.unwrap();
+
+        conn.send_data(1.into(), "hello".into(), true)
+    })
+    */
     .then(|res| {
         let conn = res.unwrap();
         // Get the next message
