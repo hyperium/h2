@@ -57,7 +57,7 @@ impl Peer for Client {
     }
 
     fn is_valid_remote_stream_id(id: StreamId) -> bool {
-        id.is_server_initiated()
+        false
     }
 
     fn convert_send_message(

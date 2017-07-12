@@ -23,6 +23,8 @@ use std::hash::BuildHasherDefault;
 pub struct Connection<T, P, B: IntoBuf = Bytes> {
     inner: proto::Inner<T, B::Buf>,
     streams: StreamMap<State>,
+    // Set to `true` as long as the connection is in a valid state.
+    active: bool,
     peer: PhantomData<(P, B)>,
 }
 
@@ -36,6 +38,7 @@ pub fn new<T, P, B>(transport: proto::Inner<T, B::Buf>) -> Connection<T, P, B>
     Connection {
         inner: transport,
         streams: StreamMap::default(),
+        active: true,
         peer: PhantomData,
     }
 }
@@ -108,6 +111,10 @@ impl<T, P, B> Stream for Connection<T, P, B>
 
         trace!("Connection::poll");
 
+        if !self.active {
+            return Err(error::User::Corrupt.into());
+        }
+
         let frame = match try!(self.inner.poll()) {
             Async::Ready(f) => f,
             Async::NotReady => {
@@ -135,7 +142,8 @@ impl<T, P, B> Stream for Connection<T, P, B>
                     // connections should not be factored.
 
                     if !P::is_valid_remote_stream_id(stream_id) {
-                        unimplemented!();
+                        self.active = false;
+                        return Err(error::Reason::ProtocolError.into());
                     }
                 }
 
@@ -179,6 +187,10 @@ impl<T, P, B> Sink for Connection<T, P, B>
     fn start_send(&mut self, item: Self::SinkItem)
         -> StartSend<Self::SinkItem, Self::SinkError>
     {
+        if !self.active {
+            return Err(error::User::Corrupt.into());
+        }
+
         // First ensure that the upstream can process a new item
         if !try!(self.poll_ready()).is_ready() {
             return Ok(AsyncSink::NotReady(item));

@@ -56,6 +56,9 @@ pub enum User {
     /// The stream is not currently expecting a frame of this type.
     UnexpectedFrameType,
 
+    /// The connection state is corrupt and the connection should be dropped.
+    Corrupt,
+
     // TODO: reserve additional variants
 }
 
@@ -93,6 +96,7 @@ macro_rules! user_desc {
             InvalidStreamId => concat!($prefix, "invalid stream ID"),
             InactiveStreamId => concat!($prefix, "inactive stream ID"),
             UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
+            Corrupt => concat!($prefix, "connection state corrupt"),
         }
     });
 }
