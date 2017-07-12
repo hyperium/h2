@@ -18,6 +18,12 @@ pub struct SettingSet {
     max_header_list_size: Option<u32>,
 }
 
+impl SettingSet {
+    pub fn initial_window_size(&self) -> u32 {
+        self.initial_window_size.unwrap_or(65_535)
+    }
+}
+
 /// An enum that lists all valid settings that can be sent in a SETTINGS
 /// frame.
 ///

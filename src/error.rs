@@ -1,6 +1,8 @@
 use std::{error, fmt, io};
 
 /// The error type for HTTP/2 operations
+///
+/// XXX does this sufficiently destinguish stream-level errors from connection-level errors?
 #[derive(Debug)]
 pub enum ConnectionError {
     /// An error caused by an action taken by the remote peer.
@@ -56,6 +58,10 @@ pub enum User {
     /// The stream is not currently expecting a frame of this type.
     UnexpectedFrameType,
 
+    /// The connection or stream does not have a sufficient flow control window to
+    /// transmit a Data frame to the remote.
+    FlowControlViolation,
+
     // TODO: reserve additional variants
 }
 
@@ -93,6 +99,7 @@ macro_rules! user_desc {
             InvalidStreamId => concat!($prefix, "invalid stream ID"),
             InactiveStreamId => concat!($prefix, "inactive stream ID"),
             UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
+            FlowControlViolation => concat!($prefix, "flow control violation"),
         }
     });
 }

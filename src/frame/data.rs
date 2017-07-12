@@ -4,6 +4,7 @@ use bytes::{BufMut, Bytes, Buf};
 #[derive(Debug)]
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
+    data_len: usize,
     data: T,
     flags: DataFlag,
     pad_len: Option<u8>,
@@ -26,9 +27,9 @@ impl Data<Bytes> {
         } else {
             None
         };
-
         Ok(Data {
             stream_id: head.stream_id(),
+            data_len: payload.len(),
             data: payload,
             flags: flags,
             pad_len: pad_len,
@@ -37,15 +38,6 @@ impl Data<Bytes> {
 }
 
 impl<T> Data<T> {
-    pub fn new(stream_id: StreamId, data: T) -> Self {
-        Data {
-            stream_id: stream_id,
-            data: data,
-            flags: DataFlag::default(),
-            pad_len: None,
-        }
-    }
-
     pub fn stream_id(&self) -> StreamId {
         self.stream_id
     }
@@ -62,14 +54,24 @@ impl<T> Data<T> {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
 
+    pub fn len(&self) -> usize {
+        self.data_len
+    }
+
     pub fn into_payload(self) -> T {
         self.data
     }
 }
 
 impl<T: Buf> Data<T> {
-    pub fn len(&self) -> usize {
-        self.data.remaining()
+    pub fn from_buf(stream_id: StreamId, data: T) -> Self {
+        Data {
+            stream_id: stream_id,
+            data_len: data.remaining(),
+            data: data,
+            flags: DataFlag::default(),
+            pad_len: None,
+        }
     }
 
     pub fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {

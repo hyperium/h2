@@ -43,6 +43,14 @@ impl<T, U> Settings<T>
         }
     }
 
+    pub fn local_settings(&self) -> &frame::SettingSet {
+        &self.local
+    }
+
+    pub fn remote_settings(&self) -> &frame::SettingSet {
+        &self.local
+    }
+
     /// Swap the inner transport while maintaining the current state.
     pub fn swap_inner<T2, F: FnOnce(T) -> T2>(self, f: F) -> Settings<T2> {
         let inner = f(self.inner);

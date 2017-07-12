@@ -5,7 +5,7 @@ use frame::{self, Head, Kind, Error};
 
 const SIZE_INCREMENT_MASK: u32 = 1 << 31;
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct WindowUpdate {
     stream_id: StreamId,
     size_increment: u32,
@@ -52,8 +52,8 @@ impl WindowUpdate {
     }
 }
 
-impl From<WindowUpdate> for frame::Frame {
-    fn from(src: WindowUpdate) -> frame::Frame {
+impl<B> From<WindowUpdate> for frame::Frame<B> {
+    fn from(src: WindowUpdate) -> Self {
         frame::Frame::WindowUpdate(src)
     }
 }

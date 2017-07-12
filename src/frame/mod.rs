@@ -113,11 +113,6 @@ pub enum Error {
     Hpack(hpack::DecoderError),
 }
 
-// ===== impl Frame ======
-
-impl Frame {
-}
-
 // ===== impl Error =====
 
 impl From<Error> for ConnectionError {

@@ -93,5 +93,5 @@ pub fn from_server_handshaker<T, P, B>(transport: Settings<FramedWrite<T, B::Buf
     });
 
     // Finally, return the constructed `Connection`
-    connection::new(settings, 65_535, 65_535)
+    connection::new(settings)
 }
