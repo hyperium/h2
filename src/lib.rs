@@ -40,6 +40,8 @@ pub use proto::Connection;
 
 use bytes::Bytes;
 
+pub type FrameSize = u32;
+
 /// An H2 connection frame
 #[derive(Debug)]
 pub enum Frame<T, B = Bytes> {
@@ -52,7 +54,7 @@ pub enum Frame<T, B = Bytes> {
         id: StreamId,
         data: B,
         /// TODO figure out how to make this a requirement on `B`
-        data_len: usize,
+        data_len: FrameSize,
         end_of_stream: bool,
     },
     Trailers {

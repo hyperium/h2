@@ -1,4 +1,4 @@
-use {hpack, ConnectionError};
+use {hpack, ConnectionError, FrameSize};
 use frame::{self, Frame};
 use proto::ReadySink;
 
@@ -24,7 +24,7 @@ pub struct FramedWrite<T, B> {
     next: Option<Next<B>>,
 
     /// Max frame size, this is specified by the peer
-    max_frame_size: usize,
+    max_frame_size: FrameSize,
 }
 
 #[derive(Debug)]
@@ -74,7 +74,7 @@ impl<T, B> FramedWrite<T, B>
     }
 
     fn frame_len(&self, data: &frame::Data<B>) -> usize {
-        cmp::min(self.max_frame_size, data.len())
+        cmp::min(self.max_frame_size, data.len()) as usize
     }
 }
 
@@ -94,7 +94,7 @@ impl<T, B> Sink for FramedWrite<T, B>
 
         match item {
             Frame::Data(mut v) => {
-                if v.len() >= CHAIN_THRESHOLD {
+                if v.len() >= (CHAIN_THRESHOLD as FrameSize) {
                     let head = v.head();
                     let len = self.frame_len(&v);
 

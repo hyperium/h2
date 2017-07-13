@@ -1,4 +1,4 @@
-use Peer;
+use {FrameSize, Peer};
 use error::ConnectionError;
 use error::Reason::*;
 use error::User::*;
@@ -102,7 +102,7 @@ impl State {
         }
     }
 
-    pub fn take_remote_window_update(&mut self) -> Option<u32> {
+    pub fn take_recv_window_update(&mut self) -> Option<u32> {
         use self::State::*;
         use self::PeerState::*;
 
@@ -129,7 +129,7 @@ impl State {
     /// > flow-control window and MUST NOT send new flow-controlled frames until it
     /// > receives WINDOW_UPDATE frames that cause the flow-control window to become
     /// > positive.
-    pub fn update_remote_initial_window_size(&mut self, old: u32, new: u32) {
+    pub fn update_initial_recv_window_size(&mut self, old: u32, new: u32) {
         use self::State::*;
         use self::PeerState::*;
 
@@ -147,7 +147,7 @@ impl State {
     }
 
     /// TODO Connection doesn't have an API for local updates yet.
-    pub fn update_local_initial_window_size(&mut self, _old: u32, _new: u32) {
+    pub fn update_initial_send_window_size(&mut self, _old: u32, _new: u32) {
         //use self::State::*;
         //use self::PeerState::*;
         unimplemented!()
@@ -159,7 +159,7 @@ impl State {
     /// stream id. `Err` is returned if this is an invalid state transition.
     pub fn recv_headers<P: Peer>(&mut self,
                                  eos: bool,
-                                 remote_window_size: u32)
+                                 initial_recv_window_size: u32)
         -> Result<bool, ConnectionError>
     {
         use self::State::*;
@@ -171,7 +171,7 @@ impl State {
                 if eos {
                     *self = HalfClosedRemote(local);
                 } else {
-                    *self = Open { local, remote: Data(FlowController::new(remote_window_size)) };
+                    *self = Open { local, remote: Data(FlowController::new(initial_recv_window_size)) };
                 }
                 Ok(true)
             }
@@ -191,7 +191,7 @@ impl State {
                 if eos {
                     *self = Closed;
                 } else {
-                    *self = HalfClosedLocal(Data(FlowController::new(remote_window_size)));
+                    *self = HalfClosedLocal(Data(FlowController::new(initial_recv_window_size)));
                 };
                 Ok(false)
             }
@@ -204,22 +204,22 @@ impl State {
         }
     }
 
-    pub fn recv_data(&mut self, eos: bool, len: usize) -> Result<(), ConnectionError> {
+    pub fn recv_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
         use self::State::*;
 
         match *self {
-            Open { local, remote } => {
+            Open { local, mut remote } => {
                 try!(remote.check_is_data(ProtocolError.into()));
-                try!(remote.check_window_size(len, FlowControlError.into()));
+                try!(remote.claim_window_size(len, FlowControlError.into()));
                 if eos {
                     *self = HalfClosedRemote(local);
                 }
                 Ok(())
             }
 
-            HalfClosedLocal(remote) => {
+            HalfClosedLocal(mut remote) => {
                 try!(remote.check_is_data(ProtocolError.into()));
-                try!(remote.check_window_size(len, FlowControlError.into()));
+                try!(remote.claim_window_size(len, FlowControlError.into()));
                 if eos {
                     *self = Closed;
                 }
@@ -238,7 +238,11 @@ impl State {
     ///
     /// Returns true if this state transition results in initializing the stream
     /// id. `Err` is returned if this is an invalid state transition.
-    pub fn send_headers<P: Peer>(&mut self, eos: bool, local_window_size: u32) -> Result<bool, ConnectionError> {
+    pub fn send_headers<P: Peer>(&mut self, 
+                                 eos: bool,
+                                 initial_send_window_size: u32)
+        -> Result<bool, ConnectionError>
+    {
         use self::State::*;
         use self::PeerState::*;
 
@@ -248,7 +252,7 @@ impl State {
                     HalfClosedLocal(Headers)
                 } else {
                     Open {
-                        local: Data(FlowController::new(local_window_size)),
+                        local: Data(FlowController::new(initial_send_window_size)),
                         remote: Headers,
                     }
                 };
@@ -262,7 +266,7 @@ impl State {
                 *self = if eos {
                     HalfClosedLocal(remote)
                 } else {
-                    let local = Data(FlowController::new(local_window_size));
+                    let local = Data(FlowController::new(initial_send_window_size));
                     Open { local, remote }
                 };
 
@@ -275,7 +279,7 @@ impl State {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedRemote(Data(FlowController::new(local_window_size)))
+                    HalfClosedRemote(Data(FlowController::new(initial_send_window_size)))
                 };
 
                 Ok(false)
@@ -289,22 +293,22 @@ impl State {
         }
     }
 
-    pub fn send_data(&mut self, eos: bool, len: usize) -> Result<(), ConnectionError> {
+    pub fn send_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
         use self::State::*;
 
         match *self {
-            Open { local, remote } => {
+            Open { mut local, remote } => {
                 try!(local.check_is_data(UnexpectedFrameType.into()));
-                try!(local.check_window_size(len, FlowControlViolation.into()));
+                try!(local.claim_window_size(len, FlowControlViolation.into()));
                 if eos {
                     *self = HalfClosedLocal(remote);
                 }
                 Ok(())
             }
 
-            HalfClosedRemote(local) => {
+            HalfClosedRemote(mut local) => {
                 try!(local.check_is_data(UnexpectedFrameType.into()));
-                try!(local.check_window_size(len, FlowControlViolation.into()));
+                try!(local.claim_window_size(len, FlowControlViolation.into()));
                 if eos {
                     *self = Closed;
                 }
@@ -353,10 +357,10 @@ impl PeerState {
     }
 
     #[inline]
-    fn check_window_size(&self, len: usize, err: ConnectionError) -> Result<(), ConnectionError> {
+    fn claim_window_size(&mut self, sz: FrameSize, err: ConnectionError) -> Result<(), ConnectionError> {
         use self::PeerState::*;
         match self {
-            &Data(ref fc) if len <= fc.window_size() as usize=> Ok(()),
+            &mut Data(ref mut fc) => fc.claim_window(sz).map_err(|_| err),
             _ => Err(err),
         }
     }

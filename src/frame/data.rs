@@ -1,10 +1,11 @@
+use FrameSize;
 use frame::{util, Frame, Head, Error, StreamId, Kind};
 use bytes::{BufMut, Bytes, Buf};
 
 #[derive(Debug)]
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
-    data_len: usize,
+    data_len: FrameSize,
     data: T,
     flags: DataFlag,
     pad_len: Option<u8>,
@@ -29,7 +30,7 @@ impl Data<Bytes> {
         };
         Ok(Data {
             stream_id: head.stream_id(),
-            data_len: payload.len(),
+            data_len: payload.len() as FrameSize,
             data: payload,
             flags: flags,
             pad_len: pad_len,
@@ -54,7 +55,7 @@ impl<T> Data<T> {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> FrameSize {
         self.data_len
     }
 
@@ -66,20 +67,21 @@ impl<T> Data<T> {
 impl<T: Buf> Data<T> {
     pub fn from_buf(stream_id: StreamId, data: T) -> Self {
         Data {
-            stream_id: stream_id,
-            data_len: data.remaining(),
-            data: data,
+            stream_id,
+            data_len: data.remaining() as FrameSize,
+            data,
             flags: DataFlag::default(),
             pad_len: None,
         }
     }
 
     pub fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {
-        if self.len() > dst.remaining_mut() {
+        let len = self.len() as usize;
+        if len > dst.remaining_mut() {
             unimplemented!();
         }
 
-        self.head().encode(self.len(), dst);
+        self.head().encode(len, dst);
         dst.put(&mut self.data);
     }
 }

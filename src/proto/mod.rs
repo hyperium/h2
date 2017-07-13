@@ -35,6 +35,9 @@ type Framed<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
 
+
+pub type WindowSize = u32;
+
 /// Create a full H2 transport from an I/O handle.
 ///
 /// This is called as the final step of the client handshake future.

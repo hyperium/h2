@@ -1,17 +1,19 @@
+use proto::WindowSize;
+
 #[derive(Clone, Copy, Debug)]
 pub struct WindowUnderflow;
 
-pub const DEFAULT_INITIAL_WINDOW_SIZE: u32 = 65_535;
+pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
 
 #[derive(Copy, Clone, Debug)]
 pub struct FlowController {
     /// Amount that may be claimed.
-    window_size: u32,
+    window_size: WindowSize,
     /// Amount to be removed by future increments.
-    underflow: u32,
+    underflow: WindowSize,
     /// The amount that has been incremented but not yet advertised (to the application or
     /// the remote).
-    next_window_update: u32,
+    next_window_update: WindowSize,
 }
 
 impl Default for FlowController {
@@ -21,7 +23,7 @@ impl Default for FlowController {
 }
 
 impl FlowController {
-    pub fn new(window_size: u32) -> FlowController {
+    pub fn new(window_size: WindowSize) -> FlowController {
         FlowController {
             window_size,
             underflow: 0,
@@ -29,19 +31,15 @@ impl FlowController {
         }
     }
 
-    pub fn window_size(&self) -> u32 {
-        self.window_size
-    }
-
     /// Reduce future capacity of the window.
     ///
     /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
-    pub fn shrink_window(&mut self, decr: u32) {
+    pub fn shrink_window(&mut self, decr: WindowSize) {
         self.underflow += decr;
     }
 
     /// Claim the provided amount from the window, if there is enough space.
-    pub fn claim_window(&mut self, sz: u32) -> Result<(), WindowUnderflow> {
+    pub fn claim_window(&mut self, sz: WindowSize) -> Result<(), WindowUnderflow> {
         if self.window_size < sz {
             return Err(WindowUnderflow);
         }
@@ -51,7 +49,7 @@ impl FlowController {
     }
 
     /// Applies a window increment immediately.
-    pub fn add_to_window(&mut self, sz: u32) {
+    pub fn add_to_window(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;
@@ -64,7 +62,7 @@ impl FlowController {
     }
 
     /// Obtains and clears an unadvertised window update.
-    pub fn take_window_update(&mut self) -> Option<u32> {
+    pub fn take_window_update(&mut self) -> Option<WindowSize> {
         if self.next_window_update == 0 {
             return None;
         }

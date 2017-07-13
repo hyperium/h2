@@ -46,12 +46,24 @@ impl<T> FramedRead<T> {
             unimplemented!();
         }
 
-        let frame = match head.kind() {
+        let kind = head.kind();
+        debug!("received {:?}", kind);
+
+        let frame = match kind {
+            Kind::Settings => {
+                frame::Settings::load(head, &bytes[frame::HEADER_LEN..])?.into()
+            }
+            Kind::Ping => {
+                frame::Ping::load(head, &bytes[frame::HEADER_LEN..])?.into()
+            }
+            Kind::WindowUpdate => {
+                frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..])?.into()
+            }
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
-                let frame = try!(frame::Data::load(head, bytes));
-                frame.into()
+                frame::Data::load(head, bytes)?.into()
             }
+
             Kind::Headers => {
                 let mut buf = Cursor::new(bytes);
                 buf.set_position(frame::HEADER_LEN as u64);
@@ -67,41 +79,25 @@ impl<T> FramedRead<T> {
 
                 frame.into()
             }
-            Kind::Priority => unimplemented!(),
+
+            // TODO
+
             Kind::Reset => {
-                let frame = try!(frame::Reset::load(head, &bytes[frame::HEADER_LEN..]));
-                debug!("decoded; frame={:?}", frame);
-                // TODO: implement
-                return Ok(None);
-            }
-            Kind::Settings => {
-                let frame = try!(frame::Settings::load(head, &bytes[frame::HEADER_LEN..]));
-                frame.into()
-            }
-            Kind::PushPromise => {
-                debug!("received PUSH_PROMISE");
-                // TODO: implement
-                return Ok(None);
-            }
-            Kind::Ping => {
-                try!(frame::Ping::load(head, &bytes[frame::HEADER_LEN..])).into()
+                let _todo = try!(frame::Reset::load(head, &bytes[frame::HEADER_LEN..]));
+                unimplemented!();
             }
             Kind::GoAway => {
-                let frame = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
-                debug!("decoded; frame={:?}", frame);
+                let _todo = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
                 unimplemented!();
             }
-            Kind::WindowUpdate => {
-                // TODO: IMPLEMENT
-                let frame = try!(frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]));
-                debug!("decoded; frame={:?}", frame);
-                return Ok(None);
-            },
-            Kind::Continuation => {
-                unimplemented!();
+            Kind::PushPromise |
+            Kind::Priority |
+            Kind::Continuation |
+            Kind::Unknown => {
+                unimplemented!()
             }
-            Kind::Unknown => return Ok(None),
         };
+        debug!("decoded; frame={:?}", frame);
 
         Ok(Some(frame))
     }

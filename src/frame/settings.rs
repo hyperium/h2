@@ -1,3 +1,4 @@
+use FrameSize;
 use frame::{Frame, Error, Head, Kind, StreamId};
 use bytes::{BytesMut, BufMut, BigEndian};
 
@@ -45,7 +46,7 @@ const ACK: u8 = 0x1;
 const ALL: u8 = ACK;
 
 pub const DEFAULT_SETTINGS_HEADER_TABLE_SIZE: usize = 4_096;
-pub const DEFAULT_MAX_FRAME_SIZE: usize = 16_384;
+pub const DEFAULT_MAX_FRAME_SIZE: FrameSize = 16_384;
 
 // ===== impl Settings =====
 
