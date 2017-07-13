@@ -128,7 +128,7 @@ impl<T, P, B> Connection<T, P, B>
           P: Peer,
           B: IntoBuf
 {
-    /// Attempts to send a window update to the remote.
+    /// Attempts to send a window update to the remote, if one is pending.
     fn poll_send_window_update(&mut self) -> Poll<(), ConnectionError> {
         if let Some(f) = self.pending_send_window_update.take() {
             if self.inner.start_send(f.into())?.is_not_ready() {
@@ -304,6 +304,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
         -> StartSend<Self::SinkItem, Self::SinkError>
     {
         use frame::Frame::Headers;
+        trace!("Connection::start_send");
 
         // First ensure that the upstream can process a new item. This ensures, for
         // instance, that any pending local window updates have been sent to the remote
@@ -355,7 +356,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
             Frame::Data { id, data, data_len, end_of_stream } => {
                 self.claim_connection_send_window(data_len)?;
 
-                // The stream must be initialized at this point
+                // The stream must be initialized at this point.
                 match self.streams.get_mut(&id) {
                     None => return Err(error::User::InactiveStreamId.into()),
                     Some(state) => try!(state.send_data(end_of_stream, data_len)),
@@ -393,8 +394,9 @@ impl<T, P, B> Sink for Connection<T, P, B>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_send_window_update());
-        self.inner.poll_complete()
+        trace!("Connection::poll_complete");
+        try_ready!(self.inner.poll_complete());
+        self.poll_send_window_update()
     }
 }
 
@@ -404,7 +406,8 @@ impl<T, P, B> ReadySink for Connection<T, P, B>
           B: IntoBuf,
 {
     fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
-        try_ready!(self.poll_send_window_update());
-        self.inner.poll_ready()
+        trace!("Connection::poll_ready");
+        try_ready!(self.inner.poll_ready());
+        self.poll_send_window_update()
     }
 }
