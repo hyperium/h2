@@ -66,6 +66,7 @@ impl<T, U> Settings<T>
     }
 
     fn try_send_pending(&mut self) -> Poll<(), ConnectionError> {
+        trace!("try_send_pending; dirty={} acks={}", self.is_dirty, self.remaining_acks);
         if self.is_dirty {
             let frame = frame::Settings::new(self.local.clone());
             try_ready!(self.try_send(frame));
@@ -84,15 +85,13 @@ impl<T, U> Settings<T>
     }
 
     fn try_send(&mut self, item: frame::Settings) -> Poll<(), ConnectionError> {
-        if let AsyncSink::NotReady(_) = try!(self.inner.start_send(item.into())) {
-            // TODO: I don't think this is needed actually... It was originally
-            // done to "satisfy the start_send" contract...
-            try!(self.inner.poll_complete());
-
-            return Ok(Async::NotReady);
+        trace!("try_send");
+        if self.inner.start_send(item.into())?.is_ready() {
+            Ok(Async::Ready(()))
+        } else {
+            Ok(Async::NotReady)
         }
 
-        Ok(Async::Ready(()))
     }
 }
 
@@ -146,7 +145,7 @@ impl<T, U> Sink for Settings<T>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        trace!("Settings::poll_complete");
+        trace!("poll_complete");
         try_ready!(self.try_send_pending());
         self.inner.poll_complete()
     }
@@ -162,11 +161,9 @@ impl<T, U> ReadySink for Settings<T>
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        if try!(self.try_send_pending()).is_ready() {
-            return self.inner.poll_ready();
-        }
-
-        Ok(Async::NotReady)
+        trace!("poll_ready");
+        try_ready!(self.try_send_pending());
+        self.inner.poll_ready()
     }
 }
 

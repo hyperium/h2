@@ -206,7 +206,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
         use frame::Frame::*;
-        trace!("Connection::poll");
+        trace!("poll");
 
         loop {
             let frame = match try!(self.inner.poll()) {
@@ -215,7 +215,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
                     // Receiving new frames may depend on ensuring that the write buffer
                     // is clear (e.g. if window updates need to be sent), so `poll_ready`
                     // is called here. 
-                    try_ready!(self.poll_ready());
+                    try_ready!(self.inner.poll_complete());
 
                     // If the snder sink is ready, we attempt to poll the underlying
                     // stream once more because it, may have been made ready by flushing
@@ -224,7 +224,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
                 }
             };
 
-            trace!("received; frame={:?}", frame);
+            trace!("poll; frame={:?}", frame);
             let frame = match frame {
                 Some(Headers(v)) => {
                     // TODO: Update stream state
@@ -304,12 +304,11 @@ impl<T, P, B> Sink for Connection<T, P, B>
         -> StartSend<Self::SinkItem, Self::SinkError>
     {
         use frame::Frame::Headers;
-        trace!("Connection::start_send");
+        trace!("start_send");
 
-        // First ensure that the upstream can process a new item. This ensures, for
-        // instance, that any pending local window updates have been sent to the remote
-        // before sending any other (i.e. DATA) frames.
-        if try!(self.poll_ready()).is_not_ready() {
+        // Ensure that a pending window update is sent before doing anything further.
+        if self.poll_send_window_update()? == Async::NotReady
+        || self.inner.poll_ready()? == Async::NotReady {
             return Ok(AsyncSink::NotReady(item));
         }
         assert!(self.pending_send_window_update.is_none());
@@ -394,7 +393,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        trace!("Connection::poll_complete");
+        trace!("poll_complete");
         try_ready!(self.inner.poll_complete());
         self.poll_send_window_update()
     }
@@ -406,7 +405,7 @@ impl<T, P, B> ReadySink for Connection<T, P, B>
           B: IntoBuf,
 {
     fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
-        trace!("Connection::poll_ready");
+        trace!("poll_ready");
         try_ready!(self.inner.poll_ready());
         self.poll_send_window_update()
     }
