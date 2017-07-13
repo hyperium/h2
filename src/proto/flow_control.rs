@@ -38,7 +38,10 @@ impl FlowController {
         self.underflow += decr;
     }
 
-    /// Claim the provided amount from the window, if there is enough space.
+    /// Claims the provided amount from the window, if there is enough space.
+    ///
+    /// Fails when `take_window_update()` hasn't returned at least `sz` more bytes than
+    /// have been previously claimed.
     pub fn claim_window(&mut self, sz: WindowSize) -> Result<(), WindowUnderflow> {
         if self.window_size < sz {
             return Err(WindowUnderflow);
@@ -49,7 +52,7 @@ impl FlowController {
     }
 
     /// Applies a window increment immediately.
-    pub fn add_to_window(&mut self, sz: WindowSize) {
+    pub fn increment_window_size(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;

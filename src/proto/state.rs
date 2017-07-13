@@ -59,35 +59,13 @@ pub enum State {
 }
 
 impl State {
-    /// Updates the local flow controller with the given window size increment.
+    /// Updates the local flow controller so that the remote may send `incr` more bytes.
     ///
     /// Returns the amount of capacity created, accounting for window size changes. The
     /// caller should send the the returned window size increment to the remote.
     ///
     /// If the remote is closed, None is returned.
-    pub fn send_window_update(&mut self, incr: u32) -> Option<u32> {
-        use self::State::*;
-        use self::PeerState::*;
-
-        if incr == 0 {
-            return None;
-        }
-
-        match self {
-            &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedRemote(Data(ref mut fc)) => {
-                fc.add_to_window(incr);
-                fc.take_window_update()
-            }
-            _ => None,
-        }
-    }
- 
-    /// Updates the remote flow controller with the given window size increment.
-    ///
-    /// Returns the amount of capacity created, accounting for window size changes. The
-    /// caller should send the the returned window size increment to the remote.
-    pub fn recv_window_update(&mut self, incr: u32) {
+    pub fn increment_send_window_size(&mut self, incr: u32) {
         use self::State::*;
         use self::PeerState::*;
 
@@ -97,18 +75,53 @@ impl State {
 
         match self {
             &mut Open { remote: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => fc.add_to_window(incr),
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.increment_window_size(incr),
             _ => {},
         }
     }
-
-    pub fn take_recv_window_update(&mut self) -> Option<u32> {
+ 
+    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
+    /// data.
+    pub fn take_send_window_update(&mut self) -> Option<u32> {
         use self::State::*;
         use self::PeerState::*;
 
         match self {
             &mut Open { remote: Data(ref mut fc), .. } |
             &mut HalfClosedLocal(Data(ref mut fc)) => fc.take_window_update(),
+            _ => None,
+        }
+    }
+
+    /// Updates the remote flow controller so that the remote may receive `incr`
+    /// additional bytes.
+    ///
+    /// Returns the amount of capacity created, accounting for window size changes. The
+    /// caller should send the the returned window size increment to the remote.
+    pub fn increment_recv_window_size(&mut self, incr: u32) {
+        use self::State::*;
+        use self::PeerState::*;
+
+        if incr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.increment_window_size(incr),
+            _ => {},
+        }
+    }
+
+    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
+    /// data.
+    pub fn take_recv_window_update(&mut self) -> Option<u32> {
+        use self::State::*;
+        use self::PeerState::*;
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.take_window_update(),
             _ => None,
         }
     }
@@ -139,7 +152,7 @@ impl State {
                 if new < old {
                     fc.shrink_window(old - new);
                 } else {
-                    fc.add_to_window(new - old);
+                    fc.increment_window_size(new - old);
                 }
             }
             _ => {}
@@ -240,7 +253,7 @@ impl State {
     /// id. `Err` is returned if this is an invalid state transition.
     pub fn send_headers<P: Peer>(&mut self, 
                                  eos: bool,
-                                 initial_send_window_size: u32)
+                                 initial_window_size: u32)
         -> Result<bool, ConnectionError>
     {
         use self::State::*;
@@ -252,7 +265,7 @@ impl State {
                     HalfClosedLocal(Headers)
                 } else {
                     Open {
-                        local: Data(FlowController::new(initial_send_window_size)),
+                        local: Data(FlowController::new(initial_window_size)),
                         remote: Headers,
                     }
                 };
@@ -266,7 +279,7 @@ impl State {
                 *self = if eos {
                     HalfClosedLocal(remote)
                 } else {
-                    let local = Data(FlowController::new(initial_send_window_size));
+                    let local = Data(FlowController::new(initial_window_size));
                     Open { local, remote }
                 };
 
@@ -279,7 +292,7 @@ impl State {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedRemote(Data(FlowController::new(initial_send_window_size)))
+                    HalfClosedRemote(Data(FlowController::new(initial_window_size)))
                 };
 
                 Ok(false)

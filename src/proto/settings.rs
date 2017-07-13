@@ -91,7 +91,6 @@ impl<T, U> Settings<T>
         } else {
             Ok(Async::NotReady)
         }
-
     }
 }
 
