@@ -101,11 +101,11 @@ impl<T, P, B: IntoBuf> Connection<T, P, B> {
         assert!(self.sending_window_update.is_none());
 
         let added = if id.is_zero() {
-            self.local_flow_controller.increment_window_size(incr);
+            self.local_flow_controller.grow_window(incr);
             self.local_flow_controller.take_window_update()
         } else {
             self.streams.get_mut(&id).and_then(|s| {
-                s.increment_recv_window_size(incr);
+                s.grow_recv_window(incr);
                 s.take_recv_window_update()
             })
         };
@@ -126,10 +126,10 @@ impl<T, P, B: IntoBuf> Connection<T, P, B> {
         }
 
         let added = if id.is_zero() {
-            self.remote_flow_controller.increment_window_size(incr);
+            self.remote_flow_controller.grow_window(incr);
             true
         } else if let Some(mut s) = self.streams.get_mut(&id) {
-            s.increment_send_window_size(incr);
+            s.grow_send_window(incr);
             true
         } else {
             false

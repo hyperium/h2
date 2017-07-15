@@ -47,8 +47,9 @@ use proto::FlowController;
 #[derive(Debug, Copy, Clone)]
 pub enum StreamState {
     Idle,
-    ReservedLocal,
-    ReservedRemote,
+    // TODO: these states shouldn't count against concurrency limits:
+    //ReservedLocal,
+    //ReservedRemote,
     Open {
         local: PeerState,
         remote: PeerState,
@@ -65,7 +66,7 @@ impl StreamState {
     /// caller should send the the returned window size increment to the remote.
     ///
     /// If the remote is closed, None is returned.
-    pub fn increment_send_window_size(&mut self, incr: u32) {
+    pub fn grow_send_window(&mut self, incr: u32) {
         use self::StreamState::*;
         use self::PeerState::*;
 
@@ -75,11 +76,27 @@ impl StreamState {
 
         match self {
             &mut Open { remote: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => fc.increment_window_size(incr),
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.grow_window(incr),
             _ => {},
         }
     }
  
+    pub fn shrink_send_window(&mut self, decr: u32) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.shrink_window(decr),
+            _ => {},
+        }
+    }
+
+
     /// Consumes newly-advertised capacity to inform the local endpoint it may send more
     /// data.
     pub fn take_send_window_update(&mut self) -> Option<u32> {
@@ -98,7 +115,7 @@ impl StreamState {
     ///
     /// Returns the amount of capacity created, accounting for window size changes. The
     /// caller should send the the returned window size increment to the remote.
-    pub fn increment_recv_window_size(&mut self, incr: u32) {
+    pub fn grow_recv_window(&mut self, incr: u32) {
         use self::StreamState::*;
         use self::PeerState::*;
 
@@ -108,7 +125,22 @@ impl StreamState {
 
         match self {
             &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedRemote(Data(ref mut fc)) => fc.increment_window_size(incr),
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.grow_window(incr),
+            _ => {},
+        }
+    }
+
+    pub fn shrink_recv_window(&mut self, decr: u32) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.shrink_window(decr),
             _ => {},
         }
     }
@@ -124,46 +156,6 @@ impl StreamState {
             &mut HalfClosedRemote(Data(ref mut fc)) => fc.take_window_update(),
             _ => None,
         }
-    }
-
-    /// Applies an update to the remote's initial window size.
-    ///
-    /// Per RFC 7540 §6.9.2
-    ///
-    /// > In addition to changing the flow-control window for streams that are not yet
-    /// > active, a SETTINGS frame can alter the initial flow-control window size for
-    /// > streams with active flow-control windows (that is, streams in the "open" or
-    /// > "half-closed (remote)" state). When the value of SETTINGS_INITIAL_WINDOW_SIZE
-    /// > changes, a receiver MUST adjust the size of all stream flow-control windows that
-    /// > it maintains by the difference between the new value and the old value.
-    /// >
-    /// > A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available space in a
-    /// > flow-control window to become negative. A sender MUST track the negative
-    /// > flow-control window and MUST NOT send new flow-controlled frames until it
-    /// > receives WINDOW_UPDATE frames that cause the flow-control window to become
-    /// > positive.
-    pub fn update_initial_recv_window_size(&mut self, old: u32, new: u32) {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        match self {
-            &mut Open { remote: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => {
-                if new < old {
-                    fc.shrink_window(old - new);
-                } else {
-                    fc.increment_window_size(new - old);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// TODO Connection doesn't have an API for local updates yet.
-    pub fn update_initial_send_window_size(&mut self, _old: u32, _new: u32) {
-        //use self::StreamState::*;
-        //use self::PeerState::*;
-        unimplemented!()
     }
 
     /// Transition the state to represent headers being received.
@@ -212,8 +204,6 @@ impl StreamState {
             Closed | HalfClosedRemote(..) => {
                 Err(ProtocolError.into())
             }
-
-            _ => unimplemented!(),
         }
     }
 
@@ -301,8 +291,6 @@ impl StreamState {
             Closed | HalfClosedLocal(..) => {
                 Err(UnexpectedFrameType.into())
             }
-
-            _ => unimplemented!(),
         }
     }
 

@@ -23,6 +23,10 @@ impl SettingSet {
     pub fn initial_window_size(&self) -> u32 {
         self.initial_window_size.unwrap_or(65_535)
     }
+    
+    pub fn max_concurrent_streams(&self) -> Option<u32> {
+        self.max_concurrent_streams
+    }
 }
 
 /// An enum that lists all valid settings that can be sent in a SETTINGS

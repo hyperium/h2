@@ -20,7 +20,7 @@ pub use self::settings::Settings;
 pub use self::stream_tracker::StreamTracker;
 use self::state::StreamState;
 
-use {frame, Peer, StreamId};
+use {frame, ConnectionError, Peer, StreamId};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
@@ -31,7 +31,20 @@ use ordermap::OrderMap;
 use fnv::FnvHasher;
 use std::hash::BuildHasherDefault;
 
-/// Represents
+/// Represents the internals of an HTTP2 connection.
+///
+/// A transport consists of several layers (_transporters_) and is arranged from _top_
+/// (near the application) to _bottom_ (near the network).  Each transporter implements a
+/// Stream of frames received from the remote, and a ReadySink of frames sent to the
+/// remote.
+///
+/// At the top of the transport, the Settings module is responsible for:
+/// - Transmitting local settings to the remote.
+/// - Sending settings acknowledgements for all settings frames received from the remote.
+/// - Exposing settings upward to the Connection.
+///
+/// All transporters below Settings must apply relevant settings before passing a frame on
+/// to another level.  For example, if the frame writer n
 type Transport<T, B> =
     Settings<
         FlowControl<
@@ -44,15 +57,46 @@ type Framer<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
 
-
 pub type WindowSize = u32;
 
-#[derive(Debug)]
-struct StreamMap {
+#[derive(Debug, Default)]
+pub struct StreamMap {
     inner: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>
 }
 
-trait StreamTransporter {
+impl StreamMap {
+    fn shrink_local_window(&mut self, decr: u32) {
+        for (_, mut s) in &mut self.inner {
+            s.shrink_recv_window(decr)
+        }
+    }
+
+    fn grow_local_window(&mut self, incr: u32) {
+        for (_, mut s) in &mut self.inner {
+            s.grow_recv_window(incr)
+        }
+    }
+    
+    fn shrink_remote_window(&mut self, decr: u32) {
+        for (_, mut s) in &mut self.inner {
+            s.shrink_send_window(decr)
+        }
+    }
+
+    fn grow_remote_window(&mut self, incr: u32) {
+        for (_, mut s) in &mut self.inner {
+            s.grow_send_window(incr)
+        }
+    }
+}
+
+/// Allows settings to be applied from the top of the stack to the lower levels.d
+pub trait ConnectionTransporter {
+    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
+    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
+}
+
+pub trait StreamTransporter {
     fn streams(&self)-> &StreamMap;
     fn streams_mut(&mut self) -> &mut StreamMap;
 }
@@ -70,6 +114,8 @@ pub fn from_io<T, P, B>(io: T, settings: frame::SettingSet)
 
     // To avoid code duplication, we're going to go this route. It is a bit
     // weird, but oh well...
+    //
+    // We first create a Settings directly around a framed writer
     let settings = Settings::new(
         framed_write, settings);
 
@@ -92,30 +138,32 @@ pub fn server_handshaker<T, B>(io: T, settings: frame::SettingSet)
 }
 
 /// Create a full H2 transport from the server handshaker
-pub fn from_server_handshaker<T, P, B>(transport: Settings<FramedWrite<T, B::Buf>>)
+pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
           B: IntoBuf,
 {
-    let settings = transport.swap_inner(|io| {
-        // Delimit the frames
-        let framed_read = length_delimited::Builder::new()
+    let initial_local_window_size = settings.local_settings().initial_window_size();
+    let initial_remote_window_size = settings.remote_settings().initial_window_size();
+    let local_max_concurrency = settings.local_settings().max_concurrent_streams();
+    let remote_max_concurrency = settings.remote_settings().max_concurrent_streams();
+
+    // Replace Settings' writer with a full transport.
+    let transport = settings.swap_inner(|io| {
+        // Delimit the frames.
+        let framer = length_delimited::Builder::new()
             .big_endian()
             .length_field_length(3)
             .length_adjustment(9)
             .num_skip(0) // Don't skip the header
             .new_read(io);
 
-        // Map to `Frame` types
-        let framed = FramedRead::new(framed_read);
-
-        FlowControl::new(
-            StreamTracker::new(
+        FlowControl::new(initial_local_window_size, initial_remote_window_size,
+            StreamTracker::new(local_max_concurrency, remote_max_concurrency,
                 PingPong::new(
-                    framed)))
+                    FramedRead::new(framer))))
     });
 
-    // Finally, return the constructed `Connection`
-    connection::new(settings)
+    connection::new(transport)
 }

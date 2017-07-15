@@ -1,6 +1,6 @@
 use {hpack, ConnectionError, FrameSize};
 use frame::{self, Frame};
-use proto::ReadySink;
+use proto::{ConnectionTransporter, ReadySink};
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -75,6 +75,16 @@ impl<T, B> FramedWrite<T, B>
 
     fn frame_len(&self, data: &frame::Data<B>) -> usize {
         cmp::min(self.max_frame_size, data.len()) as usize
+    }
+}
+
+impl<T, B> ConnectionTransporter for FramedWrite<T, B> {
+    fn apply_local_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    fn apply_remote_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
+        Ok(())
     }
 }
 

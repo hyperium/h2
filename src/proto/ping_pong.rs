@@ -1,7 +1,7 @@
 use ConnectionError;
-use frame::{Frame, Ping};
+use frame::{Frame, Ping, SettingSet};
 use futures::*;
-use proto::ReadySink;
+use proto::{ConnectionTransporter, ReadySink};
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
@@ -19,6 +19,16 @@ impl<T, U> PingPong<T, U>
             inner,
             pong: None,
         }
+    }
+}
+
+impl<T: ConnectionTransporter, U> ConnectionTransporter for PingPong<T, U> {
+    fn apply_local_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_local_settings(set)
+    }
+
+    fn apply_remote_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_remote_settings(set)
     }
 }
 

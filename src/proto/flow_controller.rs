@@ -52,7 +52,7 @@ impl FlowController {
     }
 
     /// Applies a window increment immediately.
-    pub fn increment_window_size(&mut self, sz: WindowSize) {
+    pub fn grow_window(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;

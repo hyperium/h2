@@ -1,6 +1,6 @@
 use ConnectionError;
 use frame::{self, Frame};
-use proto::ReadySink;
+use proto::{ConnectionTransporter, ReadySink, StreamMap, StreamTransporter};
 
 use futures::*;
 use tokio_io::AsyncRead;
@@ -94,9 +94,20 @@ impl<T, U> Settings<T>
     }
 }
 
+impl<T: StreamTransporter> StreamTransporter for Settings<T> {
+    fn streams(&self) -> &StreamMap {
+        self.inner.streams()
+    }
+
+    fn streams_mut(&mut self) -> &mut StreamMap {
+        self.inner.streams_mut()
+    }
+}
+
 impl<T, U> Stream for Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+          T: ConnectionTransporter,
 {
     type Item = Frame;
     type Error = ConnectionError;
@@ -112,8 +123,10 @@ impl<T, U> Stream for Settings<T>
                         // Received new settings, queue an ACK
                         self.remaining_acks += 1;
 
-                        // Save off the settings
-                        self.remote = v.into_set();
+                        // Apply the settings before saving them.
+                        let settings = v.into_set();
+                        self.inner.apply_remote_settings(&settings)?;
+                        self.remote = settings;
 
                         let _ = try!(self.try_send_pending());
                     }
