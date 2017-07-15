@@ -45,7 +45,7 @@ use proto::FlowController;
 ///        R:  RST_STREAM frame
 /// ```
 #[derive(Debug, Copy, Clone)]
-pub enum State {
+pub enum StreamState {
     Idle,
     ReservedLocal,
     ReservedRemote,
@@ -58,7 +58,7 @@ pub enum State {
     Closed,
 }
 
-impl State {
+impl StreamState {
     /// Updates the local flow controller so that the remote may send `incr` more bytes.
     ///
     /// Returns the amount of capacity created, accounting for window size changes. The
@@ -66,7 +66,7 @@ impl State {
     ///
     /// If the remote is closed, None is returned.
     pub fn increment_send_window_size(&mut self, incr: u32) {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         if incr == 0 {
@@ -83,7 +83,7 @@ impl State {
     /// Consumes newly-advertised capacity to inform the local endpoint it may send more
     /// data.
     pub fn take_send_window_update(&mut self) -> Option<u32> {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         match self {
@@ -99,7 +99,7 @@ impl State {
     /// Returns the amount of capacity created, accounting for window size changes. The
     /// caller should send the the returned window size increment to the remote.
     pub fn increment_recv_window_size(&mut self, incr: u32) {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         if incr == 0 {
@@ -116,7 +116,7 @@ impl State {
     /// Consumes newly-advertised capacity to inform the local endpoint it may send more
     /// data.
     pub fn take_recv_window_update(&mut self) -> Option<u32> {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         match self {
@@ -143,7 +143,7 @@ impl State {
     /// > receives WINDOW_UPDATE frames that cause the flow-control window to become
     /// > positive.
     pub fn update_initial_recv_window_size(&mut self, old: u32, new: u32) {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         match self {
@@ -161,7 +161,7 @@ impl State {
 
     /// TODO Connection doesn't have an API for local updates yet.
     pub fn update_initial_send_window_size(&mut self, _old: u32, _new: u32) {
-        //use self::State::*;
+        //use self::StreamState::*;
         //use self::PeerState::*;
         unimplemented!()
     }
@@ -175,7 +175,7 @@ impl State {
                                  initial_recv_window_size: u32)
         -> Result<bool, ConnectionError>
     {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         match *self {
@@ -218,7 +218,7 @@ impl State {
     }
 
     pub fn recv_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
-        use self::State::*;
+        use self::StreamState::*;
 
         match *self {
             Open { local, mut remote } => {
@@ -256,7 +256,7 @@ impl State {
                                  initial_window_size: u32)
         -> Result<bool, ConnectionError>
     {
-        use self::State::*;
+        use self::StreamState::*;
         use self::PeerState::*;
 
         match *self {
@@ -307,7 +307,7 @@ impl State {
     }
 
     pub fn send_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
-        use self::State::*;
+        use self::StreamState::*;
 
         match *self {
             Open { mut local, remote } => {
@@ -337,9 +337,9 @@ impl State {
     }
 }
 
-impl Default for State {
-    fn default() -> State {
-        State::Idle
+impl Default for StreamState {
+    fn default() -> StreamState {
+        StreamState::Idle
     }
 }
 

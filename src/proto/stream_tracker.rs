@@ -5,34 +5,32 @@ use proto::{ReadySink, StreamMap, StreamTransporter, WindowSize};
 use futures::*;
 
 #[derive(Debug)]
-pub struct FlowControl<T>  {
+pub struct StreamTracker<T> {
     inner: T,
 }
 
-impl<T, U> FlowControl<T>
+impl<T, U> StreamTracker<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: StreamTransporter
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>
 {
-    pub fn new(inner: T) -> FlowControl<T> {
-        FlowControl { inner }
+    pub fn new(inner: T) -> StreamTracker<T> {
+        StreamTracker { inner }
     }
 }
 
-impl<T: StreamTransporter> StreamTransporter for FlowControl<T> {
+impl<T> StreamTransporter for StreamTracker<T> {
     fn streams(&self) -> &StreamMap {
-        self.inner.streams()
+        unimplemented!()
     }
 
     fn streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.streams_mut()
+        unimplemented!()
     }
 }
 
-impl<T> Stream for FlowControl<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: StreamTransporter,
- {
+impl<T, U> Stream for StreamTracker<T>
+    where T: Stream<Item = Frame<U>, Error = ConnectionError>,
+{
     type Item = T::Item;
     type Error = T::Error;
 
@@ -42,14 +40,13 @@ impl<T> Stream for FlowControl<T>
 }
 
 
-impl<T, U> Sink for FlowControl<T>
+impl<T, U> Sink for StreamTracker<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: StreamTransporter,
- {
+{
     type SinkItem = T::SinkItem;
     type SinkError = T::SinkError;
 
-    fn start_send(&mut self, item: Frame<U>) -> StartSend<T::SinkItem, T::SinkError> {
+    fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
         self.inner.start_send(item)
     }
 
@@ -58,11 +55,11 @@ impl<T, U> Sink for FlowControl<T>
     }
 }
 
-impl<T, U> ReadySink for FlowControl<T>
+
+impl<T, U> ReadySink for StreamTracker<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
-          T: StreamTransporter,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         self.inner.poll_ready()

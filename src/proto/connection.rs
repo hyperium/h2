@@ -2,7 +2,7 @@ use {Frame, FrameSize};
 use client::Client;
 use error::{self, ConnectionError};
 use frame::{self, StreamId};
-use proto::{self, Peer, ReadySink, State, FlowController, WindowSize};
+use proto::{self, Peer, ReadySink, StreamState, FlowController, WindowSize};
 use server::Server;
 
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -14,15 +14,14 @@ use futures::*;
 
 use ordermap::OrderMap;
 use fnv::FnvHasher;
-
 use std::hash::BuildHasherDefault;
 use std::marker::PhantomData;
 
 /// An H2 connection
 #[derive(Debug)]
 pub struct Connection<T, P, B: IntoBuf = Bytes> {
-    inner: proto::Inner<T, B::Buf>,
-    streams: StreamMap<State>,
+    inner: proto::Transport<T, B::Buf>,
+    streams: StreamMap<StreamState>,
     peer: PhantomData<P>,
 
     /// Tracks the connection-level flow control window for receiving data from the
@@ -41,7 +40,7 @@ pub struct Connection<T, P, B: IntoBuf = Bytes> {
 
 type StreamMap<T> = OrderMap<StreamId, T, BuildHasherDefault<FnvHasher>>;
 
-pub fn new<T, P, B>(transport: proto::Inner<T, B::Buf>)
+pub fn new<T, P, B>(transport: proto::Transport<T, B::Buf>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -256,7 +255,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
                     let init_window_size = self.inner.local_settings().initial_window_size();
 
                     let stream_initialized = try!(self.streams.entry(stream_id)
-                        .or_insert(State::default())
+                        .or_insert(StreamState::default())
                         .recv_headers::<P>(end_of_stream, init_window_size));
 
                     if stream_initialized {
@@ -347,7 +346,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
                 // ACTUALLY(ver), maybe not?
                 //   https://github.com/http2/http2-spec/commit/c83c8d911e6b6226269877e446a5cad8db921784
                 let stream_initialized = try!(self.streams.entry(id)
-                     .or_insert(State::default())
+                     .or_insert(StreamState::default())
                      .send_headers::<P>(end_of_stream, init_window_size));
 
                 if stream_initialized {

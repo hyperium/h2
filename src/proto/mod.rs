@@ -1,42 +1,61 @@
 mod connection;
 mod flow_control;
+mod flow_controller;
 mod framed_read;
 mod framed_write;
 mod ping_pong;
 mod ready;
 mod settings;
 mod state;
-mod window_update;
+mod stream_tracker;
 
 pub use self::connection::Connection;
-pub use self::flow_control::FlowController;
+pub use self::flow_control::FlowControl;
+pub use self::flow_controller::FlowController;
 pub use self::framed_read::FramedRead;
 pub use self::framed_write::FramedWrite;
 pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
-pub use self::state::{PeerState, State};
-pub use self::window_update::WindowUpdate;
+pub use self::stream_tracker::StreamTracker;
+use self::state::StreamState;
 
-use {frame, Peer};
+use {frame, Peer, StreamId};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
 use bytes::{Buf, IntoBuf};
 
-type Inner<T, B> =
-    Settings<
-        PingPong<
-            Framed<T, B>,
-            B>>;
+use ordermap::OrderMap;
+use fnv::FnvHasher;
+use std::hash::BuildHasherDefault;
 
-type Framed<T, B> =
+/// Represents
+type Transport<T, B> =
+    Settings<
+        FlowControl<
+            StreamTracker<
+                PingPong<
+                    Framer<T, B>,
+                    B>>>>;
+
+type Framer<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
 
 
 pub type WindowSize = u32;
+
+#[derive(Debug)]
+struct StreamMap {
+    inner: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>
+}
+
+trait StreamTransporter {
+    fn streams(&self)-> &StreamMap;
+    fn streams_mut(&mut self) -> &mut StreamMap;
+}
 
 /// Create a full H2 transport from an I/O handle.
 ///
@@ -91,8 +110,10 @@ pub fn from_server_handshaker<T, P, B>(transport: Settings<FramedWrite<T, B::Buf
         // Map to `Frame` types
         let framed = FramedRead::new(framed_read);
 
-        // Add ping/pong responder.
-        PingPong::new(framed)
+        FlowControl::new(
+            StreamTracker::new(
+                PingPong::new(
+                    framed)))
     });
 
     // Finally, return the constructed `Connection`

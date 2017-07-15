@@ -20,7 +20,11 @@ impl<T, U> PingPong<T, U>
             pong: None,
         }
     }
+}
 
+impl<T, U> PingPong<T, U>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+{
     fn try_send_pong(&mut self) -> Poll<(), ConnectionError> {
         if let Some(pong) = self.pong.take() {
             if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
@@ -77,8 +81,7 @@ impl<T, U> Stream for PingPong<T, U>
 }
 
 impl<T, U> Sink for PingPong<T, U>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     type SinkItem = Frame<U>;
     type SinkError = ConnectionError;
@@ -103,8 +106,7 @@ impl<T, U> Sink for PingPong<T, U>
 }
 
 impl<T, U> ReadySink for PingPong<T, U>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
