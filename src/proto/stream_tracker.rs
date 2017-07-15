@@ -1,36 +1,48 @@
 use ConnectionError;
+use error::User::*;
 use frame::{self, Frame};
-use proto::{ReadySink, StreamMap, ConnectionTransporter, StreamTransporter};
+use proto::*;
 
 use futures::*;
 
+use std::marker::PhantomData;
+
 #[derive(Debug)]
-pub struct StreamTracker<T> {
+pub struct StreamTracker<T, P> {
     inner: T,
+    peer: PhantomData<P>,
     streams: StreamMap,
     local_max_concurrency: Option<u32>,
     remote_max_concurrency: Option<u32>,
+    initial_local_window_size: WindowSize,
+    initial_remote_window_size: WindowSize,
 }
 
-impl<T, U> StreamTracker<T>
+impl<T, P, U> StreamTracker<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>
+          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+          P: Peer
 {
-    pub fn new(local_max_concurrency: Option<u32>,
+    pub fn new(initial_local_window_size: WindowSize,
+               initial_remote_window_size: WindowSize,
+               local_max_concurrency: Option<u32>,
                remote_max_concurrency: Option<u32>,
                inner: T)
-        -> StreamTracker<T>
+        -> StreamTracker<T, P>
     {
         StreamTracker {
             inner,
+            peer: PhantomData,
             streams: StreamMap::default(),
             local_max_concurrency,
             remote_max_concurrency,
+            initial_local_window_size,
+            initial_remote_window_size,
         }
     }
 }
 
-impl<T> StreamTransporter for StreamTracker<T> {
+impl<T, P> StreamTransporter for StreamTracker<T, P> {
     fn streams(&self) -> &StreamMap {
         &self.streams
     }
@@ -58,38 +70,101 @@ impl<T> StreamTransporter for StreamTracker<T> {
 /// > exceed the new value or allow streams to complete.
 ///
 /// This module does NOT close streams when the setting changes.
-impl<T: ConnectionTransporter> ConnectionTransporter for StreamTracker<T> {
+impl<T, P> ConnectionTransporter for StreamTracker<T, P>
+    where T: ConnectionTransporter
+{
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.local_max_concurrency = set.max_concurrent_streams();
+        self.initial_local_window_size = set.initial_window_size();
         self.inner.apply_local_settings(set)
     }
 
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.remote_max_concurrency = set.max_concurrent_streams();
+        self.initial_remote_window_size = set.initial_window_size();
         self.inner.apply_remote_settings(set)
     }
 }
 
-impl<T, U> Stream for StreamTracker<T>
-    where T: Stream<Item = Frame<U>, Error = ConnectionError>,
+impl<T, P> Stream for StreamTracker<T, P>
+    where T: Stream<Item = Frame, Error = ConnectionError>,
+          P: Peer,
 {
     type Item = T::Item;
     type Error = T::Error;
 
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
-        self.inner.poll()
+        use frame::Frame::*;
+
+        match try_ready!(self.inner.poll()) {
+            Some(Headers(v)) => {
+                let id = v.stream_id();
+                let eos = v.is_end_stream();
+
+                let initialized = self.streams
+                    .entry(id)
+                    .or_insert_with(|| StreamState::default())
+                    .recv_headers::<P>(eos, self.initial_local_window_size)?;
+
+                if initialized {
+                    // TODO: Ensure available capacity for a new stream
+                    // This won't be as simple as self.streams.len() as closed
+                    // connections should not be factored.
+
+                    if !P::is_valid_remote_stream_id(id) {
+                        unimplemented!();
+                    }
+                }
+
+                Ok(Async::Ready(Some(Headers(v))))
+            }
+
+            f => Ok(Async::Ready(f))
+
+        }
     }
 }
 
 
-impl<T, U> Sink for StreamTracker<T>
+impl<T, P, U> Sink for StreamTracker<T, P>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+          P: Peer,
 {
     type SinkItem = T::SinkItem;
     type SinkError = T::SinkError;
 
     fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
+        use frame::Frame::*;
+
+        if let &Headers(ref v) = &item {
+            let id = v.stream_id();
+            let eos = v.is_end_stream();
+
+            // Transition the stream state, creating a new entry if needed
+            //
+            // TODO: Response can send multiple headers frames before body (1xx
+            // responses).
+            //
+            // ACTUALLY(ver), maybe not?
+            //   https://github.com/http2/http2-spec/commit/c83c8d911e6b6226269877e446a5cad8db921784
+            let initialized = self.streams
+                .entry(id)
+                .or_insert_with(|| StreamState::default())
+                .send_headers::<P>(eos, self.initial_remote_window_size)?;
+
+            if initialized {
+                // TODO: Ensure available capacity for a new stream
+                // This won't be as simple as self.streams.len() as closed
+                // connections should not be factored.
+                if !P::is_valid_local_stream_id(id) {
+                    // TODO: clear state
+                    return Err(InvalidStreamId.into());
+                }
+            }
+        }
+
         self.inner.start_send(item)
+
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
@@ -98,10 +173,11 @@ impl<T, U> Sink for StreamTracker<T>
 }
 
 
-impl<T, U> ReadySink for StreamTracker<T>
+impl<T, P, U> ReadySink for StreamTracker<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
+          P: Peer,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         self.inner.poll_ready()

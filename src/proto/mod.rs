@@ -27,7 +27,7 @@ use tokio_io::codec::length_delimited;
 
 use bytes::{Buf, IntoBuf};
 
-use ordermap::OrderMap;
+use ordermap::{Entry, OrderMap};
 use fnv::FnvHasher;
 use std::hash::BuildHasherDefault;
 
@@ -45,13 +45,14 @@ use std::hash::BuildHasherDefault;
 ///
 /// All transporters below Settings must apply relevant settings before passing a frame on
 /// to another level.  For example, if the frame writer n
-type Transport<T, B> =
+type Transport<T, P, B> =
     Settings<
         FlowControl<
             StreamTracker<
                 PingPong<
                     Framer<T, B>,
-                    B>>>>;
+                    B>,
+                P>>>;
 
 type Framer<T, B> =
     FramedRead<
@@ -65,6 +66,14 @@ pub struct StreamMap {
 }
 
 impl StreamMap {
+    fn get_mut(&mut self, id: &StreamId) -> Option<&mut StreamState> {
+        self.inner.get_mut(id)
+    }
+
+    fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
+        self.inner.entry(id)
+    }
+
     fn shrink_local_window(&mut self, decr: u32) {
         for (_, mut s) in &mut self.inner {
             s.shrink_recv_window(decr)
@@ -159,10 +168,17 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
             .num_skip(0) // Don't skip the header
             .new_read(io);
 
-        FlowControl::new(initial_local_window_size, initial_remote_window_size,
-            StreamTracker::new(local_max_concurrency, remote_max_concurrency,
-                PingPong::new(
-                    FramedRead::new(framer))))
+        FlowControl::new(
+            initial_local_window_size,
+            initial_remote_window_size,
+            StreamTracker::new(
+                initial_local_window_size,
+                initial_remote_window_size,
+                local_max_concurrency,
+                remote_max_concurrency,
+                PingPong::new(FramedRead::new(framer))
+            )
+        )
     });
 
     connection::new(transport)
