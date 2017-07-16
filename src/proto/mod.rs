@@ -11,7 +11,7 @@ mod stream_tracker;
 
 pub use self::connection::Connection;
 pub use self::flow_control::FlowControl;
-pub use self::flow_controller::FlowController;
+pub use self::flow_controller::{FlowController, WindowUnderflow};
 pub use self::framed_read::FramedRead;
 pub use self::framed_write::FramedWrite;
 pub use self::ping_pong::PingPong;
@@ -74,27 +74,27 @@ impl StreamMap {
         self.inner.entry(id)
     }
 
-    fn shrink_local_window(&mut self, decr: u32) {
+    fn shrink_all_local_windows(&mut self, decr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.shrink_recv_window(decr)
+            s.shrink_local_window(decr)
         }
     }
 
-    fn grow_local_window(&mut self, incr: u32) {
+    fn grow_all_local_windows(&mut self, incr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.grow_recv_window(incr)
+            s.grow_local_window(incr)
         }
     }
     
-    fn shrink_remote_window(&mut self, decr: u32) {
+    fn shrink_all_remote_windows(&mut self, decr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.shrink_send_window(decr)
+            s.shrink_remote_window(decr)
         }
     }
 
-    fn grow_remote_window(&mut self, incr: u32) {
+    fn grow_all_remote_windows(&mut self, incr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.grow_send_window(incr)
+            s.grow_remote_window(incr)
         }
     }
 }

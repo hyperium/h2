@@ -1,5 +1,6 @@
 use ConnectionError;
-use error::User::*;
+use error::Reason::ProtocolError;
+use error::User::InvalidStreamId;
 use frame::{self, Frame};
 use proto::*;
 
@@ -119,8 +120,15 @@ impl<T, P> Stream for StreamTracker<T, P>
                 Ok(Async::Ready(Some(Headers(v))))
             }
 
-            f => Ok(Async::Ready(f))
+            Some(Data(v)) => {
+                match self.streams.get_mut(&v.stream_id()) {
+                    None => return Err(ProtocolError.into()),
+                    Some(state) => state.recv_data(v.is_end_stream())?,
+                }
+                Ok(Async::Ready(Some(Data(v))))
+            }
 
+            f => Ok(Async::Ready(f))
         }
     }
 }
@@ -136,31 +144,42 @@ impl<T, P, U> Sink for StreamTracker<T, P>
     fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
         use frame::Frame::*;
 
-        if let &Headers(ref v) = &item {
-            let id = v.stream_id();
-            let eos = v.is_end_stream();
+        match &item {
+            &Headers(ref v) => {
+                let id = v.stream_id();
+                let eos = v.is_end_stream();
 
-            // Transition the stream state, creating a new entry if needed
-            //
-            // TODO: Response can send multiple headers frames before body (1xx
-            // responses).
-            //
-            // ACTUALLY(ver), maybe not?
-            //   https://github.com/http2/http2-spec/commit/c83c8d911e6b6226269877e446a5cad8db921784
-            let initialized = self.streams
-                .entry(id)
-                .or_insert_with(|| StreamState::default())
-                .send_headers::<P>(eos, self.initial_remote_window_size)?;
+                // Transition the stream state, creating a new entry if needed
+                //
+                // TODO: Response can send multiple headers frames before body (1xx
+                // responses).
+                //
+                // ACTUALLY(ver), maybe not?
+                //   https://github.com/http2/http2-spec/commit/c83c8d911e6b6226269877e446a5cad8db921784
+                let initialized = self.streams
+                    .entry(id)
+                    .or_insert_with(|| StreamState::default())
+                    .send_headers::<P>(eos, self.initial_remote_window_size)?;
 
-            if initialized {
-                // TODO: Ensure available capacity for a new stream
-                // This won't be as simple as self.streams.len() as closed
-                // connections should not be factored.
-                if !P::is_valid_local_stream_id(id) {
-                    // TODO: clear state
-                    return Err(InvalidStreamId.into());
+                if initialized {
+                    // TODO: Ensure available capacity for a new stream
+                    // This won't be as simple as self.streams.len() as closed
+                    // connections should not be factored.
+                    if !P::is_valid_local_stream_id(id) {
+                        // TODO: clear state
+                        return Err(InvalidStreamId.into());
+                    }
                 }
             }
+
+            &Data(ref v) => {
+                match self.streams.get_mut(&v.stream_id()) {
+                    None => return Err(ProtocolError.into()),
+                    Some(state) => state.send_data(v.is_end_stream())?,
+                }
+            }
+
+            _ => {}
         }
 
         self.inner.start_send(item)

@@ -1,8 +1,8 @@
-use {FrameSize, Peer};
+use Peer;
 use error::ConnectionError;
 use error::Reason::*;
 use error::User::*;
-use proto::FlowController;
+use proto::{FlowController, WindowSize, WindowUnderflow};
 
 /// Represents the state of an H2 stream
 ///
@@ -60,111 +60,13 @@ pub enum StreamState {
 }
 
 impl StreamState {
-    /// Updates the local flow controller so that the remote may send `incr` more bytes.
-    ///
-    /// Returns the amount of capacity created, accounting for window size changes. The
-    /// caller should send the the returned window size increment to the remote.
-    ///
-    /// If the remote is closed, None is returned.
-    pub fn grow_send_window(&mut self, incr: u32) {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        if incr == 0 {
-            return;
-        }
-
-        match self {
-            &mut Open { remote: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => fc.grow_window(incr),
-            _ => {},
-        }
-    }
- 
-    pub fn shrink_send_window(&mut self, decr: u32) {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        if decr == 0 {
-            return;
-        }
-
-        match self {
-            &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => fc.shrink_window(decr),
-            _ => {},
-        }
-    }
-
-
-    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
-    /// data.
-    pub fn take_send_window_update(&mut self) -> Option<u32> {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        match self {
-            &mut Open { remote: Data(ref mut fc), .. } |
-            &mut HalfClosedLocal(Data(ref mut fc)) => fc.take_window_update(),
-            _ => None,
-        }
-    }
-
-    /// Updates the remote flow controller so that the remote may receive `incr`
-    /// additional bytes.
-    ///
-    /// Returns the amount of capacity created, accounting for window size changes. The
-    /// caller should send the the returned window size increment to the remote.
-    pub fn grow_recv_window(&mut self, incr: u32) {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        if incr == 0 {
-            return;
-        }
-
-        match self {
-            &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedRemote(Data(ref mut fc)) => fc.grow_window(incr),
-            _ => {},
-        }
-    }
-
-    pub fn shrink_recv_window(&mut self, decr: u32) {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        if decr == 0 {
-            return;
-        }
-
-        match self {
-            &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedRemote(Data(ref mut fc)) => fc.shrink_window(decr),
-            _ => {},
-        }
-    }
-
-    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
-    /// data.
-    pub fn take_recv_window_update(&mut self) -> Option<u32> {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        match self {
-            &mut Open { local: Data(ref mut fc), .. } |
-            &mut HalfClosedRemote(Data(ref mut fc)) => fc.take_window_update(),
-            _ => None,
-        }
-    }
-
     /// Transition the state to represent headers being received.
     ///
     /// Returns true if this state transition results in iniitializing the
     /// stream id. `Err` is returned if this is an invalid state transition.
     pub fn recv_headers<P: Peer>(&mut self,
                                  eos: bool,
-                                 initial_recv_window_size: u32)
+                                 initial_recv_window_size: WindowSize)
         -> Result<bool, ConnectionError>
     {
         use self::StreamState::*;
@@ -207,22 +109,20 @@ impl StreamState {
         }
     }
 
-    pub fn recv_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
+    pub fn recv_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
         use self::StreamState::*;
 
         match *self {
-            Open { local, mut remote } => {
+            Open { local, remote } => {
                 try!(remote.check_is_data(ProtocolError.into()));
-                try!(remote.claim_window_size(len, FlowControlError.into()));
                 if eos {
                     *self = HalfClosedRemote(local);
                 }
                 Ok(())
             }
 
-            HalfClosedLocal(mut remote) => {
+            HalfClosedLocal(remote) => {
                 try!(remote.check_is_data(ProtocolError.into()));
-                try!(remote.claim_window_size(len, FlowControlError.into()));
                 if eos {
                     *self = Closed;
                 }
@@ -243,7 +143,7 @@ impl StreamState {
     /// id. `Err` is returned if this is an invalid state transition.
     pub fn send_headers<P: Peer>(&mut self, 
                                  eos: bool,
-                                 initial_window_size: u32)
+                                 initial_window_size: WindowSize)
         -> Result<bool, ConnectionError>
     {
         use self::StreamState::*;
@@ -294,33 +194,156 @@ impl StreamState {
         }
     }
 
-    pub fn send_data(&mut self, eos: bool, len: FrameSize) -> Result<(), ConnectionError> {
+    pub fn send_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
         use self::StreamState::*;
 
         match *self {
-            Open { mut local, remote } => {
+            Open { local, remote } => {
                 try!(local.check_is_data(UnexpectedFrameType.into()));
-                try!(local.claim_window_size(len, FlowControlViolation.into()));
                 if eos {
                     *self = HalfClosedLocal(remote);
                 }
                 Ok(())
             }
 
-            HalfClosedRemote(mut local) => {
+            HalfClosedRemote(local) => {
                 try!(local.check_is_data(UnexpectedFrameType.into()));
-                try!(local.claim_window_size(len, FlowControlViolation.into()));
                 if eos {
                     *self = Closed;
                 }
                 Ok(())
             }
 
-            Closed | HalfClosedLocal(..) => {
+            Idle | Closed | HalfClosedLocal(..) => {
                 Err(UnexpectedFrameType.into())
             }
+        }
+    }
 
-            _ => unimplemented!(),
+    /// Updates the local flow controller so that the remote may send `incr` more bytes.
+    ///
+    /// Returns the amount of capacity created, accounting for window size changes. The
+    /// caller should send the the returned window size increment to the remote.
+    ///
+    /// If the remote is closed, None is returned.
+    pub fn grow_remote_window(&mut self, incr: WindowSize) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if incr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { remote: Data(ref mut fc), .. } |
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.grow_window(incr),
+            _ => {},
+        }
+    }
+ 
+    pub fn claim_remote_window(&mut self, decr: WindowSize) -> Result<(), WindowUnderflow> {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return Ok(());
+        }
+
+        match self {
+            &mut Open { remote: Data(ref mut fc), .. } |
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.claim_window(decr),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn shrink_remote_window(&mut self, decr: WindowSize) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.shrink_window(decr),
+            _ => {},
+        }
+    }
+
+    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
+    /// data.
+    pub fn take_remote_window_update(&mut self) -> Option<WindowSize> {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        match self {
+            &mut Open { remote: Data(ref mut fc), .. } |
+            &mut HalfClosedLocal(Data(ref mut fc)) => fc.take_window_update(),
+            _ => None,
+        }
+    }
+
+    /// Updates the remote flow controller so that the remote may receive `incr`
+    /// additional bytes.
+    ///
+    /// Returns the amount of capacity created, accounting for window size changes. The
+    /// caller should send the the returned window size increment to the remote.
+    pub fn grow_local_window(&mut self, incr: WindowSize) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if incr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.grow_window(incr),
+            _ => {},
+        }
+    }
+
+    pub fn claim_local_window(&mut self, decr: WindowSize) -> Result<(), WindowUnderflow> {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return Ok(());
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.claim_window(decr),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn shrink_local_window(&mut self, decr: WindowSize) {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        if decr == 0 {
+            return;
+        }
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.shrink_window(decr),
+            _ => {},
+        }
+    }
+
+    /// Consumes newly-advertised capacity to inform the local endpoint it may send more
+    /// data.
+    pub fn take_local_window_update(&mut self) -> Option<WindowSize> {
+        use self::StreamState::*;
+        use self::PeerState::*;
+
+        match self {
+            &mut Open { local: Data(ref mut fc), .. } |
+            &mut HalfClosedRemote(Data(ref mut fc)) => fc.take_window_update(),
+            _ => None,
         }
     }
 }
@@ -353,15 +376,6 @@ impl PeerState {
         use self::PeerState::*;
         match self {
             &Data(_) => Ok(()),
-            _ => Err(err),
-        }
-    }
-
-    #[inline]
-    fn claim_window_size(&mut self, sz: FrameSize, err: ConnectionError) -> Result<(), ConnectionError> {
-        use self::PeerState::*;
-        match self {
-            &mut Data(ref mut fc) => fc.claim_window(sz).map_err(|_| err),
             _ => Err(err),
         }
     }

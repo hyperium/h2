@@ -47,21 +47,37 @@ impl<T, U> FlowControl<T>
     }
 }
 
-impl<T> FlowControl<T> {
-    #[inline]
-    fn claim_local_window(&mut self, len: WindowSize) -> Result<(), ConnectionError> {
-        self.local_flow_controller.claim_window(len)
-            .map_err(|_| error::Reason::FlowControlError.into())
-    }
-
-    #[inline]
-    fn claim_remote_window(&mut self, len: WindowSize) -> Result<(), ConnectionError> {
-        self.remote_flow_controller.claim_window(len)
-            .map_err(|_| error::User::FlowControlViolation.into())
-    }
-}
-
 impl<T: StreamTransporter> FlowControl<T> {
+    fn claim_local_window(&mut self, id: &StreamId, len: WindowSize) -> Result<(), ConnectionError> {
+        if id.is_zero() {
+            return self.local_flow_controller.claim_window(len) 
+                .map_err(|_| error::Reason::FlowControlError.into());
+        }
+
+        if let Some(mut stream) = self.streams_mut().get_mut(&id) {
+            return stream.claim_local_window(len)
+                .map_err(|_| error::Reason::FlowControlError.into());
+        }
+
+        // Ignore updates for non-existent streams.
+        Ok(())
+    }
+
+    fn claim_remote_window(&mut self, id: &StreamId, len: WindowSize) -> Result<(), ConnectionError> {
+        if id.is_zero() {
+            return self.local_flow_controller.claim_window(len) 
+                .map_err(|_| error::Reason::FlowControlError.into());
+        }
+
+        if let Some(mut stream) = self.streams_mut().get_mut(&id) {
+            return stream.claim_remote_window(len)
+                .map_err(|_| error::Reason::FlowControlError.into());
+        }
+
+        // Ignore updates for non-existent streams.
+        Ok(())
+    }
+
     /// Handles a window update received from the remote, indicating that the local may
     /// send `incr` additional bytes.
     ///
@@ -75,7 +91,7 @@ impl<T: StreamTransporter> FlowControl<T> {
             self.remote_flow_controller.grow_window(incr);
             true
         } else if let Some(mut s) = self.streams_mut().get_mut(&id) {
-            s.grow_send_window(incr);
+            s.grow_remote_window(incr);
             true
         } else {
             false
@@ -137,10 +153,10 @@ impl<T> ConnectionTransporter for FlowControl<T>
             let mut streams = self.streams_mut();
             if new_window_size < old_window_size {
                 let decr = old_window_size - new_window_size;
-                streams.shrink_local_window(decr);
+                streams.shrink_all_local_windows(decr);
             } else { 
                 let incr = new_window_size - old_window_size;
-                streams.grow_local_window(incr);
+                streams.grow_all_local_windows(incr);
             }
         }
         
@@ -161,10 +177,10 @@ impl<T> ConnectionTransporter for FlowControl<T>
             let mut streams = self.streams_mut();
             if new_window_size < old_window_size {
                 let decr = old_window_size - new_window_size;
-                streams.shrink_remote_window(decr);
+                streams.shrink_all_remote_windows(decr);
             } else { 
                 let incr = new_window_size - old_window_size;
-                streams.grow_remote_window(incr);
+                streams.grow_all_remote_windows(incr);
             }
         }
         
@@ -201,7 +217,7 @@ impl<T> Stream for FlowControl<T>
                 }
 
                 Some(Data(v)) => {
-                    self.claim_local_window(v.len())?;
+                    self.claim_local_window(&v.stream_id(), v.len())?;
                     return Ok(Async::Ready(Some(Data(v))));
                 }
 
@@ -223,7 +239,7 @@ impl<T, U> Sink for FlowControl<T>
         use frame::Frame::*;
 
         if let &Data(ref v) = &item {
-            self.claim_remote_window(v.len())?;
+            self.claim_remote_window(&v.stream_id(), v.len())?;
         }
 
         self.inner.start_send(item)
