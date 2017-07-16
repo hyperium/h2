@@ -87,6 +87,18 @@ impl<T, P> ApplySettings for StreamTracker<T, P>
     }
 }
 
+impl<T, P> ControlPing for StreamTracker<T, P>
+    where T: ControlPing
+{
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn pop_pong(&mut self) -> Option<PingPayload> {
+        self.inner.pop_pong()
+    }
+}
+
 impl<T, P> Stream for StreamTracker<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           P: Peer,

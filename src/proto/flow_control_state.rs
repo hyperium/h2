@@ -53,7 +53,7 @@ impl FlowControlState {
 
     /// Claims the provided amount from the window, if there is enough space.
     ///
-    /// Fails when `take_window_update()` hasn't returned at least `sz` more bytes than
+    /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
     /// have been previously claimed.
     pub fn claim_window(&mut self, sz: WindowSize) -> Result<(), WindowUnderflow> {
         if self.window_size < sz {
@@ -65,7 +65,7 @@ impl FlowControlState {
     }
 
     /// Increase the _unadvertised_ window capacity.
-    pub fn grow_window(&mut self, sz: WindowSize) {
+    pub fn expand_window(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;
@@ -77,7 +77,7 @@ impl FlowControlState {
     }
 
     /// Obtains and applies an unadvertised window update.
-    pub fn take_window_update(&mut self) -> Option<WindowSize> {
+    pub fn apply_window_update(&mut self) -> Option<WindowSize> {
         if self.next_window_update == 0 {
             return None;
         }
@@ -93,29 +93,29 @@ impl FlowControlState {
 fn test_with_initial_size() {
     let mut fc = FlowControlState::with_initial_size(10);
 
-    fc.grow_window(8);
+    fc.expand_window(8);
     assert_eq!(fc.window_size, 10);
     assert_eq!(fc.next_window_update, 8);
 
-    assert_eq!(fc.take_window_update(), Some(8));
+    assert_eq!(fc.apply_window_update(), Some(8));
     assert_eq!(fc.window_size, 18);
     assert_eq!(fc.next_window_update, 0);
 
     assert!(fc.claim_window(13).is_ok());
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 0);
-    assert!(fc.take_window_update().is_none());
+    assert!(fc.apply_window_update().is_none());
 }
 
 #[test]
 fn test_with_next_update() {
     let mut fc = FlowControlState::with_next_update(10);
 
-    fc.grow_window(8);
+    fc.expand_window(8);
     assert_eq!(fc.window_size, 0);
     assert_eq!(fc.next_window_update, 18);
 
-    assert_eq!(fc.take_window_update(), Some(18));
+    assert_eq!(fc.apply_window_update(), Some(18));
     assert_eq!(fc.window_size, 18);
     assert_eq!(fc.next_window_update, 0);
 }
@@ -125,13 +125,13 @@ fn test_grow_accumulates() {
     let mut fc = FlowControlState::with_initial_size(5);
 
     // Updates accumulate, though the window is not made immediately available.  Trying to
-    // claim data not returned by take_window_update results in an underflow.
+    // claim data not returned by apply_window_update results in an underflow.
 
-    fc.grow_window(2);
+    fc.expand_window(2);
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 2);
 
-    fc.grow_window(6);
+    fc.expand_window(6);
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 8);
 
@@ -139,7 +139,7 @@ fn test_grow_accumulates() {
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 8);
 
-    assert_eq!(fc.take_window_update(), Some(8));
+    assert_eq!(fc.apply_window_update(), Some(8));
     assert_eq!(fc.window_size, 13);
     assert_eq!(fc.next_window_update, 0);
 
@@ -154,7 +154,7 @@ fn test_shrink() {
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 0);
 
-    fc.grow_window(3);
+    fc.expand_window(3);
     assert_eq!(fc.window_size, 5);
     assert_eq!(fc.next_window_update, 3);
     assert_eq!(fc.underflow, 0);
@@ -169,7 +169,7 @@ fn test_shrink() {
     assert_eq!(fc.next_window_update, 0);
     assert_eq!(fc.underflow, 5);
 
-    fc.grow_window(8);
+    fc.expand_window(8);
     assert_eq!(fc.window_size, 0);
     assert_eq!(fc.next_window_update, 3);
     assert_eq!(fc.underflow, 0);

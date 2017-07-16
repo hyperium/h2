@@ -1,7 +1,7 @@
 use {ConnectionError, Frame, FrameSize};
 use client::Client;
 use frame::{self, SettingSet, StreamId};
-use proto::{self, ControlSettings, Peer, ReadySink, ControlFlow, WindowSize};
+use proto::{self, ControlFlow, ControlPing, ControlSettings, Peer, PingPayload, ReadySink, WindowSize};
 use server::Server;
 
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -58,8 +58,23 @@ impl<T, P, B> ControlFlow for Connection<T, P, B>
         self.inner.poll_remote_window_update(id)
     }
 
-    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.grow_local_window(id, incr)
+    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.expand_local_window(id, incr)
+    }
+}
+
+impl<T, P, B> ControlPing for Connection<T, P, B>
+    where T: AsyncRead + AsyncWrite,
+          T: ControlPing,
+          P: Peer,
+          B: IntoBuf,
+{
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn pop_pong(&mut self) -> Option<PingPayload> {
+        self.inner.pop_pong()
     }
 }
 

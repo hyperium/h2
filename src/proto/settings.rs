@@ -110,8 +110,18 @@ impl<T: ControlFlow> ControlFlow for Settings<T> {
         self.inner.poll_remote_window_update(id)
     }
 
-    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.grow_local_window(id, incr)
+    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.expand_local_window(id, incr)
+    }
+}
+
+impl<T: ControlPing> ControlPing for Settings<T> {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn pop_pong(&mut self) -> Option<PingPayload> {
+        self.inner.pop_pong()
     }
 }
 

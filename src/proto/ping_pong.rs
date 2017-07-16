@@ -1,13 +1,16 @@
 use ConnectionError;
 use frame::{Frame, Ping, SettingSet};
+use proto::{ApplySettings, ControlPing, PingPayload, ReadySink};
+
 use futures::*;
-use proto::{ApplySettings, ReadySink};
+use std::collections::VecDeque;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
 pub struct PingPong<T, U> {
     inner: T,
-    pong: Option<Frame<U>>,
+    sending_pong: Option<Frame<U>>,
+    received_pongs: VecDeque<PingPayload>,
 }
 
 impl<T, U> PingPong<T, U>
@@ -17,7 +20,8 @@ impl<T, U> PingPong<T, U>
     pub fn new(inner: T) -> Self {
         PingPong {
             inner,
-            pong: None,
+            sending_pong: None,
+            received_pongs: VecDeque::new(),
         }
     }
 }
@@ -32,18 +36,37 @@ impl<T: ApplySettings, U> ApplySettings for PingPong<T, U> {
     }
 }
 
+impl<T, U> ControlPing for PingPong<T, U>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+          T: ReadySink,
+{
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        if self.inner.poll_ready()?.is_not_ready() {
+            return Ok(AsyncSink::NotReady(body));
+        }
+
+        match self.inner.start_send(Ping::ping(body).into())? {
+            AsyncSink::NotReady(_) => unreachable!(),
+            AsyncSink::Ready => Ok(AsyncSink::Ready),
+        }
+    }
+
+    fn pop_pong(&mut self) -> Option<PingPayload> {
+        self.received_pongs.pop_front()
+    }
+}
+
 impl<T, U> PingPong<T, U>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     fn try_send_pong(&mut self) -> Poll<(), ConnectionError> {
-        if let Some(pong) = self.pong.take() {
+        if let Some(pong) = self.sending_pong.take() {
             if let AsyncSink::NotReady(pong) = self.inner.start_send(pong)? {
                 // If the pong can't be sent, save it.
-                self.pong = Some(pong);
+                self.sending_pong = Some(pong);
                 return Ok(Async::NotReady);
             }
         }
-
         Ok(Async::Ready(()))
     }
 }
@@ -78,7 +101,7 @@ impl<T, U> Stream for PingPong<T, U>
                     // Save a pong to be sent when there is nothing more to be returned
                     // from the stream or when frames are sent to the sink.
                     let pong = Ping::pong(ping.into_payload());
-                    self.pong = Some(pong.into());
+                    self.sending_pong = Some(pong.into());
                 }
 
                 // Everything other than ping gets passed through.

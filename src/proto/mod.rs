@@ -30,20 +30,56 @@ pub use self::settings::Settings;
 pub use self::stream_tracker::StreamTracker;
 use self::state::StreamState;
 
-/// Represents the internals of an HTTP2 connection.
+/// Represents the internals of an HTTP/2 connection.
 ///
 /// A transport consists of several layers (_transporters_) and is arranged from _top_
 /// (near the application) to _bottom_ (near the network).  Each transporter implements a
 /// Stream of frames received from the remote, and a ReadySink of frames sent to the
 /// remote.
 ///
-/// At the top of the transport, the Settings module is responsible for:
-/// - Transmitting local settings to the remote.
-/// - Sending settings acknowledgements for all settings frames received from the remote.
-/// - Exposing settings upward to the Connection.
+/// ## Transport Layers
 ///
-/// All transporters below Settings must apply relevant settings before passing a frame on
-/// to another level.  For example, if the frame writer n
+/// ### `Settings`
+///
+/// - Receives remote settings frames and applies the settings downward through the
+///   transport (via the ApplySettings trait) before responding with acknowledgements.
+/// - Exposes ControlSettings up towards the application and transmits local settings to
+///   the remote.
+///
+/// ### `FlowControl`
+///
+/// - Tracks received data frames against the local stream and connection flow control
+///   windows.
+/// - Tracks sent data frames against the remote stream and connection flow control
+///   windows.
+/// - Tracks remote settings updates to SETTINGS_INITIAL_WINDOW_SIZE.
+/// - Exposes `ControlFlow` upwards.
+///   - Tracks received window updates against the remote stream and connection flow
+///     control windows so that upper layers may poll for updates.
+///   - Sends window updates for the local stream and connection flow control windows as
+///     instructed by upper layers.
+///
+/// ### `StreamTracker`
+///
+/// - Tracks the states of each stream.
+/// - **TODO** Enforces maximum concurrency.
+/// - Exposes `ControlStreams` so that upper layers may share stream state.
+///
+/// ### `PingPong`
+///
+/// - Acknowleges PINGs from the remote.
+/// - Exposes ControlPing that allows the application side to send ping requests to the
+///   remote. Acknowledgements from the remoe are queued to be consumed by the
+///   application.
+///
+/// ### FramedRead
+///
+/// - Decodes frames from bytes.
+///
+/// ### FramedWrite
+///
+/// - Encodes frames to bytes.
+///
 type Transport<T, P, B>=
     Settings<
         FlowControl<
@@ -75,25 +111,33 @@ impl StreamMap {
 
     fn shrink_all_local_windows(&mut self, decr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.shrink_local_window(decr)
+            if let Some(fc) = s.local_flow_controller() {
+                fc.shrink_window(decr);
+            }
         }
     }
 
-    fn grow_all_local_windows(&mut self, incr: u32) {
+    fn expand_all_local_windows(&mut self, incr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.grow_local_window(incr)
+            if let Some(fc) = s.local_flow_controller() {
+                fc.expand_window(incr);
+            }
         }
     }
-    
+
     fn shrink_all_remote_windows(&mut self, decr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.shrink_remote_window(decr)
+            if let Some(fc) = s.remote_flow_controller() {
+                fc.shrink_window(decr);
+            }
         }
     }
 
-    fn grow_all_remote_windows(&mut self, incr: u32) {
+    fn expand_all_remote_windows(&mut self, incr: u32) {
         for (_, mut s) in &mut self.inner {
-            s.grow_remote_window(incr)
+            if let Some(fc) = s.remote_flow_controller() {
+                fc.expand_window(incr);
+            }
         }
     }
 }
@@ -120,6 +164,13 @@ pub trait ControlStreams {
     fn streams_mut(&mut self) -> &mut StreamMap;
 }
 
+pub type PingPayload = [u8; 8];
+
+pub trait ControlPing {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
+    fn pop_pong(&mut self) -> Option<PingPayload>;
+}
+
 /// Exposes flow control states to "upper" layers of the transport (i.e. above
 /// FlowControl).
 pub trait ControlFlow {
@@ -131,7 +182,7 @@ pub trait ControlFlow {
     /// Attempts to increase the receive capacity of a stream.
     ///
     /// Errors if the given stream is not active.
-    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
+    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
 }
 
 /// Create a full H2 transport from an I/O handle.
