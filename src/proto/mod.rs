@@ -1,3 +1,12 @@
+use {frame, ConnectionError, Peer, StreamId};
+use bytes::{Buf, IntoBuf};
+use fnv::FnvHasher;
+use futures::*;
+use ordermap::{Entry, OrderMap};
+use std::hash::BuildHasherDefault;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::codec::length_delimited;
+
 mod connection;
 mod flow_control;
 mod flow_controller;
@@ -19,17 +28,6 @@ pub use self::ready::ReadySink;
 pub use self::settings::Settings;
 pub use self::stream_tracker::StreamTracker;
 use self::state::StreamState;
-
-use {frame, ConnectionError, Peer, StreamId};
-
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_io::codec::length_delimited;
-
-use bytes::{Buf, IntoBuf};
-
-use ordermap::{Entry, OrderMap};
-use fnv::FnvHasher;
-use std::hash::BuildHasherDefault;
 
 /// Represents the internals of an HTTP2 connection.
 ///
@@ -100,7 +98,7 @@ impl StreamMap {
 }
 
 /// Allows settings to be applied from the top of the stack to the lower levels.d
-pub trait ConnectionTransporter {
+pub trait ApplySettings {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
 }
@@ -108,6 +106,11 @@ pub trait ConnectionTransporter {
 pub trait StreamTransporter {
     fn streams(&self)-> &StreamMap;
     fn streams_mut(&mut self) -> &mut StreamMap;
+}
+
+pub trait FlowTransporter {
+    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError>;
+    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
 }
 
 /// Create a full H2 transport from an I/O handle.

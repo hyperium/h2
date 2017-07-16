@@ -1,7 +1,7 @@
 use {hpack, ConnectionError};
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
-use proto::{ConnectionTransporter, ReadySink};
+use proto::{ApplySettings, ReadySink};
 
 use futures::*;
 
@@ -103,7 +103,7 @@ impl<T> FramedRead<T> {
     }
 }
 
-impl<T: ConnectionTransporter> ConnectionTransporter for FramedRead<T> {
+impl<T: ApplySettings> ApplySettings for FramedRead<T> {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.get_mut().apply_local_settings(set)
     }

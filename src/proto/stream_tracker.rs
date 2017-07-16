@@ -4,8 +4,6 @@ use error::User::InvalidStreamId;
 use frame::{self, Frame};
 use proto::*;
 
-use futures::*;
-
 use std::marker::PhantomData;
 
 #[derive(Debug)]
@@ -44,10 +42,12 @@ impl<T, P, U> StreamTracker<T, P>
 }
 
 impl<T, P> StreamTransporter for StreamTracker<T, P> {
+    #[inline]
     fn streams(&self) -> &StreamMap {
         &self.streams
     }
 
+    #[inline]
     fn streams_mut(&mut self) -> &mut StreamMap {
         &mut self.streams
     }
@@ -71,8 +71,8 @@ impl<T, P> StreamTransporter for StreamTracker<T, P> {
 /// > exceed the new value or allow streams to complete.
 ///
 /// This module does NOT close streams when the setting changes.
-impl<T, P> ConnectionTransporter for StreamTracker<T, P>
-    where T: ConnectionTransporter
+impl<T, P> ApplySettings for StreamTracker<T, P>
+    where T: ApplySettings
 {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.local_max_concurrency = set.max_concurrent_streams();

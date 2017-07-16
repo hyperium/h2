@@ -1,6 +1,6 @@
-use ConnectionError;
+use {StreamId, ConnectionError};
 use frame::{self, Frame};
-use proto::{ConnectionTransporter, ReadySink, StreamMap, StreamTransporter};
+use proto::{ApplySettings, ReadySink, StreamMap, StreamTransporter, FlowTransporter, WindowSize};
 
 use futures::*;
 use tokio_io::AsyncRead;
@@ -8,6 +8,8 @@ use bytes::BufMut;
 
 use std::io;
 
+
+// TODO 
 #[derive(Debug)]
 pub struct Settings<T> {
     // Upstream transport
@@ -23,7 +25,7 @@ pub struct Settings<T> {
     remaining_acks: usize,
 
     // True when the local settings must be flushed to the remote
-    is_dirty: bool,
+    is_local_dirty: bool,
 
     // True when we have received a settings frame from the remote.
     received_remote: bool,
@@ -38,7 +40,7 @@ impl<T, U> Settings<T>
             local: local,
             remote: frame::SettingSet::default(),
             remaining_acks: 0,
-            is_dirty: true,
+            is_local_dirty: true,
             received_remote: false,
         }
     }
@@ -60,18 +62,18 @@ impl<T, U> Settings<T>
             local: self.local,
             remote: self.remote,
             remaining_acks: self.remaining_acks,
-            is_dirty: self.is_dirty,
+            is_local_dirty: self.is_local_dirty,
             received_remote: self.received_remote,
         }
     }
 
     fn try_send_pending(&mut self) -> Poll<(), ConnectionError> {
-        trace!("try_send_pending; dirty={} acks={}", self.is_dirty, self.remaining_acks);
-        if self.is_dirty {
+        trace!("try_send_pending; dirty={} acks={}", self.is_local_dirty, self.remaining_acks);
+        if self.is_local_dirty {
             let frame = frame::Settings::new(self.local.clone());
             try_ready!(self.try_send(frame));
 
-            self.is_dirty = false;
+            self.is_local_dirty = false;
         }
 
         while self.remaining_acks > 0 {
@@ -104,10 +106,20 @@ impl<T: StreamTransporter> StreamTransporter for Settings<T> {
     }
 }
 
+impl<T: FlowTransporter> FlowTransporter for Settings<T> {
+    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
+        self.inner.poll_remote_window_update(id)
+    }
+
+    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.grow_local_window(id, incr)
+    }
+}
+
 impl<T, U> Stream for Settings<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ConnectionTransporter,
+          T: ApplySettings,
 {
     type Item = Frame;
     type Error = ConnectionError;
@@ -120,14 +132,13 @@ impl<T, U> Stream for Settings<T>
                         debug!("received remote settings ack");
                         // TODO: Handle acks
                     } else {
-                        // Received new settings, queue an ACK
-                        self.remaining_acks += 1;
-
-                        // Apply the settings before saving them.
+                        // Apply the settings before saving them and sending
+                        // acknowledgements.
                         let settings = v.into_set();
                         self.inner.apply_remote_settings(&settings)?;
                         self.remote = settings;
 
+                        self.remaining_acks += 1;
                         let _ = try!(self.try_send_pending());
                     }
                 }

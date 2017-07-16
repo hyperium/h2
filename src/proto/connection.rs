@@ -1,7 +1,7 @@
 use {ConnectionError, Frame, FrameSize};
 use client::Client;
 use frame::{self, StreamId};
-use proto::{self, Peer, ReadySink, WindowSize};
+use proto::{self, Peer, ReadySink, FlowTransporter, WindowSize};
 use server::Server;
 
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -32,44 +32,22 @@ pub fn new<T, P, B>(transport: proto::Transport<T, P, B::Buf>)
     }
 }
 
-impl<T, P, B: IntoBuf> Connection<T, P, B> {
+impl<T, P, B> Connection<T, P, B>
+    where T: FlowTransporter,
+          B: IntoBuf,
+{
     /// Polls for the amount of additional data that may be sent to a remote.
     ///
     /// Connection  and stream updates are distinct.
-    pub fn poll_window_update(&mut self, _id: StreamId) -> Poll<WindowSize, ConnectionError> {
-        // let added = if id.is_zero() {
-        //     self.remote_flow_controller.take_window_update()
-        // } else {
-        //     self.streams.get_mut(&id).and_then(|s| s.take_send_window_update())
-        // };
-        // match added {
-        //     Some(incr) => Ok(Async::Ready(incr)),
-        //     None => {
-        //         self.blocked_window_update = Some(task::current());
-        //         Ok(Async::NotReady)
-        //     }
-        // }
-        unimplemented!()
+    pub fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
+        self.inner.poll_remote_window_update(id)
     }
 
     /// Increases the amount of data that the remote endpoint may send.
     ///
     /// Connection and stream updates are distinct.
-    pub fn increment_window_size(&mut self, _id: StreamId, _incr: WindowSize) {
-        // assert!(self.sending_window_update.is_none());
-        // let added = if id.is_zero() {
-        //     self.local_flow_controller.grow_window(incr);
-        //     self.local_flow_controller.take_window_update()
-        // } else {
-        //     self.streams.get_mut(&id).and_then(|s| {
-        //         s.grow_recv_window(incr);
-        //         s.take_recv_window_update()
-        //     })
-        // };
-        // if let Some(added) = added {
-        //     self.sending_window_update = Some(frame::WindowUpdate::new(id, added));
-        // }
-        unimplemented!()
+    pub fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.grow_local_window(id, incr)
     }
 }
 
@@ -150,9 +128,8 @@ impl<T, P, B> Stream for Connection<T, P, B>
                     // is called here. 
                     try_ready!(self.inner.poll_complete());
 
-                    // If the sender sink is ready, we attempt to poll the underlying
-                    // stream once more because it, may have been made ready by flushing
-                    // the sink.
+                    // If the write buffer is cleared, attempt to poll the underlying
+                    // stream once more because it, may have been made ready.
                     try_ready!(self.inner.poll())
                 }
             };
@@ -215,17 +192,12 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
+                // This is a one-way conversion. By checking `poll_ready` first (above),
+                // it's already been determined that the inner `Sink` can accept the item.
+                // If the item is rejected, then there is a bug.
                 let frame = P::convert_send_message(id, headers, end_of_stream);
-
-                // We already ensured that the upstream can handle the frame, so
-                // panic if it gets rejected.
-                let res = try!(self.inner.start_send(Headers(frame)));
-
-                // This is a one-way conversion. By checking `poll_ready` first,
-                // it's already been determined that the inner `Sink` can accept
-                // the item. If the item is rejected, then there is a bug.
+                let res = self.inner.start_send(Headers(frame))?;
                 assert!(res.is_ready());
-
                 Ok(AsyncSink::Ready)
             }
 
