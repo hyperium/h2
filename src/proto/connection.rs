@@ -148,29 +148,18 @@ impl<T, P, B> Stream for Connection<T, P, B>
 
             trace!("poll; frame={:?}", frame);
             let frame = match frame {
-                Some(Headers(v)) => {
-                    // TODO: Update stream state
-                    let stream_id = v.stream_id();
-                    let end_of_stream = v.is_end_stream();
+                Some(Headers(v)) => Frame::Headers {
+                    id: v.stream_id(),
+                    end_of_stream: v.is_end_stream(),
+                    headers: P::convert_poll_message(v),
+                },
 
-                    Frame::Headers {
-                        id: stream_id,
-                        headers: P::convert_poll_message(v),
-                        end_of_stream: end_of_stream,
-                    }
-                }
-
-                Some(Data(v)) => {
-                    let id = v.stream_id();
-                    let end_of_stream = v.is_end_stream();
-
-                    Frame::Data {
-                        id,
-                        end_of_stream,
-                        data_len: v.len(),
-                        data: v.into_payload(),
-                    }
-                }
+                Some(Data(v)) => Frame::Data {
+                    id: v.stream_id(),
+                    end_of_stream: v.is_end_stream(),
+                    data_len: v.len(),
+                    data: v.into_payload(),
+                },
 
                 Some(frame) => panic!("unexpected frame; frame={:?}", frame),
                 None => return Ok(Async::Ready(None)),
@@ -193,12 +182,11 @@ impl<T, P, B> Sink for Connection<T, P, B>
     fn start_send(&mut self, item: Self::SinkItem)
         -> StartSend<Self::SinkItem, Self::SinkError>
     {
-        use frame::Frame::Headers;
         trace!("start_send");
 
-        // Ensure that a pending window update is sent before doing anything further and
-        // ensure that the inner sink will actually receive a frame.
-        if self.poll_ready()? == Async::NotReady {
+        // Ensure the transport is ready to send a frame before we transform the external
+        // `Frame` into an internal `frame::Framme`.
+        if self.inner.poll_ready()? == Async::NotReady {
             return Ok(AsyncSink::NotReady(item));
         }
 
@@ -208,17 +196,13 @@ impl<T, P, B> Sink for Connection<T, P, B>
                 // it's already been determined that the inner `Sink` can accept the item.
                 // If the item is rejected, then there is a bug.
                 let frame = P::convert_send_message(id, headers, end_of_stream);
-                let res = self.inner.start_send(Headers(frame))?;
+                let res = self.inner.start_send(frame::Frame::Headers(frame))?;
                 assert!(res.is_ready());
                 Ok(AsyncSink::Ready)
             }
 
             Frame::Data { id, data, end_of_stream, .. } => {
-                let mut frame = frame::Data::from_buf(id, data.into_buf());
-                if end_of_stream {
-                    frame.set_end_stream();
-                }
-
+                let frame = frame::Data::from_buf(id, data.into_buf(), end_of_stream);
                 let res = try!(self.inner.start_send(frame.into()));
                 assert!(res.is_ready());
                 Ok(AsyncSink::Ready)

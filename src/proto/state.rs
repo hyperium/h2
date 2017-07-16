@@ -78,7 +78,7 @@ impl StreamState {
                 if eos {
                     *self = HalfClosedRemote(local);
                 } else {
-                    *self = Open { local, remote: Data(FlowControlState::new(initial_recv_window_size)) };
+                    *self = Open { local, remote: Data(FlowControlState::with_initial_size(initial_recv_window_size)) };
                 }
                 Ok(true)
             }
@@ -98,7 +98,7 @@ impl StreamState {
                 if eos {
                     *self = Closed;
                 } else {
-                    *self = HalfClosedLocal(Data(FlowControlState::new(initial_recv_window_size)));
+                    *self = HalfClosedLocal(Data(FlowControlState::with_initial_size(initial_recv_window_size)));
                 };
                 Ok(false)
             }
@@ -155,7 +155,7 @@ impl StreamState {
                     HalfClosedLocal(Headers)
                 } else {
                     Open {
-                        local: Data(FlowControlState::new(initial_window_size)),
+                        local: Data(FlowControlState::with_initial_size(initial_window_size)),
                         remote: Headers,
                     }
                 };
@@ -169,7 +169,8 @@ impl StreamState {
                 *self = if eos {
                     HalfClosedLocal(remote)
                 } else {
-                    let local = Data(FlowControlState::new(initial_window_size));
+                    let fc = FlowControlState::with_initial_size(initial_window_size);
+                    let local = Data(fc);
                     Open { local, remote }
                 };
 
@@ -182,7 +183,8 @@ impl StreamState {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedRemote(Data(FlowControlState::new(initial_window_size)))
+                    let fc = FlowControlState::with_initial_size(initial_window_size);
+                    HalfClosedRemote(Data(fc))
                 };
 
                 Ok(false)

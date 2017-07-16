@@ -44,7 +44,7 @@ use self::state::StreamState;
 ///
 /// All transporters below Settings must apply relevant settings before passing a frame on
 /// to another level.  For example, if the frame writer n
-type Transport<T, P, B> =
+type Transport<T, P, B>=
     Settings<
         FlowControl<
             StreamTracker<
@@ -98,20 +98,23 @@ impl StreamMap {
     }
 }
 
-/// Allows settings updates to be pushed "down" the transport (i.e. below Settings).
+/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
+/// FramedWrite).
 pub trait ApplySettings {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
 }
 
-/// Exposes settings to "upper" layers of the transport (i.e. above Settings).
+/// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
+/// above---Connection).
 pub trait ControlSettings {
     fn update_local_settings(&mut self, set: frame::SettingSet) -> Result<(), ConnectionError>;
     fn local_settings(&self) -> &SettingSet;
     fn remote_settings(&self) -> &SettingSet;
 }
 
-/// Exposes stream states to "upper" layers of the transport (i.e. above StreamTracker).
+/// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
+/// to Connection).
 pub trait ControlStreams {
     fn streams(&self)-> &StreamMap;
     fn streams_mut(&mut self) -> &mut StreamMap;

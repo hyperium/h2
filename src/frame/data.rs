@@ -65,12 +65,16 @@ impl<T> Data<T> {
 }
 
 impl<T: Buf> Data<T> {
-    pub fn from_buf(stream_id: StreamId, data: T) -> Self {
+    pub fn from_buf(stream_id: StreamId, data: T, eos: bool) -> Self {
+        let mut flags = DataFlag::default();
+        if eos {
+            flags.set_end_stream();
+        }
         Data {
             stream_id,
             data_len: data.remaining() as FrameSize,
             data,
-            flags: DataFlag::default(),
+            flags,
             pad_len: None,
         }
     }

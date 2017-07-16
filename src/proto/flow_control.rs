@@ -45,8 +45,8 @@ impl<T, U> FlowControl<T>
             inner,
             initial_local_window_size,
             initial_remote_window_size,
-            local_flow_controller: FlowControlState::new(initial_local_window_size),
-            remote_flow_controller: FlowControlState::new(initial_remote_window_size),
+            local_flow_controller: FlowControlState::with_initial_size(initial_local_window_size),
+            remote_flow_controller: FlowControlState::with_next_update(initial_remote_window_size),
             blocked_remote_window_update: None,
             sending_local_window_update: None,
             pending_local_window_updates: VecDeque::new(),
@@ -54,6 +54,7 @@ impl<T, U> FlowControl<T>
     }
 }
 
+// Flow control utitlities.
 impl<T: ControlStreams> FlowControl<T> {
     fn claim_local_window(&mut self, id: &StreamId, len: WindowSize) -> Result<(), ConnectionError> {
         let res = if id.is_zero() {
@@ -106,6 +107,7 @@ impl<T: ControlStreams> FlowControl<T> {
     }
 }
 
+/// Exposes a public upward API for flow control.
 impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
         if id.is_zero() {
@@ -139,6 +141,7 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     }
 }
 
+/// Proxies access to streams.
 impl<T: ControlStreams> ControlStreams for FlowControl<T> {
     #[inline]
     fn streams(&self) -> &StreamMap {
@@ -183,7 +186,7 @@ impl<T, U> FlowControl<T>
 
 /// Applies an update to an endpoint's initial window size.
 ///
-/// Per RFC 7540 §6.9.2
+/// Per RFC 7540 §6.9.2:
 ///
 /// > In addition to changing the flow-control window for streams that are not yet
 /// > active, a SETTINGS frame can alter the initial flow-control window size for

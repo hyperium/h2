@@ -18,12 +18,12 @@ pub struct FlowControlState {
 
 impl Default for FlowControlState {
     fn default() -> Self {
-        Self::new(DEFAULT_INITIAL_WINDOW_SIZE)
+        Self::with_initial_size(DEFAULT_INITIAL_WINDOW_SIZE)
     }
 }
 
 impl FlowControlState {
-    pub fn new(window_size: WindowSize) -> FlowControlState {
+    pub fn with_initial_size(window_size: WindowSize) -> FlowControlState {
         FlowControlState {
             window_size,
             underflow: 0,
@@ -31,11 +31,24 @@ impl FlowControlState {
         }
     }
 
+    pub fn with_next_update(next_window_update: WindowSize) -> FlowControlState {
+        FlowControlState {
+            window_size: 0,
+            underflow: 0,
+            next_window_update,
+        }
+    }
+
     /// Reduce future capacity of the window.
     ///
     /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
     pub fn shrink_window(&mut self, decr: WindowSize) {
-        self.underflow += decr;
+        if decr < self.next_window_update {
+            self.next_window_update -= decr
+        } else {
+            self.underflow += decr - self.next_window_update;
+            self.next_window_update = 0;
+        }
     }
 
     /// Claims the provided amount from the window, if there is enough space.
@@ -51,7 +64,7 @@ impl FlowControlState {
         Ok(())
     }
 
-    /// Applies a window increment immediately.
+    /// Increase the _unadvertised_ window capacity.
     pub fn grow_window(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
@@ -59,12 +72,11 @@ impl FlowControlState {
         }
 
         let added = sz - self.underflow;
-        self.window_size += added;
         self.next_window_update += added;
         self.underflow = 0;
     }
 
-    /// Obtains and clears an unadvertised window update.
+    /// Obtains and applies an unadvertised window update.
     pub fn take_window_update(&mut self) -> Option<WindowSize> {
         if self.next_window_update == 0 {
             return None;
@@ -72,12 +84,93 @@ impl FlowControlState {
 
         let incr = self.next_window_update;
         self.next_window_update = 0;
+        self.window_size += incr;
         Some(incr)
     }
 }
 
 #[test]
-fn test() {
-    let mut fc = FlowControlState::new(65_535);
+fn test_with_initial_size() {
+    let mut fc = FlowControlState::with_initial_size(10);
 
+    fc.grow_window(8);
+    assert_eq!(fc.window_size, 10);
+    assert_eq!(fc.next_window_update, 8);
+
+    assert_eq!(fc.take_window_update(), Some(8));
+    assert_eq!(fc.window_size, 18);
+    assert_eq!(fc.next_window_update, 0);
+
+    assert!(fc.claim_window(13).is_ok());
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 0);
+    assert!(fc.take_window_update().is_none());
+}
+
+#[test]
+fn test_with_next_update() {
+    let mut fc = FlowControlState::with_next_update(10);
+
+    fc.grow_window(8);
+    assert_eq!(fc.window_size, 0);
+    assert_eq!(fc.next_window_update, 18);
+
+    assert_eq!(fc.take_window_update(), Some(18));
+    assert_eq!(fc.window_size, 18);
+    assert_eq!(fc.next_window_update, 0);
+}
+
+#[test]
+fn test_grow_accumulates() {
+    let mut fc = FlowControlState::with_initial_size(5);
+
+    // Updates accumulate, though the window is not made immediately available.  Trying to
+    // claim data not returned by take_window_update results in an underflow.
+
+    fc.grow_window(2);
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 2);
+
+    fc.grow_window(6);
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 8);
+
+    assert!(fc.claim_window(13).is_err());
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 8);
+
+    assert_eq!(fc.take_window_update(), Some(8));
+    assert_eq!(fc.window_size, 13);
+    assert_eq!(fc.next_window_update, 0);
+
+    assert!(fc.claim_window(13).is_ok());
+    assert_eq!(fc.window_size, 0);
+    assert_eq!(fc.next_window_update, 0);
+}
+
+#[test]
+fn test_shrink() {
+    let mut fc = FlowControlState::with_initial_size(5);
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 0);
+
+    fc.grow_window(3);
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 3);
+    assert_eq!(fc.underflow, 0);
+
+    fc.shrink_window(8);
+    assert_eq!(fc.window_size, 5);
+    assert_eq!(fc.next_window_update, 0);
+    assert_eq!(fc.underflow, 5);
+
+    assert!(fc.claim_window(5).is_ok());
+    assert_eq!(fc.window_size, 0);
+    assert_eq!(fc.next_window_update, 0);
+    assert_eq!(fc.underflow, 5);
+
+    fc.grow_window(8);
+    assert_eq!(fc.window_size, 0);
+    assert_eq!(fc.next_window_update, 3);
+    assert_eq!(fc.underflow, 0);
 }
