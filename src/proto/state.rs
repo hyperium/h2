@@ -2,7 +2,7 @@ use Peer;
 use error::ConnectionError;
 use error::Reason::*;
 use error::User::*;
-use proto::{FlowController, WindowSize, WindowUnderflow};
+use proto::{FlowControlState, WindowSize, WindowUnderflow};
 
 /// Represents the state of an H2 stream
 ///
@@ -78,7 +78,7 @@ impl StreamState {
                 if eos {
                     *self = HalfClosedRemote(local);
                 } else {
-                    *self = Open { local, remote: Data(FlowController::new(initial_recv_window_size)) };
+                    *self = Open { local, remote: Data(FlowControlState::new(initial_recv_window_size)) };
                 }
                 Ok(true)
             }
@@ -98,7 +98,7 @@ impl StreamState {
                 if eos {
                     *self = Closed;
                 } else {
-                    *self = HalfClosedLocal(Data(FlowController::new(initial_recv_window_size)));
+                    *self = HalfClosedLocal(Data(FlowControlState::new(initial_recv_window_size)));
                 };
                 Ok(false)
             }
@@ -155,7 +155,7 @@ impl StreamState {
                     HalfClosedLocal(Headers)
                 } else {
                     Open {
-                        local: Data(FlowController::new(initial_window_size)),
+                        local: Data(FlowControlState::new(initial_window_size)),
                         remote: Headers,
                     }
                 };
@@ -169,7 +169,7 @@ impl StreamState {
                 *self = if eos {
                     HalfClosedLocal(remote)
                 } else {
-                    let local = Data(FlowController::new(initial_window_size));
+                    let local = Data(FlowControlState::new(initial_window_size));
                     Open { local, remote }
                 };
 
@@ -182,7 +182,7 @@ impl StreamState {
                 *self = if eos {
                     Closed
                 } else {
-                    HalfClosedRemote(Data(FlowController::new(initial_window_size)))
+                    HalfClosedRemote(Data(FlowControlState::new(initial_window_size)))
                 };
 
                 Ok(false)
@@ -357,8 +357,8 @@ impl Default for StreamState {
 #[derive(Debug, Copy, Clone)]
 pub enum PeerState {
     Headers,
-    /// Contains a FlowController representing the _receiver_ of this this data stream.
-    Data(FlowController),
+    /// Contains a FlowControlState representing the _receiver_ of this this data stream.
+    Data(FlowControlState),
 }
 
 impl PeerState {

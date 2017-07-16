@@ -1,7 +1,7 @@
 use {ConnectionError, Frame, FrameSize};
 use client::Client;
-use frame::{self, StreamId};
-use proto::{self, Peer, ReadySink, FlowTransporter, WindowSize};
+use frame::{self, SettingSet, StreamId};
+use proto::{self, ControlSettings, Peer, ReadySink, ControlFlow, WindowSize};
 use server::Server;
 
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -32,21 +32,33 @@ pub fn new<T, P, B>(transport: proto::Transport<T, P, B::Buf>)
     }
 }
 
-impl<T, P, B> Connection<T, P, B>
-    where T: FlowTransporter,
+
+impl<T, P, B> ControlSettings for Connection<T, P, B>
+    where T: ControlSettings,
           B: IntoBuf,
 {
-    /// Polls for the amount of additional data that may be sent to a remote.
-    ///
-    /// Connection  and stream updates are distinct.
-    pub fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
+    fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
+        self.inner.update_local_settings(local)
+    }
+
+    fn local_settings(&self) -> &SettingSet {
+        self.inner.local_settings()
+    }
+
+    fn remote_settings(&self) -> &SettingSet {
+        self.inner.remote_settings()
+    }
+}
+
+impl<T, P, B> ControlFlow for Connection<T, P, B>
+    where T: ControlFlow,
+          B: IntoBuf,
+{
+    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
         self.inner.poll_remote_window_update(id)
     }
 
-    /// Increases the amount of data that the remote endpoint may send.
-    ///
-    /// Connection and stream updates are distinct.
-    pub fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+    fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
         self.inner.grow_local_window(id, incr)
     }
 }

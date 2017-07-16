@@ -6,7 +6,7 @@ pub struct WindowUnderflow;
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
 
 #[derive(Copy, Clone, Debug)]
-pub struct FlowController {
+pub struct FlowControlState {
     /// Amount that may be claimed.
     window_size: WindowSize,
     /// Amount to be removed by future increments.
@@ -16,15 +16,15 @@ pub struct FlowController {
     next_window_update: WindowSize,
 }
 
-impl Default for FlowController {
+impl Default for FlowControlState {
     fn default() -> Self {
         Self::new(DEFAULT_INITIAL_WINDOW_SIZE)
     }
 }
 
-impl FlowController {
-    pub fn new(window_size: WindowSize) -> FlowController {
-        FlowController {
+impl FlowControlState {
+    pub fn new(window_size: WindowSize) -> FlowControlState {
+        FlowControlState {
             window_size,
             underflow: 0,
             next_window_update: 0,
@@ -78,6 +78,6 @@ impl FlowController {
 
 #[test]
 fn test() {
-    let mut fc = FlowController::new(65_535);
+    let mut fc = FlowControlState::new(65_535);
 
 }

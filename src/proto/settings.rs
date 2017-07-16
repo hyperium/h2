@@ -1,8 +1,7 @@
 use {StreamId, ConnectionError};
-use frame::{self, Frame};
-use proto::{ApplySettings, ReadySink, StreamMap, StreamTransporter, FlowTransporter, WindowSize};
+use frame::{self, Frame, SettingSet};
+use proto::*;
 
-use futures::*;
 use tokio_io::AsyncRead;
 use bytes::BufMut;
 
@@ -16,10 +15,10 @@ pub struct Settings<T> {
     inner: T,
 
     // Our settings
-    local: frame::SettingSet,
+    local: SettingSet,
 
     // Peer settings
-    remote: frame::SettingSet,
+    remote: SettingSet,
 
     // Number of acks remaining to send to the peer
     remaining_acks: usize,
@@ -34,22 +33,22 @@ pub struct Settings<T> {
 impl<T, U> Settings<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
-    pub fn new(inner: T, local: frame::SettingSet) -> Settings<T> {
+    pub fn new(inner: T, local: SettingSet) -> Settings<T> {
         Settings {
             inner: inner,
             local: local,
-            remote: frame::SettingSet::default(),
+            remote: SettingSet::default(),
             remaining_acks: 0,
             is_local_dirty: true,
             received_remote: false,
         }
     }
 
-    pub fn local_settings(&self) -> &frame::SettingSet {
+    pub fn local_settings(&self) -> &SettingSet {
         &self.local
     }
 
-    pub fn remote_settings(&self) -> &frame::SettingSet {
+    pub fn remote_settings(&self) -> &SettingSet {
         &self.local
     }
 
@@ -96,7 +95,7 @@ impl<T, U> Settings<T>
     }
 }
 
-impl<T: StreamTransporter> StreamTransporter for Settings<T> {
+impl<T: ControlStreams> ControlStreams for Settings<T> {
     fn streams(&self) -> &StreamMap {
         self.inner.streams()
     }
@@ -106,13 +105,29 @@ impl<T: StreamTransporter> StreamTransporter for Settings<T> {
     }
 }
 
-impl<T: FlowTransporter> FlowTransporter for Settings<T> {
+impl<T: ControlFlow> ControlFlow for Settings<T> {
     fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
         self.inner.poll_remote_window_update(id)
     }
 
     fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
         self.inner.grow_local_window(id, incr)
+    }
+}
+
+impl<T> ControlSettings for Settings<T>{
+    fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
+        self.local = local;
+        self.is_local_dirty = true;
+        Ok(())
+    }
+
+    fn local_settings(&self) -> &SettingSet {
+        &self.local
+    }
+
+    fn remote_settings(&self) -> &SettingSet {
+        &self.remote
     }
 }
 

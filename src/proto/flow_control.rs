@@ -13,10 +13,10 @@ pub struct FlowControl<T>  {
 
     /// Tracks the connection-level flow control window for receiving data from the
     /// remote.
-    local_flow_controller: FlowController,
+    local_flow_controller: FlowControlState,
 
     /// Tracks the onnection-level flow control window for receiving data from the remote.
-    remote_flow_controller: FlowController,
+    remote_flow_controller: FlowControlState,
 
     /// Holds the list of streams on which local window updates may be sent.
     // XXX It would be cool if this didn't exist.
@@ -34,7 +34,7 @@ pub struct FlowControl<T>  {
 impl<T, U> FlowControl<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: StreamTransporter
+          T: ControlStreams
 {
     pub fn new(initial_local_window_size: u32,
                initial_remote_window_size: u32,
@@ -45,8 +45,8 @@ impl<T, U> FlowControl<T>
             inner,
             initial_local_window_size,
             initial_remote_window_size,
-            local_flow_controller: FlowController::new(initial_local_window_size),
-            remote_flow_controller: FlowController::new(initial_remote_window_size),
+            local_flow_controller: FlowControlState::new(initial_local_window_size),
+            remote_flow_controller: FlowControlState::new(initial_remote_window_size),
             blocked_remote_window_update: None,
             sending_local_window_update: None,
             pending_local_window_updates: VecDeque::new(),
@@ -54,7 +54,7 @@ impl<T, U> FlowControl<T>
     }
 }
 
-impl<T: StreamTransporter> FlowControl<T> {
+impl<T: ControlStreams> FlowControl<T> {
     fn claim_local_window(&mut self, id: &StreamId, len: WindowSize) -> Result<(), ConnectionError> {
         let res = if id.is_zero() {
             self.local_flow_controller.claim_window(len)
@@ -106,7 +106,7 @@ impl<T: StreamTransporter> FlowControl<T> {
     }
 }
 
-impl<T: StreamTransporter> FlowTransporter for FlowControl<T> {
+impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
         if id.is_zero() {
             if let Some(sz) = self.remote_flow_controller.take_window_update() {
@@ -139,7 +139,7 @@ impl<T: StreamTransporter> FlowTransporter for FlowControl<T> {
     }
 }
 
-impl<T: StreamTransporter> StreamTransporter for FlowControl<T> {
+impl<T: ControlStreams> ControlStreams for FlowControl<T> {
     #[inline]
     fn streams(&self) -> &StreamMap {
         self.inner.streams()
@@ -153,7 +153,7 @@ impl<T: StreamTransporter> StreamTransporter for FlowControl<T> {
 
 impl<T, U> FlowControl<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: StreamTransporter,
+          T: ControlStreams,
 {
     /// Returns ready when there are no pending window updates to send.
     fn poll_send_local_window_updates(&mut self) -> Poll<(), ConnectionError> {
@@ -199,7 +199,7 @@ impl<T, U> FlowControl<T>
 /// > positive.
 impl<T> ApplySettings for FlowControl<T> 
     where T: ApplySettings,
-          T: StreamTransporter
+          T: ControlStreams
 {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)?;
@@ -248,7 +248,7 @@ impl<T> ApplySettings for FlowControl<T>
 
 impl<T> Stream for FlowControl<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: StreamTransporter,
+          T: ControlStreams,
  {
     type Item = T::Item;
     type Error = T::Error;
@@ -278,7 +278,7 @@ impl<T> Stream for FlowControl<T>
 impl<T, U> Sink for FlowControl<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
-          T: StreamTransporter,
+          T: ControlStreams,
  {
     type SinkItem = T::SinkItem;
     type SinkError = T::SinkError;
@@ -318,7 +318,7 @@ impl<T, U> ReadySink for FlowControl<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
-          T: StreamTransporter,
+          T: ControlStreams,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.inner.poll_ready());

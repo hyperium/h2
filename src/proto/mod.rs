@@ -1,4 +1,5 @@
 use {frame, ConnectionError, Peer, StreamId};
+use frame::SettingSet;
 use bytes::{Buf, IntoBuf};
 use fnv::FnvHasher;
 use futures::*;
@@ -9,7 +10,7 @@ use tokio_io::codec::length_delimited;
 
 mod connection;
 mod flow_control;
-mod flow_controller;
+mod flow_control_state;
 mod framed_read;
 mod framed_write;
 mod ping_pong;
@@ -20,7 +21,7 @@ mod stream_tracker;
 
 pub use self::connection::Connection;
 pub use self::flow_control::FlowControl;
-pub use self::flow_controller::{FlowController, WindowUnderflow};
+pub use self::flow_control_state::{FlowControlState, WindowUnderflow};
 pub use self::framed_read::FramedRead;
 pub use self::framed_write::FramedWrite;
 pub use self::ping_pong::PingPong;
@@ -97,19 +98,36 @@ impl StreamMap {
     }
 }
 
-/// Allows settings to be applied from the top of the stack to the lower levels.d
+/// Allows settings updates to be pushed "down" the transport (i.e. below Settings).
 pub trait ApplySettings {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
 }
 
-pub trait StreamTransporter {
+/// Exposes settings to "upper" layers of the transport (i.e. above Settings).
+pub trait ControlSettings {
+    fn update_local_settings(&mut self, set: frame::SettingSet) -> Result<(), ConnectionError>;
+    fn local_settings(&self) -> &SettingSet;
+    fn remote_settings(&self) -> &SettingSet;
+}
+
+/// Exposes stream states to "upper" layers of the transport (i.e. above StreamTracker).
+pub trait ControlStreams {
     fn streams(&self)-> &StreamMap;
     fn streams_mut(&mut self) -> &mut StreamMap;
 }
 
-pub trait FlowTransporter {
+/// Exposes flow control states to "upper" layers of the transport (i.e. above
+/// FlowControl).
+pub trait ControlFlow {
+    /// Asks the flow controller for unreported send capacity on a stream.
+    ///
+    /// Errors if the given stream is not active.
     fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError>;
+
+    /// Attempts to increase the receive capacity of a stream.
+    ///
+    /// Errors if the given stream is not active.
     fn grow_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
 }
 
@@ -128,10 +146,10 @@ pub fn from_io<T, P, B>(io: T, settings: frame::SettingSet)
     // weird, but oh well...
     //
     // We first create a Settings directly around a framed writer
-    let settings = Settings::new(
+    let transport = Settings::new(
         framed_write, settings);
 
-    from_server_handshaker(settings)
+    from_server_handshaker(transport)
 }
 
 /// Create a transport prepared to handle the server handshake.
@@ -145,7 +163,6 @@ pub fn server_handshaker<T, B>(io: T, settings: frame::SettingSet)
           B: Buf,
 {
     let framed_write = FramedWrite::new(io);
-
     Settings::new(framed_write, settings)
 }
 

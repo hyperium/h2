@@ -41,7 +41,7 @@ impl<T, P, U> StreamTracker<T, P>
     }
 }
 
-impl<T, P> StreamTransporter for StreamTracker<T, P> {
+impl<T, P> ControlStreams for StreamTracker<T, P> {
     #[inline]
     fn streams(&self) -> &StreamMap {
         &self.streams
