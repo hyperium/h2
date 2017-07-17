@@ -134,13 +134,15 @@ impl<T, P> Stream for StreamTracker<T, P>
 
             Some(Data(v)) => {
                 match self.streams.get_mut(&v.stream_id()) {
-                    None => return Err(Reason::ProtocolError.into()),
-                    Some(state) => state.recv_data(v.is_end_stream())?,
+                    None => Err(Reason::ProtocolError.into()),
+                    Some(state) => {
+                        state.recv_data(v.is_end_stream())?;
+                        Ok(Async::Ready(Some(Data(v))))
+                    }
                 }
-                Ok(Async::Ready(Some(Data(v))))
             }
 
-            f => Ok(Async::Ready(f))
+            f => Ok(Async::Ready(f)),
         }
     }
 }

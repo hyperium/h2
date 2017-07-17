@@ -1,10 +1,8 @@
 use {frame, ConnectionError, Peer, StreamId};
 use frame::SettingSet;
+
 use bytes::{Buf, IntoBuf};
-use fnv::FnvHasher;
 use futures::*;
-use ordermap::{Entry, OrderMap};
-use std::hash::BuildHasherDefault;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
@@ -28,7 +26,8 @@ pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
 pub use self::stream_tracker::StreamTracker;
-use self::state::StreamState;
+
+use self::state::{StreamMap, StreamState};
 
 /// Represents the internals of an HTTP/2 connection.
 ///
@@ -95,60 +94,6 @@ type Framer<T, B> =
 
 pub type WindowSize = u32;
 
-#[derive(Debug, Default)]
-pub struct StreamMap {
-    inner: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>
-}
-
-impl StreamMap {
-    fn get_mut(&mut self, id: &StreamId) -> Option<&mut StreamState> {
-        self.inner.get_mut(id)
-    }
-
-    fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
-        self.inner.entry(id)
-    }
-
-    fn shrink_all_local_windows(&mut self, decr: u32) {
-        for (_, mut s) in &mut self.inner {
-            if let Some(fc) = s.local_flow_controller() {
-                fc.shrink_window(decr);
-            }
-        }
-    }
-
-    fn expand_all_local_windows(&mut self, incr: u32) {
-        for (_, mut s) in &mut self.inner {
-            if let Some(fc) = s.local_flow_controller() {
-                fc.expand_window(incr);
-            }
-        }
-    }
-
-    fn shrink_all_remote_windows(&mut self, decr: u32) {
-        for (_, mut s) in &mut self.inner {
-            if let Some(fc) = s.remote_flow_controller() {
-                fc.shrink_window(decr);
-            }
-        }
-    }
-
-    fn expand_all_remote_windows(&mut self, incr: u32) {
-        for (_, mut s) in &mut self.inner {
-            if let Some(fc) = s.remote_flow_controller() {
-                fc.expand_window(incr);
-            }
-        }
-    }
-}
-
-/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
-/// FramedWrite).
-pub trait ApplySettings {
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-}
-
 /// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
 /// above---Connection).
 pub trait ControlSettings {
@@ -157,18 +102,11 @@ pub trait ControlSettings {
     fn remote_settings(&self) -> &SettingSet;
 }
 
-/// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
-/// to Connection).
-pub trait ControlStreams {
-    fn streams(&self)-> &StreamMap;
-    fn streams_mut(&mut self) -> &mut StreamMap;
-}
-
-pub type PingPayload = [u8; 8];
-
-pub trait ControlPing {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
-    fn pop_pong(&mut self) -> Option<PingPayload>;
+/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
+/// FramedWrite).
+pub trait ApplySettings {
+    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
+    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
 }
 
 /// Exposes flow control states to "upper" layers of the transport (i.e. above
@@ -183,6 +121,20 @@ pub trait ControlFlow {
     ///
     /// Errors if the given stream is not active.
     fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
+}
+
+/// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
+/// to Connection).
+pub trait ControlStreams {
+    fn streams(&self)-> &StreamMap;
+    fn streams_mut(&mut self) -> &mut StreamMap;
+}
+
+pub type PingPayload = [u8; 8];
+
+pub trait ControlPing {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
+    fn pop_pong(&mut self) -> Option<PingPayload>;
 }
 
 /// Create a full H2 transport from an I/O handle.

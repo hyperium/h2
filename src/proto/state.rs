@@ -1,8 +1,12 @@
-use Peer;
+use {Peer, StreamId};
 use error::ConnectionError;
 use error::Reason::*;
 use error::User::*;
 use proto::{FlowControlState, WindowSize};
+
+use fnv::FnvHasher;
+use ordermap::{Entry, OrderMap};
+use std::hash::BuildHasherDefault;
 
 /// Represents the state of an H2 stream
 ///
@@ -274,6 +278,53 @@ impl PeerState {
         match self {
             &Data(_) => Ok(()),
             _ => Err(err),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct StreamMap {
+    inner: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>
+}
+
+impl StreamMap {
+    pub fn get_mut(&mut self, id: &StreamId) -> Option<&mut StreamState> {
+        self.inner.get_mut(id)
+    }
+
+    pub fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
+        self.inner.entry(id)
+    }
+
+    pub fn shrink_all_local_windows(&mut self, decr: u32) {
+        for (_, mut s) in &mut self.inner {
+            if let Some(fc) = s.local_flow_controller() {
+                fc.shrink_window(decr);
+            }
+        }
+    }
+
+    pub fn expand_all_local_windows(&mut self, incr: u32) {
+        for (_, mut s) in &mut self.inner {
+            if let Some(fc) = s.local_flow_controller() {
+                fc.expand_window(incr);
+            }
+        }
+    }
+
+    pub fn shrink_all_remote_windows(&mut self, decr: u32) {
+        for (_, mut s) in &mut self.inner {
+            if let Some(fc) = s.remote_flow_controller() {
+                fc.shrink_window(decr);
+            }
+        }
+    }
+
+    pub fn expand_all_remote_windows(&mut self, incr: u32) {
+        for (_, mut s) in &mut self.inner {
+            if let Some(fc) = s.remote_flow_controller() {
+                fc.expand_window(incr);
+            }
         }
     }
 }
