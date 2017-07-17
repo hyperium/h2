@@ -9,10 +9,10 @@ use ordermap::OrderMap;
 use std::hash::BuildHasherDefault;
 use std::marker::PhantomData;
 
-// TODO enforce local_max_concurrency.
-// TODO enforce remote_max_concurrency.
-// TODO reset_streams nees to be bounded.
-// TODO track reserved streams (PUSH_PROMISE)
+// TODO track "last stream id" for GOAWAY.
+// TODO track/provide "next" stream id.
+// TODO reset_streams needs to be bounded.
+// TODO track reserved streams (PUSH_PROMISE).
 
 #[derive(Debug)]
 pub struct StreamTracker<T, P> {
