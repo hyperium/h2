@@ -1,4 +1,3 @@
-use FrameSize;
 use frame::{util, Frame, Head, Error, StreamId, Kind};
 use bytes::{BufMut, Bytes, Buf};
 
@@ -55,16 +54,16 @@ impl<T> Data<T> {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
 
+    pub fn payload(&self) -> &T {
+        &self.data
+    }
+
     pub fn into_payload(self) -> T {
         self.data
     }
 }
 
 impl<T: Buf> Data<T> {
-    pub fn len(&self) -> usize {
-        self.data.remaining()
-    }
-
     pub fn from_buf(stream_id: StreamId, data: T, eos: bool) -> Self {
         let mut flags = DataFlag::default();
         if eos {
@@ -80,7 +79,7 @@ impl<T: Buf> Data<T> {
     }
 
     pub fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {
-        let len = self.len() as usize;
+        let len = self.data.remaining() as usize;
         if len > dst.remaining_mut() {
             unimplemented!();
         }

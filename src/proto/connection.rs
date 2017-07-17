@@ -1,4 +1,4 @@
-use {ConnectionError, Frame, FrameSize};
+use {ConnectionError, Frame};
 use client::Client;
 use error;
 use frame::{self, SettingSet, StreamId};
@@ -91,7 +91,6 @@ impl<T, P> Connection<T, P, Bytes>
     {
         self.send(Frame::Data {
             id,
-            data_len: data.len() as FrameSize,
             data,
             end_of_stream,
         })
@@ -176,7 +175,6 @@ impl<T, P, B> Stream for Connection<T, P, B>
                 Some(Data(v)) => Frame::Data {
                     id: v.stream_id(),
                     end_of_stream: v.is_end_stream(),
-                    //data_len: v.len(),
                     data: v.into_payload(),
                 },
 

@@ -1,5 +1,4 @@
-use ConnectionError;
-use error;
+use {error, ConnectionError, FrameSize};
 use frame::{self, Frame};
 use proto::*;
 
@@ -8,8 +7,8 @@ use std::collections::VecDeque;
 #[derive(Debug)]
 pub struct FlowControl<T>  {
     inner: T,
-    initial_local_window_size: u32,
-    initial_remote_window_size: u32,
+    initial_local_window_size: WindowSize,
+    initial_remote_window_size: WindowSize,
 
     /// Tracks the connection-level flow control window for receiving data from the
     /// remote.
@@ -37,8 +36,8 @@ impl<T, U> FlowControl<T>
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams
 {
-    pub fn new(initial_local_window_size: u32,
-               initial_remote_window_size: u32,
+    pub fn new(initial_local_window_size: WindowSize,
+               initial_remote_window_size: WindowSize,
                inner: T)
         -> FlowControl<T>
     {
@@ -250,11 +249,12 @@ impl<T> Stream for FlowControl<T>
                 }
 
                 Some(Data(v)) => {
-                    if self.connection_local_flow_controller.claim_window(v.len()).is_err() {
+                    let sz = v.payload().len() as FrameSize;
+                    if self.connection_local_flow_controller.claim_window(sz).is_err() {
                         return Err(error::Reason::FlowControlError.into())
                     }
                     if let Some(fc) = self.local_flow_controller(v.stream_id()) {
-                        if fc.claim_window(v.len()).is_err() {
+                        if fc.claim_window(sz).is_err() {
                             return Err(error::Reason::FlowControlError.into())
                         }
                     }
@@ -271,6 +271,7 @@ impl<T, U> Sink for FlowControl<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
           T: ControlStreams,
+          U: Buf,
  {
     type SinkItem = T::SinkItem;
     type SinkError = T::SinkError;
@@ -289,11 +290,12 @@ impl<T, U> Sink for FlowControl<T>
                     return Ok(AsyncSink::NotReady(Data(v)));
                 }
 
-                if self.connection_remote_flow_controller.claim_window(v.len()).is_err() {
+                let sz = v.payload().remaining() as FrameSize;
+                if self.connection_remote_flow_controller.claim_window(sz).is_err() {
                     return Err(error::User::FlowControlViolation.into());
                 }
                 if let Some(fc) = self.remote_flow_controller(v.stream_id()) {
-                    if fc.claim_window(v.len()).is_err() {
+                    if fc.claim_window(sz).is_err() {
                         return Err(error::User::FlowControlViolation.into())
                     }
                 }
@@ -318,6 +320,7 @@ impl<T, U> ReadySink for FlowControl<T>
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
           T: ControlStreams,
+          U: Buf,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.inner.poll_ready());

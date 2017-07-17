@@ -74,7 +74,7 @@ impl<T, B> FramedWrite<T, B>
     }
 
     fn frame_len(&self, data: &frame::Data<B>) -> usize {
-        cmp::min(self.max_frame_size, data.len()) as usize
+        cmp::min(self.max_frame_size as usize, data.payload().remaining())
     }
 }
 
@@ -104,7 +104,7 @@ impl<T, B> Sink for FramedWrite<T, B>
 
         match item {
             Frame::Data(mut v) => {
-                if v.len() >= (CHAIN_THRESHOLD as FrameSize) {
+                if v.payload().remaining() >= CHAIN_THRESHOLD {
                     let head = v.head();
                     let len = self.frame_len(&v);
 
@@ -121,7 +121,7 @@ impl<T, B> Sink for FramedWrite<T, B>
 
                     // The chunk has been fully encoded, so there is no need to
                     // keep it around
-                    assert_eq!(v.len(), 0, "chunk not fully encoded");
+                    assert_eq!(v.payload().remaining(), 0, "chunk not fully encoded");
                 }
             }
             Frame::Headers(v) => {
