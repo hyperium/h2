@@ -1,4 +1,5 @@
 use {frame, ConnectionError, Peer, StreamId};
+use error::Reason;
 use frame::SettingSet;
 
 use bytes::{Buf, IntoBuf};
@@ -60,8 +61,8 @@ use self::state::{StreamMap, StreamState};
 ///
 /// ### `StreamTracker`
 ///
-/// - Tracks the states of each stream.
-/// - **TODO** Enforces maximum concurrency.
+/// - Tracks all active streams.
+/// - Tracks all reset streams.
 /// - Exposes `ControlStreams` so that upper layers may share stream state.
 ///
 /// ### `PingPong`
@@ -126,16 +127,21 @@ pub trait ControlFlow {
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
 /// to Connection).
 pub trait ControlStreams {
+    /// Accesses the map of all active streams.
     fn streams(&self)-> &StreamMap;
+
+    /// Mutably accesses the map of all active streams.
     fn streams_mut(&mut self) -> &mut StreamMap;
-    fn stream_is_reset(&self, id: StreamId) -> bool;
+
+    /// Checks whether a stream has been reset.
+    fn stream_is_reset(&self, id: StreamId) -> Option<Reason>;
 }
 
 pub type PingPayload = [u8; 8];
 
 pub trait ControlPing {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
-    fn pop_pong(&mut self) -> Option<PingPayload>;
+    fn take_pong(&mut self) -> Option<PingPayload>;
 }
 
 /// Create a full H2 transport from an I/O handle.
@@ -203,7 +209,9 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
                 initial_remote_window_size,
                 local_max_concurrency,
                 remote_max_concurrency,
-                PingPong::new(FramedRead::new(framer))
+                PingPong::new(
+                    FramedRead::new(framer)
+                )
             )
         )
     });

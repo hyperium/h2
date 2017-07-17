@@ -63,6 +63,7 @@ impl<T> Data<T> {
 
 impl<T: Buf> Data<T> {
     pub fn from_buf(stream_id: StreamId, data: T, eos: bool) -> Self {
+        // TODO ensure that data.remaining() < MAX_FRAME_SIZE
         let mut flags = DataFlag::default();
         if eos {
             flags.set_end_stream();

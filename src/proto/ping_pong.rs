@@ -3,14 +3,15 @@ use frame::{Frame, Ping, SettingSet};
 use proto::{ApplySettings, ControlPing, PingPayload, ReadySink};
 
 use futures::*;
-use std::collections::VecDeque;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
 pub struct PingPong<T, U> {
     inner: T,
     sending_pong: Option<Frame<U>>,
-    received_pongs: VecDeque<PingPayload>,
+    received_pong: Option<PingPayload>,
+    blocked_ping: Option<task::Task>,
+    expecting_pong: bool,
 }
 
 impl<T, U> PingPong<T, U>
@@ -21,7 +22,9 @@ impl<T, U> PingPong<T, U>
         PingPong {
             inner,
             sending_pong: None,
-            received_pongs: VecDeque::new(),
+            received_pong: None,
+            expecting_pong: false,
+            blocked_ping: None,
         }
     }
 }
@@ -45,14 +48,35 @@ impl<T, U> ControlPing for PingPong<T, U>
             return Ok(AsyncSink::NotReady(body));
         }
 
+        // Only allow one in-flight ping.
+        if self.expecting_pong || self.received_pong.is_some() {
+            self.blocked_ping = Some(task::current());
+            return Ok(AsyncSink::NotReady(body))
+        }
+
         match self.inner.start_send(Ping::ping(body).into())? {
-            AsyncSink::NotReady(_) => unreachable!(),
-            AsyncSink::Ready => Ok(AsyncSink::Ready),
+            AsyncSink::NotReady(_) => {
+                // By virtual of calling inner.poll_ready(), this must not happen.
+                unreachable!()
+            }
+            AsyncSink::Ready => {
+                self.expecting_pong = true;
+                Ok(AsyncSink::Ready)
+            }
         }
     }
 
-    fn pop_pong(&mut self) -> Option<PingPayload> {
-        self.received_pongs.pop_front()
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        match self.received_pong.take() {
+            None => None,
+            Some(p) => {
+                self.expecting_pong = false;
+                if let Some(task) = self.blocked_ping.take() {
+                    task.notify();
+                }
+                Some(p)
+            }
+        }
     }
 }
 
@@ -94,20 +118,20 @@ impl<T, U> Stream for PingPong<T, U>
             match self.inner.poll()? {
                 Async::Ready(Some(Frame::Ping(ping))) => {
                     if ping.is_ack() {
-                        // If we received an ACK, pass it on (nothing to be done here).
-                        return Ok(Async::Ready(Some(ping.into())));
+                        // Save acknowledgements to be returned from take_pong().
+                        self.received_pong = Some(ping.into_payload());
+                        if let Some(task) = self.blocked_ping.take() {
+                            task.notify();
+                        }
+                    } else {
+                        // Save the ping's payload to be sent as an acknowledgement.
+                        let pong = Ping::pong(ping.into_payload());
+                        self.sending_pong = Some(pong.into());
                     }
-
-                    // Save a pong to be sent when there is nothing more to be returned
-                    // from the stream or when frames are sent to the sink.
-                    let pong = Ping::pong(ping.into_payload());
-                    self.sending_pong = Some(pong.into());
                 }
 
                 // Everything other than ping gets passed through.
-                f => {
-                    return Ok(f);
-                }
+                f => return Ok(f),
             }
         }
     }
@@ -151,6 +175,7 @@ impl<T, U> ReadySink for PingPong<T, U>
 #[cfg(test)]
 mod test {
     use super::*;
+    use proto::ControlPing;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::rc::Rc;
@@ -253,12 +278,10 @@ mod test {
             trans.from_socket.push_back(pong.into());
         }
 
-        match ping_pong.poll().unwrap() {
-            Async::Ready(Some(Frame::Ping(pong))) => {
-                assert!(pong.is_ack());
-                assert_eq!(&pong.into_payload(), b"buoyant!");
-            }
-            f => panic!("unexpected frame: {:?}", f),
+        assert!(ping_pong.poll().unwrap().is_not_ready());
+        match ping_pong.take_pong() {
+            Some(pong) => assert_eq!(&pong, b"buoyant!"),
+            None => panic!("no pong received"),
         }
 
         {
@@ -325,6 +348,17 @@ mod test {
                 trans.closing = true;
             }
             self.poll_complete()
+        }
+    }
+
+    impl ReadySink for Transport {
+        fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+            let mut trans = self.0.borrow_mut();
+            if trans.closing || trans.start_send_blocked {
+                Ok(Async::NotReady)
+            } else {
+                Ok(Async::Ready(()))
+            }
         }
     }
 }

@@ -296,16 +296,28 @@ pub struct StreamMap {
 }
 
 impl StreamMap {
-    pub fn get_mut(&mut self, id: &StreamId) -> Option<&mut StreamState> {
-        self.inner.get_mut(id)
+    pub fn get_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
+        self.inner.get_mut(&id)
+    }
+
+    pub fn has_stream(&mut self, id: StreamId) -> bool {
+        self.inner.contains_key(&id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
     }
 
     pub fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
         self.inner.entry(id)
     }
 
-    pub fn remove(&mut self, id: &StreamId) -> Option<StreamState> {
-        self.inner.remove(id)
+    pub fn remove(&mut self, id: StreamId) -> Option<StreamState> {
+        self.inner.remove(&id)
     }
 
     pub fn shrink_all_local_windows(&mut self, decr: u32) {

@@ -104,7 +104,7 @@ impl<T: ControlStreams> ControlStreams for Settings<T> {
         self.inner.streams_mut()
     }
 
-    fn stream_is_reset(&self, id: StreamId) -> bool {
+    fn stream_is_reset(&self, id: StreamId) -> Option<Reason> {
         self.inner.stream_is_reset(id)
     }
 }
@@ -124,8 +124,8 @@ impl<T: ControlPing> ControlPing for Settings<T> {
         self.inner.start_ping(body)
     }
 
-    fn pop_pong(&mut self) -> Option<PingPayload> {
-        self.inner.pop_pong()
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 }
 

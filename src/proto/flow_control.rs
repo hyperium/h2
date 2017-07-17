@@ -61,7 +61,7 @@ impl<T: ControlStreams> FlowControl<T> {
         if id.is_zero() {
             Some(&mut self.connection_local_flow_controller)
         } else {
-            self.inner.streams_mut().get_mut(&id).and_then(|s| s.local_flow_controller())
+            self.inner.streams_mut().get_mut(id).and_then(|s| s.local_flow_controller())
         }
     }
 
@@ -69,7 +69,7 @@ impl<T: ControlStreams> FlowControl<T> {
         if id.is_zero() {
             Some(&mut self.connection_remote_flow_controller)
         } else {
-            self.inner.streams_mut().get_mut(&id).and_then(|s| s.remote_flow_controller())
+            self.inner.streams_mut().get_mut(id).and_then(|s| s.remote_flow_controller())
         }
     }
 }
@@ -84,7 +84,7 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.streams_mut()
     }
 
-    fn stream_is_reset(&self, id: StreamId) -> bool {
+    fn stream_is_reset(&self, id: StreamId) -> Option<Reason> {
         self.inner.stream_is_reset(id)
     }
 }
@@ -92,7 +92,7 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
 /// Exposes a public upward API for flow control.
 impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
-        if self.stream_is_reset(id) {
+        if self.stream_is_reset(id).is_some() {
             return Err(error::User::StreamReset.into());
         }
 
@@ -125,7 +125,7 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
                 self.pending_local_window_updates.push_back(id);
             }
             Ok(())
-        } else if self.stream_is_reset(id) {
+        } else if self.stream_is_reset(id).is_some() {
             Err(error::User::StreamReset.into())
         } else {
             Err(error::User::InvalidStreamId.into())
@@ -138,8 +138,8 @@ impl<T: ControlPing> ControlPing for FlowControl<T> {
         self.inner.start_ping(body)
     }
 
-    fn pop_pong(&mut self) -> Option<PingPayload> {
-        self.inner.pop_pong()
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 }
 
@@ -160,7 +160,7 @@ impl<T, U> FlowControl<T>
         }
 
         while let Some(id) = self.pending_local_window_updates.pop_front() {
-            if !self.stream_is_reset(id) {
+            if self.stream_is_reset(id).is_none() {
                 let update = self.local_flow_controller(id).and_then(|s| s.apply_window_update());
                 if let Some(incr) = update {
                     try_ready!(self.try_send(frame::WindowUpdate::new(id, incr)));
@@ -270,6 +270,8 @@ impl<T> Stream for FlowControl<T>
                     if self.connection_local_flow_controller.claim_window(sz).is_err() {
                         return Err(error::Reason::FlowControlError.into())
                     }
+                    // If this frame ends the stream, there may no longer be a flow
+                    // controller.  That's fine.
                     if let Some(fc) = self.local_flow_controller(v.stream_id()) {
                         if fc.claim_window(sz).is_err() {
                             return Err(error::Reason::FlowControlError.into())

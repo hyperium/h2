@@ -72,19 +72,19 @@ impl<T, P, B> ControlPing for Connection<T, P, B>
         self.inner.start_ping(body)
     }
 
-    fn pop_pong(&mut self) -> Option<PingPayload> {
-        self.inner.pop_pong()
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 }
 
-// Note: this is bytes-specific for now so that we can know the payload's length.
-impl<T, P> Connection<T, P, Bytes>
+impl<T, P, B> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
+          B: IntoBuf,
 {
     pub fn send_data(self,
                      id: StreamId,
-                     data: Bytes,
+                     data: B,
                      end_of_stream: bool)
         -> sink::Send<Self>
     {
@@ -151,6 +151,8 @@ impl<T, P, B> Stream for Connection<T, P, B>
         loop {
             let frame = match try!(self.inner.poll()) {
                 Async::Ready(f) => f,
+
+                // XXX is this necessary?
                 Async::NotReady => {
                     // Receiving new frames may depend on ensuring that the write buffer
                     // is clear (e.g. if window updates need to be sent), so `poll_complete`
@@ -217,7 +219,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
-                if self.inner.stream_is_reset(id) {
+                if self.inner.stream_is_reset(id).is_some() {
                     return Err(error::User::StreamReset.into());
                 }
 
@@ -231,7 +233,7 @@ impl<T, P, B> Sink for Connection<T, P, B>
             }
 
             Frame::Data { id, data, end_of_stream } => {
-                if self.inner.stream_is_reset(id) {
+                if self.inner.stream_is_reset(id).is_some() {
                     return Err(error::User::StreamReset.into());
                 }
 
