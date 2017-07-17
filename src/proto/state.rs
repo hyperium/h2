@@ -64,6 +64,14 @@ pub enum StreamState {
 }
 
 impl StreamState {
+    pub fn is_closed(&self) ->  bool {
+        use self::StreamState::*;
+
+        match self {
+            &Closed => true,
+            _ => false,
+        }
+    }
     /// Transition the state to represent headers being received.
     ///
     /// Returns true if this state transition results in iniitializing the
@@ -294,6 +302,10 @@ impl StreamMap {
 
     pub fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
         self.inner.entry(id)
+    }
+
+    pub fn remove(&mut self, id: &StreamId) -> Option<StreamState> {
+        self.inner.remove(id)
     }
 
     pub fn shrink_all_local_windows(&mut self, decr: u32) {

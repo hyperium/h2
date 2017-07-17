@@ -515,7 +515,7 @@ impl Table {
     }
 
     #[cfg(test)]
-    fn assert_valid_state(&self, msg: &'static str) -> bool {
+    fn assert_valid_state(&self, _msg: &'static str) -> bool {
         /*
         // Checks that the internal map structure is valid
         //

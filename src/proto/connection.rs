@@ -2,25 +2,24 @@ use {ConnectionError, Frame};
 use client::Client;
 use error;
 use frame::{self, SettingSet, StreamId};
-use proto::{self, ControlFlow, ControlPing, ControlSettings, Peer, PingPayload, ReadySink, WindowSize};
+use proto::*;
 use server::Server;
 
 use bytes::{Bytes, IntoBuf};
 use http::{request, response};
-use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::marker::PhantomData;
 
 /// An H2 connection
 #[derive(Debug)]
 pub struct Connection<T, P, B: IntoBuf = Bytes> {
-    inner: proto::Transport<T, P, B::Buf>,
+    inner: Transport<T, P, B::Buf>,
     // Set to `true` as long as the connection is in a valid state.
     active: bool,
     _phantom: PhantomData<(P, B)>,
 }
 
-pub fn new<T, P, B>(transport: proto::Transport<T, P, B::Buf>)
+pub fn new<T, P, B>(transport: Transport<T, P, B::Buf>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -178,6 +177,11 @@ impl<T, P, B> Stream for Connection<T, P, B>
                     data: v.into_payload(),
                 },
 
+                Some(Reset(v)) => Frame::Reset {
+                    id: v.stream_id(),
+                    error: v.reason(),
+                },
+
                 Some(frame) => panic!("unexpected frame; frame={:?}", frame),
                 None => return Ok(Async::Ready(None)),
             };
@@ -213,6 +217,10 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
+                if self.inner.stream_is_reset(id) {
+                    return Err(error::User::StreamReset.into());
+                }
+
                 // This is a one-way conversion. By checking `poll_ready` first (above),
                 // it's already been determined that the inner `Sink` can accept the item.
                 // If the item is rejected, then there is a bug.
@@ -222,18 +230,26 @@ impl<T, P, B> Sink for Connection<T, P, B>
                 Ok(AsyncSink::Ready)
             }
 
-            Frame::Data { id, data, end_of_stream, .. } => {
+            Frame::Data { id, data, end_of_stream } => {
+                if self.inner.stream_is_reset(id) {
+                    return Err(error::User::StreamReset.into());
+                }
+
                 let frame = frame::Data::from_buf(id, data.into_buf(), end_of_stream);
                 let res = try!(self.inner.start_send(frame.into()));
                 assert!(res.is_ready());
                 Ok(AsyncSink::Ready)
             }
 
+            Frame::Reset { id, error } => {
+                let f = frame::Reset::new(id, error);
+                let res = self.inner.start_send(f.into())?;
+                assert!(res.is_ready());
+                Ok(AsyncSink::Ready)
+            }
+
             /*
             Frame::Trailers { id, headers } => {
-                unimplemented!();
-            }
-            Frame::Body { id, chunk, end_of_stream } => {
                 unimplemented!();
             }
             Frame::PushPromise { id, promise } => {

@@ -34,7 +34,7 @@ pub mod server;
 
 mod util;
 
-pub use error::ConnectionError;
+pub use error::{ConnectionError, Reason};
 pub use frame::{StreamId};
 pub use proto::Connection;
 
@@ -63,9 +63,9 @@ pub enum Frame<T, B = Bytes> {
         id: StreamId,
         promise: (),
     },
-    Error {
+    Reset {
         id: StreamId,
-        error: (),
+        error: Reason,
     },
 }
 

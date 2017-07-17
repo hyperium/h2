@@ -4,7 +4,6 @@ use bytes::{BufMut, Bytes, Buf};
 #[derive(Debug)]
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
-    //data_len: FrameSize,
     data: T,
     flags: DataFlag,
     pad_len: Option<u8>,
@@ -29,7 +28,6 @@ impl Data<Bytes> {
         };
         Ok(Data {
             stream_id: head.stream_id(),
-            //data_len: payload.len() as FrameSize,
             data: payload,
             flags: flags,
             pad_len: pad_len,
@@ -71,7 +69,6 @@ impl<T: Buf> Data<T> {
         }
         Data {
             stream_id,
-            //data_len: data.remaining() as FrameSize,
             data,
             flags,
             pad_len: None,

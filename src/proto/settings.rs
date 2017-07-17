@@ -103,6 +103,10 @@ impl<T: ControlStreams> ControlStreams for Settings<T> {
     fn streams_mut(&mut self) -> &mut StreamMap {
         self.inner.streams_mut()
     }
+
+    fn stream_is_reset(&self, id: StreamId) -> bool {
+        self.inner.stream_is_reset(id)
+    }
 }
 
 impl<T: ControlFlow> ControlFlow for Settings<T> {

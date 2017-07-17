@@ -80,12 +80,12 @@ impl<T> FramedRead<T> {
                 frame.into()
             }
 
+            Kind::Reset => {
+                frame::Reset::load(head, &bytes[frame::HEADER_LEN..])?.into()
+            }
+
             // TODO
 
-            Kind::Reset => {
-                let _todo = try!(frame::Reset::load(head, &bytes[frame::HEADER_LEN..]));
-                unimplemented!();
-            }
             Kind::GoAway => {
                 let _todo = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
                 unimplemented!();

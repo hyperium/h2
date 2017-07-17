@@ -61,7 +61,25 @@ pub enum Frame<T = Bytes> {
     PushPromise(PushPromise),
     Settings(Settings),
     Ping(Ping),
-    WindowUpdate(WindowUpdate)
+    WindowUpdate(WindowUpdate),
+    Reset(Reset)
+}
+
+impl<T> Frame<T> {
+    pub fn stream_id(&self) -> StreamId {
+        use self::Frame::*;
+
+        match self {
+            &Headers(ref v) => v.stream_id(),
+            &Data(ref v) => v.stream_id(),
+            &PushPromise(ref v) => v.stream_id(),
+            &WindowUpdate(ref v) => v.stream_id(),
+            &Reset(ref v) => v.stream_id(),
+
+            &Ping(_) |
+            &Settings(_) => StreamId::zero(),
+        }
+    }
 }
 
 /// Errors that can occur during parsing an HTTP/2 frame.

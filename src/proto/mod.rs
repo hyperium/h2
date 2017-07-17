@@ -128,6 +128,7 @@ pub trait ControlFlow {
 pub trait ControlStreams {
     fn streams(&self)-> &StreamMap;
     fn streams_mut(&mut self) -> &mut StreamMap;
+    fn stream_is_reset(&self, id: StreamId) -> bool;
 }
 
 pub type PingPayload = [u8; 8];

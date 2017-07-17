@@ -22,7 +22,23 @@ pub enum ConnectionError {
 }
 
 #[derive(Debug)]
-pub struct Stream(Reason);
+pub struct StreamError(Reason);
+
+impl StreamError {
+   pub fn new(r: Reason) -> StreamError {
+       StreamError(r)
+   }
+
+   pub fn reason(&self) -> Reason {
+       self.0
+   }
+}
+
+impl From<Reason> for StreamError {
+    fn from(r: Reason) -> Self {
+        StreamError(r)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Reason {
@@ -65,6 +81,9 @@ pub enum User {
     /// The connection state is corrupt and the connection should be dropped.
     Corrupt,
 
+    /// The stream state has been reset.
+    StreamReset,
+
     // TODO: reserve additional variants
 }
 
@@ -103,6 +122,7 @@ macro_rules! user_desc {
             InactiveStreamId => concat!($prefix, "inactive stream ID"),
             UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
             FlowControlViolation => concat!($prefix, "flow control violation"),
+            StreamReset => concat!($prefix, "frame sent on reset stream"),
             Corrupt => concat!($prefix, "connection state corrupt"),
         }
     });

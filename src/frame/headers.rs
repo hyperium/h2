@@ -48,6 +48,12 @@ pub struct PushPromise {
     flags: HeadersFlag,
 }
 
+impl PushPromise {
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+}
+
 #[derive(Debug)]
 pub struct Continuation {
     /// Stream ID of continuation frame

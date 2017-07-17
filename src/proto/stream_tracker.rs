@@ -1,16 +1,21 @@
-use ConnectionError;
+use {ConnectionError};
 use error::Reason;
 use error::User;
 use frame::{self, Frame};
 use proto::*;
 
+use fnv::FnvHasher;
+use ordermap::OrderMap;
+use std::hash::BuildHasherDefault;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
 pub struct StreamTracker<T, P> {
     inner: T,
     peer: PhantomData<P>,
-    streams: StreamMap,
+    active_streams: StreamMap,
+    // TODO reserved_streams: HashSet<StreamId>
+    reset_streams: OrderMap<StreamId, Reason, BuildHasherDefault<FnvHasher>>,
     local_max_concurrency: Option<u32>,
     remote_max_concurrency: Option<u32>,
     initial_local_window_size: WindowSize,
@@ -32,7 +37,8 @@ impl<T, P, U> StreamTracker<T, P>
         StreamTracker {
             inner,
             peer: PhantomData,
-            streams: StreamMap::default(),
+            active_streams: StreamMap::default(),
+            reset_streams: OrderMap::default(),
             local_max_concurrency,
             remote_max_concurrency,
             initial_local_window_size,
@@ -44,12 +50,16 @@ impl<T, P, U> StreamTracker<T, P>
 impl<T, P> ControlStreams for StreamTracker<T, P> {
     #[inline]
     fn streams(&self) -> &StreamMap {
-        &self.streams
+        &self.active_streams
     }
 
     #[inline]
     fn streams_mut(&mut self) -> &mut StreamMap {
-        &mut self.streams
+        &mut self.active_streams
+    }
+
+    fn stream_is_reset(&self, id: StreamId) -> bool {
+        self.reset_streams.contains_key(&id)
     }
 }
 
@@ -109,40 +119,93 @@ impl<T, P> Stream for StreamTracker<T, P>
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
         use frame::Frame::*;
 
-        match try_ready!(self.inner.poll()) {
-            Some(Headers(v)) => {
-                let id = v.stream_id();
-                let eos = v.is_end_stream();
+        loop {
+            match try_ready!(self.inner.poll()) {
+                Some(Headers(v)) => {
+                    let id = v.stream_id();
+                    let eos = v.is_end_stream();
 
-                let initialized = self.streams
-                    .entry(id)
-                    .or_insert_with(|| StreamState::default())
-                    .recv_headers::<P>(eos, self.initial_local_window_size)?;
+                    if self.reset_streams.contains_key(&id) {
+                        continue;
+                    }
 
-                if initialized {
-                    // TODO: Ensure available capacity for a new stream
-                    // This won't be as simple as self.streams.len() as closed
-                    // connections should not be factored.
+                    let is_closed = {
+                        let stream = self.active_streams.entry(id)
+                            .or_insert_with(|| StreamState::default());
 
-                    if !P::is_valid_remote_stream_id(id) {
-                        return Err(Reason::ProtocolError.into());
+                        let initialized =
+                            stream.recv_headers::<P>(eos, self.initial_local_window_size)?;
+
+                        if initialized {
+                            // TODO: Ensure available capacity for a new stream
+                            // This won't be as simple as self.streams.len() as closed
+                            // connections should not be factored.
+
+                            if !P::is_valid_remote_stream_id(id) {
+                                return Err(Reason::ProtocolError.into());
+                            }
+                        }
+
+                        stream.is_closed()
+                    };
+
+                    if is_closed {
+                        self.active_streams.remove(&id);
+                        self.reset_streams.insert(id, Reason::NoError);
+                    }
+
+                    return Ok(Async::Ready(Some(Headers(v))));
+                }
+
+                Some(Data(v)) => {
+                    let id = v.stream_id();
+
+                    if self.reset_streams.contains_key(&id) {
+                        continue;
+                    }
+
+                    let is_closed = {
+                        let stream = match self.active_streams.get_mut(&id) {
+                            None => return Err(Reason::ProtocolError.into()),
+                            Some(s) => s,
+                        };
+                        stream.recv_data(v.is_end_stream())?;
+                        stream.is_closed()
+                    };
+
+                    if is_closed {
+                        self.active_streams.remove(&id);
+                        self.reset_streams.insert(id, Reason::NoError);
+                    }
+
+                    return Ok(Async::Ready(Some(Data(v))));
+                }
+
+                Some(Reset(v)) => {
+                    let id = v.stream_id();
+
+                    // Set or update the reset reason.
+                    self.reset_streams.insert(id, v.reason());
+
+                    if self.active_streams.remove(&id).is_some() {
+                        return Ok(Async::Ready(Some(Reset(v))));
                     }
                 }
 
-                Ok(Async::Ready(Some(Headers(v))))
-            }
+                Some(f) => {
+                    let id = f.stream_id();
 
-            Some(Data(v)) => {
-                match self.streams.get_mut(&v.stream_id()) {
-                    None => Err(Reason::ProtocolError.into()),
-                    Some(state) => {
-                        state.recv_data(v.is_end_stream())?;
-                        Ok(Async::Ready(Some(Data(v))))
+                    if self.reset_streams.contains_key(&id) {
+                        continue;
                     }
+
+                    return Ok(Async::Ready(Some(f)));
+                }
+
+                None => {
+                    return Ok(Async::Ready(None));
                 }
             }
-
-            f => Ok(Async::Ready(f)),
         }
     }
 }
@@ -158,6 +221,9 @@ impl<T, P, U> Sink for StreamTracker<T, P>
     fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
         use frame::Frame::*;
 
+        // Must be enforced through higher levels.
+        debug_assert!(!self.stream_is_reset(item.stream_id()));
+
         match &item {
             &Headers(ref v) => {
                 let id = v.stream_id();
@@ -170,34 +236,51 @@ impl<T, P, U> Sink for StreamTracker<T, P>
                 //
                 // ACTUALLY(ver), maybe not?
                 //   https://github.com/http2/http2-spec/commit/c83c8d911e6b6226269877e446a5cad8db921784
-                let initialized = self.streams
-                    .entry(id)
-                    .or_insert_with(|| StreamState::default())
-                    .send_headers::<P>(eos, self.initial_remote_window_size)?;
 
-                if initialized {
-                    // TODO: Ensure available capacity for a new stream
-                    // This won't be as simple as self.streams.len() as closed
-                    // connections should not be factored.
-                    if !P::is_valid_local_stream_id(id) {
-                        // TODO: clear state
-                        return Err(User::InvalidStreamId.into());
+                let is_closed = {
+                    let stream = self.active_streams.entry(id)
+                        .or_insert_with(|| StreamState::default());
+
+                    let initialized =
+                        stream.send_headers::<P>(eos, self.initial_remote_window_size)?;
+
+                    if initialized {
+                        // TODO: Ensure available capacity for a new stream
+                        // This won't be as simple as self.streams.len() as closed
+                        // connections should not be factored.
+                        if !P::is_valid_local_stream_id(id) {
+                            // TODO: clear state
+                            return Err(User::InvalidStreamId.into());
+                        }
                     }
+
+                    stream.is_closed()
+                };
+
+                if is_closed {
+                    self.active_streams.remove(&id);
+                    self.reset_streams.insert(id, Reason::NoError);
                 }
             }
 
             &Data(ref v) => {
-                match self.streams.get_mut(&v.stream_id()) {
+                match self.active_streams.get_mut(&v.stream_id()) {
                     None => return Err(User::InactiveStreamId.into()),
-                    Some(state) => state.send_data(v.is_end_stream())?,
+                    Some(stream) => stream.send_data(v.is_end_stream())?,
                 }
+            }
+
+
+            &Reset(ref v) => {
+                let id = v.stream_id();
+                self.active_streams.remove(&id);
+                self.reset_streams.insert(id, v.reason());
             }
 
             _ => {}
         }
 
         self.inner.start_send(item)
-
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
