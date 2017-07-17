@@ -5,7 +5,7 @@ use bytes::{BufMut, Bytes, Buf};
 #[derive(Debug)]
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
-    data_len: FrameSize,
+    //data_len: FrameSize,
     data: T,
     flags: DataFlag,
     pad_len: Option<u8>,
@@ -30,7 +30,7 @@ impl Data<Bytes> {
         };
         Ok(Data {
             stream_id: head.stream_id(),
-            data_len: payload.len() as FrameSize,
+            //data_len: payload.len() as FrameSize,
             data: payload,
             flags: flags,
             pad_len: pad_len,
@@ -55,16 +55,16 @@ impl<T> Data<T> {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
 
-    pub fn len(&self) -> FrameSize {
-        self.data_len
-    }
-
     pub fn into_payload(self) -> T {
         self.data
     }
 }
 
 impl<T: Buf> Data<T> {
+    pub fn len(&self) -> usize {
+        self.data.remaining()
+    }
+
     pub fn from_buf(stream_id: StreamId, data: T, eos: bool) -> Self {
         let mut flags = DataFlag::default();
         if eos {
@@ -72,7 +72,7 @@ impl<T: Buf> Data<T> {
         }
         Data {
             stream_id,
-            data_len: data.remaining() as FrameSize,
+            //data_len: data.remaining() as FrameSize,
             data,
             flags,
             pad_len: None,

@@ -1,6 +1,6 @@
 use ConnectionError;
-use error::Reason::ProtocolError;
-use error::User::InvalidStreamId;
+use error::Reason;
+use error::User;
 use frame::{self, Frame};
 use proto::*;
 
@@ -125,7 +125,7 @@ impl<T, P> Stream for StreamTracker<T, P>
                     // connections should not be factored.
 
                     if !P::is_valid_remote_stream_id(id) {
-                        unimplemented!();
+                        return Err(Reason::ProtocolError.into());
                     }
                 }
 
@@ -134,7 +134,7 @@ impl<T, P> Stream for StreamTracker<T, P>
 
             Some(Data(v)) => {
                 match self.streams.get_mut(&v.stream_id()) {
-                    None => return Err(ProtocolError.into()),
+                    None => return Err(Reason::ProtocolError.into()),
                     Some(state) => state.recv_data(v.is_end_stream())?,
                 }
                 Ok(Async::Ready(Some(Data(v))))
@@ -179,14 +179,14 @@ impl<T, P, U> Sink for StreamTracker<T, P>
                     // connections should not be factored.
                     if !P::is_valid_local_stream_id(id) {
                         // TODO: clear state
-                        return Err(InvalidStreamId.into());
+                        return Err(User::InvalidStreamId.into());
                     }
                 }
             }
 
             &Data(ref v) => {
                 match self.streams.get_mut(&v.stream_id()) {
-                    None => return Err(ProtocolError.into()),
+                    None => return Err(User::InactiveStreamId.into()),
                     Some(state) => state.send_data(v.is_end_stream())?,
                 }
             }

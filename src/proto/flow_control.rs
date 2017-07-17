@@ -47,7 +47,7 @@ impl<T, U> FlowControl<T>
             initial_local_window_size,
             initial_remote_window_size,
             connection_local_flow_controller: FlowControlState::with_initial_size(initial_local_window_size),
-            connection_remote_flow_controller: FlowControlState::with_next_update(initial_remote_window_size),
+            connection_remote_flow_controller: FlowControlState::with_initial_size(initial_remote_window_size),
             blocked_remote_window_update: None,
             sending_local_window_update: None,
             pending_local_window_updates: VecDeque::new(),

@@ -62,6 +62,9 @@ pub enum User {
     /// transmit a Data frame to the remote.
     FlowControlViolation,
 
+    /// The connection state is corrupt and the connection should be dropped.
+    Corrupt,
+
     // TODO: reserve additional variants
 }
 
@@ -100,6 +103,7 @@ macro_rules! user_desc {
             InactiveStreamId => concat!($prefix, "inactive stream ID"),
             UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
             FlowControlViolation => concat!($prefix, "flow control violation"),
+            Corrupt => concat!($prefix, "connection state corrupt"),
         }
     });
 }

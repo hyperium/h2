@@ -54,7 +54,7 @@ pub enum Frame<T, B = Bytes> {
         id: StreamId,
         data: B,
         /// TODO figure out how to make this a requirement on `B`
-        data_len: FrameSize,
+        //data_len: FrameSize,
         end_of_stream: bool,
     },
     Trailers {
