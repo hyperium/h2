@@ -90,7 +90,8 @@ impl StreamState {
                 if eos {
                     *self = HalfClosedRemote(local);
                 } else {
-                    *self = Open { local, remote: Data(FlowControlState::with_initial_size(initial_recv_window_size)) };
+                    let remote = Data(FlowControlState::with_initial_size(initial_recv_window_size));
+                    *self = Open { local, remote };
                 }
                 Ok(true)
             }
@@ -298,6 +299,14 @@ pub struct StreamMap {
 impl StreamMap {
     pub fn get_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
         self.inner.get_mut(&id)
+    }
+
+    pub fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.get_mut(&id).and_then(|s| s.local_flow_controller())
+    }
+
+    pub fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.get_mut(&id).and_then(|s| s.remote_flow_controller())
     }
 
     pub fn has_stream(&mut self, id: StreamId) -> bool {

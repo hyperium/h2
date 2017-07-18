@@ -353,7 +353,7 @@ mod test {
 
     impl ReadySink for Transport {
         fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-            let mut trans = self.0.borrow_mut();
+            let trans = self.0.borrow();
             if trans.closing || trans.start_send_blocked {
                 Ok(Async::NotReady)
             } else {

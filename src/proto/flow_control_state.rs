@@ -51,12 +51,17 @@ impl FlowControlState {
         }
     }
 
+    /// Returns true iff `claim_window(sz)` would return succeed.
+    pub fn check_window(&mut self, sz: WindowSize) -> bool {
+        sz <= self.window_size
+    }
+
     /// Claims the provided amount from the window, if there is enough space.
     ///
     /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
     /// have been previously claimed.
     pub fn claim_window(&mut self, sz: WindowSize) -> Result<(), WindowUnderflow> {
-        if self.window_size < sz {
+        if !self.check_window(sz) {
             return Err(WindowUnderflow);
         }
 

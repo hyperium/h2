@@ -50,19 +50,6 @@ impl<T, P, B> ControlSettings for Connection<T, P, B>
     }
 }
 
-impl<T, P, B> ControlFlow for Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          B: IntoBuf,
-{
-    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
-        self.inner.poll_remote_window_update(id)
-    }
-
-    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.expand_local_window(id, incr)
-    }
-}
-
 impl<T, P, B> ControlPing for Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -82,6 +69,16 @@ impl<T, P, B> Connection<T, P, B>
           P: Peer,
           B: IntoBuf,
 {
+    /// Polls for the next update to a remote flow control window.
+    pub fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
+        self.inner.poll_window_update()
+    }
+
+    /// Increases the capacity of a local flow control window.
+    pub fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.expand_window(id, incr)
+    }
+
     pub fn send_data(self,
                      id: StreamId,
                      data: B,

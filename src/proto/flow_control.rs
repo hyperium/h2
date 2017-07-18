@@ -7,28 +7,33 @@ use std::collections::VecDeque;
 #[derive(Debug)]
 pub struct FlowControl<T>  {
     inner: T,
-    initial_local_window_size: WindowSize,
-    initial_remote_window_size: WindowSize,
+
+    local_initial: WindowSize,
+    remote_initial: WindowSize,
 
     /// Tracks the connection-level flow control window for receiving data from the
     /// remote.
-    connection_local_flow_controller: FlowControlState,
+    local_connection: FlowControlState,
 
     /// Tracks the onnection-level flow control window for receiving data from the remote.
-    connection_remote_flow_controller: FlowControlState,
+    remote_connection: FlowControlState,
 
     /// Holds the list of streams on which local window updates may be sent.
     // XXX It would be cool if this didn't exist.
-    pending_local_window_updates: VecDeque<StreamId>,
-    pending_local_connection_window_update: bool,
+    local_pending_streams: VecDeque<StreamId>,
 
-    /// If a window update can't be sent immediately, it may need to be saved to be sent later.
-    sending_local_window_update: Option<frame::WindowUpdate>,
+    /// If a window update can't be sent immediately, it may need to be saved to be sent
+    /// later.
+    local_sending: Option<frame::WindowUpdate>,
 
-    /// When `poll_remote_window_update` is not ready, then the calling task is saved to
+    /// Holds the list of streams on which local window updates may be sent.
+    // XXX It would be cool if this didn't exist.
+    remote_pending_streams: VecDeque<StreamId>,
+
+    /// When `poll_window_update` is not ready, then the calling task is saved to
     /// be notified later. Access to poll_window_update must not be shared across tasks,
     /// as we only track a single task (and *not* i.e. a task per stream id).
-    blocked_remote_window_update: Option<task::Task>,
+    remote_blocked: Option<task::Task>,
 }
 
 impl<T, U> FlowControl<T>
@@ -36,21 +41,23 @@ impl<T, U> FlowControl<T>
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams
 {
-    pub fn new(initial_local_window_size: WindowSize,
-               initial_remote_window_size: WindowSize,
+    pub fn new(local_initial: WindowSize,
+               remote_initial: WindowSize,
                inner: T)
         -> FlowControl<T>
     {
         FlowControl {
             inner,
-            initial_local_window_size,
-            initial_remote_window_size,
-            connection_local_flow_controller: FlowControlState::with_initial_size(initial_local_window_size),
-            connection_remote_flow_controller: FlowControlState::with_initial_size(initial_remote_window_size),
-            blocked_remote_window_update: None,
-            sending_local_window_update: None,
-            pending_local_window_updates: VecDeque::new(),
-            pending_local_connection_window_update: false,
+
+            local_initial,
+            local_connection: FlowControlState::with_initial_size(local_initial),
+            local_sending: None,
+            local_pending_streams: VecDeque::new(),
+
+            remote_initial,
+            remote_connection: FlowControlState::with_initial_size(remote_initial),
+            remote_blocked: None,
+            remote_pending_streams: VecDeque::new(),
         }
     }
 }
@@ -59,7 +66,7 @@ impl<T, U> FlowControl<T>
 impl<T: ControlStreams> FlowControl<T> {
     fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
-            Some(&mut self.connection_local_flow_controller)
+            Some(&mut self.local_connection)
         } else {
             self.inner.streams_mut().get_mut(id).and_then(|s| s.local_flow_controller())
         }
@@ -67,7 +74,7 @@ impl<T: ControlStreams> FlowControl<T> {
 
    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
-            Some(&mut self.connection_remote_flow_controller)
+            Some(&mut self.remote_connection)
         } else {
             self.inner.streams_mut().get_mut(id).and_then(|s| s.remote_flow_controller())
         }
@@ -91,25 +98,26 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
 
 /// Exposes a public upward API for flow control.
 impl<T: ControlStreams> ControlFlow for FlowControl<T> {
-    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError> {
-        if self.stream_is_reset(id).is_some() {
-            return Err(error::User::StreamReset.into());
+    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
+        // This biases connection window updates, which probably makese sense.
+        if let Some(incr) = self.remote_connection.apply_window_update() {
+            return Ok(Async::Ready(WindowUpdate(StreamId::zero(), incr)));
         }
 
-        match self.remote_flow_controller(id) {
-            None => return Err(error::User::InvalidStreamId.into()),
-            Some(mut flow) => {
-                if let Some(sz) = flow.apply_window_update() {
-                    return Ok(Async::Ready(sz));
+        // TODO this should probably account for stream priority?
+        while let Some(id) = self.remote_pending_streams.pop_front() {
+            if let Some(mut flow) = self.remote_flow_controller(id) {
+                if let Some(incr) = flow.apply_window_update() {
+                    return Ok(Async::Ready(WindowUpdate(id, incr)));
                 }
             }
         }
 
-        self.blocked_remote_window_update = Some(task::current());
+        self.remote_blocked = Some(task::current());
         return Ok(Async::NotReady);
     }
 
-    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
         let added = match self.local_flow_controller(id) {
             None => false,
             Some(mut fc) => {
@@ -118,11 +126,9 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
             }
         };
 
-        if added {  
-            if id.is_zero() {
-                self.pending_local_connection_window_update = true;
-            } else {
-                self.pending_local_window_updates.push_back(id);
+        if added {
+            if !id.is_zero() {
+                self.local_pending_streams.push_back(id);
             }
             Ok(())
         } else if self.stream_is_reset(id).is_some() {
@@ -148,18 +154,16 @@ impl<T, U> FlowControl<T>
           T: ControlStreams,
 {
     /// Returns ready when there are no pending window updates to send.
-    fn poll_send_local_window_updates(&mut self) -> Poll<(), ConnectionError> {
-        if let Some(f) = self.sending_local_window_update.take() {
+    fn poll_send_local(&mut self) -> Poll<(), ConnectionError> {
+        if let Some(f) = self.local_sending.take() {
             try_ready!(self.try_send(f));
         }
 
-        if self.pending_local_connection_window_update {
-            if let Some(incr) = self.connection_local_flow_controller.apply_window_update() {
-                try_ready!(self.try_send(frame::WindowUpdate::new(StreamId::zero(), incr)));
-            }
+        if let Some(incr) = self.local_connection.apply_window_update() {
+            try_ready!(self.try_send(frame::WindowUpdate::new(StreamId::zero(), incr)));
         }
 
-        while let Some(id) = self.pending_local_window_updates.pop_front() {
+        while let Some(id) = self.local_pending_streams.pop_front() {
             if self.stream_is_reset(id).is_none() {
                 let update = self.local_flow_controller(id).and_then(|s| s.apply_window_update());
                 if let Some(incr) = update {
@@ -173,7 +177,7 @@ impl<T, U> FlowControl<T>
 
     fn try_send(&mut self, f: frame::WindowUpdate) -> Poll<(), ConnectionError> {
         if self.inner.start_send(f.into())?.is_not_ready() {
-            self.sending_local_window_update = Some(f);
+            self.local_sending = Some(f);
             Ok(Async::NotReady)
         } else {
             Ok(Async::Ready(()))
@@ -204,7 +208,7 @@ impl<T> ApplySettings for FlowControl<T>
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)?;
 
-        let old_window_size = self.initial_local_window_size;
+        let old_window_size = self.local_initial;
         let new_window_size = set.initial_window_size();
         if new_window_size == old_window_size {
             return Ok(());
@@ -219,14 +223,14 @@ impl<T> ApplySettings for FlowControl<T>
             streams.expand_all_local_windows(incr);
         }
         
-        self.initial_local_window_size = new_window_size;
+        self.local_initial = new_window_size;
         Ok(())
     }
 
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_remote_settings(set)?;
 
-        let old_window_size = self.initial_remote_window_size;
+        let old_window_size = self.remote_initial;
         let new_window_size = set.initial_window_size();
         if new_window_size == old_window_size {
             return Ok(());
@@ -241,7 +245,7 @@ impl<T> ApplySettings for FlowControl<T>
             streams.expand_all_remote_windows(incr);
         }
         
-        self.initial_remote_window_size = new_window_size;
+        self.remote_initial = new_window_size;
         Ok(())
     }
 }
@@ -267,7 +271,7 @@ impl<T> Stream for FlowControl<T>
 
                 Some(Data(v)) => {
                     let sz = v.payload().len() as FrameSize;
-                    if self.connection_local_flow_controller.claim_window(sz).is_err() {
+                    if self.local_connection.claim_window(sz).is_err() {
                         return Err(error::Reason::FlowControlError.into())
                     }
                     // If this frame ends the stream, there may no longer be a flow
@@ -298,51 +302,60 @@ impl<T, U> Sink for FlowControl<T>
     fn start_send(&mut self, frame: Frame<U>) -> StartSend<T::SinkItem, T::SinkError> {
         use frame::Frame::*;
 
-        if self.poll_send_local_window_updates()?.is_not_ready() {
+        debug_assert!(self.stream_is_reset(frame.stream_id()).is_none());
+
+        // Ensures that:
+        // 1. all pending local window updates have been sent to the remote.
+        // 2. the underlying transport is will accept the frame. It's important that this
+        //    be checked before claiming capacity from the flow controllers.
+        if self.poll_ready()?.is_not_ready() {
             return Ok(AsyncSink::NotReady(frame));
         }
 
-        match frame {
-            Data(v) => {
-                // Before claiming space, ensure that the transport will accept the frame.
-                if self.inner.poll_ready()?.is_not_ready() {
-                    return Ok(AsyncSink::NotReady(Data(v)));
-                }
+        // Ensure that an outbound data frame does not violate the remote's flow control
+        // window.
+        if let &Data(ref v) = &frame {
+            let sz = v.payload().remaining() as FrameSize;
 
-                let sz = v.payload().remaining() as FrameSize;
-                if self.connection_remote_flow_controller.claim_window(sz).is_err() {
-                    return Err(error::User::FlowControlViolation.into());
-                }
-                if let Some(fc) = self.remote_flow_controller(v.stream_id()) {
-                    if fc.claim_window(sz).is_err() {
-                        return Err(error::User::FlowControlViolation.into())
-                    }
-                }
-
-                let res = self.inner.start_send(Data(v))?;
-                assert!(res.is_ready());
-                Ok(res)
+            // Ensure there's enough capacity on the connection before acting on the
+            // stream.
+            if !self.remote_connection.check_window(sz) {
+                return Err(error::User::FlowControlViolation.into());
             }
 
-            frame => self.inner.start_send(frame),
+            // Ensure there's enough capacity on stream.
+            {
+                let mut fc = self.streams_mut()
+                    .remote_flow_controller(v.stream_id())
+                    .expect("no remote stream for data frame");
+                if fc.claim_window(sz).is_err() {
+                    return Err(error::User::FlowControlViolation.into())
+                }
+            }
+
+            self.remote_connection.claim_window(sz)
+                .expect("remote connection flow control error");
         }
+
+        let res = self.inner.start_send(frame)?;
+        assert!(res.is_ready());
+        Ok(res)
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
-        try_ready!(self.inner.poll_complete());
-        self.poll_send_local_window_updates()
+        try_ready!(self.poll_send_local());
+        self.inner.poll_complete()
     }
 }
 
 impl<T, U> ReadySink for FlowControl<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
           T: ControlStreams,
           U: Buf,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.inner.poll_ready());
-        self.poll_send_local_window_updates()
+        try_ready!(self.poll_send_local());
+        self.inner.poll_ready()
     }
 }

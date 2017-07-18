@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 // TODO reset_streams needs to be bounded.
 // TODO track reserved streams (PUSH_PROMISE).
 
+/// Tracks a connection's streams.
 #[derive(Debug)]
 pub struct StreamTracker<T, P> {
     inner: T,
@@ -96,7 +97,7 @@ impl<T, P> ControlStreams for StreamTracker<T, P> {
 
 /// Handles updates to `SETTINGS_MAX_CONCURRENT_STREAMS`.
 ///
-/// > Indicates the maximum number of concurrent streams that the sender will allow. This
+/// > Indicates the maximum number of concurrent streams that the senderg will allow. This
 /// > limit is directional: it applies to the number of streams that the sender permits
 /// > the receiver to create. Initially, there is no limit to this value. It is
 /// > recommended that this value be no smaller than 100, so as to not unnecessarily limit
@@ -152,8 +153,8 @@ impl<T, P, U> Stream for StreamTracker<T, P>
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
         use frame::Frame::*;
 
-        // The local must complete refusing the remote stream before processing additional
-        // frames.
+        // Since there's only one slot for pending refused streams, it must be cleared
+        // before polling  a frame from the transport.
         if let Some(id) = self.pending_refused_stream.take() {
             try_ready!(self.send_refusal(id));
         }

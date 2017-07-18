@@ -110,18 +110,30 @@ pub trait ApplySettings {
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct WindowUpdate(pub StreamId, pub WindowSize);
+impl WindowUpdate {
+    pub fn stream_id(&self) -> StreamId {
+        self.0
+    }
+
+    pub fn increment(&self) -> WindowSize {
+        self.1
+    }
+}
+
 /// Exposes flow control states to "upper" layers of the transport (i.e. above
 /// FlowControl).
 pub trait ControlFlow {
-    /// Asks the flow controller for unreported send capacity on a stream.
-    ///
-    /// Errors if the given stream is not active.
-    fn poll_remote_window_update(&mut self, id: StreamId) -> Poll<WindowSize, ConnectionError>;
+    /// Polls for the next window update from the remote.
+    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError>;
 
-    /// Attempts to increase the receive capacity of a stream.
+    /// Increases the local receive capacity of a stream.
     ///
-    /// Errors if the given stream is not active.
-    fn expand_local_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
+    /// This may cause a window update to be sent to the remote.
+    ///
+    /// Fails if the given stream is not active.
+    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
 }
 
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
