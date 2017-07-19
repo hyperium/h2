@@ -24,7 +24,7 @@ pub struct Settings<T> {
     remaining_acks: usize,
 
     // True when the local settings must be flushed to the remote
-    is_local_dirty: bool,
+    is_valid_local_id_dirty: bool,
 
     // True when we have received a settings frame from the remote.
     received_remote: bool,
@@ -39,7 +39,7 @@ impl<T, U> Settings<T>
             local: local,
             remote: SettingSet::default(),
             remaining_acks: 0,
-            is_local_dirty: true,
+            is_valid_local_id_dirty: true,
             received_remote: false,
         }
     }
@@ -61,18 +61,18 @@ impl<T, U> Settings<T>
             local: self.local,
             remote: self.remote,
             remaining_acks: self.remaining_acks,
-            is_local_dirty: self.is_local_dirty,
+            is_valid_local_id_dirty: self.is_valid_local_id_dirty,
             received_remote: self.received_remote,
         }
     }
 
     fn try_send_pending(&mut self) -> Poll<(), ConnectionError> {
-        trace!("try_send_pending; dirty={} acks={}", self.is_local_dirty, self.remaining_acks);
-        if self.is_local_dirty {
+        trace!("try_send_pending; dirty={} acks={}", self.is_valid_local_id_dirty, self.remaining_acks);
+        if self.is_valid_local_id_dirty {
             let frame = frame::Settings::new(self.local.clone());
             try_ready!(self.try_send(frame));
 
-            self.is_local_dirty = false;
+            self.is_valid_local_id_dirty = false;
         }
 
         while self.remaining_acks > 0 {
@@ -96,16 +96,24 @@ impl<T, U> Settings<T>
 }
 
 impl<T: ControlStreams> ControlStreams for Settings<T> {
-    fn streams(&self) -> &StreamMap {
-        self.inner.streams()
+   fn local_streams(&self) -> &StreamMap {
+        self.inner.local_streams()
     }
 
-    fn streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.streams_mut()
+    fn local_streams_mut(&mut self) -> &mut StreamMap {
+        self.inner.local_streams_mut()
     }
 
-    fn stream_is_reset(&self, id: StreamId) -> Option<Reason> {
-        self.inner.stream_is_reset(id)
+    fn remote_streams(&self) -> &StreamMap {
+        self.inner.local_streams()
+    }
+
+    fn remote_streams_mut(&mut self) -> &mut StreamMap {
+        self.inner.local_streams_mut()
+    }
+
+    fn is_valid_local_id(id: StreamId) -> bool {
+        T::is_valid_local_id(id)
     }
 }
 
@@ -132,7 +140,7 @@ impl<T: ControlPing> ControlPing for Settings<T> {
 impl<T> ControlSettings for Settings<T>{
     fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
         self.local = local;
-        self.is_local_dirty = true;
+        self.is_valid_local_id_dirty = true;
         Ok(())
     }
 

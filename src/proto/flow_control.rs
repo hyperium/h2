@@ -68,7 +68,7 @@ impl<T: ControlStreams> FlowControl<T> {
         if id.is_zero() {
             Some(&mut self.local_connection)
         } else {
-            self.inner.streams_mut().get_mut(id).and_then(|s| s.local_flow_controller())
+            self.inner.local_flow_controller(id)
         }
     }
 
@@ -76,23 +76,31 @@ impl<T: ControlStreams> FlowControl<T> {
         if id.is_zero() {
             Some(&mut self.remote_connection)
         } else {
-            self.inner.streams_mut().get_mut(id).and_then(|s| s.remote_flow_controller())
+            self.inner.remote_flow_controller(id)
         }
     }
 }
 
 /// Proxies access to streams.
 impl<T: ControlStreams> ControlStreams for FlowControl<T> {
-    fn streams(&self) -> &StreamMap {
-        self.inner.streams()
+   fn local_streams(&self) -> &StreamMap {
+        self.inner.local_streams()
     }
 
-    fn streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.streams_mut()
+    fn local_streams_mut(&mut self) -> &mut StreamMap {
+        self.inner.local_streams_mut()
     }
 
-    fn stream_is_reset(&self, id: StreamId) -> Option<Reason> {
-        self.inner.stream_is_reset(id)
+    fn remote_streams(&self) -> &StreamMap {
+        self.inner.local_streams()
+    }
+
+    fn remote_streams_mut(&mut self) -> &mut StreamMap {
+        self.inner.local_streams_mut()
+    }
+
+    fn is_valid_local_id(id: StreamId) -> bool {
+        T::is_valid_local_id(id)
     }
 }
 
@@ -101,14 +109,14 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
         // This biases connection window updates, which probably makese sense.
         if let Some(incr) = self.remote_connection.apply_window_update() {
-            return Ok(Async::Ready(WindowUpdate(StreamId::zero(), incr)));
+            return Ok(Async::Ready(WindowUpdate::new(StreamId::zero(), incr)));
         }
 
         // TODO this should probably account for stream priority?
         while let Some(id) = self.remote_pending_streams.pop_front() {
             if let Some(mut flow) = self.remote_flow_controller(id) {
                 if let Some(incr) = flow.apply_window_update() {
-                    return Ok(Async::Ready(WindowUpdate(id, incr)));
+                    return Ok(Async::Ready(WindowUpdate::new(id, incr)));
                 }
             }
         }
@@ -131,8 +139,8 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
                 self.local_pending_streams.push_back(id);
             }
             Ok(())
-        } else if self.stream_is_reset(id).is_some() {
-            Err(error::User::StreamReset.into())
+        } else if let Some(rst) = self.get_reset(id) {
+            Err(error::User::StreamReset(rst).into())
         } else {
             Err(error::User::InvalidStreamId.into())
         }

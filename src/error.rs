@@ -82,7 +82,7 @@ pub enum User {
     Corrupt,
 
     /// The stream state has been reset.
-    StreamReset,
+    StreamReset(Reason),
 
     /// The application attempted to initiate too many streams to remote.
     MaxConcurrencyExceeded,
@@ -125,7 +125,7 @@ macro_rules! user_desc {
             InactiveStreamId => concat!($prefix, "inactive stream ID"),
             UnexpectedFrameType => concat!($prefix, "unexpected frame type"),
             FlowControlViolation => concat!($prefix, "flow control violation"),
-            StreamReset => concat!($prefix, "frame sent on reset stream"),
+            StreamReset(_) => concat!($prefix, "frame sent on reset stream"),
             Corrupt => concat!($prefix, "connection state corrupt"),
             MaxConcurrencyExceeded => concat!($prefix, "stream would exceed remote max concurrency"),
         }

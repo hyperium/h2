@@ -1,8 +1,10 @@
-use {ConnectionError};
+use ConnectionError;
+use client::Client;
 use error::Reason;
 use error::User;
 use frame::{self, Frame};
 use proto::*;
+use server::Server;
 
 use fnv::FnvHasher;
 use ordermap::OrderMap;
@@ -16,82 +18,93 @@ use std::marker::PhantomData;
 
 /// Tracks a connection's streams.
 #[derive(Debug)]
-pub struct StreamTracker<T, P> {
+pub struct StreamRecv<T, P> {
     inner: T,
     peer: PhantomData<P>,
 
-    active_streams: StreamMap,
-    // TODO reserved_streams: HashSet<StreamId>
-    reset_streams: OrderMap<StreamId, Reason, BuildHasherDefault<FnvHasher>>,
-
+    local: StreamMap,
     local_max_concurrency: Option<u32>,
-    remote_max_concurrency: Option<u32>,
-    initial_local_window_size: WindowSize,
-    initial_remote_window_size: WindowSize,
+    local_initial_window_size: WindowSize,
 
-    pending_refused_stream: Option<StreamId>,
+    remote: StreamMap,
+    remote_max_concurrency: Option<u32>,
+    remote_initial_window_size: WindowSize,
+    remote_pending_refuse: Option<StreamId>,
 }
 
-impl<T, P, U> StreamTracker<T, P>
+impl<T, P, U> StreamRecv<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           P: Peer
 {
-    pub fn new(initial_local_window_size: WindowSize,
-               initial_remote_window_size: WindowSize,
-               local_max_concurrency: Option<u32>,
-               remote_max_concurrency: Option<u32>,
+    pub fn new(initial_window_size: WindowSize,
+               max_concurrency: Option<u32>,
                inner: T)
-        -> StreamTracker<T, P>
+        -> StreamRecv<T, P>
     {
-        StreamTracker {
+        StreamRecv {
             inner,
             peer: PhantomData,
 
-            active_streams: StreamMap::default(),
-            reset_streams: OrderMap::default(),
-            pending_refused_stream: None,
-
-            local_max_concurrency,
-            remote_max_concurrency,
-            initial_local_window_size,
-            initial_remote_window_size,
+            local: StreamMap::default(),
+            remote: StreamMap::default(),
+            max_concurrency,
+            initial_window_size,
+            remote_pending_refuse: None,
         }
+    }
+
+    pub fn try_open_remote(&mut self, frame: Frame) -> Result<(), ConnectionError> {
+        unimplemented!()
+    }
+
+    pub fn try_close(&mut self, frame: Frame) -> Result<(), ConnectionError> {
+        unimplemented!()
     }
 }
 
-impl<T, P, U> StreamTracker<T, P>
+impl<T, P, U> StreamRecv<T, P>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           P: Peer
 {
     fn send_refusal(&mut self, id: StreamId) -> Poll<(), ConnectionError> {
-        debug_assert!(self.pending_refused_stream.is_none());
+        debug_assert!(self.remote_pending_refused.is_none());
 
         let f = frame::Reset::new(id, Reason::RefusedStream);
         match self.inner.start_send(f.into())? {
             AsyncSink::Ready => {
-                self.reset_streams.insert(id, Reason::RefusedStream);
+                self.reset(id, Reason::RefusedStream);
                 Ok(Async::Ready(()))
             }
             AsyncSink::NotReady(_) => {
-                self.pending_refused_stream = Some(id);
+                self.pending_refused = Some(id);
                 Ok(Async::NotReady)
             }
         }
     }
 }
 
-impl<T, P> ControlStreams for StreamTracker<T, P> {
-    fn streams(&self) -> &StreamMap {
-        &self.active_streams
+impl<T, P> ControlStreams for StreamRecv<T, P>
+    where P: Peer
+{
+   fn local_streams(&self) -> &StreamMap {
+        &self.local
     }
 
-    fn streams_mut(&mut self) -> &mut StreamMap {
-        &mut self.active_streams
+    fn local_streams_mut(&mut self) -> &mut StreamMap {
+        &mut self.local
     }
 
-    fn stream_is_reset(&self, id: StreamId) -> Option<Reason> {
-        self.reset_streams.get(&id).map(|r| *r)
+    fn remote_streams(&self) -> &StreamMap {
+        &self.remote
+    }
+
+    fn remote_streams_mut(&mut self) -> &mut StreamMap {
+        &mut self.remote
+    }
+
+    fn is_valid_local_id(id: StreamId) -> bool {
+        P::is_valid_local_stream_id(id)
     }
 }
 
@@ -114,23 +127,21 @@ impl<T, P> ControlStreams for StreamTracker<T, P> {
 /// > exceed the new value or allow streams to complete.
 ///
 /// This module does NOT close streams when the setting changes.
-impl<T, P> ApplySettings for StreamTracker<T, P>
+impl<T, P> ApplySettings for StreamRecv<T, P>
     where T: ApplySettings
 {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.local_max_concurrency = set.max_concurrent_streams();
-        self.initial_local_window_size = set.initial_window_size();
+        self.max_concurrency = set.max_concurrent_streams();
+        self.initial_window_size = set.initial_window_size();
         self.inner.apply_local_settings(set)
     }
 
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.remote_max_concurrency = set.max_concurrent_streams();
-        self.initial_remote_window_size = set.initial_window_size();
         self.inner.apply_remote_settings(set)
     }
 }
 
-impl<T, P> ControlPing for StreamTracker<T, P>
+impl<T, P> ControlPing for StreamRecv<T, P>
     where T: ControlPing
 {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
@@ -142,7 +153,7 @@ impl<T, P> ControlPing for StreamTracker<T, P>
     }
 }
 
-impl<T, P, U> Stream for StreamTracker<T, P>
+impl<T, P, U> Stream for StreamRecv<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           P: Peer,
@@ -155,7 +166,7 @@ impl<T, P, U> Stream for StreamTracker<T, P>
 
         // Since there's only one slot for pending refused streams, it must be cleared
         // before polling  a frame from the transport.
-        if let Some(id) = self.pending_refused_stream.take() {
+        if let Some(id) = self.pending_refused.take() {
             try_ready!(self.send_refusal(id));
         }
 
@@ -165,17 +176,24 @@ impl<T, P, U> Stream for StreamTracker<T, P>
                     let id = v.stream_id();
                     let eos = v.is_end_stream();
 
-                    if self.reset_streams.contains_key(&id) {
+                    if self.get_reset(id).is_some() {
+                        // TODO send the remote errors when it sends us frames on reset
+                        // streams.
                         continue;
+                    }
+
+                    if let Some(mut s) = self.get_active_mut(id) {
+                        let created = s.recv_headers(eos, self.initial_window_size)?;
+                        assert!(!created);
+                        return Ok(Async::Ready(Some(Headers(v))));
                     }
 
                     // Ensure that receiving this frame will not violate the local max
                     // stream concurrency setting. Ensure that the stream is refused
                     // before processing additional frames.
-                    if let Some(max) = self.local_max_concurrency {
+                    if let Some(max) = self.max_concurrency {
                         let max = max as usize;
-                        if !self.active_streams.has_stream(id)
-                        && self.active_streams.len() >= max - 1 {
+                        if !self.local.is_active(id) && self.local.active_count() >= max - 1 {
                             // This frame would violate our local max concurrency, so reject
                             // the stream.
                             try_ready!(self.send_refusal(id));
@@ -191,7 +209,7 @@ impl<T, P, U> Stream for StreamTracker<T, P>
                             .or_insert_with(|| StreamState::default());
 
                         let initialized =
-                            stream.recv_headers::<P>(eos, self.initial_local_window_size)?;
+                            stream.recv_headers(eos, self.initial_window_size)?;
 
                         if initialized {
                             if !P::is_valid_remote_stream_id(id) {
@@ -213,7 +231,9 @@ impl<T, P, U> Stream for StreamTracker<T, P>
                 Some(Data(v)) => {
                     let id = v.stream_id();
 
-                    if self.reset_streams.contains_key(&id) {
+                    if self.get_reset(id).is_some() {
+                        // TODO send the remote errors when it sends us frames on reset
+                        // streams.
                         continue;
                     }
 
@@ -227,28 +247,24 @@ impl<T, P, U> Stream for StreamTracker<T, P>
                     };
 
                     if is_closed {
-                        self.active_streams.remove(id);
-                        self.reset_streams.insert(id, Reason::NoError);
+                        self.reset(id, Reason::NoError);
                     }
 
                     return Ok(Async::Ready(Some(Data(v))));
                 }
 
                 Some(Reset(v)) => {
-                    let id = v.stream_id();
-
                     // Set or update the reset reason.
-                    self.reset_streams.insert(id, v.reason());
-
-                    if self.active_streams.remove(id).is_some() {
-                        return Ok(Async::Ready(Some(Reset(v))));
-                    }
+                    self.reset(v.stream_id(), v.reason());
+                    return Ok(Async::Ready(Some(Reset(v))));
                 }
 
                 Some(f) => {
                     let id = f.stream_id();
 
-                    if self.reset_streams.contains_key(&id) {
+                    if self.get_reset(id).is_some() {
+                        // TODO send the remote errors when it sends us frames on reset
+                        // streams.
                         continue;
                     }
 
@@ -263,14 +279,14 @@ impl<T, P, U> Stream for StreamTracker<T, P>
     }
 }
 
-impl<T, P, U> Sink for StreamTracker<T, P>
+impl<T, P, U> Sink for StreamRecv<T, P>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           P: Peer,
 {
     type SinkItem = T::SinkItem;
     type SinkError = T::SinkError;
 
-    fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
+    fn start_send(&mut self, frame: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
         use frame::Frame::*;
 
         // Must be enforced through higher levels.
@@ -278,13 +294,13 @@ impl<T, P, U> Sink for StreamTracker<T, P>
 
         // The local must complete refusing the remote stream before sending any other
         // frames.
-        if let Some(id) = self.pending_refused_stream.take() {
+        if let Some(id) = self.pending_refused.take() {
             if self.send_refusal(id)?.is_not_ready() {
                 return Ok(AsyncSink::NotReady(item));
             }
         }
 
-        match item {
+        match frame {
             Headers(v) => {
                 let id = v.stream_id();
                 let eos = v.is_end_stream();
@@ -366,7 +382,7 @@ impl<T, P, U> Sink for StreamTracker<T, P>
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
-        if let Some(id) = self.pending_refused_stream.take() {
+        if let Some(id) = self.pending_refused.take() {
             try_ready!(self.send_refusal(id));
         }
 
@@ -375,14 +391,14 @@ impl<T, P, U> Sink for StreamTracker<T, P>
 }
 
 
-impl<T, P, U> ReadySink for StreamTracker<T, P>
+impl<T, P, U> ReadySink for StreamRecv<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
           P: Peer,
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        if let Some(id) = self.pending_refused_stream.take() {
+        if let Some(id) = self.pending_refused.take() {
             try_ready!(self.send_refusal(id));
         }
 

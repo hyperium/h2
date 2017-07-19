@@ -16,7 +16,8 @@ mod ping_pong;
 mod ready;
 mod settings;
 mod state;
-mod stream_tracker;
+mod stream_recv;
+mod stream_send;
 
 pub use self::connection::Connection;
 pub use self::flow_control::FlowControl;
@@ -26,7 +27,8 @@ pub use self::framed_write::FramedWrite;
 pub use self::ping_pong::PingPong;
 pub use self::ready::ReadySink;
 pub use self::settings::Settings;
-pub use self::stream_tracker::StreamTracker;
+pub use self::stream_recv::StreamRecv;
+pub use self::stream_send::StreamSend;
 
 use self::state::{StreamMap, StreamState};
 
@@ -82,14 +84,19 @@ use self::state::{StreamMap, StreamState};
 ///
 type Transport<T, P, B>=
     Settings<
-        FlowControl<
-            StreamTracker<
-                PingPong<
-                    Framer<T, B>,
-                    B>,
-                P>>>;
+        Streams<
+            PingPong<
+                Codec<T, B>,
+                B>,
+            P>>;
 
-type Framer<T, B> =
+type Streams<T, P> =
+    StreamSend<
+        FlowControl<
+            StreamRecv<T, P>>,
+        P>;
+
+type Codec<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
 
@@ -111,14 +118,22 @@ pub trait ApplySettings {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct WindowUpdate(pub StreamId, pub WindowSize);
+pub struct WindowUpdate {
+    stream_id: StreamId,
+    increment: WindowSize
+}
+
 impl WindowUpdate {
+    pub fn new(stream_id: StreamId, increment: WindowSize) -> WindowUpdate {
+        WindowUpdate { stream_id, increment }
+    }
+
     pub fn stream_id(&self) -> StreamId {
-        self.0
+        self.stream_id
     }
 
     pub fn increment(&self) -> WindowSize {
-        self.1
+        self.increment
     }
 }
 
@@ -139,14 +154,35 @@ pub trait ControlFlow {
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
 /// to Connection).
 pub trait ControlStreams {
-    /// Accesses the map of all active streams.
-    fn streams(&self)-> &StreamMap;
+    fn is_valid_local_id(id: StreamId) -> bool;
+    fn is_valid_remote_id(id: StreamId) -> bool {
+        !id.is_zero() && !Self::is_valid_local_id(id)
+    }
 
-    /// Mutably accesses the map of all active streams.
-    fn streams_mut(&mut self) -> &mut StreamMap;
+    fn get_active(&self, id: StreamId) -> Option<&StreamState> {
+        self.streams(id).get_active(id)
+    }
 
-    /// Checks whether a stream has been reset.
-    fn stream_is_reset(&self, id: StreamId) -> Option<Reason>;
+    fn get_active_mut(&mut self, id: StreamId) -> Option<&mut StreamState>  {
+        self.streams_mut(id).get_active_mut(id)
+    }
+
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.streams(id).get_reset(id)
+    }
+
+    fn reset(&mut self, id: StreamId, cause: Reason) {
+        self.streams_mut(id).reset(id, cause);
+    }
+
+    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.streams_mut(id).local_flow_controller(id)
+    }
+
+    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.streams_mut(id).remote_flow_controller(id)
+    }
 }
 
 pub type PingPayload = [u8; 8];
@@ -206,26 +242,24 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
     // Replace Settings' writer with a full transport.
     let transport = settings.swap_inner(|io| {
         // Delimit the frames.
-        let framer = length_delimited::Builder::new()
+        let framed = length_delimited::Builder::new()
             .big_endian()
             .length_field_length(3)
             .length_adjustment(9)
             .num_skip(0) // Don't skip the header
             .new_read(io);
 
-        FlowControl::new(
-            initial_local_window_size,
+        StreamSend::new(
             initial_remote_window_size,
-            StreamTracker::new(
+            remote_max_concurrency,
+            FlowControl::new(
                 initial_local_window_size,
                 initial_remote_window_size,
-                local_max_concurrency,
-                remote_max_concurrency,
-                PingPong::new(
-                    FramedRead::new(framer)
-                )
-            )
-        )
+                StreamRecv::new(
+                    initial_local_window_size,
+                    local_max_concurrency,
+                    PingPong::new(
+                        FramedRead::new(framed)))))
     });
 
     connection::new(transport)

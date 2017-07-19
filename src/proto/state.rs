@@ -1,5 +1,5 @@
 use {Peer, StreamId};
-use error::ConnectionError;
+use error::{ConnectionError, Reason};
 use error::Reason::*;
 use error::User::*;
 use proto::{FlowControlState, WindowSize};
@@ -7,6 +7,7 @@ use proto::{FlowControlState, WindowSize};
 use fnv::FnvHasher;
 use ordermap::{Entry, OrderMap};
 use std::hash::BuildHasherDefault;
+use std::marker::PhantomData;
 
 /// Represents the state of an H2 stream
 ///
@@ -76,10 +77,9 @@ impl StreamState {
     ///
     /// Returns true if this state transition results in iniitializing the
     /// stream id. `Err` is returned if this is an invalid state transition.
-    pub fn recv_headers<P: Peer>(&mut self,
-                                 eos: bool,
-                                 initial_recv_window_size: WindowSize)
+    pub fn recv_headers<P>(&mut self, eos: bool, initial_window_size: WindowSize)
         -> Result<bool, ConnectionError>
+        where P: Peer
     {
         use self::StreamState::*;
         use self::PeerState::*;
@@ -90,7 +90,7 @@ impl StreamState {
                 if eos {
                     *self = HalfClosedRemote(local);
                 } else {
-                    let remote = Data(FlowControlState::with_initial_size(initial_recv_window_size));
+                    let remote = Data(FlowControlState::with_initial_size(initial_window_size));
                     *self = Open { local, remote };
                 }
                 Ok(true)
@@ -111,7 +111,8 @@ impl StreamState {
                 if eos {
                     *self = Closed;
                 } else {
-                    *self = HalfClosedLocal(Data(FlowControlState::with_initial_size(initial_recv_window_size)));
+                    let remote = FlowControlState::with_initial_size(initial_window_size);
+                    *self = HalfClosedLocal(Data(remote));
                 };
                 Ok(false)
             }
@@ -291,46 +292,76 @@ impl PeerState {
     }
 }
 
+// TODO track reserved streams
+// TODO constrain the size of `reset`
 #[derive(Debug, Default)]
-pub struct StreamMap {
-    inner: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>
+pub struct StreamMap<P> {
+    /// Holds active streams initiated by the local endpoint.
+    local_active: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>,
+
+    /// Holds active streams initiated by the remote endpoint.
+    remote_active: OrderMap<StreamId, StreamState, BuildHasherDefault<FnvHasher>>,
+
+    /// Holds active streams initiated by the remote.
+    reset: OrderMap<StreamId, Reason, BuildHasherDefault<FnvHasher>>,
+
+    _phantom: PhantomData<P>,
 }
 
-impl StreamMap {
-    pub fn get_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
-        self.inner.get_mut(&id)
+impl<P: Peer> StreamMap<P> {
+    pub fn active(&mut self, id: StreamId) -> Option<&StreamState> {
+        assert!(!id.is_zero());
+        if P::is_valid_local_stream_id(id) {
+            self.local_active.get(id)
+        } else {
+            self.remote_active.get(id)
+        }
+    }
+
+    pub fn active_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
+        assert!(!id.is_zero());
+        if P::is_valid_local_stream_id(id) {
+            self.local_active.get_mut(id)
+        } else {
+            self.remote_active.get_mut(id)
+        }
+    }
+
+    pub fn local_active(&self, id: StreamId) -> Option<&StreamState> {
+        self.local_active.get(&id)
+    }
+
+    pub fn local_active_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
+        self.local_active.get_mut(&id)
     }
 
     pub fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.get_mut(&id).and_then(|s| s.local_flow_controller())
+        self.get_active_mut(id).and_then(|s| s.local_flow_controller())
     }
 
     pub fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.get_mut(&id).and_then(|s| s.remote_flow_controller())
+        self.get_active_mut(id).and_then(|s| s.remote_flow_controller())
     }
 
-    pub fn has_stream(&mut self, id: StreamId) -> bool {
-        self.inner.contains_key(&id)
+    pub fn localis_active(&mut self, id: StreamId) -> bool {
+        self.active.contains_key(&id)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+    pub fn active_count(&self) -> usize {
+        self.active.len()
     }
 
-    pub fn len(&self) -> usize {
-        self.inner.len()
+    pub fn reset(&mut self, id: StreamId, cause: Reason) {
+        self.reset.insert(id, cause);
+        self.active.remove(&id);
     }
 
-    pub fn entry(&mut self, id: StreamId) -> Entry<StreamId, StreamState, BuildHasherDefault<FnvHasher>> {
-        self.inner.entry(id)
-    }
-
-    pub fn remove(&mut self, id: StreamId) -> Option<StreamState> {
-        self.inner.remove(&id)
+    pub fn get_reset(&mut self, id: StreamId) -> Option<Reason> {
+        self.reset.get(&id).map(|r| *r)
     }
 
     pub fn shrink_all_local_windows(&mut self, decr: u32) {
-        for (_, mut s) in &mut self.inner {
+        for (_, mut s) in &mut self.active {
             if let Some(fc) = s.local_flow_controller() {
                 fc.shrink_window(decr);
             }
@@ -338,7 +369,7 @@ impl StreamMap {
     }
 
     pub fn expand_all_local_windows(&mut self, incr: u32) {
-        for (_, mut s) in &mut self.inner {
+        for (_, mut s) in &mut self.active {
             if let Some(fc) = s.local_flow_controller() {
                 fc.expand_window(incr);
             }
@@ -346,7 +377,7 @@ impl StreamMap {
     }
 
     pub fn shrink_all_remote_windows(&mut self, decr: u32) {
-        for (_, mut s) in &mut self.inner {
+        for (_, mut s) in &mut self.active {
             if let Some(fc) = s.remote_flow_controller() {
                 fc.shrink_window(decr);
             }
@@ -354,7 +385,7 @@ impl StreamMap {
     }
 
     pub fn expand_all_remote_windows(&mut self, incr: u32) {
-        for (_, mut s) in &mut self.inner {
+        for (_, mut s) in &mut self.active {
             if let Some(fc) = s.remote_flow_controller() {
                 fc.expand_window(incr);
             }

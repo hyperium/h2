@@ -111,11 +111,15 @@ impl Peer for Server {
     type Poll = http::request::Head;
 
     fn is_valid_local_stream_id(_id: StreamId) -> bool {
-        false
+        id.is_server_initiated()
     }
 
     fn is_valid_remote_stream_id(id: StreamId) -> bool {
         id.is_client_initiated()
+    }
+
+    fn can_create_local_stream() -> bool {
+        false
     }
 
     fn convert_send_message(

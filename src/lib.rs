@@ -85,6 +85,17 @@ pub trait Peer {
     /// remote node.
     fn is_valid_remote_stream_id(id: StreamId) -> bool;
 
+
+    fn can_create_local_stream() -> bool;
+    fn can_create_remote_stream() -> bool {
+        !Self::can_create_local_stream()
+    }
+
+    //fn can_reserve_local_stream() -> bool;
+    // fn can_reserve_remote_stream() -> bool {
+    //     !self.can_reserve_local_stream
+    // }
+
     #[doc(hidden)]
     fn convert_send_message(
         id: StreamId,

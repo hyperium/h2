@@ -216,10 +216,6 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
         match item {
             Frame::Headers { id, headers, end_of_stream } => {
-                if self.inner.stream_is_reset(id).is_some() {
-                    return Err(error::User::StreamReset.into());
-                }
-
                 // This is a one-way conversion. By checking `poll_ready` first (above),
                 // it's already been determined that the inner `Sink` can accept the item.
                 // If the item is rejected, then there is a bug.
