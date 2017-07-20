@@ -7,8 +7,21 @@ use bytes::BufMut;
 
 use std::io;
 
+/// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
+/// above---Connection).
+pub trait ControlSettings {
+    fn update_local_settings(&mut self, set: frame::SettingSet) -> Result<(), ConnectionError>;
+    fn local_settings(&self) -> &SettingSet;
+    fn remote_settings(&self) -> &SettingSet;
+}
 
-// TODO 
+/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
+/// FramedWrite).
+pub trait ApplySettings {
+    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
+    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
+}
+
 #[derive(Debug)]
 pub struct Settings<T> {
     // Upstream transport
@@ -92,48 +105,6 @@ impl<T, U> Settings<T>
         } else {
             Ok(Async::NotReady)
         }
-    }
-}
-
-impl<T: ControlStreams> ControlStreams for Settings<T> {
-   fn local_streams(&self) -> &StreamMap {
-        self.inner.local_streams()
-    }
-
-    fn local_streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.local_streams_mut()
-    }
-
-    fn remote_streams(&self) -> &StreamMap {
-        self.inner.local_streams()
-    }
-
-    fn remote_streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.local_streams_mut()
-    }
-
-    fn is_valid_local_id(id: StreamId) -> bool {
-        T::is_valid_local_id(id)
-    }
-}
-
-impl<T: ControlFlow> ControlFlow for Settings<T> {
-    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-        self.inner.poll_window_update()
-    }
-
-    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.expand_window(id, incr)
-    }
-}
-
-impl<T: ControlPing> ControlPing for Settings<T> {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
     }
 }
 
@@ -242,5 +213,25 @@ impl<T: AsyncRead> AsyncRead for Settings<T> {
 
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.inner.prepare_uninitialized_buffer(buf)
+    }
+}
+
+impl<T: ControlFlow> ControlFlow for Settings<T> {
+    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
+        self.inner.poll_window_update()
+    }
+
+    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.expand_window(id, incr)
+    }
+}
+
+impl<T: ControlPing> ControlPing for Settings<T> {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 }

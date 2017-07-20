@@ -1,6 +1,6 @@
 use {frame, ConnectionError, Peer, StreamId};
 use error::Reason;
-use frame::SettingSet;
+use frame::{Frame, SettingSet};
 
 use bytes::{Buf, IntoBuf};
 use futures::*;
@@ -16,21 +16,27 @@ mod ping_pong;
 mod ready;
 mod settings;
 mod state;
-mod stream_recv;
-mod stream_send;
+mod stream_recv_close;
+mod stream_recv_open;
+mod stream_send_close;
+mod stream_send_open;
+mod stream_store;
 
 pub use self::connection::Connection;
-pub use self::flow_control::FlowControl;
-pub use self::flow_control_state::{FlowControlState, WindowUnderflow};
-pub use self::framed_read::FramedRead;
-pub use self::framed_write::FramedWrite;
-pub use self::ping_pong::PingPong;
-pub use self::ready::ReadySink;
-pub use self::settings::Settings;
-pub use self::stream_recv::StreamRecv;
-pub use self::stream_send::StreamSend;
 
-use self::state::{StreamMap, StreamState};
+use self::flow_control::{ControlFlow, FlowControl};
+use self::flow_control_state::{FlowControlState, WindowUnderflow};
+use self::framed_read::FramedRead;
+use self::framed_write::FramedWrite;
+use self::ping_pong::{ControlPing, PingPayload, PingPong};
+use self::ready::ReadySink;
+use self::settings::{ApplySettings, ControlSettings, Settings};
+use self::state::{StreamState, PeerState};
+use self::stream_recv_close::StreamRecvClose;
+use self::stream_recv_open::StreamRecvOpen;
+use self::stream_send_close::StreamSendClose;
+use self::stream_send_open::StreamSendOpen;
+use self::stream_store::{ControlStreams, StreamStore};
 
 /// Represents the internals of an HTTP/2 connection.
 ///
@@ -91,31 +97,18 @@ type Transport<T, P, B>=
             P>>;
 
 type Streams<T, P> =
-    StreamSend<
-        FlowControl<
-            StreamRecv<T, P>>,
-        P>;
+    StreamSendOpen<
+        StreamRecvClose<
+            FlowControl<
+                StreamSendClose<
+                    StreamRecvOpen<
+                        StreamStore<T, P>>>>>>;
 
 type Codec<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
 
 pub type WindowSize = u32;
-
-/// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
-/// above---Connection).
-pub trait ControlSettings {
-    fn update_local_settings(&mut self, set: frame::SettingSet) -> Result<(), ConnectionError>;
-    fn local_settings(&self) -> &SettingSet;
-    fn remote_settings(&self) -> &SettingSet;
-}
-
-/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
-/// FramedWrite).
-pub trait ApplySettings {
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-}
 
 #[derive(Debug, Copy, Clone)]
 pub struct WindowUpdate {
@@ -135,61 +128,6 @@ impl WindowUpdate {
     pub fn increment(&self) -> WindowSize {
         self.increment
     }
-}
-
-/// Exposes flow control states to "upper" layers of the transport (i.e. above
-/// FlowControl).
-pub trait ControlFlow {
-    /// Polls for the next window update from the remote.
-    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError>;
-
-    /// Increases the local receive capacity of a stream.
-    ///
-    /// This may cause a window update to be sent to the remote.
-    ///
-    /// Fails if the given stream is not active.
-    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
-}
-
-/// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
-/// to Connection).
-pub trait ControlStreams {
-    fn is_valid_local_id(id: StreamId) -> bool;
-    fn is_valid_remote_id(id: StreamId) -> bool {
-        !id.is_zero() && !Self::is_valid_local_id(id)
-    }
-
-    fn get_active(&self, id: StreamId) -> Option<&StreamState> {
-        self.streams(id).get_active(id)
-    }
-
-    fn get_active_mut(&mut self, id: StreamId) -> Option<&mut StreamState>  {
-        self.streams_mut(id).get_active_mut(id)
-    }
-
-
-    fn get_reset(&self, id: StreamId) -> Option<Reason> {
-        self.streams(id).get_reset(id)
-    }
-
-    fn reset(&mut self, id: StreamId, cause: Reason) {
-        self.streams_mut(id).reset(id, cause);
-    }
-
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.streams_mut(id).local_flow_controller(id)
-    }
-
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.streams_mut(id).remote_flow_controller(id)
-    }
-}
-
-pub type PingPayload = [u8; 8];
-
-pub trait ControlPing {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
-    fn take_pong(&mut self) -> Option<PingPayload>;
 }
 
 /// Create a full H2 transport from an I/O handle.
@@ -249,17 +187,20 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
             .num_skip(0) // Don't skip the header
             .new_read(io);
 
-        StreamSend::new(
+        StreamSendOpen::new(
             initial_remote_window_size,
             remote_max_concurrency,
-            FlowControl::new(
-                initial_local_window_size,
-                initial_remote_window_size,
-                StreamRecv::new(
+            StreamRecvClose::new(
+                FlowControl::new(
                     initial_local_window_size,
-                    local_max_concurrency,
-                    PingPong::new(
-                        FramedRead::new(framed)))))
+                    initial_remote_window_size,
+                    StreamSendClose::new(
+                        StreamRecvOpen::new(
+                            initial_local_window_size,
+                            local_max_concurrency,
+                            StreamStore::new(
+                                PingPong::new(
+                                    FramedRead::new(framed))))))))
     });
 
     connection::new(transport)

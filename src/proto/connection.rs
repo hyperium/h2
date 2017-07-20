@@ -3,6 +3,7 @@ use client::Client;
 use error;
 use frame::{self, SettingSet, StreamId};
 use proto::*;
+use proto::ping_pong::PingPayload;
 use server::Server;
 
 use bytes::{Bytes, IntoBuf};
@@ -32,37 +33,23 @@ pub fn new<T, P, B>(transport: Transport<T, P, B::Buf>)
     }
 }
 
+// impl<T, P, B> ControlSettings for Connection<T, P, B>
+//     where T: AsyncRead + AsyncWrite,
+//           B: IntoBuf,
+// {
+//     fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
+//         self.inner.update_local_settings(local)
+//     }
 
-impl<T, P, B> ControlSettings for Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          B: IntoBuf,
-{
-    fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.update_local_settings(local)
-    }
+//     fn local_settings(&self) -> &SettingSet {
+//         self.inner.local_settings()
+//     }
 
-    fn local_settings(&self) -> &SettingSet {
-        self.inner.local_settings()
-    }
+//     fn remote_settings(&self) -> &SettingSet {
+//         self.inner.remote_settings()
+//     }
+// }
 
-    fn remote_settings(&self) -> &SettingSet {
-        self.inner.remote_settings()
-    }
-}
-
-impl<T, P, B> ControlPing for Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
-{
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
-    }
-}
 
 impl<T, P, B> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
@@ -146,21 +133,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
         }
 
         loop {
-            let frame = match try!(self.inner.poll()) {
-                Async::Ready(f) => f,
-
-                // XXX is this necessary?
-                Async::NotReady => {
-                    // Receiving new frames may depend on ensuring that the write buffer
-                    // is clear (e.g. if window updates need to be sent), so `poll_complete`
-                    // is called here. 
-                    try_ready!(self.poll_complete());
-
-                    // If the write buffer is cleared, attempt to poll the underlying
-                    // stream once more because it, may have been made ready.
-                    try_ready!(self.inner.poll())
-                }
-            };
+            let frame = try_ready!(self.inner.poll());
 
             trace!("poll; frame={:?}", frame);
             let frame = match frame {
@@ -214,34 +187,20 @@ impl<T, P, B> Sink for Connection<T, P, B>
             return Ok(AsyncSink::NotReady(item));
         }
 
-        match item {
+        let frame = match item {
             Frame::Headers { id, headers, end_of_stream } => {
                 // This is a one-way conversion. By checking `poll_ready` first (above),
                 // it's already been determined that the inner `Sink` can accept the item.
                 // If the item is rejected, then there is a bug.
-                let frame = P::convert_send_message(id, headers, end_of_stream);
-                let res = self.inner.start_send(frame::Frame::Headers(frame))?;
-                assert!(res.is_ready());
-                Ok(AsyncSink::Ready)
+                let f = P::convert_send_message(id, headers, end_of_stream);
+                frame::Frame::Headers(f)
             }
 
             Frame::Data { id, data, end_of_stream } => {
-                if self.inner.stream_is_reset(id).is_some() {
-                    return Err(error::User::StreamReset.into());
-                }
-
-                let frame = frame::Data::from_buf(id, data.into_buf(), end_of_stream);
-                let res = try!(self.inner.start_send(frame.into()));
-                assert!(res.is_ready());
-                Ok(AsyncSink::Ready)
+                frame::Data::from_buf(id, data.into_buf(), end_of_stream).into()
             }
 
-            Frame::Reset { id, error } => {
-                let f = frame::Reset::new(id, error);
-                let res = self.inner.start_send(f.into())?;
-                assert!(res.is_ready());
-                Ok(AsyncSink::Ready)
-            }
+            Frame::Reset { id, error } => frame::Reset::new(id, error).into(),
 
             /*
             Frame::Trailers { id, headers } => {
@@ -255,7 +214,11 @@ impl<T, P, B> Sink for Connection<T, P, B>
             }
             */
             _ => unimplemented!(),
-        }
+        };
+
+        let res = self.inner.start_send(frame)?;
+        assert!(res.is_ready());
+        Ok(AsyncSink::Ready)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {

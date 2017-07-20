@@ -4,6 +4,20 @@ use proto::*;
 
 use std::collections::VecDeque;
 
+/// Exposes flow control states to "upper" layers of the transport (i.e. above
+/// FlowControl).
+pub trait ControlFlow {
+    /// Polls for the next window update from the remote.
+    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError>;
+
+    /// Increases the local receive capacity of a stream.
+    ///
+    /// This may cause a window update to be sent to the remote.
+    ///
+    /// Fails if the given stream is not active.
+    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
+}
+
 #[derive(Debug)]
 pub struct FlowControl<T>  {
     inner: T,
@@ -80,30 +94,6 @@ impl<T: ControlStreams> FlowControl<T> {
         }
     }
 }
-
-/// Proxies access to streams.
-impl<T: ControlStreams> ControlStreams for FlowControl<T> {
-   fn local_streams(&self) -> &StreamMap {
-        self.inner.local_streams()
-    }
-
-    fn local_streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.local_streams_mut()
-    }
-
-    fn remote_streams(&self) -> &StreamMap {
-        self.inner.local_streams()
-    }
-
-    fn remote_streams_mut(&mut self) -> &mut StreamMap {
-        self.inner.local_streams_mut()
-    }
-
-    fn is_valid_local_id(id: StreamId) -> bool {
-        T::is_valid_local_id(id)
-    }
-}
-
 /// Exposes a public upward API for flow control.
 impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
@@ -139,21 +129,11 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
                 self.local_pending_streams.push_back(id);
             }
             Ok(())
-        } else if let Some(rst) = self.get_reset(id) {
+        } else if let Some(rst) = self.inner.get_reset(id) {
             Err(error::User::StreamReset(rst).into())
         } else {
             Err(error::User::InvalidStreamId.into())
         }
-    }
-}
-
-impl<T: ControlPing> ControlPing for FlowControl<T> {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
     }
 }
 
@@ -172,7 +152,7 @@ impl<T, U> FlowControl<T>
         }
 
         while let Some(id) = self.local_pending_streams.pop_front() {
-            if self.stream_is_reset(id).is_none() {
+            if self.inner.get_reset(id).is_none() {
                 let update = self.local_flow_controller(id).and_then(|s| s.apply_window_update());
                 if let Some(incr) = update {
                     try_ready!(self.try_send(frame::WindowUpdate::new(id, incr)));
@@ -190,71 +170,6 @@ impl<T, U> FlowControl<T>
         } else {
             Ok(Async::Ready(()))
         }
-    }
-}
-
-/// Applies an update to an endpoint's initial window size.
-///
-/// Per RFC 7540 §6.9.2:
-///
-/// > In addition to changing the flow-control window for streams that are not yet
-/// > active, a SETTINGS frame can alter the initial flow-control window size for
-/// > streams with active flow-control windows (that is, streams in the "open" or
-/// > "half-closed (remote)" state). When the value of SETTINGS_INITIAL_WINDOW_SIZE
-/// > changes, a receiver MUST adjust the size of all stream flow-control windows that
-/// > it maintains by the difference between the new value and the old value.
-/// >
-/// > A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available space in a
-/// > flow-control window to become negative. A sender MUST track the negative
-/// > flow-control window and MUST NOT send new flow-controlled frames until it
-/// > receives WINDOW_UPDATE frames that cause the flow-control window to become
-/// > positive.
-impl<T> ApplySettings for FlowControl<T> 
-    where T: ApplySettings,
-          T: ControlStreams
-{
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_local_settings(set)?;
-
-        let old_window_size = self.local_initial;
-        let new_window_size = set.initial_window_size();
-        if new_window_size == old_window_size {
-            return Ok(());
-        }
-
-        let mut streams = self.inner.streams_mut();
-        if new_window_size < old_window_size {
-            let decr = old_window_size - new_window_size;
-            streams.shrink_all_local_windows(decr);
-        } else { 
-            let incr = new_window_size - old_window_size;
-            streams.expand_all_local_windows(incr);
-        }
-        
-        self.local_initial = new_window_size;
-        Ok(())
-    }
-
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_remote_settings(set)?;
-
-        let old_window_size = self.remote_initial;
-        let new_window_size = set.initial_window_size();
-        if new_window_size == old_window_size {
-            return Ok(());
-        }
-
-        let mut streams = self.inner.streams_mut();
-        if new_window_size < old_window_size {
-            let decr = old_window_size - new_window_size;
-            streams.shrink_all_remote_windows(decr);
-        } else { 
-            let incr = new_window_size - old_window_size;
-            streams.expand_all_remote_windows(incr);
-        }
-        
-        self.remote_initial = new_window_size;
-        Ok(())
     }
 }
 
@@ -310,7 +225,7 @@ impl<T, U> Sink for FlowControl<T>
     fn start_send(&mut self, frame: Frame<U>) -> StartSend<T::SinkItem, T::SinkError> {
         use frame::Frame::*;
 
-        debug_assert!(self.stream_is_reset(frame.stream_id()).is_none());
+        debug_assert!(self.inner.get_reset(frame.stream_id()).is_none());
 
         // Ensures that:
         // 1. all pending local window updates have been sent to the remote.
@@ -333,8 +248,7 @@ impl<T, U> Sink for FlowControl<T>
 
             // Ensure there's enough capacity on stream.
             {
-                let mut fc = self.streams_mut()
-                    .remote_flow_controller(v.stream_id())
+                let mut fc = self.inner.remote_flow_controller(v.stream_id())
                     .expect("no remote stream for data frame");
                 if fc.claim_window(sz).is_err() {
                     return Err(error::User::FlowControlViolation.into())
@@ -365,5 +279,118 @@ impl<T, U> ReadySink for FlowControl<T>
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_send_local());
         self.inner.poll_ready()
+    }
+}
+
+/// Applies an update to an endpoint's initial window size.
+///
+/// Per RFC 7540 §6.9.2:
+///
+/// > In addition to changing the flow-control window for streams that are not yet
+/// > active, a SETTINGS frame can alter the initial flow-control window size for
+/// > streams with active flow-control windows (that is, streams in the "open" or
+/// > "half-closed (remote)" state). When the value of SETTINGS_INITIAL_WINDOW_SIZE
+/// > changes, a receiver MUST adjust the size of all stream flow-control windows that
+/// > it maintains by the difference between the new value and the old value.
+/// >
+/// > A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available space in a
+/// > flow-control window to become negative. A sender MUST track the negative
+/// > flow-control window and MUST NOT send new flow-controlled frames until it
+/// > receives WINDOW_UPDATE frames that cause the flow-control window to become
+/// > positive.
+impl<T> ApplySettings for FlowControl<T> 
+    where T: ApplySettings,
+          T: ControlStreams
+{
+    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_local_settings(set)?;
+
+        let old_window_size = self.local_initial;
+        let new_window_size = set.initial_window_size();
+        if new_window_size == old_window_size {
+            return Ok(());
+        }
+
+        self.inner.local_update_inital_window_size(old_window_size, new_window_size);
+        self.local_initial = new_window_size;
+        Ok(())
+    }
+
+    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_remote_settings(set)?;
+
+        let old_window_size = self.remote_initial;
+        let new_window_size = set.initial_window_size();
+        if new_window_size == old_window_size {
+            return Ok(());
+        }
+
+        self.inner.remote_update_inital_window_size(old_window_size, new_window_size);
+        self.remote_initial = new_window_size;
+        Ok(())
+    }
+}
+
+impl<T: ControlStreams> ControlStreams for FlowControl<T> {
+    fn is_valid_local_id(id: StreamId) -> bool {
+        T::is_valid_local_id(id)
+    }
+
+    fn is_valid_remote_id(id: StreamId) -> bool {
+        T::is_valid_remote_id(id)
+    }
+
+    fn can_create_local_stream() -> bool {
+        T::can_create_local_stream()
+    }
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.inner.get_reset(id)
+    }
+
+    fn reset_stream(&mut self, id: StreamId, cause: Reason) {
+        self.inner.reset_stream(id, cause)
+    }
+
+    fn is_local_active(&self, id: StreamId) -> bool {
+        self.inner.is_local_active(id)
+    }
+
+    fn is_remote_active(&self, id: StreamId) -> bool {
+        self.inner.is_remote_active(id)
+    }
+
+    fn local_active_len(&self) -> usize {
+        self.inner.local_active_len()
+    }
+
+    fn remote_active_len(&self) -> usize {
+        self.inner.remote_active_len()
+    }
+
+    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.local_update_inital_window_size(old_sz, new_sz)
+    }
+
+    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.remote_update_inital_window_size(old_sz, new_sz)
+    }
+
+    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.local_flow_controller(id)
+    }
+
+    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.remote_flow_controller(id)
+    }
+}
+
+impl<T: ControlPing> ControlPing for FlowControl<T> {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 }

@@ -16,6 +16,15 @@ impl Reset {
             error_code: error.into(),
         }
     }
+
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
+    pub fn reason(&self) -> Reason {
+        self.error_code.into()
+    }
+
     pub fn load(head: Head, payload: &[u8]) -> Result<Reset, Error> {
         if payload.len() != 4 {
             return Err(Error::InvalidPayloadLength);
@@ -34,14 +43,6 @@ impl Reset {
         let head = Head::new(Kind::Reset, 0, self.stream_id);
         head.encode(4, dst);
         dst.put_u32::<BigEndian>(self.error_code);
-    }
-
-    pub fn stream_id(&self) -> StreamId {
-        self.stream_id
-    }
-
-    pub fn reason(&self) -> Reason {
-        self.error_code.into()
     }
 }
 

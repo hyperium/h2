@@ -110,7 +110,7 @@ impl Peer for Server {
     type Send = http::response::Head;
     type Poll = http::request::Head;
 
-    fn is_valid_local_stream_id(_id: StreamId) -> bool {
+    fn is_valid_local_stream_id(id: StreamId) -> bool {
         id.is_server_initiated()
     }
 

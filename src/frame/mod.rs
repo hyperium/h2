@@ -80,6 +80,21 @@ impl<T> Frame<T> {
             &Settings(_) => StreamId::zero(),
         }
     }
+
+    pub fn is_end_stream(&self) -> bool {
+        use self::Frame::*;
+
+        match self {
+            &Headers(ref v) => v.is_end_stream(),
+            &Data(ref v) => v.is_end_stream(),
+            &Reset(ref v) => true,
+
+            &PushPromise(_) |
+            &WindowUpdate(_) |
+            &Ping(_) |
+            &Settings(_) => false,
+        }
+    }
 }
 
 /// Errors that can occur during parsing an HTTP/2 frame.

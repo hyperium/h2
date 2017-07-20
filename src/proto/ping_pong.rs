@@ -1,8 +1,15 @@
-use ConnectionError;
+use {ConnectionError, StreamId};
 use frame::{Frame, Ping, SettingSet};
-use proto::{ApplySettings, ControlPing, PingPayload, ReadySink};
+use proto::{ApplySettings, ReadySink, ControlStreams, FlowControlState};
 
 use futures::*;
+
+pub type PingPayload = [u8; 8];
+
+pub trait ControlPing {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
+    fn take_pong(&mut self) -> Option<PingPayload>;
+}
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
@@ -26,16 +33,6 @@ impl<T, U> PingPong<T, U>
             expecting_pong: false,
             blocked_ping: None,
         }
-    }
-}
-
-impl<T: ApplySettings, U> ApplySettings for PingPong<T, U> {
-    fn apply_local_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_local_settings(set)
-    }
-
-    fn apply_remote_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_remote_settings(set)
     }
 }
 
@@ -169,6 +166,16 @@ impl<T, U> ReadySink for PingPong<T, U>
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.try_send_pong());
         self.inner.poll_ready()
+    }
+}
+
+impl<T: ApplySettings, U> ApplySettings for PingPong<T, U> {
+    fn apply_local_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_local_settings(set)
+    }
+
+    fn apply_remote_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
+        self.inner.apply_remote_settings(set)
     }
 }
 
