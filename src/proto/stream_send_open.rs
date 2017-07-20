@@ -3,8 +3,6 @@ use error::User::{InvalidStreamId, StreamReset};
 use frame::{Frame, SettingSet};
 use proto::*;
 
-use futures::*;
-
 #[derive(Debug)]
 pub struct StreamSendOpen<T> {
     inner: T,

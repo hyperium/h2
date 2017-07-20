@@ -31,13 +31,13 @@ impl FlowControlState {
         }
     }
 
-    pub fn with_next_update(next_window_update: WindowSize) -> FlowControlState {
-        FlowControlState {
-            window_size: 0,
-            underflow: 0,
-            next_window_update,
-        }
-    }
+    // pub fn with_next_update(next_window_update: WindowSize) -> FlowControlState {
+    //     FlowControlState {
+    //         window_size: 0,
+    //         underflow: 0,
+    //         next_window_update,
+    //     }
+    // }
 
     /// Reduce future capacity of the window.
     ///

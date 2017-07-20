@@ -1,6 +1,6 @@
-use {ConnectionError, StreamId};
+use ConnectionError;
 use frame::{Frame, Ping, SettingSet};
-use proto::{ApplySettings, ReadySink, ControlStreams, FlowControlState};
+use proto::{ApplySettings, ReadySink};
 
 use futures::*;
 

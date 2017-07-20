@@ -1,6 +1,6 @@
-use {frame, ConnectionError, Peer, StreamId};
+use {frame, Peer, StreamId};
 use error::Reason;
-use frame::{Frame, SettingSet};
+use frame::Frame;
 
 use bytes::{Buf, IntoBuf};
 use futures::*;
@@ -25,13 +25,13 @@ mod stream_store;
 pub use self::connection::Connection;
 
 use self::flow_control::{ControlFlow, FlowControl};
-use self::flow_control_state::{FlowControlState, WindowUnderflow};
+use self::flow_control_state::{FlowControlState};
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::{ControlPing, PingPayload, PingPong};
 use self::ready::ReadySink;
-use self::settings::{ApplySettings, ControlSettings, Settings};
-use self::state::{StreamState, PeerState};
+use self::settings::{ApplySettings, /*ControlSettings,*/ Settings};
+use self::state::{StreamState};
 use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;

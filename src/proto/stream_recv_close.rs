@@ -1,14 +1,8 @@
 use {ConnectionError};
 use error::Reason;
-use error::User;
 use frame::{self, Frame};
 use proto::*;
 use proto::ready::ReadySink;
-
-use fnv::FnvHasher;
-use futures::*;
-use ordermap::OrderMap;
-use std::hash::BuildHasherDefault;
 
 // TODO track "last stream id" for GOAWAY.
 // TODO track/provide "next" stream id.

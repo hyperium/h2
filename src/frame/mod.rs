@@ -87,7 +87,7 @@ impl<T> Frame<T> {
         match self {
             &Headers(ref v) => v.is_end_stream(),
             &Data(ref v) => v.is_end_stream(),
-            &Reset(ref v) => true,
+            &Reset(_) => true,
 
             &PushPromise(_) |
             &WindowUpdate(_) |

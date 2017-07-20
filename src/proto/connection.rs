@@ -1,9 +1,9 @@
 use {ConnectionError, Frame};
 use client::Client;
 use error;
-use frame::{self, SettingSet, StreamId};
+use frame::{self, StreamId};
 use proto::*;
-use proto::ping_pong::PingPayload;
+//use proto::ping_pong::PingPayload;
 use server::Server;
 
 use bytes::{Bytes, IntoBuf};

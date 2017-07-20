@@ -2,8 +2,6 @@ use ConnectionError;
 use frame::{Frame, StreamId};
 use proto::*;
 
-use futures::*;
-
 /// Tracks a connection's streams.
 #[derive(Debug)]
 pub struct StreamRecvOpen<T> {

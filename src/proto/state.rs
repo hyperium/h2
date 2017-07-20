@@ -1,13 +1,7 @@
-use {Peer, StreamId};
-use error::{ConnectionError, Reason};
+use {ConnectionError, Peer};
 use error::Reason::*;
 use error::User::*;
 use proto::{FlowControlState, WindowSize};
-
-use fnv::FnvHasher;
-use ordermap::{Entry, OrderMap};
-use std::hash::BuildHasherDefault;
-use std::marker::PhantomData;
 
 /// Represents the state of an H2 stream
 ///

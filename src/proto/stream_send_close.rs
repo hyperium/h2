@@ -1,12 +1,7 @@
 use ConnectionError;
-use client::Client;
 use error::Reason;
-use error::User;
 use frame::{self, Frame};
 use proto::*;
-
-use futures::*;
-use std::marker::PhantomData;
 
 // TODO track "last stream id" for GOAWAY.
 // TODO track/provide "next" stream id.
