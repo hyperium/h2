@@ -87,12 +87,22 @@ impl<T> Frame<T> {
         match self {
             &Headers(ref v) => v.is_end_stream(),
             &Data(ref v) => v.is_end_stream(),
-            &Reset(_) => true,
 
             &PushPromise(_) |
             &WindowUpdate(_) |
             &Ping(_) |
             &Settings(_) => false,
+
+            &Reset(_) => true,
+        }
+    }
+
+    pub fn is_reset(&self) -> bool {
+        use self::Frame::*;
+
+        match self {
+            &Reset(_) => true,
+            _ => false,
         }
     }
 }

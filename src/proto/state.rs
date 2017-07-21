@@ -59,177 +59,197 @@ pub enum StreamState {
 }
 
 impl StreamState {
-    pub fn is_closed(&self) ->  bool {
+    // /// Transition the state to represent headers being received.
+    // ///
+    // /// Returns true if this state transition results in iniitializing the
+    // /// stream id. `Err` is returned if this is an invalid state transition.
+    // pub fn recv_headers<P>(&mut self, eos: bool, initial_window_size: WindowSize)
+    //     -> Result<bool, ConnectionError>
+    //     where P: Peer
+    // {
+    //     use self::StreamState::*;
+    //     use self::PeerState::*;
+
+    //     match *self {
+    //         Idle => {
+    //             let local = Headers;
+    //             if eos {
+    //                 *self = HalfClosedRemote(local);
+    //             } else {
+    //                 let remote = Data(FlowControlState::with_initial_size(initial_window_size));
+    //                 *self = Open { local, remote };
+    //             }
+    //             Ok(true)
+    //         }
+
+    //         Open { local, remote } => {
+    //             try!(remote.check_is_headers(ProtocolError.into()));
+    //             if !eos {
+    //                 // Received non-trailers HEADERS on open remote.
+    //                 return Err(ProtocolError.into());
+    //             }
+    //             *self = HalfClosedRemote(local);
+    //             Ok(false)
+    //         }
+
+    //         HalfClosedLocal(headers) => {
+    //             try!(headers.check_is_headers(ProtocolError.into()));
+    //             if eos {
+    //                 *self = Closed;
+    //             } else {
+    //                 let remote = FlowControlState::with_initial_size(initial_window_size);
+    //                 *self = HalfClosedLocal(Data(remote));
+    //             };
+    //             Ok(false)
+    //         }
+
+    //         Closed | HalfClosedRemote(..) => {
+    //             Err(ProtocolError.into())
+    //         }
+    //     }
+    // }
+
+    // /// Transition the state to represent headers being sent.
+    // ///
+    // /// Returns true if this state transition results in initializing the stream
+    // /// id. `Err` is returned if this is an invalid state transition.
+    // pub fn send_headers<P: Peer>(&mut self, 
+    //                              eos: bool,
+    //                              initial_window_size: WindowSize)
+    //     -> Result<bool, ConnectionError>
+    // {
+    //     use self::StreamState::*;
+    //     use self::PeerState::*;
+
+    //     match *self {
+    //         Idle => {
+    //             *self = if eos {
+    //                 HalfClosedLocal(Headers)
+    //             } else {
+    //                 Open {
+    //                     local: Data(FlowControlState::with_initial_size(initial_window_size)),
+    //                     remote: Headers,
+    //                 }
+    //             };
+
+    //             Ok(true)
+    //         }
+
+    //         Open { local, remote } => {
+    //             try!(local.check_is_headers(UnexpectedFrameType.into()));
+
+    //             *self = if eos {
+    //                 HalfClosedLocal(remote)
+    //             } else {
+    //                 let fc = FlowControlState::with_initial_size(initial_window_size);
+    //                 let local = Data(fc);
+    //                 Open { local, remote }
+    //             };
+
+    //             Ok(false)
+    //         }
+
+    //         HalfClosedRemote(local) => {
+    //             try!(local.check_is_headers(UnexpectedFrameType.into()));
+
+    //             *self = if eos {
+    //                 Closed
+    //             } else {
+    //                 let fc = FlowControlState::with_initial_size(initial_window_size);
+    //                 HalfClosedRemote(Data(fc))
+    //             };
+
+    //             Ok(false)
+    //         }
+
+    //         Closed | HalfClosedLocal(..) => {
+    //             Err(UnexpectedFrameType.into())
+    //         }
+    //     }
+    // }
+
+    pub fn check_can_send_data(&self) -> Result<(), ConnectionError> {
         use self::StreamState::*;
 
         match self {
-            &Closed => true,
-            _ => false,
+            &Open { ref remote, .. } => {
+                try!(remote.check_is_data(UnexpectedFrameType.into()));
+                Ok(())
+            }
+
+            &HalfClosedLocal(ref remote) => {
+                try!(remote.check_is_data(UnexpectedFrameType.into()));
+                Ok(())
+            }
+
+            &Idle | &Closed | &HalfClosedRemote(..) => {
+                Err(UnexpectedFrameType.into())
+            }
         }
     }
-    /// Transition the state to represent headers being received.
-    ///
-    /// Returns true if this state transition results in iniitializing the
-    /// stream id. `Err` is returned if this is an invalid state transition.
-    pub fn recv_headers<P>(&mut self, eos: bool, initial_window_size: WindowSize)
-        -> Result<bool, ConnectionError>
-        where P: Peer
-    {
+
+    pub fn check_can_recv_data(&self) -> Result<(), ConnectionError> {
         use self::StreamState::*;
-        use self::PeerState::*;
+
+        match self {
+            &Open { ref local, .. } => {
+                try!(local.check_is_data(ProtocolError.into()));
+                Ok(())
+            }
+
+            &HalfClosedRemote(ref local) => {
+                try!(local.check_is_data(ProtocolError.into()));
+                Ok(())
+            }
+
+            &Idle | &Closed | &HalfClosedLocal(..) => {
+                Err(ProtocolError.into())
+            }
+        }
+    }
+
+    /// Returns true iff the stream is fully closed.
+    pub fn close_local(&mut self) -> Result<bool, ConnectionError> {
+        use self::StreamState::*;
 
         match *self {
-            Idle => {
-                let local = Headers;
-                if eos {
-                    *self = HalfClosedRemote(local);
-                } else {
-                    let remote = Data(FlowControlState::with_initial_size(initial_window_size));
-                    *self = Open { local, remote };
-                }
+            Open { remote, .. } => {
+                *self = HalfClosedLocal(remote);
+                Ok(false)
+            }
+
+            HalfClosedLocal(remote) => {
+                *self = Closed;
                 Ok(true)
             }
 
-            Open { local, remote } => {
-                try!(remote.check_is_headers(ProtocolError.into()));
-                if !eos {
-                    // Received non-trailers HEADERS on open remote.
-                    return Err(ProtocolError.into());
-                }
+            Idle | Closed | HalfClosedRemote(..) => {
+                Err(ProtocolError.into())
+            }
+        }
+    }
+
+    /// Returns true iff the stream is fully closed.
+    pub fn close_remote(&mut self) -> Result<bool, ConnectionError> {
+        use self::StreamState::*;
+
+        match *self {
+            Open { local, .. } => {
                 *self = HalfClosedRemote(local);
                 Ok(false)
             }
 
-            HalfClosedLocal(headers) => {
-                try!(headers.check_is_headers(ProtocolError.into()));
-                if eos {
-                    *self = Closed;
-                } else {
-                    let remote = FlowControlState::with_initial_size(initial_window_size);
-                    *self = HalfClosedLocal(Data(remote));
-                };
-                Ok(false)
-            }
-
-            Closed | HalfClosedRemote(..) => {
-                Err(ProtocolError.into())
-            }
-        }
-    }
-
-    pub fn recv_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
-        use self::StreamState::*;
-
-        match *self {
-            Open { local, remote } => {
-                try!(remote.check_is_data(ProtocolError.into()));
-                if eos {
-                    *self = HalfClosedRemote(local);
-                }
-                Ok(())
-            }
-
-            HalfClosedLocal(remote) => {
-                try!(remote.check_is_data(ProtocolError.into()));
-                if eos {
-                    *self = Closed;
-                }
-                Ok(())
-            }
-
-            Closed | HalfClosedRemote(..) => {
-                Err(ProtocolError.into())
-            }
-
-            _ => unimplemented!(),
-        }
-    }
-
-    /// Transition the state to represent headers being sent.
-    ///
-    /// Returns true if this state transition results in initializing the stream
-    /// id. `Err` is returned if this is an invalid state transition.
-    pub fn send_headers<P: Peer>(&mut self, 
-                                 eos: bool,
-                                 initial_window_size: WindowSize)
-        -> Result<bool, ConnectionError>
-    {
-        use self::StreamState::*;
-        use self::PeerState::*;
-
-        match *self {
-            Idle => {
-                *self = if eos {
-                    HalfClosedLocal(Headers)
-                } else {
-                    Open {
-                        local: Data(FlowControlState::with_initial_size(initial_window_size)),
-                        remote: Headers,
-                    }
-                };
-
+            HalfClosedRemote(local) => {
+                *self = Closed;
                 Ok(true)
             }
 
-            Open { local, remote } => {
-                try!(local.check_is_headers(UnexpectedFrameType.into()));
-
-                *self = if eos {
-                    HalfClosedLocal(remote)
-                } else {
-                    let fc = FlowControlState::with_initial_size(initial_window_size);
-                    let local = Data(fc);
-                    Open { local, remote }
-                };
-
-                Ok(false)
-            }
-
-            HalfClosedRemote(local) => {
-                try!(local.check_is_headers(UnexpectedFrameType.into()));
-
-                *self = if eos {
-                    Closed
-                } else {
-                    let fc = FlowControlState::with_initial_size(initial_window_size);
-                    HalfClosedRemote(Data(fc))
-                };
-
-                Ok(false)
-            }
-
-            Closed | HalfClosedLocal(..) => {
-                Err(UnexpectedFrameType.into())
-            }
-        }
-    }
-
-    pub fn send_data(&mut self, eos: bool) -> Result<(), ConnectionError> {
-        use self::StreamState::*;
-
-        match *self {
-            Open { local, remote } => {
-                try!(local.check_is_data(UnexpectedFrameType.into()));
-                if eos {
-                    *self = HalfClosedLocal(remote);
-                }
-                Ok(())
-            }
-
-            HalfClosedRemote(local) => {
-                try!(local.check_is_data(UnexpectedFrameType.into()));
-                if eos {
-                    *self = Closed;
-                }
-                Ok(())
-            }
-
             Idle | Closed | HalfClosedLocal(..) => {
-                Err(UnexpectedFrameType.into())
+                Err(ProtocolError.into())
             }
         }
     }
- 
+
     pub fn local_flow_controller(&mut self) -> Option<&mut FlowControlState> {
         use self::StreamState::*;
         use self::PeerState::*;

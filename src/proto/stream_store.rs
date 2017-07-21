@@ -1,5 +1,5 @@
 use {ConnectionError, Peer, StreamId};
-use error::Reason;
+use error::Reason::{NoError, ProtocolError};
 use proto::*;
 
 use fnv::FnvHasher;
@@ -18,8 +18,10 @@ pub trait ControlStreams {
         !Self::can_create_local_stream()
     }
 
-    fn get_reset(&self, id: StreamId) -> Option<Reason>;
+    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
     fn reset_stream(&mut self, id: StreamId, cause: Reason);
+    fn get_reset(&self, id: StreamId) -> Option<Reason>;
 
     fn is_local_active(&self, id: StreamId) -> bool;
     fn is_remote_active(&self, id: StreamId) -> bool;
@@ -33,13 +35,8 @@ pub trait ControlStreams {
     fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32);
     fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32);
 
-    // fn get_active(&self, id: StreamId) -> Option<&StreamState> {
-    //     self.streams(id).get_active(id)
-    // }
-
-    // fn get_active_mut(&mut self, id: StreamId) -> Option<&mut StreamState>  {
-    //     self.streams_mut(id).get_active_mut(id)
-    // }
+    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
 }
 
 /// Holds the underlying stream state to be accessed by upper layers.
@@ -112,6 +109,35 @@ impl<T, P, U> ReadySink for StreamStore<T, P>
     }
 }
 
+impl<T, P: Peer> StreamStore<T, P> {
+    pub fn get_active(&mut self, id: StreamId) -> Option<&StreamState> {
+        assert!(!id.is_zero());
+        if P::is_valid_local_stream_id(id) {
+            self.local_active.get(&id)
+        } else {
+            self.remote_active.get(&id)
+        }
+    }
+
+    pub fn get_active_mut(&mut self, id: StreamId) -> Option<&mut StreamState> {
+        assert!(!id.is_zero());
+        if P::is_valid_local_stream_id(id) {
+            self.local_active.get_mut(&id)
+        } else {
+            self.remote_active.get_mut(&id)
+        }
+    }
+
+    pub fn remove_active(&mut self, id: StreamId) {
+        assert!(!id.is_zero());
+        if P::is_valid_local_stream_id(id) {
+            self.local_active.remove(&id);
+        } else {
+            self.remote_active.remove(&id);
+        }
+    }
+}
+
 impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
     fn is_valid_local_id(id: StreamId) -> bool {
         P::is_valid_local_stream_id(id)
@@ -125,17 +151,37 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         P::can_create_local_stream()
     }
 
-    fn get_reset(&self, id: StreamId) -> Option<Reason> {
-        self.reset.get(&id).map(|r| *r)
+    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        let fully_closed = self.get_active_mut(id)
+            .map(|s| s.close_local())
+            .unwrap_or_else(|| Err(ProtocolError.into()))?;
+
+        if fully_closed {
+            self.remove_active(id);
+            self.reset.insert(id, NoError);
+        }
+        Ok(())
+    }
+
+    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        let fully_closed = self.get_active_mut(id)
+            .map(|s| s.close_remote())
+            .unwrap_or_else(|| Err(ProtocolError.into()))?;
+
+        if fully_closed {
+            self.remove_active(id);
+            self.reset.insert(id, NoError);
+        }
+        Ok(())
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
-        if P::is_valid_local_stream_id(id) {
-            self.local_active.remove(&id);
-        } else {
-            self.remote_active.remove(&id);
-        }
+        self.remove_active(id);
         self.reset.insert(id, cause);
+    }
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.reset.get(&id).map(|r| *r)
     }
 
     fn is_local_active(&self, id: StreamId) -> bool {
@@ -236,6 +282,20 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         } else {
             self.remote_active.get_mut(&id).and_then(|s| s.remote_flow_controller())
         }
+    }
+
+    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        if let Some(s) = self.get_active(id) {
+            return s.check_can_send_data();
+        }
+        Err(ProtocolError.into())
+    }
+
+    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
+        if let Some(s) = self.get_active(id) {
+            return s.check_can_recv_data();
+        }
+        Err(ProtocolError.into())
     }
 }
 

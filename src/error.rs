@@ -85,7 +85,7 @@ pub enum User {
     StreamReset(Reason),
 
     /// The application attempted to initiate too many streams to remote.
-    MaxConcurrencyExceeded,
+    Rejected,
 
     // TODO: reserve additional variants
 }
@@ -127,7 +127,7 @@ macro_rules! user_desc {
             FlowControlViolation => concat!($prefix, "flow control violation"),
             StreamReset(_) => concat!($prefix, "frame sent on reset stream"),
             Corrupt => concat!($prefix, "connection state corrupt"),
-            MaxConcurrencyExceeded => concat!($prefix, "stream would exceed remote max concurrency"),
+            Rejected => concat!($prefix, "stream would exceed remote max concurrency"),
         }
     });
 }

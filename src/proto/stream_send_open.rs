@@ -1,5 +1,5 @@
 use ConnectionError;
-use error::User::{InvalidStreamId, StreamReset};
+use error::User::{InvalidStreamId, StreamReset, Rejected};
 use frame::{Frame, SettingSet};
 use proto::*;
 
@@ -101,34 +101,27 @@ impl<T, U> Sink for StreamSendOpen<T>
 
         if T::is_valid_local_id(id) {
             if self.inner.is_local_active(id) {
-                // If the frame ends thestream, it will be handled in stream_recv.
-                return self.inner.start_send(frame);
-            }
-
-            if T::can_create_local_stream() {
-                let has_capacity = match self.max_concurrency {
-                    None => true,
-                    Some(max) => self.inner.local_active_len() < (max as usize),
-                };
-                if has_capacity {
-                    // create that shit.
-                    unimplemented!();
+            } else if T::can_create_local_stream() {
+                if let Some(max) = self.max_concurrency {
+                    if (max as usize) < self.inner.local_active_len() {
+                        return Err(Rejected.into());
+                    }
                 }
+
+                // TODO create that shit.
             }
         } else {
-            if self.inner.is_remote_active(id) {
-                // If the frame was part of a remote stream, it MUST already exist. If the
-                // frame ends thestream, it will be handled in stream_recv.
-                return self.inner.start_send(frame);
-            }
-
-            if let Reset(rst) = frame {
-                return self.inner.start_send(Reset(rst));
+            // If the frame was part of a remote stream, it MUST already exist.
+            if !self.inner.is_remote_active(id) && !frame.is_reset() {
+                return Err(InvalidStreamId.into());
             }
         }
 
-        // Tried to send a frame on a stream
-        return Err(InvalidStreamId.into());
+        if let &Data(..) = &frame {
+            self.inner.check_can_send_data(id);
+        }
+
+        return self.inner.start_send(frame);
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
@@ -160,12 +153,20 @@ impl<T: ControlStreams> ControlStreams for StreamSendOpen<T> {
         T::can_create_local_stream()
     }
 
-    fn get_reset(&self, id: StreamId) -> Option<Reason> {
-        self.inner.get_reset(id)
+    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_local_half(id)
+    }
+
+    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_remote_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
         self.inner.reset_stream(id, cause)
+    }
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.inner.get_reset(id)
     }
 
     fn is_local_active(&self, id: StreamId) -> bool {
@@ -198,6 +199,14 @@ impl<T: ControlStreams> ControlStreams for StreamSendOpen<T> {
 
     fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         self.inner.remote_flow_controller(id)
+    }
+
+    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.check_can_send_data(id)
+    }
+
+    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
+        self.inner.check_can_recv_data(id)
     }
 }
 

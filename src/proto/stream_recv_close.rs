@@ -79,12 +79,20 @@ impl<T: ControlStreams> ControlStreams for StreamRecvClose<T> {
         T::can_create_local_stream()
     }
 
-    fn get_reset(&self, id: StreamId) -> Option<Reason> {
-        self.inner.get_reset(id)
+    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_local_half(id)
+    }
+
+    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_remote_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
         self.inner.reset_stream(id, cause)
+    }
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.inner.get_reset(id)
     }
 
     fn is_local_active(&self, id: StreamId) -> bool {
@@ -117,6 +125,14 @@ impl<T: ControlStreams> ControlStreams for StreamRecvClose<T> {
 
     fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         self.inner.remote_flow_controller(id)
+    }
+
+    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.check_can_send_data(id)
+    }
+
+    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
+        self.inner.check_can_recv_data(id)
     }
 }
 

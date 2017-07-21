@@ -112,18 +112,18 @@ fn test_with_initial_size() {
     assert!(fc.apply_window_update().is_none());
 }
 
-#[test]
-fn test_with_next_update() {
-    let mut fc = FlowControlState::with_next_update(10);
-
-    fc.expand_window(8);
-    assert_eq!(fc.window_size, 0);
-    assert_eq!(fc.next_window_update, 18);
-
-    assert_eq!(fc.apply_window_update(), Some(18));
-    assert_eq!(fc.window_size, 18);
-    assert_eq!(fc.next_window_update, 0);
-}
+// #[test]
+// fn test_with_next_update() {
+//     let mut fc = FlowControlState::with_next_update(10);
+//
+//     fc.expand_window(8);
+//     assert_eq!(fc.window_size, 0);
+//     assert_eq!(fc.next_window_update, 18);
+//
+//     assert_eq!(fc.apply_window_update(), Some(18));
+//     assert_eq!(fc.window_size, 18);
+//     assert_eq!(fc.next_window_update, 0);
+// }
 
 #[test]
 fn test_grow_accumulates() {

@@ -1,4 +1,5 @@
 use ConnectionError;
+use error::Reason::{ProtocolError, RefusedStream};
 use frame::{Frame, StreamId};
 use proto::*;
 
@@ -35,7 +36,7 @@ impl<T, U> StreamRecvOpen<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams,
 {
-    fn send_refusal(&mut self, id: StreamId) -> Poll<(), ConnectionError> {
+    fn send_refuse(&mut self, id: StreamId) -> Poll<(), ConnectionError> {
         debug_assert!(self.pending_refuse.is_none());
 
         let f = frame::Reset::new(id, Reason::RefusedStream);
@@ -99,7 +100,7 @@ impl<T, U> Stream for StreamRecvOpen<T>
         // Since there's only one slot for pending refused streams, it must be cleared
         // before polling  a frame from the transport.
         if let Some(id) = self.pending_refuse.take() {
-            try_ready!(self.send_refusal(id));
+            try_ready!(self.send_refuse(id));
         }
 
         loop {
@@ -115,12 +116,27 @@ impl<T, U> Stream for StreamRecvOpen<T>
 
             if self.inner.get_reset(id).is_some() {
                 // For now, just ignore frames on reset streams.
+                debug!("ignoring received frame on reset stream");
                 // TODO tell the remote to knock it off?
                 continue;
             }
 
             if T::is_valid_remote_id(id) {
-                unimplemented!()
+                if !self.inner.is_local_active(id) {
+                    if !T::can_create_remote_stream() {
+                        return Err(ProtocolError.into());
+                    }
+
+                    if let Some(max) = self.max_concurrency {
+                        if (max as usize) < self.inner.local_active_len() {
+                            return Err(RefusedStream.into());
+                        }
+                    }
+                }
+
+                // If the frame ends the stream, it will be handled in
+                // StreamRecvClose.
+                return Ok(Async::Ready(Some(frame)));
             }
         }
     }
@@ -139,7 +155,7 @@ impl<T, U> Sink for StreamRecvOpen<T>
         // The local must complete refusing the remote stream before sending any other
         // frames.
         if let Some(id) = self.pending_refuse.take() {
-            if self.send_refusal(id)?.is_not_ready() {
+            if self.send_refuse(id)?.is_not_ready() {
                 return Ok(AsyncSink::NotReady(frame));
             }
         }
@@ -157,7 +173,7 @@ impl<T, U> Sink for StreamRecvOpen<T>
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
         if let Some(id) = self.pending_refuse.take() {
-            try_ready!(self.send_refusal(id));
+            try_ready!(self.send_refuse(id));
         }
 
         self.inner.poll_complete()
@@ -173,7 +189,7 @@ impl<T, U> ReadySink for StreamRecvOpen<T>
 {
     fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         if let Some(id) = self.pending_refuse.take() {
-            try_ready!(self.send_refusal(id));
+            try_ready!(self.send_refuse(id));
         }
 
         self.inner.poll_ready()
@@ -284,7 +300,6 @@ impl<T, U> ReadySink for StreamRecvOpen<T>
     //     return Ok(Async::Ready(None));
     // }
 
-
 impl<T: ControlStreams> ControlStreams for StreamRecvOpen<T> {
     fn is_valid_local_id(id: StreamId) -> bool {
         T::is_valid_local_id(id)
@@ -298,12 +313,20 @@ impl<T: ControlStreams> ControlStreams for StreamRecvOpen<T> {
         T::can_create_local_stream()
     }
 
-    fn get_reset(&self, id: StreamId) -> Option<Reason> {
-        self.inner.get_reset(id)
+    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_local_half(id)
+    }
+
+    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_stream_remote_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
         self.inner.reset_stream(id, cause)
+    }
+
+    fn get_reset(&self, id: StreamId) -> Option<Reason> {
+        self.inner.get_reset(id)
     }
 
     fn is_local_active(&self, id: StreamId) -> bool {
@@ -336,6 +359,14 @@ impl<T: ControlStreams> ControlStreams for StreamRecvOpen<T> {
 
     fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         self.inner.remote_flow_controller(id)
+    }
+
+    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.check_can_send_data(id)
+    }
+
+    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
+        self.inner.check_can_recv_data(id)
     }
 }
 
