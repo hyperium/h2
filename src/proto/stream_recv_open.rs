@@ -121,23 +121,34 @@ impl<T, U> Stream for StreamRecvOpen<T>
                 continue;
             }
 
-            if T::is_valid_remote_id(id) {
-                if !self.inner.is_local_active(id) {
-                    if !T::can_create_remote_stream() {
+            if T::remote_valid_id(id) {
+                if !self.inner.is_remote_active(id) {
+                    if !T::remote_can_open() {
                         return Err(ProtocolError.into());
                     }
 
                     if let Some(max) = self.max_concurrency {
-                        if (max as usize) < self.inner.local_active_len() {
+                        if (max as usize) < self.inner.remote_active_len() {
                             return Err(RefusedStream.into());
                         }
                     }
-                }
 
-                // If the frame ends the stream, it will be handled in
-                // StreamRecvClose.
-                return Ok(Async::Ready(Some(frame)));
+                    self.inner.remote_open(id, self.initial_window_size)?;
+                }
+            } else {
+                // Receiving on local stream MUST be on active stream.
+                if !self.inner.is_local_active(id) && !frame.is_reset() {
+                    return Err(ProtocolError.into());
+                }
             }
+
+            if let &Data(..) = &frame {
+                self.inner.check_can_recv_data(id)?;
+            }
+
+            // If the frame ends the stream, it will be handled in
+            // StreamRecvClose.
+            return Ok(Async::Ready(Some(frame)));
         }
     }
 }
@@ -301,24 +312,32 @@ impl<T, U> ReadySink for StreamRecvOpen<T>
     // }
 
 impl<T: ControlStreams> ControlStreams for StreamRecvOpen<T> {
-    fn is_valid_local_id(id: StreamId) -> bool {
-        T::is_valid_local_id(id)
+    fn local_valid_id(id: StreamId) -> bool {
+        T::local_valid_id(id)
     }
 
-    fn is_valid_remote_id(id: StreamId) -> bool {
-        T::is_valid_remote_id(id)
+    fn remote_valid_id(id: StreamId) -> bool {
+        T::remote_valid_id(id)
     }
 
-    fn can_create_local_stream() -> bool {
-        T::can_create_local_stream()
+    fn local_can_open() -> bool {
+        T::local_can_open()
     }
 
-    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_stream_local_half(id)
+    fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.local_open(id, sz)
     }
 
-    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_stream_remote_half(id)
+    fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.remote_open(id, sz)
+    }
+
+    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_local_half(id)
+    }
+
+    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_remote_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {

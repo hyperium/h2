@@ -85,9 +85,9 @@ pub trait Peer {
     /// remote node.
     fn is_valid_remote_stream_id(id: StreamId) -> bool;
 
-    fn can_create_local_stream() -> bool;
-    fn can_create_remote_stream() -> bool {
-        !Self::can_create_local_stream()
+    fn local_can_open() -> bool;
+    fn remote_can_open() -> bool {
+        !Self::local_can_open()
     }
 
     //fn can_reserve_local_stream() -> bool;

@@ -48,7 +48,7 @@ impl<T, U> Sink for StreamSendClose<T>
             if let &Frame::Reset(ref rst) = &frame {
                 self.inner.reset_stream(id, rst.reason());
             } else {
-                self.inner.close_stream_local_half(id)?;
+                self.inner.close_local_half(id)?;
             }
         }
 
@@ -81,24 +81,32 @@ impl<T: ApplySettings> ApplySettings for StreamSendClose<T> {
 }
 
 impl<T: ControlStreams> ControlStreams for StreamSendClose<T> {
-    fn is_valid_local_id(id: StreamId) -> bool {
-        T::is_valid_local_id(id)
+    fn local_valid_id(id: StreamId) -> bool {
+        T::local_valid_id(id)
     }
 
-    fn is_valid_remote_id(id: StreamId) -> bool {
-        T::is_valid_remote_id(id)
+    fn remote_valid_id(id: StreamId) -> bool {
+        T::remote_valid_id(id)
     }
 
-    fn can_create_local_stream() -> bool {
-        T::can_create_local_stream()
+    fn local_can_open() -> bool {
+        T::local_can_open()
     }
 
-    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_stream_local_half(id)
+    fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.local_open(id, sz)
     }
 
-    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_stream_remote_half(id)
+    fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.remote_open(id, sz)
+    }
+
+    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_local_half(id)
+    }
+
+    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_remote_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {

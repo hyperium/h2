@@ -37,7 +37,7 @@ pub struct Settings<T> {
     remaining_acks: usize,
 
     // True when the local settings must be flushed to the remote
-    is_valid_local_id_dirty: bool,
+    local_valid_id_dirty: bool,
 
     // True when we have received a settings frame from the remote.
     received_remote: bool,
@@ -52,7 +52,7 @@ impl<T, U> Settings<T>
             local: local,
             remote: SettingSet::default(),
             remaining_acks: 0,
-            is_valid_local_id_dirty: true,
+            local_valid_id_dirty: true,
             received_remote: false,
         }
     }
@@ -74,18 +74,18 @@ impl<T, U> Settings<T>
             local: self.local,
             remote: self.remote,
             remaining_acks: self.remaining_acks,
-            is_valid_local_id_dirty: self.is_valid_local_id_dirty,
+            local_valid_id_dirty: self.local_valid_id_dirty,
             received_remote: self.received_remote,
         }
     }
 
     fn try_send_pending(&mut self) -> Poll<(), ConnectionError> {
-        trace!("try_send_pending; dirty={} acks={}", self.is_valid_local_id_dirty, self.remaining_acks);
-        if self.is_valid_local_id_dirty {
+        trace!("try_send_pending; dirty={} acks={}", self.local_valid_id_dirty, self.remaining_acks);
+        if self.local_valid_id_dirty {
             let frame = frame::Settings::new(self.local.clone());
             try_ready!(self.try_send(frame));
 
-            self.is_valid_local_id_dirty = false;
+            self.local_valid_id_dirty = false;
         }
 
         while self.remaining_acks > 0 {
@@ -111,7 +111,7 @@ impl<T, U> Settings<T>
 impl<T> ControlSettings for Settings<T>{
     fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
         self.local = local;
-        self.is_valid_local_id_dirty = true;
+        self.local_valid_id_dirty = true;
         Ok(())
     }
 

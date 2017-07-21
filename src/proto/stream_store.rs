@@ -1,6 +1,7 @@
 use {ConnectionError, Peer, StreamId};
 use error::Reason::{NoError, ProtocolError};
 use proto::*;
+use proto::state::{StreamState, PeerState};
 
 use fnv::FnvHasher;
 use ordermap::OrderMap;
@@ -10,16 +11,23 @@ use std::marker::PhantomData;
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
 /// to Connection).
 pub trait ControlStreams {
-    fn is_valid_local_id(id: StreamId) -> bool;
-    fn is_valid_remote_id(id: StreamId) -> bool;
+    fn local_valid_id(id: StreamId) -> bool;
+    fn remote_valid_id(id: StreamId) -> bool;
 
-    fn can_create_local_stream() -> bool;
-    fn can_create_remote_stream() -> bool {
-        !Self::can_create_local_stream()
+    fn local_can_open() -> bool;
+    fn remote_can_open() -> bool {
+        !Self::local_can_open()
     }
 
-    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
-    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
+    fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
+
+    // fn local_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    // fn remote_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+
+    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+
     fn reset_stream(&mut self, id: StreamId, cause: Reason);
     fn get_reset(&self, id: StreamId) -> Option<Reason>;
 
@@ -139,19 +147,46 @@ impl<T, P: Peer> StreamStore<T, P> {
 }
 
 impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
-    fn is_valid_local_id(id: StreamId) -> bool {
+    fn local_valid_id(id: StreamId) -> bool {
         P::is_valid_local_stream_id(id)
     }
 
-    fn is_valid_remote_id(id: StreamId) -> bool {
+    fn remote_valid_id(id: StreamId) -> bool {
         P::is_valid_remote_stream_id(id)
     }
 
-    fn can_create_local_stream() -> bool {
-        P::can_create_local_stream()
+    fn local_can_open() -> bool {
+        P::local_can_open()
     }
 
-    fn close_stream_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+    /// Open a new stream from the local side (i.e. as a Client).
+    //
+    fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        debug_assert!(Self::local_can_open());
+        assert!(Self::local_valid_id(id));
+        debug_assert!(!self.local_active.contains_key(&id));
+
+        self.local_active.insert(id, StreamState::Open {
+            remote: PeerState::Data(FlowControlState::with_initial_size(sz)),
+            local: PeerState::Headers,
+        });
+        Ok(())
+    }
+
+    /// Open a new stream from the remote side (i.e. as a Server).
+    fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        debug_assert!(Self::remote_can_open());
+        assert!(Self::remote_valid_id(id));
+        debug_assert!(!self.remote_active.contains_key(&id));
+
+        self.remote_active.insert(id, StreamState::Open {
+            local: PeerState::Data(FlowControlState::with_initial_size(sz)),
+            remote: PeerState::Headers,
+        });
+        Ok(())
+    }
+
+    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
         let fully_closed = self.get_active_mut(id)
             .map(|s| s.close_local())
             .unwrap_or_else(|| Err(ProtocolError.into()))?;
@@ -163,7 +198,7 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         Ok(())
     }
 
-    fn close_stream_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
         let fully_closed = self.get_active_mut(id)
             .map(|s| s.close_remote())
             .unwrap_or_else(|| Err(ProtocolError.into()))?;

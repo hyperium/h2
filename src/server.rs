@@ -118,7 +118,7 @@ impl Peer for Server {
         id.is_client_initiated()
     }
 
-    fn can_create_local_stream() -> bool {
+    fn local_can_open() -> bool {
         false
     }
 

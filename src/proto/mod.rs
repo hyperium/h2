@@ -31,7 +31,7 @@ use self::framed_write::FramedWrite;
 use self::ping_pong::{ControlPing, PingPayload, PingPong};
 use self::ready::ReadySink;
 use self::settings::{ApplySettings, /*ControlSettings,*/ Settings};
-use self::state::{StreamState};
+use self::state::{StreamState, PeerState};
 use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
