@@ -110,29 +110,19 @@ impl<T, U> Stream for StreamRecvOpen<T>
 
         trace!("poll");
         loop {
-            let frame = match self.inner.poll()? {
-                Async::NotReady => {
-                    panic!("poll: NotReady");
-                }
-                Async::Ready(None) => {
-                    panic!("poll: None");
-                }
-                Async::Ready(Some(f)) => {
-                    trace!("poll: id={:?} eos={}", f.stream_id(), f.is_end_stream());
-                    f
-                }
+            let frame = match try_ready!(self.inner.poll()) {
+                None => return Ok(Async::Ready(None)),
+                Some(f) => f,
             };
-            // let frame = match try_ready!(self.inner.poll()) {
-            //     None => return Ok(Async::Ready(None)),
-            //     Some(f) => f,
-            // };
 
             let id = frame.stream_id();
             trace!("poll: id={:?}", id);
+
             if id.is_zero() {
                 if !frame.is_connection_frame() {
                     return Err(ProtocolError.into())
                 }
+
                 // Nothing to do on connection frames.
                 return Ok(Async::Ready(Some(frame)));
             }

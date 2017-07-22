@@ -112,15 +112,6 @@ impl<T> Frame<T> {
             &Reset(_) => true,
         }
     }
-
-    pub fn is_reset(&self) -> bool {
-        use self::Frame::*;
-
-        match self {
-            &Reset(_) => true,
-            _ => false,
-        }
-    }
 }
 
 /// Errors that can occur during parsing an HTTP/2 frame.

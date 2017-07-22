@@ -1,9 +1,11 @@
+extern crate bytes;
 extern crate h2;
 extern crate http;
-extern crate futures;
-extern crate mock_io;
 extern crate env_logger;
-extern crate bytes;
+extern crate futures;
+#[macro_use]
+extern crate log;
+extern crate mock_io;
 
 // scoped so `cargo test client_request` dtrt.
 mod client_request {
@@ -48,6 +50,7 @@ mod client_request {
 
         let h2 = client::handshake(mock)
             .wait().unwrap();
+        trace!("hands have been shook");
 
         // At this point, the connection should be closed
         assert!(Stream::wait(h2).next().is_none());

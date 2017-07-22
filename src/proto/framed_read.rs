@@ -39,6 +39,8 @@ impl<T> FramedRead<T> {
     }
 
     fn decode_frame(&mut self, mut bytes: Bytes) -> Result<Option<Frame>, ConnectionError> {
+        trace!("decoding frame from {}B", bytes.len());
+
         // Parse the head
         let head = frame::Head::parse(&bytes);
 
@@ -47,7 +49,7 @@ impl<T> FramedRead<T> {
         }
 
         let kind = head.kind();
-        debug!("received {:?}", kind);
+        debug!("decoded; kind={:?}", kind);
 
         let frame = match kind {
             Kind::Settings => {
@@ -121,11 +123,13 @@ impl<T> Stream for FramedRead<T>
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
         loop {
+            trace!("poll");
             let bytes = match try_ready!(self.inner.poll()) {
                 Some(bytes) => bytes.freeze(),
                 None => return Ok(Async::Ready(None)),
             };
 
+            trace!("poll; bytes={}B", bytes.len());
             if let Some(frame) = try!(self.decode_frame(bytes)) {
                 debug!("poll; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));

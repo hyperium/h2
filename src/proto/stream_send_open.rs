@@ -87,6 +87,7 @@ impl<T, U> Sink for StreamSendOpen<T>
             if !frame.is_connection_frame() {
                 return Err(InvalidStreamId.into())
             }
+
             // Nothing to do on connection frames.
             return self.inner.start_send(frame);
         }

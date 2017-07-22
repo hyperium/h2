@@ -27,9 +27,9 @@ extern crate log;
 
 pub mod client;
 pub mod error;
-pub mod hpack;
-pub mod proto;
-pub mod frame;
+mod hpack;
+mod proto;
+mod frame;
 pub mod server;
 
 mod util;
