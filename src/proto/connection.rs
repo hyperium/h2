@@ -3,7 +3,8 @@ use client::Client;
 use error;
 use frame::{self, StreamId};
 use proto::*;
-//use proto::ping_pong::PingPayload;
+use proto::ping_pong::{ControlPing, PingPayload};
+use proto::settings::ControlSettings;
 use server::Server;
 
 use bytes::{Bytes, IntoBuf};
@@ -33,24 +34,6 @@ pub fn new<T, P, B>(transport: Transport<T, P, B::Buf>)
     }
 }
 
-// impl<T, P, B> ControlSettings for Connection<T, P, B>
-//     where T: AsyncRead + AsyncWrite,
-//           B: IntoBuf,
-// {
-//     fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
-//         self.inner.update_local_settings(local)
-//     }
-
-//     fn local_settings(&self) -> &SettingSet {
-//         self.inner.local_settings()
-//     }
-
-//     fn remote_settings(&self) -> &SettingSet {
-//         self.inner.remote_settings()
-//     }
-// }
-
-
 impl<T, P, B> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -64,6 +47,18 @@ impl<T, P, B> Connection<T, P, B>
     /// Increases the capacity of a local flow control window.
     pub fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
         self.inner.expand_window(id, incr)
+    }
+
+    pub fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
+        self.inner.update_local_settings(local)
+    }
+
+    pub fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    pub fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
     }
 
     pub fn send_data(self,

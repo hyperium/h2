@@ -1,5 +1,5 @@
 use ConnectionError;
-use error::User::{InactiveStreamId, InvalidStreamId, StreamReset, Rejected, UnexpectedFrameType};
+use error::User::{InactiveStreamId, InvalidStreamId, StreamReset, Rejected};
 use frame::{Frame, SettingSet};
 use proto::*;
 

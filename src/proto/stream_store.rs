@@ -390,3 +390,13 @@ impl<T: ApplySettings, P> ApplySettings for StreamStore<T, P> {
         self.inner.apply_remote_settings(set)
     }
 }
+
+impl<T: ControlPing, P> ControlPing for StreamStore<T, P> {
+    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        self.inner.start_ping(body)
+    }
+
+    fn take_pong(&mut self) -> Option<PingPayload> {
+        self.inner.take_pong()
+    }
+}
