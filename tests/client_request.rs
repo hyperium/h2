@@ -6,6 +6,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate mock_io;
+extern crate test_futures;
 
 // scoped so `cargo test client_request` dtrt.
 mod client_request {
@@ -15,6 +16,7 @@ mod client_request {
     use futures::*;
     use bytes::Bytes;
     use mock_io;
+    use test_futures::*;
 
     // TODO: move into another file
     macro_rules! assert_user_err {
@@ -48,12 +50,12 @@ mod client_request {
             .write(SETTINGS_ACK)
             .build();
 
-        let h2 = client::handshake(mock)
+        let mut h2 = client::handshake(mock)
             .wait().unwrap();
         trace!("hands have been shook");
 
         // At this point, the connection should be closed
-        assert!(Stream::wait(h2).next().is_none());
+        sassert_empty(&mut h2);
     }
 
     #[test]
@@ -78,10 +80,14 @@ mod client_request {
         // Send the request
         let mut request = request::Head::default();
         request.uri = "https://http2.akamai.com/".parse().unwrap();
+
+        trace!("sending request");
         let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
 
         // Get the response
-        let (resp, h2) = h2.into_future().wait().unwrap();
+
+        trace!("getting response");
+        let (resp, mut h2) = h2.into_future().wait().unwrap();
 
         match resp.unwrap() {
             Frame::Headers { headers, .. } => {
@@ -91,7 +97,8 @@ mod client_request {
         }
 
         // No more frames
-        assert!(Stream::wait(h2).next().is_none());
+        trace!("ensure no more responses");
+        sassert_empty(&mut h2);
     }
 
     #[test]
@@ -144,7 +151,7 @@ mod client_request {
         }
 
         // Get the response body
-        let (data, h2) = h2.into_future().wait().unwrap();
+        let (data, mut h2) = h2.into_future().wait().unwrap();
 
         match data.unwrap() {
             Frame::Data { id, data, end_of_stream, .. } => {
@@ -155,7 +162,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        assert!(Stream::wait(h2).next().is_none());
+        sassert_empty(&mut h2);
     }
 
     #[test]
@@ -208,7 +215,7 @@ mod client_request {
         }
 
         // Get the response body
-        let (data, h2) = h2.into_future().wait().unwrap();
+        let (data, mut h2) = h2.into_future().wait().unwrap();
 
         match data.unwrap() {
             Frame::Data { id, data, end_of_stream, .. } => {
@@ -219,7 +226,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        assert!(Stream::wait(h2).next().is_none());
+        sassert_empty(&mut h2);
     }
 
     #[test]
@@ -288,7 +295,7 @@ mod client_request {
         }
 
         // Get the response body
-        let (data, h2) = h2.into_future().wait().expect("into future");
+        let (data, mut h2) = h2.into_future().wait().expect("into future");
 
         match data.expect("response data") {
             Frame::Data { id, data, end_of_stream, .. } => {
@@ -299,7 +306,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        assert!(Stream::wait(h2).next().is_none());
+        sassert_empty(&mut h2);
     }
 
     #[test]
