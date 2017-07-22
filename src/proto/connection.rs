@@ -72,6 +72,7 @@ impl<T, P, B> Connection<T, P, B>
                      end_of_stream: bool)
         -> sink::Send<Self>
     {
+        trace!("send_data: id={:?}", id);
         self.send(Frame::Data {
             id,
             data,

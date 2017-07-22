@@ -407,12 +407,12 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.send_flow_controller(id)
     }
 
-    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.check_can_send_data(id)
+    fn can_send_data(&mut self, id: StreamId) -> bool {
+        self.inner.can_send_data(id)
     }
 
-    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
-        self.inner.check_can_recv_data(id)
+    fn can_recv_data(&mut self, id: StreamId) -> bool  {
+        self.inner.can_recv_data(id)
     }
 }
 

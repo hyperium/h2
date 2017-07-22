@@ -76,8 +76,8 @@ pub trait ControlStreams {
     fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32);
     fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32);
 
-    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
-    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn can_send_data(&mut self, id: StreamId) -> bool;
+    fn can_recv_data(&mut self, id: StreamId) -> bool;
 }
 
 /// Holds the underlying stream state to be accessed by upper layers.
@@ -366,18 +366,18 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         }
     }
 
-    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        if let Some(s) = self.get_active(id) {
-            return s.check_can_send_data();
+    fn can_send_data(&mut self, id: StreamId) -> bool {
+        match self.get_active(id) {
+            Some(s) => s.can_send_data(),
+            None => false,
         }
-        Err(ProtocolError.into())
     }
 
-    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
-        if let Some(s) = self.get_active(id) {
-            return s.check_can_recv_data();
+    fn can_recv_data(&mut self, id: StreamId) -> bool  {
+        match self.get_active(id) {
+            Some(s) => s.can_recv_data(),
+            None => false,
         }
-        Err(ProtocolError.into())
     }
 }
 

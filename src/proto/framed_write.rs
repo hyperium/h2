@@ -155,7 +155,7 @@ impl<T, B> Sink for FramedWrite<T, B>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        trace!("FramedWrite::poll_complete");
+        trace!("poll_complete");
 
         // TODO: implement
         match self.next {
@@ -165,6 +165,7 @@ impl<T, B> Sink for FramedWrite<T, B>
 
         // As long as there is data to write, try to write it!
         while !self.is_empty() {
+            trace!("writing {}", self.buf.remaining());
             try_ready!(self.inner.write_buf(&mut self.buf));
         }
 

@@ -1,6 +1,5 @@
 use ConnectionError;
 use error::Reason::*;
-use error::User::*;
 use proto::{FlowControlState, WindowSize};
 
 /// Represents the state of an H2 stream
@@ -156,40 +155,24 @@ impl StreamState {
         Ok(true)
     }
 
-    pub fn check_can_send_data(&self) -> Result<(), ConnectionError> {
+    pub fn can_send_data(&self) -> bool {
         use self::StreamState::*;
         match self {
-            &Open { ref remote, .. } => {
-                try!(remote.check_streaming(UnexpectedFrameType.into()));
-                Ok(())
-            }
+            &Idle | &Closed | &HalfClosedRemote(..) => false,
 
-            &HalfClosedLocal(ref remote) => {
-                try!(remote.check_streaming(UnexpectedFrameType.into()));
-                Ok(())
-            }
-
-            &Idle | &Closed | &HalfClosedRemote(..) => {
-                Err(UnexpectedFrameType.into())
-            }
+            &Open { ref remote, .. } |
+            &HalfClosedLocal(ref remote) => remote.is_streaming(),
         }
     }
 
-    pub fn check_can_recv_data(&self) -> Result<(), ConnectionError> {
+    pub fn can_recv_data(&self) -> bool {
         use self::StreamState::*;
         match self {
-            &Open { ref local, .. } => {
-                try!(local.check_streaming(ProtocolError.into()));
-                Ok(())
-            }
+            &Idle | &Closed | &HalfClosedLocal(..) => false,
 
+            &Open { ref local, .. } |
             &HalfClosedRemote(ref local) => {
-                try!(local.check_streaming(ProtocolError.into()));
-                Ok(())
-            }
-
-            &Idle | &Closed | &HalfClosedLocal(..) => {
-                Err(ProtocolError.into())
+                local.is_streaming()
             }
         }
     }
@@ -288,11 +271,11 @@ impl PeerState {
     }
 
     #[inline]
-    fn check_streaming(&self, err: ConnectionError) -> Result<(), ConnectionError> {
+    fn is_streaming(&self) -> bool {
         use self::PeerState::*;
         match self {
-            &Streaming(..) => Ok(()),
-            _ => Err(err),
+            &Streaming(..) => true,
+            _ => false,
         }
     }
 

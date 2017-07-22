@@ -170,7 +170,9 @@ impl<T, U> Stream for StreamRecvOpen<T>
 
             if let &Data(..) = &frame {
                 // Ensures we've already received headers for this stream.
-                self.inner.check_can_recv_data(id)?;
+                if !self.inner.can_recv_data(id) {
+                    return Err(ProtocolError.into());
+                }
             }
 
             // If the frame ends the stream, it will be handled in
@@ -400,12 +402,12 @@ impl<T: ControlStreams> ControlStreams for StreamRecvOpen<T> {
         self.inner.send_flow_controller(id)
     }
 
-    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.check_can_send_data(id)
+    fn can_send_data(&mut self, id: StreamId) -> bool {
+        self.inner.can_send_data(id)
     }
 
-    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
-        self.inner.check_can_recv_data(id)
+    fn can_recv_data(&mut self, id: StreamId) -> bool  {
+        self.inner.can_recv_data(id)
     }
 }
 

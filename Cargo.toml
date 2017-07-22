@@ -16,7 +16,6 @@ ordermap = "0.2.10"
 
 [dev-dependencies]
 mock-io = { git = "https://github.com/carllerche/mock-io" }
-test_futures = "0.0.1"
 
 # Fuzzing
 quickcheck = "0.4.1"

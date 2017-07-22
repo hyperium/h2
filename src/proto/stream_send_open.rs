@@ -1,5 +1,5 @@
 use ConnectionError;
-use error::User::{InvalidStreamId, StreamReset, Rejected};
+use error::User::{InactiveStreamId, InvalidStreamId, StreamReset, Rejected, UnexpectedFrameType};
 use frame::{Frame, SettingSet};
 use proto::*;
 
@@ -103,7 +103,11 @@ impl<T, U> Sink for StreamSendOpen<T>
         }
 
         if T::local_valid_id(id) {
-            if !self.inner.is_local_active(id) {
+            if self.inner.is_local_active(id) {
+                if !self.inner.can_send_data(id) {
+                    return Err(InactiveStreamId.into());
+                }
+            } else {
                 if !T::local_can_open() {
                     return Err(InvalidStreamId.into());
                 }
@@ -114,8 +118,11 @@ impl<T, U> Sink for StreamSendOpen<T>
                     }
                 }
 
-                trace!("creating new local stream");
-                self.inner.local_open(id, self.initial_window_size)?;
+                if let &Frame::Headers(..) = &frame {
+                    self.inner.local_open(id, self.initial_window_size)?;
+                } else {
+                    return Err(InactiveStreamId.into());
+                }
             }
         } else {
             // If the frame is part of a remote stream, it MUST already exist.
@@ -130,7 +137,9 @@ impl<T, U> Sink for StreamSendOpen<T>
 
         if let &Frame::Data(..) = &frame {
             // Ensures we've already sent headers for this stream.
-            self.inner.check_can_send_data(id)?;
+            if !self.inner.can_send_data(id) {
+                return Err(InactiveStreamId.into());
+            }
         }
 
         trace!("sending frame...");
@@ -230,12 +239,12 @@ impl<T: ControlStreams> ControlStreams for StreamSendOpen<T> {
         self.inner.send_flow_controller(id)
     }
 
-    fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.check_can_send_data(id)
+    fn can_send_data(&mut self, id: StreamId) -> bool {
+        self.inner.can_send_data(id)
     }
 
-    fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>  {
-        self.inner.check_can_recv_data(id)
+    fn can_recv_data(&mut self, id: StreamId) -> bool  {
+        self.inner.can_recv_data(id)
     }
 }
 
