@@ -133,7 +133,21 @@ impl<T, P, B> Stream for Connection<T, P, B>
         }
 
         loop {
-            let frame = try_ready!(self.inner.poll());
+            let frame = match try!(self.inner.poll()) {
+                Async::Ready(f) => f,
+
+                // XXX is this necessary?
+                Async::NotReady => {
+                    // Receiving new frames may depend on ensuring that the write buffer
+                    // is clear (e.g. if window updates need to be sent), so `poll_complete`
+                    // is called here. 
+                    try_ready!(self.poll_complete());
+
+                    // If the write buffer is cleared, attempt to poll the underlying
+                    // stream once more because it, may have been made ready.
+                    try_ready!(self.inner.poll())
+                }
+            };
 
             trace!("poll; frame={:?}", frame);
             let frame = match frame {

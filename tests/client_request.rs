@@ -55,7 +55,7 @@ mod client_request {
         trace!("hands have been shook");
 
         // At this point, the connection should be closed
-        sassert_empty(&mut h2);
+        sassert_done(&mut h2);
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod client_request {
 
         // No more frames
         trace!("ensure no more responses");
-        sassert_empty(&mut h2);
+        sassert_done(&mut h2);
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        sassert_empty(&mut h2);
+        sassert_done(&mut h2);
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        sassert_empty(&mut h2);
+        sassert_done(&mut h2);
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod client_request {
             _ => panic!("unexpected frame"),
         }
 
-        sassert_empty(&mut h2);
+        sassert_done(&mut h2);
     }
 
     #[test]

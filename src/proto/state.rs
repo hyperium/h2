@@ -146,7 +146,7 @@ impl StreamState {
                 };
             }
 
-            HalfClosedLocal(AwaitingHeaders) => {
+            HalfClosedRemote(AwaitingHeaders) => {
                 *self = HalfClosedRemote(PeerState::streaming(sz));
             }
 
