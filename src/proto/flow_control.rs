@@ -78,19 +78,19 @@ impl<T, U> FlowControl<T>
 
 // Flow control utitlities.
 impl<T: ControlStreams> FlowControl<T> {
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
             Some(&mut self.local_connection)
         } else {
-            self.inner.local_flow_controller(id)
+            self.inner.recv_flow_controller(id)
         }
     }
 
-   fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+   fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
             Some(&mut self.remote_connection)
         } else {
-            self.inner.remote_flow_controller(id)
+            self.inner.send_flow_controller(id)
         }
     }
 }
@@ -104,7 +104,7 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
 
         // TODO this should probably account for stream priority?
         while let Some(id) = self.remote_pending_streams.pop_front() {
-            if let Some(mut flow) = self.remote_flow_controller(id) {
+            if let Some(mut flow) = self.send_flow_controller(id) {
                 if let Some(incr) = flow.apply_window_update() {
                     return Ok(Async::Ready(WindowUpdate::new(id, incr)));
                 }
@@ -116,7 +116,7 @@ impl<T: ControlStreams> ControlFlow for FlowControl<T> {
     }
 
     fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        let added = match self.local_flow_controller(id) {
+        let added = match self.recv_flow_controller(id) {
             None => false,
             Some(mut fc) => {
                 fc.expand_window(incr);
@@ -153,7 +153,7 @@ impl<T, U> FlowControl<T>
 
         while let Some(id) = self.local_pending_streams.pop_front() {
             if self.inner.get_reset(id).is_none() {
-                let update = self.local_flow_controller(id).and_then(|s| s.apply_window_update());
+                let update = self.recv_flow_controller(id).and_then(|s| s.apply_window_update());
                 if let Some(incr) = update {
                     try_ready!(self.try_send(frame::WindowUpdate::new(id, incr)));
                 }
@@ -187,7 +187,7 @@ impl<T> Stream for FlowControl<T>
         loop {
             match try_ready!(self.inner.poll()) {
                 Some(WindowUpdate(v)) => {
-                    if let Some(fc) = self.remote_flow_controller(v.stream_id()) {
+                    if let Some(fc) = self.send_flow_controller(v.stream_id()) {
                         fc.expand_window(v.size_increment());
                     }
                 }
@@ -199,7 +199,7 @@ impl<T> Stream for FlowControl<T>
                     }
                     // If this frame ends the stream, there may no longer be a flow
                     // controller.  That's fine.
-                    if let Some(fc) = self.local_flow_controller(v.stream_id()) {
+                    if let Some(fc) = self.recv_flow_controller(v.stream_id()) {
                         if fc.claim_window(sz).is_err() {
                             return Err(error::Reason::FlowControlError.into())
                         }
@@ -248,7 +248,7 @@ impl<T, U> Sink for FlowControl<T>
 
             // Ensure there's enough capacity on stream.
             {
-                let mut fc = self.inner.remote_flow_controller(v.stream_id())
+                let mut fc = self.inner.send_flow_controller(v.stream_id())
                     .expect("no remote stream for data frame");
                 if fc.claim_window(sz).is_err() {
                     return Err(error::User::FlowControlViolation.into())
@@ -311,7 +311,7 @@ impl<T> ApplySettings for FlowControl<T>
             return Ok(());
         }
 
-        self.inner.local_update_inital_window_size(old_window_size, new_window_size);
+        self.inner.update_inital_recv_window_size(old_window_size, new_window_size);
         self.local_initial = new_window_size;
         Ok(())
     }
@@ -325,7 +325,7 @@ impl<T> ApplySettings for FlowControl<T>
             return Ok(());
         }
 
-        self.inner.remote_update_inital_window_size(old_window_size, new_window_size);
+        self.inner.update_inital_send_window_size(old_window_size, new_window_size);
         self.remote_initial = new_window_size;
         Ok(())
     }
@@ -348,16 +348,24 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.local_open(id, sz)
     }
 
+    fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.local_open_recv_half(id, sz)
+    }
+
+    fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.remote_open_send_half(id, sz)
+    }
+
     fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
         self.inner.remote_open(id, sz)
     }
 
-    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_local_half(id)
+    fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_send_half(id)
     }
 
-    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_remote_half(id)
+    fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_recv_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
@@ -383,20 +391,20 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.remote_active_len()
     }
 
-    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.local_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_recv_window_size(old_sz, new_sz)
     }
 
-    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.remote_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_send_window_size(old_sz, new_sz)
     }
 
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.local_flow_controller(id)
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.recv_flow_controller(id)
     }
 
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.remote_flow_controller(id)
+    fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.send_flow_controller(id)
     }
 
     fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {

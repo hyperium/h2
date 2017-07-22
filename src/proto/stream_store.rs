@@ -1,7 +1,7 @@
 use {ConnectionError, Peer, StreamId};
 use error::Reason::{NoError, ProtocolError};
 use proto::*;
-use proto::state::{StreamState, PeerState};
+use proto::state::StreamState;
 
 use fnv::FnvHasher;
 use ordermap::OrderMap;
@@ -14,19 +14,44 @@ pub trait ControlStreams {
     fn local_valid_id(id: StreamId) -> bool;
     fn remote_valid_id(id: StreamId) -> bool;
 
+    /// Indicates whether this local endpoint may open streams (with HEADERS).
+    ///
+    /// Implies that this endpoint is a client.
     fn local_can_open() -> bool;
+
+    /// Indicates whether this remote endpoint may open streams (with HEADERS).
+    ///
+    /// Implies that this endpoint is a server.
     fn remote_can_open() -> bool {
         !Self::local_can_open()
     }
 
+    /// Create a new stream in the OPEN state from the local side (i.e. as a Client).
+    ///
+    /// Must only be called when local_can_open returns true.
     fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
+
+    /// Create a new stream in the OPEN state from the remote side (i.e. as a Server).
+    ///
+    /// Must only be called when remote_can_open returns true.
     fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
+
+    /// Prepare the receive side of a local stream to receive data from the remote.
+    ///
+    /// Typically called when a client receives a response header.
+    fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
+
+    /// Prepare the send side of a remote stream to receive data from the local endpoint.
+    ///
+    /// Typically called when a server sends a response header.
+    fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
 
     // fn local_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
     // fn remote_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
 
-    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
-    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    /// Close the local half of a stream so that the local side may not RECEIVE
+    fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason);
     fn get_reset(&self, id: StreamId) -> Option<Reason>;
@@ -34,14 +59,22 @@ pub trait ControlStreams {
     fn is_local_active(&self, id: StreamId) -> bool;
     fn is_remote_active(&self, id: StreamId) -> bool;
 
+    fn is_active(&self, id: StreamId) -> bool {
+        if Self::local_valid_id(id) {
+            self.is_local_active(id)
+        } else {
+            self.is_remote_active(id)
+        }
+    }
+
     fn local_active_len(&self) -> usize;
     fn remote_active_len(&self) -> usize;
 
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
+    fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
 
-    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32);
-    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32);
+    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32);
+    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32);
 
     fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
     fn check_can_recv_data(&mut self, id: StreamId) -> Result<(), ConnectionError>;
@@ -160,35 +193,49 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
     }
 
     /// Open a new stream from the local side (i.e. as a Client).
-    //
     fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        debug_assert!(Self::local_can_open());
         assert!(Self::local_valid_id(id));
+        debug_assert!(Self::local_can_open());
         debug_assert!(!self.local_active.contains_key(&id));
 
-        self.local_active.insert(id, StreamState::Open {
-            remote: PeerState::Data(FlowControlState::with_initial_size(sz)),
-            local: PeerState::Headers,
-        });
+        self.local_active.insert(id, StreamState::new_open_sending(sz));
         Ok(())
     }
 
     /// Open a new stream from the remote side (i.e. as a Server).
     fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        debug_assert!(Self::remote_can_open());
         assert!(Self::remote_valid_id(id));
+        debug_assert!(Self::remote_can_open());
         debug_assert!(!self.remote_active.contains_key(&id));
 
-        self.remote_active.insert(id, StreamState::Open {
-            local: PeerState::Data(FlowControlState::with_initial_size(sz)),
-            remote: PeerState::Headers,
-        });
+        self.remote_active.insert(id, StreamState::new_open_recving(sz));
         Ok(())
     }
 
-    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+    fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        assert!(Self::local_valid_id(id));
+        debug_assert!(self.local_active.contains_key(&id));
+
+        match self.local_active.get_mut(&id) {
+            Some(s) => s.open_recv_half(sz).map(|_| {}),
+            None => Err(ProtocolError.into()),
+        }
+    }
+
+    fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        assert!(Self::remote_valid_id(id));
+        debug_assert!(Self::remote_can_open());
+        debug_assert!(self.remote_active.contains_key(&id));
+
+        match self.remote_active.get_mut(&id) {
+            Some(s) => s.open_send_half(sz).map(|_| {}),
+            None => Err(ProtocolError.into()),
+        }
+    }
+
+    fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
         let fully_closed = self.get_active_mut(id)
-            .map(|s| s.close_local())
+            .map(|s| s.close_send_half())
             .unwrap_or_else(|| Err(ProtocolError.into()))?;
 
         if fully_closed {
@@ -198,9 +245,9 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         Ok(())
     }
 
-    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+    fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
         let fully_closed = self.get_active_mut(id)
-            .map(|s| s.close_remote())
+            .map(|s| s.close_recv_half())
             .unwrap_or_else(|| Err(ProtocolError.into()))?;
 
         if fully_closed {
@@ -235,18 +282,18 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         self.remote_active.len()
     }
 
-    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
         if new_sz < old_sz {
             let decr = old_sz - new_sz;
 
             for s in self.local_active.values_mut() {
-                if let Some(fc) = s.local_flow_controller() {
+                if let Some(fc) = s.recv_flow_controller() {
                     fc.shrink_window(decr);
                 }
             }
 
             for s in self.remote_active.values_mut() {
-                if let Some(fc) = s.local_flow_controller() {
+                if let Some(fc) = s.recv_flow_controller() {
                     fc.shrink_window(decr);
                 }
             }
@@ -254,31 +301,31 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
             let incr = new_sz - old_sz;
 
             for s in self.local_active.values_mut() {
-                if let Some(fc) = s.local_flow_controller() {
+                if let Some(fc) = s.recv_flow_controller() {
                     fc.expand_window(incr);
                 }
             }
 
             for s in self.remote_active.values_mut() {
-                if let Some(fc) = s.local_flow_controller() {
+                if let Some(fc) = s.recv_flow_controller() {
                     fc.expand_window(incr);
                 }
             }
         }
     }
 
-    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
         if new_sz < old_sz {
             let decr = old_sz - new_sz;
 
             for s in self.local_active.values_mut() {
-                if let Some(fc) = s.remote_flow_controller() {
+                if let Some(fc) = s.send_flow_controller() {
                     fc.shrink_window(decr);
                 }
             }
 
             for s in self.remote_active.values_mut() {
-                if let Some(fc) = s.remote_flow_controller() {
+                if let Some(fc) = s.send_flow_controller() {
                     fc.shrink_window(decr);
                 }
             }
@@ -286,36 +333,36 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
             let incr = new_sz - old_sz;
 
             for s in self.local_active.values_mut() {
-                if let Some(fc) = s.remote_flow_controller() {
+                if let Some(fc) = s.send_flow_controller() {
                     fc.expand_window(incr);
                 }
             }
 
             for s in self.remote_active.values_mut() {
-                if let Some(fc) = s.remote_flow_controller() {
+                if let Some(fc) = s.send_flow_controller() {
                     fc.expand_window(incr);
                 }
             }
         }
     }
 
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
             None
         } else if P::is_valid_local_stream_id(id) {
-            self.local_active.get_mut(&id).and_then(|s| s.local_flow_controller())
+            self.local_active.get_mut(&id).and_then(|s| s.recv_flow_controller())
         } else {
-            self.remote_active.get_mut(&id).and_then(|s| s.local_flow_controller())
+            self.remote_active.get_mut(&id).and_then(|s| s.recv_flow_controller())
         }
     }
 
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+    fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
         if id.is_zero() {
             None
         } else if P::is_valid_local_stream_id(id) {
-            self.local_active.get_mut(&id).and_then(|s| s.remote_flow_controller())
+            self.local_active.get_mut(&id).and_then(|s| s.send_flow_controller())
         } else {
-            self.remote_active.get_mut(&id).and_then(|s| s.remote_flow_controller())
+            self.remote_active.get_mut(&id).and_then(|s| s.send_flow_controller())
         }
     }
 

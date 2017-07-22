@@ -9,6 +9,7 @@ use proto::ready::ReadySink;
 // TODO reset_streams needs to be bounded.
 // TODO track reserved streams (PUSH_PROMISE).
 
+/// Handles end-of-stream frames sent from the remote.
 #[derive(Debug)]
 pub struct StreamRecvClose<T> {
     inner: T,
@@ -32,11 +33,24 @@ impl<T> Stream for StreamRecvClose<T>
     type Error = T::Error;
 
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
-        use frame::Frame::*;
+        let frame = match try_ready!(self.inner.poll()) {
+            None => return Ok(Async::Ready(None)),
+            Some(f) => f,
+        };
 
-        let frame = try_ready!(self.inner.poll());
+        let id = frame.stream_id();
+        if !id.is_zero() {
+            if frame.is_end_stream() {
+                if let &Frame::Reset(ref rst) = &frame {
+                    self.inner.reset_stream(id, rst.reason());
+                } else {
+                    debug_assert!(self.inner.is_active(id));
+                    self.inner.close_recv_half(id)?;
+                }
+            }
+        }
 
-        unimplemented!()
+        Ok(Async::Ready(Some(frame)))
     }
 }
 
@@ -87,12 +101,20 @@ impl<T: ControlStreams> ControlStreams for StreamRecvClose<T> {
         self.inner.remote_open(id, sz)
     }
 
-    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_local_half(id)
+    fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.local_open_recv_half(id, sz)
     }
 
-    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_remote_half(id)
+    fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.remote_open_send_half(id, sz)
+    }
+
+    fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_send_half(id)
+    }
+
+    fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_recv_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
@@ -119,20 +141,20 @@ impl<T: ControlStreams> ControlStreams for StreamRecvClose<T> {
         self.inner.remote_active_len()
     }
 
-    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.local_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_recv_window_size(old_sz, new_sz)
     }
 
-    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.remote_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_send_window_size(old_sz, new_sz)
     }
 
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.local_flow_controller(id)
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.recv_flow_controller(id)
     }
 
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.remote_flow_controller(id)
+    fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.send_flow_controller(id)
     }
 
     fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {

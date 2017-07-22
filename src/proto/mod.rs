@@ -31,7 +31,6 @@ use self::framed_write::FramedWrite;
 use self::ping_pong::{ControlPing, PingPayload, PingPong};
 use self::ready::ReadySink;
 use self::settings::{ApplySettings, /*ControlSettings,*/ Settings};
-use self::state::{StreamState, PeerState};
 use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
@@ -172,8 +171,8 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
           P: Peer,
           B: IntoBuf,
 {
-    let initial_local_window_size = settings.local_settings().initial_window_size();
-    let initial_remote_window_size = settings.remote_settings().initial_window_size();
+    let initial_recv_window_size = settings.local_settings().initial_window_size();
+    let initial_send_window_size = settings.remote_settings().initial_window_size();
     let local_max_concurrency = settings.local_settings().max_concurrent_streams();
     let remote_max_concurrency = settings.remote_settings().max_concurrent_streams();
 
@@ -187,16 +186,17 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
             .num_skip(0) // Don't skip the header
             .new_read(io);
 
+        trace!("composing transport");
         StreamSendOpen::new(
-            initial_remote_window_size,
+            initial_send_window_size,
             remote_max_concurrency,
             StreamRecvClose::new(
                 FlowControl::new(
-                    initial_local_window_size,
-                    initial_remote_window_size,
+                    initial_recv_window_size,
+                    initial_send_window_size,
                     StreamSendClose::new(
                         StreamRecvOpen::new(
-                            initial_local_window_size,
+                            initial_recv_window_size,
                             local_max_concurrency,
                             StreamStore::new(
                                 PingPong::new(
@@ -205,3 +205,4 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
 
     connection::new(transport)
 }
+

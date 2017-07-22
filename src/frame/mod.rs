@@ -66,6 +66,22 @@ pub enum Frame<T = Bytes> {
 }
 
 impl<T> Frame<T> {
+    pub fn is_connection_frame(&self) -> bool {
+        use self::Frame::*;
+
+        match self {
+            &Headers(..) |
+            &Data(..) |
+            &PushPromise(..) |
+            &Reset(..) => false,
+
+            &WindowUpdate(ref v) => v.stream_id().is_zero(),
+
+            &Ping(_) |
+            &Settings(_) => true,
+        }
+    }
+
     pub fn stream_id(&self) -> StreamId {
         use self::Frame::*;
 

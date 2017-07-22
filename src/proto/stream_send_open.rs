@@ -68,6 +68,7 @@ impl<T> Stream for StreamSendOpen<T>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
+        trace!("poll");
         self.inner.poll()
     }
 }
@@ -80,18 +81,19 @@ impl<T, U> Sink for StreamSendOpen<T>
     type SinkError = T::SinkError;
 
     fn start_send(&mut self, frame: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
-        use frame::Frame::*;
-
         let id = frame.stream_id();
+        trace!("start_send: id={:?}", id);
         if id.is_zero() {
+            if !frame.is_connection_frame() {
+                return Err(InvalidStreamId.into())
+            }
             // Nothing to do on connection frames.
             return self.inner.start_send(frame);
         }
 
         // Reset the stream immediately and send the Reset on the underlying transport.
-        if let Reset(rst) = frame {
-            self.inner.reset_stream(id, rst.reason());
-            return self.inner.start_send(Reset(rst));
+        if let &Frame::Reset(..) = &frame {
+            return self.inner.start_send(frame);
         }
 
         // Ensure that the stream hasn't been closed otherwise.
@@ -111,19 +113,26 @@ impl<T, U> Sink for StreamSendOpen<T>
                     }
                 }
 
+                trace!("creating new local stream");
                 self.inner.local_open(id, self.initial_window_size)?;
             }
         } else {
-            // If the frame was part of a remote stream, it MUST already exist.
-            if !self.inner.is_remote_active(id) && !frame.is_reset() {
+            // If the frame is part of a remote stream, it MUST already exist.
+            if self.inner.is_remote_active(id) {
+                if let &Frame::Headers(..) = &frame {
+                    self.inner.remote_open_send_half(id, self.initial_window_size)?;
+                }
+            } else {
                 return Err(InvalidStreamId.into());
             }
         }
 
-        if let &Data(..) = &frame {
+        if let &Frame::Data(..) = &frame {
+            // Ensures we've already sent headers for this stream.
             self.inner.check_can_send_data(id)?;
         }
 
+        trace!("sending frame...");
         return self.inner.start_send(frame);
     }
 
@@ -164,12 +173,20 @@ impl<T: ControlStreams> ControlStreams for StreamSendOpen<T> {
         self.inner.remote_open(id, sz)
     }
 
-    fn close_local_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_local_half(id)
+    fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.local_open_recv_half(id, sz)
     }
 
-    fn close_remote_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
-        self.inner.close_remote_half(id)
+    fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
+        self.inner.remote_open_send_half(id, sz)
+    }
+
+    fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_send_half(id)
+    }
+
+    fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError> {
+        self.inner.close_recv_half(id)
     }
 
     fn reset_stream(&mut self, id: StreamId, cause: Reason) {
@@ -196,20 +213,20 @@ impl<T: ControlStreams> ControlStreams for StreamSendOpen<T> {
         self.inner.remote_active_len()
     }
 
-    fn local_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.local_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_recv_window_size(old_sz, new_sz)
     }
 
-    fn remote_update_inital_window_size(&mut self, old_sz: u32, new_sz: u32) {
-        self.inner.remote_update_inital_window_size(old_sz, new_sz)
+    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+        self.inner.update_inital_send_window_size(old_sz, new_sz)
     }
 
-    fn local_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.local_flow_controller(id)
+    fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.recv_flow_controller(id)
     }
 
-    fn remote_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
-        self.inner.remote_flow_controller(id)
+    fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState> {
+        self.inner.send_flow_controller(id)
     }
 
     fn check_can_send_data(&mut self, id: StreamId) -> Result<(), ConnectionError> {
