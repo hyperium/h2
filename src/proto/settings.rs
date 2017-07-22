@@ -57,10 +57,13 @@ impl<T, U> Settings<T>
         }
     }
 
+    // TODO remove this
     pub fn local_settings(&self) -> &SettingSet {
         &self.local
     }
 
+    // TODO replace this with settings a client needs to know about (concurrency, initial
+    // window size, etc).
     pub fn remote_settings(&self) -> &SettingSet {
         &self.local
     }
