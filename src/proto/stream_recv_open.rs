@@ -66,7 +66,9 @@ impl<T> ApplySettings for StreamRecvOpen<T>
 {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.max_concurrency = set.max_concurrent_streams();
-        self.initial_window_size = set.initial_window_size();
+        if let Some(sz) = set.initial_window_size() {
+            self.initial_window_size = sz;
+        }
         self.inner.apply_local_settings(set)
     }
 

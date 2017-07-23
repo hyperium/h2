@@ -38,7 +38,9 @@ impl<T: ApplySettings> ApplySettings for StreamSendOpen<T> {
 
     fn apply_remote_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError> {
         self.max_concurrency = set.max_concurrent_streams();
-        self.initial_window_size = set.initial_window_size();
+        if let Some(sz) = set.initial_window_size() {
+            self.initial_window_size = sz;
+        }
         self.inner.apply_remote_settings(set)
     }
 }

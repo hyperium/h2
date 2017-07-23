@@ -30,7 +30,7 @@ use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::{ControlPing, PingPayload, PingPong};
 use self::ready::ReadySink;
-use self::settings::{ApplySettings, /*ControlSettings,*/ Settings};
+use self::settings::{ApplySettings, ControlSettings, Settings};
 use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
@@ -165,7 +165,7 @@ impl WindowUpdate {
 /// Create a full H2 transport from an I/O handle.
 ///
 /// This is called as the final step of the client handshake future.
-pub fn from_io<T, P, B>(io: T, settings: frame::SettingSet)
+pub fn from_io<T, P, B>(io: T, local_settings: frame::SettingSet)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -177,10 +177,9 @@ pub fn from_io<T, P, B>(io: T, settings: frame::SettingSet)
     // weird, but oh well...
     //
     // We first create a Settings directly around a framed writer
-    let transport = Settings::new(
-        framed_write, settings);
+    let transport = Settings::new(framed_write, local_settings.clone());
 
-    from_server_handshaker(transport)
+    from_server_handshaker(transport, local_settings)
 }
 
 /// Create a transport prepared to handle the server handshake.
@@ -198,16 +197,18 @@ pub fn server_handshaker<T, B>(io: T, settings: frame::SettingSet)
 }
 
 /// Create a full H2 transport from the server handshaker
-pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>>)
+pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>>,
+                                       local_settings: frame::SettingSet)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
           B: IntoBuf,
 {
-    let initial_recv_window_size = settings.local_settings().initial_window_size();
-    let initial_send_window_size = settings.remote_settings().initial_window_size();
-    let local_max_concurrency = settings.local_settings().max_concurrent_streams();
-    let remote_max_concurrency = settings.remote_settings().max_concurrent_streams();
+    let initial_recv_window_size = local_settings.initial_window_size().unwrap_or(65_535);
+    let local_max_concurrency = local_settings.max_concurrent_streams();
+
+    let initial_send_window_size = settings.remote_initial_window_size();
+    let remote_max_concurrency = settings.remote_max_concurrent_streams();
 
     // Replace Settings' writer with a full transport.
     let transport = settings.swap_inner(|io| {

@@ -53,6 +53,18 @@ impl<T, P, B> Connection<T, P, B>
         self.inner.update_local_settings(local)
     }
 
+    pub fn remote_initial_window_size(&self) -> u32 {
+        self.inner.remote_initial_window_size()
+    }
+
+    pub fn remote_max_concurrent_streams(&self) -> Option<u32> {
+        self.inner.remote_max_concurrent_streams()
+    }
+
+    pub fn remote_push_enabled(&self) -> Option<bool> {
+        self.inner.remote_push_enabled()
+    }
+
     pub fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         self.inner.start_ping(body)
     }

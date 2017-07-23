@@ -20,10 +20,14 @@ pub struct SettingSet {
 }
 
 impl SettingSet {
-    pub fn initial_window_size(&self) -> u32 {
-        self.initial_window_size.unwrap_or(65_535)
+    pub fn enable_push(&self) -> Option<bool> {
+        self.enable_push.map(|n| n != 0)
     }
-    
+
+    pub fn initial_window_size(&self) -> Option<u32> {
+        self.initial_window_size
+    }
+
     pub fn max_concurrent_streams(&self) -> Option<u32> {
         self.max_concurrent_streams
     }

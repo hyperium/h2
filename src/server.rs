@@ -46,12 +46,13 @@ pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
           B: 'static, // TODO: Why is this required but not in client?
 {
-    let transport = proto::server_handshaker(io, Default::default());
+    let local_settings = frame::SettingSet::default();
+    let transport = proto::server_handshaker(io, local_settings.clone());
 
     // Flush pending settings frame and then wait for the client preface
     let handshake = Flush::new(transport)
         .and_then(ReadPreface::new)
-        .map(proto::from_server_handshaker)
+        .map(move |t| proto::from_server_handshaker(t, local_settings))
         ;
 
     Handshake { inner: Box::new(handshake) }

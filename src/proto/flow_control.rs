@@ -317,28 +317,30 @@ impl<T> ApplySettings for FlowControl<T>
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)?;
 
-        let old_window_size = self.local_initial;
-        let new_window_size = set.initial_window_size();
-        if new_window_size == old_window_size {
-            return Ok(());
-        }
+        if let Some(new_window_size) = set.initial_window_size() {
+            let old_window_size = self.local_initial;
+            if new_window_size == old_window_size {
+                return Ok(());
+            }
 
-        self.inner.update_inital_recv_window_size(old_window_size, new_window_size);
-        self.local_initial = new_window_size;
+            self.inner.update_inital_recv_window_size(old_window_size, new_window_size);
+            self.local_initial = new_window_size;
+        }
         Ok(())
     }
 
     fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_remote_settings(set)?;
 
-        let old_window_size = self.remote_initial;
-        let new_window_size = set.initial_window_size();
-        if new_window_size == old_window_size {
-            return Ok(());
-        }
+        if let Some(new_window_size) = set.initial_window_size() {
+            let old_window_size = self.remote_initial;
+            if new_window_size == old_window_size {
+                return Ok(());
+            }
 
-        self.inner.update_inital_send_window_size(old_window_size, new_window_size);
-        self.remote_initial = new_window_size;
+            self.inner.update_inital_send_window_size(old_window_size, new_window_size);
+            self.remote_initial = new_window_size;
+        }
         Ok(())
     }
 }
