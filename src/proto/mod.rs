@@ -7,6 +7,10 @@ use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
+#[macro_use]
+mod ifaces;
+use self::ifaces::*;
+
 mod connection;
 mod flow_control;
 mod flow_control_state;
@@ -24,18 +28,18 @@ mod stream_store;
 
 pub use self::connection::Connection;
 
-use self::flow_control::{ControlFlow, FlowControl};
+use self::flow_control::{FlowControl};
 use self::flow_control_state::{FlowControlState};
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
-use self::ping_pong::{ControlPing, PingPayload, PingPong};
+use self::ping_pong::{PingPong};
 use self::ready::ReadySink;
-use self::settings::{ApplySettings, ControlSettings, Settings};
+use self::settings::Settings;
 use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
 use self::stream_send_open::StreamSendOpen;
-use self::stream_store::{ControlStreams, StreamStore};
+use self::stream_store::StreamStore;
 
 /// Represents the internals of an HTTP/2 connection.
 ///
@@ -139,6 +143,8 @@ type Streams<T, P> =
 type Codec<T, B> =
     FramedRead<
         FramedWrite<T, B>>;
+
+pub type PingPayload = [u8; 8];
 
 pub type WindowSize = u32;
 

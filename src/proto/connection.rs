@@ -3,8 +3,6 @@ use client::Client;
 use error;
 use frame::{self, StreamId};
 use proto::*;
-use proto::ping_pong::{ControlPing, PingPayload};
-use proto::settings::ControlSettings;
 use server::Server;
 
 use bytes::{Bytes, IntoBuf};

@@ -1,15 +1,6 @@
 use ConnectionError;
 use frame::{Frame, Ping, SettingSet};
-use proto::{ApplySettings, ReadySink};
-
-use futures::*;
-
-pub type PingPayload = [u8; 8];
-
-pub trait ControlPing {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
-    fn take_pong(&mut self) -> Option<PingPayload>;
-}
+use proto::*;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]

@@ -7,23 +7,6 @@ use bytes::BufMut;
 
 use std::io;
 
-/// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
-/// above---Connection).
-pub trait ControlSettings {
-    fn update_local_settings(&mut self, set: frame::SettingSet) -> Result<(), ConnectionError>;
-
-    fn remote_push_enabled(&self) -> Option<bool>;
-    fn remote_max_concurrent_streams(&self) -> Option<u32>;
-    fn remote_initial_window_size(&self) -> WindowSize;
-}
-
-/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
-/// FramedWrite).
-pub trait ApplySettings {
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError>;
-}
-
 #[derive(Debug)]
 pub struct Settings<T> {
     // Upstream transport
@@ -241,12 +224,4 @@ impl<T: ControlFlow> ControlFlow for Settings<T> {
     }
 }
 
-impl<T: ControlPing> ControlPing for Settings<T> {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
-    }
-}
+proxy_control_ping!(Settings);
