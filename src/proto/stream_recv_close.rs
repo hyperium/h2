@@ -41,6 +41,7 @@ impl<T> Stream for StreamRecvClose<T>
         let id = frame.stream_id();
         if !id.is_zero() {
             if frame.is_end_stream() {
+                trace!("poll: id={:?} eos", id);
                 if let &Frame::Reset(ref rst) = &frame {
                     self.inner.reset_stream(id, rst.reason());
                 } else {

@@ -47,7 +47,7 @@ impl<T, U> Sink for StreamSendClose<T>
         let eos = frame.is_end_stream();
         trace!("start_send: id={:?} eos={}", id, eos);
         if !id.is_zero() {
-            if frame.is_end_stream() {
+            if eos {
                 if let &Frame::Reset(ref rst) = &frame {
                     self.inner.reset_stream(id, rst.reason());
                 } else {

@@ -1,8 +1,9 @@
 use ConnectionError;
-use error::User::{InactiveStreamId, InvalidStreamId, StreamReset, Rejected};
+use error::User::{InactiveStreamId, InvalidStreamId, StreamReset, Rejected, UnexpectedFrameType};
 use frame::{Frame, SettingSet};
 use proto::*;
 
+///
 #[derive(Debug)]
 pub struct StreamSendOpen<T> {
     inner: T,
@@ -73,6 +74,16 @@ impl<T> Stream for StreamSendOpen<T>
     }
 }
 
+impl<T: ControlStreams> StreamSendOpen<T> {
+    fn check_not_reset(&self, id: StreamId) -> Result<(), ConnectionError> {
+        // Ensure that the stream hasn't been closed otherwise.
+        match self.inner.get_reset(id) {
+            Some(reason) => Err(StreamReset(reason).into()),
+            None => Ok(()),
+        }
+    }
+}
+
 impl<T, U> Sink for StreamSendOpen<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams,
@@ -83,67 +94,62 @@ impl<T, U> Sink for StreamSendOpen<T>
     fn start_send(&mut self, frame: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
         let id = frame.stream_id();
         trace!("start_send: id={:?}", id);
+
+        // Forward connection frames immediately.
         if id.is_zero() {
             if !frame.is_connection_frame() {
-                return Err(InvalidStreamId.into())
+                return Err(InvalidStreamId.into());
             }
 
-            // Nothing to do on connection frames.
             return self.inner.start_send(frame);
         }
 
-        // Reset the stream immediately and send the Reset on the underlying transport.
-        if let &Frame::Reset(..) = &frame {
-            return self.inner.start_send(frame);
-        }
+        match &frame {
+            &Frame::Reset(..) => {}
 
-        // Ensure that the stream hasn't been closed otherwise.
-        if let Some(reason) = self.inner.get_reset(id) {
-            return Err(StreamReset(reason).into())
-        }
+            &Frame::Headers(..) => {
+                self.check_not_reset(id)?;
+                if T::local_valid_id(id) {
+                    if self.inner.is_local_active(id) {
+                        // Can't send a a HEADERS frame on a local stream that's active,
+                        // because we've already sent headers.  This will have to change
+                        // to support PUSH_PROMISE.
+                        return Err(UnexpectedFrameType.into());
+                    }
 
-        if T::local_valid_id(id) {
-            if self.inner.is_local_active(id) {
+                    if !T::local_can_open() {
+                        // A server tried to start a stream with a HEADERS frame.
+                        return Err(UnexpectedFrameType.into());
+                    }
+
+                    if let Some(max) = self.max_concurrency {
+                        // Don't allow this stream to overflow the remote's max stream
+                        // concurrency.
+                        if (max as usize) < self.inner.local_active_len() {
+                            return Err(Rejected.into());
+                        }
+                    }
+
+                    self.inner.local_open(id, self.initial_window_size)?;
+                } else {
+                    // On remote streams,
+                    if self.inner.remote_open_send_half(id, self.initial_window_size).is_err() {
+                        return Err(InvalidStreamId.into());
+                    }
+                }
+            }
+
+            // This only handles other stream frames (data, window update, ...).  Ensure
+            // the stream is open (i.e. has already sent headers).
+            _ => {
+                self.check_not_reset(id)?;
                 if !self.inner.can_send_data(id) {
                     return Err(InactiveStreamId.into());
                 }
-            } else {
-                if !T::local_can_open() {
-                    return Err(InvalidStreamId.into());
-                }
-
-                if let Some(max) = self.max_concurrency {
-                    if (max as usize) < self.inner.local_active_len() {
-                        return Err(Rejected.into());
-                    }
-                }
-
-                if let &Frame::Headers(..) = &frame {
-                    self.inner.local_open(id, self.initial_window_size)?;
-                } else {
-                    return Err(InactiveStreamId.into());
-                }
-            }
-        } else {
-            // If the frame is part of a remote stream, it MUST already exist.
-            if self.inner.is_remote_active(id) {
-                if let &Frame::Headers(..) = &frame {
-                    self.inner.remote_open_send_half(id, self.initial_window_size)?;
-                }
-            } else {
-                return Err(InvalidStreamId.into());
             }
         }
 
-        if let &Frame::Data(..) = &frame {
-            // Ensures we've already sent headers for this stream.
-            if !self.inner.can_send_data(id) {
-                return Err(InactiveStreamId.into());
-            }
-        }
-
-        trace!("sending frame...");
-        return self.inner.start_send(frame);
+        self.inner.start_send(frame)
     }
 
     fn poll_complete(&mut self) -> Poll<(), T::SinkError> {

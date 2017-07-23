@@ -241,7 +241,7 @@ mod client_request {
         request.uri = "https://http2.akamai.com/".parse().unwrap();
 
         let err = h2.send_request(0.into(), request, true).wait().unwrap_err();
-        assert_user_err!(err, InvalidStreamId);
+        assert_user_err!(err, UnexpectedFrameType);
     }
 
     #[test]
@@ -350,7 +350,7 @@ mod client_request {
         request.uri = "https://http2.akamai.com/".parse().unwrap();
         let err = h2.send_request(1.into(), request, true).wait().unwrap_err();
 
-        assert_user_err!(err, InactiveStreamId);
+        assert_user_err!(err, UnexpectedFrameType);
     }
 
     #[test]

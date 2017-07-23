@@ -93,6 +93,16 @@ impl<T> ApplySettings for StreamRecvOpen<T>
     }
 }
 
+impl<T: ControlStreams> StreamRecvOpen<T> {
+    fn check_not_reset(&self, id: StreamId) -> Result<(), ConnectionError> {
+        // Ensure that the stream hasn't been closed otherwise.
+        match self.inner.get_reset(id) {
+            Some(reason) => Err(reason.into()),
+            None => Ok(()),
+        }
+    }
+}
+
 impl<T, U> Stream for StreamRecvOpen<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
@@ -127,51 +137,46 @@ impl<T, U> Stream for StreamRecvOpen<T>
                 return Ok(Async::Ready(Some(frame)));
             }
 
-            if let &Reset(_) = &frame {
-                // Resetting handled by StreamRecvClose.
-                return Ok(Async::Ready(Some(frame)));
-            }
+            match &frame {
+                &Frame::Reset(..) => {}
 
-            if self.inner.get_reset(id).is_some() {
-                // For now, just ignore frames on reset streams.
-                debug!("ignoring received frame on reset stream");
-                // TODO tell the remote to knock it off?
-                continue;
-            }
-
-            if T::remote_valid_id(id) {
-                if !self.inner.is_remote_active(id) {
-                    if !T::remote_can_open() {
-                        return Err(ProtocolError.into());
-                    }
-
-                    if let Some(max) = self.max_concurrency {
-                        if (max as usize) < self.inner.remote_active_len() {
-                            let _ = self.send_refuse(id)?;
-                            debug!("refusing stream that would exceed max_concurrency");
-
-                            // There's no point in returning an error to the application.
-                            continue;
+                &Frame::Headers(..) => {
+                    self.check_not_reset(id)?;
+                    if T::remote_valid_id(id) {
+                        if self.inner.is_remote_active(id) {
+                            // Can't send a a HEADERS frame on a remote stream that's
+                            // active, because we've already received headers.  This will
+                            // have to change to support PUSH_PROMISE.
+                            return Err(ProtocolError.into());
                         }
-                    }
 
-                    self.inner.remote_open(id, self.initial_window_size)?;
-                }
-            } else {
-                // If the frame is part of a local stream, it MUST already exist.
-                if self.inner.is_local_active(id) {
-                    if let &Headers(..) = &frame {
+                        if !T::remote_can_open() {
+                            return Err(ProtocolError.into());
+                        }
+
+                        if let Some(max) = self.max_concurrency {
+                            if (max as usize) < self.inner.remote_active_len() {
+                                debug!("refusing stream that would exceed max_concurrency={}", max);
+                                self.send_refuse(id)?;
+
+                                // There's no point in returning an error to the application.
+                                continue;
+                            }
+                        }
+
+                        self.inner.remote_open(id, self.initial_window_size)?;
+                    } else {
+                        // On remote streams,
                         self.inner.local_open_recv_half(id, self.initial_window_size)?;
                     }
-                } else {
-                    return Err(ProtocolError.into());
                 }
-            }
 
-            if let &Data(..) = &frame {
-                // Ensures we've already received headers for this stream.
-                if !self.inner.can_recv_data(id) {
-                    return Err(ProtocolError.into());
+                // All other stream frames are sent only when
+                _ => {
+                    self.check_not_reset(id)?;
+                    if !self.inner.can_recv_data(id) {
+                        return Err(ProtocolError.into());
+                    }
                 }
             }
 
@@ -182,6 +187,7 @@ impl<T, U> Stream for StreamRecvOpen<T>
     }
 }
 
+/// Ensures that a pending reset is 
 impl<T, U> Sink for StreamRecvOpen<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams,

@@ -213,8 +213,9 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
     }
 
     fn local_open_recv_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        assert!(Self::local_valid_id(id));
-        debug_assert!(self.local_active.contains_key(&id));
+        if !Self::local_valid_id(id) {
+            return Err(ProtocolError.into());
+        }
 
         match self.local_active.get_mut(&id) {
             Some(s) => s.open_recv_half(sz).map(|_| {}),
@@ -223,9 +224,9 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
     }
 
     fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        assert!(Self::remote_valid_id(id));
-        debug_assert!(Self::remote_can_open());
-        debug_assert!(self.remote_active.contains_key(&id));
+        if !Self::remote_valid_id(id) {
+            return Err(ProtocolError.into());
+        }
 
         match self.remote_active.get_mut(&id) {
             Some(s) => s.open_send_half(sz).map(|_| {}),
