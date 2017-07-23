@@ -53,7 +53,28 @@ use self::stream_store::{ControlStreams, StreamStore};
 /// - Exposes ControlSettings up towards the application and transmits local settings to
 ///   the remote.
 ///
-/// ### `FlowControl`
+/// ### The stream transport
+///
+/// The states of all HTTP/2 connections are stored centrally in the `StreamStore` at the
+/// bottom of the stream transport. Several modules above this access this state via the
+/// `ControlStreams` API to drive changes to the stream state.  In each direction (send
+/// from local to remote, and recv from remote to local), there is an Stream\*Open module
+/// responsible for initializing new streams and ensuring that frames do not violate
+/// stream state. Then, there are modules that operate on streams (for instance,
+/// FlowControl).  Finally, a Stream\*Close module is responsible for acting on END_STREAM
+/// frames to ensure that stream states are not closed before work is complete.
+///
+/// #### `StreamSendOpen`
+///
+/// - Initializes streams initiated by the local peer.
+/// - Ensures that frames sent from the local peer are appropriate for the stream's state.
+/// - Ensures that the remote's max stream concurrency is not violated.
+///
+/// #### `StreamRecvClose`
+///
+/// - Updates the stream state for frames sent with END_STREAM.
+///
+/// #### `FlowControl`
 ///
 /// - Tracks received data frames against the local stream and connection flow control
 ///   windows.
@@ -66,10 +87,22 @@ use self::stream_store::{ControlStreams, StreamStore};
 ///   - Sends window updates for the local stream and connection flow control windows as
 ///     instructed by upper layers.
 ///
-/// ### `StreamTracker`
+/// #### `StreamSendClose`
 ///
-/// - Tracks all active streams.
-/// - Tracks all reset streams.
+/// - Updates the stream state for frames receive` with END_STREAM.
+///
+/// #### `StreamRecvOpen`
+///
+/// - Initializes streams initiated by the remote peer.
+/// - Ensures that frames received from the remote peer are appropriate for the stream's
+///   state.
+/// - Ensures that the local peer's max stream concurrency is not violated.
+///   - Emits StreamRefused resets to the remote.
+///
+/// #### `StreamStore`
+///
+/// - Holds the state of all local & remote active streams.
+/// - Holds the cause of all reset/closed streams.
 /// - Exposes `ControlStreams` so that upper layers may share stream state.
 ///
 /// ### `PingPong`

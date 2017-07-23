@@ -3,11 +3,7 @@ use error::Reason;
 use frame::{self, Frame};
 use proto::*;
 
-// TODO track "last stream id" for GOAWAY.
-// TODO track/provide "next" stream id.
-// TODO reset_streams needs to be bounded.
-// TODO track reserved streams (PUSH_PROMISE).
-
+/// Tracks END_STREAM frames sent from the local peer.
 #[derive(Debug)]
 pub struct StreamSendClose<T> {
     inner: T,
@@ -23,6 +19,7 @@ impl<T, U> StreamSendClose<T>
     }
 }
 
+/// Proxy.
 impl<T> Stream for StreamSendClose<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: ControlStreams,
@@ -35,6 +32,7 @@ impl<T> Stream for StreamSendClose<T>
     }
 }
 
+/// Tracks END_STREAM frames sent from the local peer.
 impl<T, U> Sink for StreamSendClose<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ControlStreams,
@@ -65,6 +63,7 @@ impl<T, U> Sink for StreamSendClose<T>
     }
 }
 
+/// Proxy.
 impl<T, U> ReadySink for StreamSendClose<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
@@ -75,6 +74,7 @@ impl<T, U> ReadySink for StreamSendClose<T>
     }
 }
 
+/// Proxy.
 impl<T: ApplySettings> ApplySettings for StreamSendClose<T> {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)
@@ -85,6 +85,7 @@ impl<T: ApplySettings> ApplySettings for StreamSendClose<T> {
     }
 }
 
+/// Proxy.
 impl<T: ControlStreams> ControlStreams for StreamSendClose<T> {
     fn local_valid_id(id: StreamId) -> bool {
         T::local_valid_id(id)
@@ -146,11 +147,11 @@ impl<T: ControlStreams> ControlStreams for StreamSendClose<T> {
         self.inner.remote_active_len()
     }
 
-    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_recv_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         self.inner.update_inital_recv_window_size(old_sz, new_sz)
     }
 
-    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_send_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         self.inner.update_inital_send_window_size(old_sz, new_sz)
     }
 
@@ -162,15 +163,16 @@ impl<T: ControlStreams> ControlStreams for StreamSendClose<T> {
         self.inner.send_flow_controller(id)
     }
 
-    fn can_send_data(&mut self, id: StreamId) -> bool {
-        self.inner.can_send_data(id)
+    fn is_send_open(&mut self, id: StreamId) -> bool {
+        self.inner.is_send_open(id)
     }
 
-    fn can_recv_data(&mut self, id: StreamId) -> bool  {
-        self.inner.can_recv_data(id)
+    fn is_recv_open(&mut self, id: StreamId) -> bool  {
+        self.inner.is_recv_open(id)
     }
 }
 
+/// Proxy.
 impl<T: ControlPing> ControlPing for StreamSendClose<T> {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         self.inner.start_ping(body)

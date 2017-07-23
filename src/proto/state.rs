@@ -155,7 +155,7 @@ impl StreamState {
         Ok(true)
     }
 
-    pub fn can_send_data(&self) -> bool {
+    pub fn is_send_open(&self) -> bool {
         use self::StreamState::*;
         match self {
             &Idle | &Closed | &HalfClosedRemote(..) => false,
@@ -165,7 +165,7 @@ impl StreamState {
         }
     }
 
-    pub fn can_recv_data(&self) -> bool {
+    pub fn is_recv_open(&self) -> bool {
         use self::StreamState::*;
         match self {
             &Idle | &Closed | &HalfClosedLocal(..) => false,

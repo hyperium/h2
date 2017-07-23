@@ -11,7 +11,12 @@ use std::marker::PhantomData;
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
 /// to Connection).
 pub trait ControlStreams {
+    /// Determines whether the given stream could theoretically be opened by the local
+    /// side of this connection.
     fn local_valid_id(id: StreamId) -> bool;
+
+    /// Determines whether the given stream could theoretically be opened by the remote
+    /// side of this connection.
     fn remote_valid_id(id: StreamId) -> bool;
 
     /// Indicates whether this local endpoint may open streams (with HEADERS).
@@ -26,7 +31,7 @@ pub trait ControlStreams {
         !Self::local_can_open()
     }
 
-    /// Create a new stream in the OPEN state from the local side (i.e. as a Client).
+    /// Creates a new stream in the OPEN state from the local side (i.e. as a Client).
     ///
     /// Must only be called when local_can_open returns true.
     fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
@@ -46,19 +51,37 @@ pub trait ControlStreams {
     /// Typically called when a server sends a response header.
     fn remote_open_send_half(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError>;
 
+    // TODO push promise
     // fn local_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
     // fn remote_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
 
-    /// Close the local half of a stream so that the local side may not RECEIVE
+    /// Closes the send half of a stream.
+    ///
+    /// Fails with a ProtocolError if send half of the stream was not open.
     fn close_send_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+
+    /// Closes the recv half of a stream.
+    ///
+    /// Fails with a ProtocolError if recv half of the stream was not open.
     fn close_recv_half(&mut self, id: StreamId) -> Result<(), ConnectionError>;
 
+    /// Resets the given stream.
+    ///
+    /// If the stream was already reset, the stored cause is updated.
     fn reset_stream(&mut self, id: StreamId, cause: Reason);
+
+    /// Get the reason the stream was reset, if it was reset.
     fn get_reset(&self, id: StreamId) -> Option<Reason>;
 
+    /// Returns true if the given stream was opened by the local peer and is not yet
+    /// closed.
     fn is_local_active(&self, id: StreamId) -> bool;
+
+    /// Returns true if the given stream was opened by the remote peer and is not yet
+    /// closed.
     fn is_remote_active(&self, id: StreamId) -> bool;
 
+    /// Returns true if the given stream was opened and is not yet closed.
     fn is_active(&self, id: StreamId) -> bool {
         if Self::local_valid_id(id) {
             self.is_local_active(id)
@@ -67,17 +90,31 @@ pub trait ControlStreams {
         }
     }
 
+    /// Returns the number of open streams initiated by the local peer.
     fn local_active_len(&self) -> usize;
+
+    /// Returns the number of open streams initiated by the remote peer.
     fn remote_active_len(&self) -> usize;
 
+    /// Returns true iff the recv half of the given stream is open.
+    fn is_recv_open(&mut self, id: StreamId) -> bool;
+
+    /// Returns true iff the send half of the given stream is open.
+    fn is_send_open(&mut self, id: StreamId) -> bool;
+
+    /// If the given stream ID is active and able to recv data, get its mutable recv flow
+    /// control state.
     fn recv_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
+
+    /// If the given stream ID is active and able to send data, get its mutable send flow
+    /// control state.
     fn send_flow_controller(&mut self, id: StreamId) -> Option<&mut FlowControlState>;
 
-    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32);
-    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32);
+    /// Updates the initial window size for the local peer.
+    fn update_inital_recv_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize);
 
-    fn can_send_data(&mut self, id: StreamId) -> bool;
-    fn can_recv_data(&mut self, id: StreamId) -> bool;
+    /// Updates the initial window size for the remote peer.
+    fn update_inital_send_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize);
 }
 
 /// Holds the underlying stream state to be accessed by upper layers.
@@ -112,41 +149,6 @@ impl<T, P, U> StreamStore<T, P>
             reset: OrderMap::default(),
             _phantom: PhantomData,
         }
-    }
-}
-
-impl<T, P> Stream for StreamStore<T, P>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-{
-    type Item = Frame;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        self.inner.poll()
-    }
-}
-
-impl<T, P, U> Sink for StreamStore<T, P>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-{
-    type SinkItem = Frame<U>;
-    type SinkError = ConnectionError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Frame<U>, ConnectionError> {
-        self.inner.start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_complete()
-    }
-}
-
-impl<T, P, U> ReadySink for StreamStore<T, P>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ReadySink,
-{
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
     }
 }
 
@@ -192,21 +194,25 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         P::local_can_open()
     }
 
-    /// Open a new stream from the local side (i.e. as a Client).
     fn local_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        assert!(Self::local_valid_id(id));
-        debug_assert!(Self::local_can_open());
-        debug_assert!(!self.local_active.contains_key(&id));
+        if !Self::local_valid_id(id) || !Self::local_can_open() {
+            return Err(ProtocolError.into());
+        }
+        if self.local_active.contains_key(&id) {
+            return Err(ProtocolError.into());
+        }
 
         self.local_active.insert(id, StreamState::new_open_sending(sz));
         Ok(())
     }
 
-    /// Open a new stream from the remote side (i.e. as a Server).
     fn remote_open(&mut self, id: StreamId, sz: WindowSize) -> Result<(), ConnectionError> {
-        assert!(Self::remote_valid_id(id));
-        debug_assert!(Self::remote_can_open());
-        debug_assert!(!self.remote_active.contains_key(&id));
+        if !Self::remote_valid_id(id) || !Self::remote_can_open() {
+            return Err(ProtocolError.into());
+        }
+        if self.remote_active.contains_key(&id) {
+            return Err(ProtocolError.into());
+        }
 
         self.remote_active.insert(id, StreamState::new_open_recving(sz));
         Ok(())
@@ -275,6 +281,20 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         self.remote_active.contains_key(&id)
     }
 
+    fn is_send_open(&mut self, id: StreamId) -> bool {
+        match self.get_active(id) {
+            Some(s) => s.is_send_open(),
+            None => false,
+        }
+    }
+
+    fn is_recv_open(&mut self, id: StreamId) -> bool  {
+        match self.get_active(id) {
+            Some(s) => s.is_recv_open(),
+            None => false,
+        }
+    }
+
     fn local_active_len(&self) -> usize {
         self.local_active.len()
     }
@@ -283,7 +303,7 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         self.remote_active.len()
     }
 
-    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_recv_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         if new_sz < old_sz {
             let decr = old_sz - new_sz;
 
@@ -315,7 +335,7 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
         }
     }
 
-    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_send_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         if new_sz < old_sz {
             let decr = old_sz - new_sz;
 
@@ -366,22 +386,47 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
             self.remote_active.get_mut(&id).and_then(|s| s.send_flow_controller())
         }
     }
+}
 
-    fn can_send_data(&mut self, id: StreamId) -> bool {
-        match self.get_active(id) {
-            Some(s) => s.can_send_data(),
-            None => false,
-        }
-    }
+/// Proxy.
+impl<T, P> Stream for StreamStore<T, P>
+    where T: Stream<Item = Frame, Error = ConnectionError>,
+{
+    type Item = Frame;
+    type Error = ConnectionError;
 
-    fn can_recv_data(&mut self, id: StreamId) -> bool  {
-        match self.get_active(id) {
-            Some(s) => s.can_recv_data(),
-            None => false,
-        }
+    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
+        self.inner.poll()
     }
 }
 
+/// Proxy.
+impl<T, P, U> Sink for StreamStore<T, P>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+{
+    type SinkItem = Frame<U>;
+    type SinkError = ConnectionError;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Frame<U>, ConnectionError> {
+        self.inner.start_send(item)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        self.inner.poll_complete()
+    }
+}
+
+/// Proxy.
+impl<T, P, U> ReadySink for StreamStore<T, P>
+    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+          T: ReadySink,
+{
+    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+        self.inner.poll_ready()
+    }
+}
+
+/// Proxy.
 impl<T: ApplySettings, P> ApplySettings for StreamStore<T, P> {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)
@@ -392,6 +437,7 @@ impl<T: ApplySettings, P> ApplySettings for StreamStore<T, P> {
     }
 }
 
+/// Proxy.
 impl<T: ControlPing, P> ControlPing for StreamStore<T, P> {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         self.inner.start_ping(body)

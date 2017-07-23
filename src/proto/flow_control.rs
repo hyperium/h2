@@ -173,6 +173,10 @@ impl<T, U> FlowControl<T>
     }
 }
 
+/// Tracks window updates received from the remote and ensures that the remote does not
+/// violate the local peer's flow controller.
+///
+/// TODO send flow control reset when the peer violates the flow control window.
 impl<T> Stream for FlowControl<T>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: ControlStreams,
@@ -201,6 +205,7 @@ impl<T> Stream for FlowControl<T>
                     // controller.  That's fine.
                     if let Some(fc) = self.recv_flow_controller(v.stream_id()) {
                         if fc.claim_window(sz).is_err() {
+                            // TODO send flow control reset.
                             return Err(error::Reason::FlowControlError.into())
                         }
                     }
@@ -213,6 +218,12 @@ impl<T> Stream for FlowControl<T>
     }
 }
 
+/// Tracks the send flow control windows for sent frames.
+///
+/// If sending a frame would violate the remote's window, start_send fails with
+/// `FlowControlViolation`.
+///
+/// Sends pending window updates before operating on the underlying transport.
 impl<T, U> Sink for FlowControl<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
@@ -270,6 +281,7 @@ impl<T, U> Sink for FlowControl<T>
     }
 }
 
+/// Sends pending window updates before checking the underyling transport's readiness.
 impl<T, U> ReadySink for FlowControl<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
@@ -331,6 +343,7 @@ impl<T> ApplySettings for FlowControl<T>
     }
 }
 
+/// Proxy.
 impl<T: ControlStreams> ControlStreams for FlowControl<T> {
     fn local_valid_id(id: StreamId) -> bool {
         T::local_valid_id(id)
@@ -375,6 +388,7 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
     fn get_reset(&self, id: StreamId) -> Option<Reason> {
         self.inner.get_reset(id)
     }
+
     fn is_local_active(&self, id: StreamId) -> bool {
         self.inner.is_local_active(id)
     }
@@ -391,11 +405,11 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.remote_active_len()
     }
 
-    fn update_inital_recv_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_recv_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         self.inner.update_inital_recv_window_size(old_sz, new_sz)
     }
 
-    fn update_inital_send_window_size(&mut self, old_sz: u32, new_sz: u32) {
+    fn update_inital_send_window_size(&mut self, old_sz: WindowSize, new_sz: WindowSize) {
         self.inner.update_inital_send_window_size(old_sz, new_sz)
     }
 
@@ -407,15 +421,16 @@ impl<T: ControlStreams> ControlStreams for FlowControl<T> {
         self.inner.send_flow_controller(id)
     }
 
-    fn can_send_data(&mut self, id: StreamId) -> bool {
-        self.inner.can_send_data(id)
+    fn is_send_open(&mut self, id: StreamId) -> bool {
+        self.inner.is_send_open(id)
     }
 
-    fn can_recv_data(&mut self, id: StreamId) -> bool  {
-        self.inner.can_recv_data(id)
+    fn is_recv_open(&mut self, id: StreamId) -> bool  {
+        self.inner.is_recv_open(id)
     }
 }
 
+/// Proxy.
 impl<T: ControlPing> ControlPing for FlowControl<T> {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         self.inner.start_ping(body)
