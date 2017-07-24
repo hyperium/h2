@@ -38,7 +38,7 @@ mod stream_recv_close;
 mod stream_recv_open;
 mod stream_send_close;
 mod stream_send_open;
-mod stream_store;
+mod stream_states;
 
 pub use self::connection::Connection;
 
@@ -53,7 +53,7 @@ use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
 use self::stream_send_open::StreamSendOpen;
-use self::stream_store::StreamStates;
+use self::stream_states::StreamStates;
 
 /// Represents the internals of an HTTP/2 connection.
 ///

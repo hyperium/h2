@@ -24,6 +24,10 @@ pub trait ControlStreams {
         !Self::local_can_open()
     }
 
+    // TODO push promise
+    // fn local_can_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+    // fn remote_can_reserve(&mut self, id: StreamId) -> Result<(), ConnectionError>;
+
     /// Creates a new stream in the OPEN state from the local side (i.e. as a Client).
     ///
     /// Must only be called when local_can_open returns true.

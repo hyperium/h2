@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 // TODO track reserved streams
 // TODO constrain the size of `reset`
 #[derive(Debug, Default)]
-pub struct StreamStore<T, P> {
+pub struct StreamStates<T, P> {
     inner: T,
 
     /// Holds active streams initiated by the local endpoint.
@@ -27,13 +27,13 @@ pub struct StreamStore<T, P> {
     _phantom: PhantomData<P>,
 }
 
-impl<T, P, U> StreamStore<T, P>
+impl<T, P, U> StreamStates<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
           T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           P: Peer,
 {
-    pub fn new(inner: T) -> StreamStore<T, P> {
-        StreamStore {
+    pub fn new(inner: T) -> StreamStates<T, P> {
+        StreamStates {
             inner,
             local_active: OrderMap::default(),
             remote_active: OrderMap::default(),
@@ -43,7 +43,7 @@ impl<T, P, U> StreamStore<T, P>
     }
 }
 
-impl<T, P: Peer> StreamStore<T, P> {
+impl<T, P: Peer> StreamStates<T, P> {
     pub fn get_active(&mut self, id: StreamId) -> Option<&StreamState> {
         assert!(!id.is_zero());
         if P::is_valid_local_stream_id(id) {
@@ -72,7 +72,7 @@ impl<T, P: Peer> StreamStore<T, P> {
     }
 }
 
-impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
+impl<T, P: Peer> ControlStreams for StreamStates<T, P> {
     fn local_valid_id(id: StreamId) -> bool {
         P::is_valid_local_stream_id(id)
     }
@@ -280,7 +280,7 @@ impl<T, P: Peer> ControlStreams for StreamStore<T, P> {
 }
 
 /// Proxy.
-impl<T, P> Stream for StreamStore<T, P>
+impl<T, P> Stream for StreamStates<T, P>
     where T: Stream<Item = Frame, Error = ConnectionError>,
 {
     type Item = Frame;
@@ -292,7 +292,7 @@ impl<T, P> Stream for StreamStore<T, P>
 }
 
 /// Proxy.
-impl<T, P, U> Sink for StreamStore<T, P>
+impl<T, P, U> Sink for StreamStates<T, P>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
 {
     type SinkItem = Frame<U>;
@@ -308,7 +308,7 @@ impl<T, P, U> Sink for StreamStore<T, P>
 }
 
 /// Proxy.
-impl<T, P, U> ReadySink for StreamStore<T, P>
+impl<T, P, U> ReadySink for StreamStates<T, P>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
           T: ReadySink,
 {
@@ -318,7 +318,7 @@ impl<T, P, U> ReadySink for StreamStore<T, P>
 }
 
 /// Proxy.
-impl<T: ApplySettings, P> ApplySettings for StreamStore<T, P> {
+impl<T: ApplySettings, P> ApplySettings for StreamStates<T, P> {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.apply_local_settings(set)
     }
@@ -329,7 +329,7 @@ impl<T: ApplySettings, P> ApplySettings for StreamStore<T, P> {
 }
 
 /// Proxy.
-impl<T: ControlPing, P> ControlPing for StreamStore<T, P> {
+impl<T: ControlPing, P> ControlPing for StreamStates<T, P> {
     fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         self.inner.start_ping(body)
     }
