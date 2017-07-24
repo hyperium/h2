@@ -35,7 +35,7 @@ pub mod server;
 mod util;
 
 pub use error::{ConnectionError, Reason};
-pub use frame::{StreamId};
+pub use frame::StreamId;
 pub use proto::Connection;
 
 use bytes::Bytes;

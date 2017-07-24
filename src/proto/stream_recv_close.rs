@@ -1,4 +1,4 @@
-use {ConnectionError};
+use ConnectionError;
 use error::Reason;
 use frame::{self, Frame};
 use proto::*;

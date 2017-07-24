@@ -7,7 +7,7 @@ use futures::*;
 
 use bytes::Bytes;
 
-use tokio_io::{AsyncRead};
+use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
 
 use std::io::{self, Cursor};

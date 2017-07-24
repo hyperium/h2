@@ -7,18 +7,6 @@ use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
-// First, pull in the internal interfaces that support macros used throughout this module.
-
-#[macro_use]
-mod apply_settings;
-#[macro_use]
-mod control_flow;
-#[macro_use]
-mod control_ping;
-mod control_settings;
-#[macro_use]
-mod control_streams;
-
 macro_rules! proxy_stream {
     ($struct:ident $(, $targs:ident)*) => (
         impl<T: Stream$(, $targs)*> Stream for $struct<T$(, $targs)*> {
@@ -61,6 +49,18 @@ macro_rules! proxy_ready_sink {
     )
 }
 
+// First, pull in the internal interfaces that support macros used throughout this module.
+
+#[macro_use]
+mod apply_settings;
+#[macro_use]
+mod control_flow;
+#[macro_use]
+mod control_ping;
+mod control_settings;
+#[macro_use]
+mod control_streams;
+
 use self::apply_settings::ApplySettings;
 use self::control_flow::ControlFlow;
 use self::control_ping::ControlPing;
@@ -84,11 +84,11 @@ mod stream_states;
 
 pub use self::connection::Connection;
 
-use self::flow_control::{FlowControl};
-use self::flow_control_state::{FlowControlState};
+use self::flow_control::FlowControl;
+use self::flow_control_state::FlowControlState;
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
-use self::ping_pong::{PingPong};
+use self::ping_pong::PingPong;
 use self::ready::ReadySink;
 use self::settings::Settings;
 use self::stream_recv_close::StreamRecvClose;
