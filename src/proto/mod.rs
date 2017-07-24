@@ -33,11 +33,11 @@ mod framed_write;
 mod ping_pong;
 mod ready;
 mod settings;
-mod state;
 mod stream_recv_close;
 mod stream_recv_open;
 mod stream_send_close;
 mod stream_send_open;
+mod stream_state;
 mod stream_states;
 
 pub use self::connection::Connection;

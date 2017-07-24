@@ -1,7 +1,7 @@
 use {ConnectionError, Peer, StreamId};
 use error::Reason::{NoError, ProtocolError};
 use proto::*;
-use proto::state::StreamState;
+use proto::stream_state::StreamState;
 
 use fnv::FnvHasher;
 use ordermap::OrderMap;
@@ -317,24 +317,5 @@ impl<T, P, U> ReadySink for StreamStates<T, P>
     }
 }
 
-/// Proxy.
-impl<T: ApplySettings, P> ApplySettings for StreamStates<T, P> {
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_local_settings(set)
-    }
-
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.apply_remote_settings(set)
-    }
-}
-
-/// Proxy.
-impl<T: ControlPing, P> ControlPing for StreamStates<T, P> {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
-    }
-}
+proxy_apply_settings!(StreamStates, P);
+proxy_control_ping!(StreamStates, P);

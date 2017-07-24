@@ -9,8 +9,8 @@ pub trait ApplySettings {
 }
 
 macro_rules! proxy_apply_settings {
-    ($outer:ident) => (
-        impl<T: ApplySettings> ApplySettings for $outer<T> {
+    ($struct:ident $(, $targs:ident)*) => (
+        impl<T: ApplySettings$(, $targs)*> ApplySettings for $struct<T$(, $targs)*> {
             fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
                 self.inner.apply_local_settings(set)
             }
