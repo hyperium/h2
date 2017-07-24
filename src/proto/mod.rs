@@ -132,26 +132,31 @@ use self::stream_states::StreamStates;
 /// - Ensures that frames sent from the local peer are appropriate for the stream's state.
 /// - Ensures that the remote's max stream concurrency is not violated.
 ///
-/// #### `StreamRecvClose`
+/// #### `FlowControlSend`
 ///
-/// - Updates the stream state for frames sent with END_STREAM.
-///
-/// #### `FlowControl`
-///
-/// - Tracks received data frames against the local stream and connection flow control
-///   windows.
 /// - Tracks sent data frames against the remote stream and connection flow control
 ///   windows.
 /// - Tracks remote settings updates to SETTINGS_INITIAL_WINDOW_SIZE.
-/// - Exposes `ControlFlow` upwards.
+/// - Exposes `ControlFlowSend` upwards.
 ///   - Tracks received window updates against the remote stream and connection flow
 ///     control windows so that upper layers may poll for updates.
-///   - Sends window updates for the local stream and connection flow control windows as
-///     instructed by upper layers.
 ///
 /// #### `StreamSendClose`
 ///
-/// - Updates the stream state for frames receive` with END_STREAM.
+/// - Updates the stream state for frames sent with END_STREAM.
+///
+/// #### `StreamRecvClose`
+///
+/// - Updates the stream state for frames received with END_STREAM.
+///
+/// #### `FlowControlRecv`
+///
+/// - Tracks received data frames against the local stream and connection flow control
+///   windows.
+/// - Tracks remote settings updates to SETTINGS_INITIAL_WINDOW_SIZE.
+/// - Exposes `ControlFlowRecv` upwards.
+///   - Sends window updates for the local stream and connection flow control windows as
+///     instructed by upper layers.
 ///
 /// #### `StreamRecvOpen`
 ///
@@ -192,10 +197,10 @@ type Transport<T, P, B>=
 
 type Streams<T, P> =
     StreamSendOpen<
-        StreamRecvClose<
-            FlowControlSend<
-                FlowControlRecv<
-                    StreamSendClose<
+        FlowControlSend<
+            StreamSendClose<
+                StreamRecvClose<
+                    FlowControlRecv<
                         StreamRecvOpen<
                             StreamStates<T, P>>>>>>>;
 
@@ -289,12 +294,12 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
         StreamSendOpen::new(
             initial_send_window_size,
             remote_max_concurrency,
-            StreamRecvClose::new(
-                FlowControlSend::new(
-                    initial_send_window_size,
-                    FlowControlRecv::new(
-                        initial_recv_window_size,
-                        StreamSendClose::new(
+            FlowControlSend::new(
+                initial_send_window_size,
+                StreamSendClose::new(
+                    StreamRecvClose::new(
+                        FlowControlRecv::new(
+                            initial_recv_window_size,
                             StreamRecvOpen::new(
                                 initial_recv_window_size,
                                 local_max_concurrency,
