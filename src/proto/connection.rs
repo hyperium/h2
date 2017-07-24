@@ -146,7 +146,7 @@ impl<T, P, B> Stream for Connection<T, P, B>
                 Async::NotReady => {
                     // Receiving new frames may depend on ensuring that the write buffer
                     // is clear (e.g. if window updates need to be sent), so `poll_complete`
-                    // is called here. 
+                    // is called here.
                     try_ready!(self.poll_complete());
 
                     // If the write buffer is cleared, attempt to poll the underlying

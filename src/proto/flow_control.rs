@@ -296,7 +296,7 @@ impl<T, U> ReadySink for FlowControl<T>
 /// > flow-control window and MUST NOT send new flow-controlled frames until it
 /// > receives WINDOW_UPDATE frames that cause the flow-control window to become
 /// > positive.
-impl<T> ApplySettings for FlowControl<T> 
+impl<T> ApplySettings for FlowControl<T>
     where T: ApplySettings,
           T: ControlStreams
 {

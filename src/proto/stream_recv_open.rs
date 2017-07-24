@@ -99,7 +99,7 @@ impl<T, U> Stream for StreamRecvOpen<T>
 
     fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
         // Since there's only one slot for pending refused streams, it must be cleared
-        // before polling  a frame from the transport.
+        // before polling a frame from the transport.
         try_ready!(self.send_pending_refuse());
 
         trace!("poll");
