@@ -62,13 +62,14 @@ mod control_settings;
 mod control_streams;
 
 use self::apply_settings::ApplySettings;
-use self::control_flow::ControlFlow;
+use self::control_flow::{ControlFlowRecv, ControlFlowSend};
 use self::control_ping::ControlPing;
 use self::control_settings::ControlSettings;
 use self::control_streams::ControlStreams;
 
 mod connection;
-mod flow_control;
+mod flow_control_recv;
+mod flow_control_send;
 mod flow_control_state;
 mod framed_read;
 mod framed_write;
@@ -84,7 +85,8 @@ mod stream_states;
 
 pub use self::connection::Connection;
 
-use self::flow_control::FlowControl;
+use self::flow_control_recv::FlowControlRecv;
+use self::flow_control_send::FlowControlSend;
 use self::flow_control_state::FlowControlState;
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
@@ -191,10 +193,11 @@ type Transport<T, P, B>=
 type Streams<T, P> =
     StreamSendOpen<
         StreamRecvClose<
-            FlowControl<
-                StreamSendClose<
-                    StreamRecvOpen<
-                        StreamStates<T, P>>>>>>;
+            FlowControlSend<
+                FlowControlRecv<
+                    StreamSendClose<
+                        StreamRecvOpen<
+                            StreamStates<T, P>>>>>>>;
 
 type Codec<T, B> =
     FramedRead<
@@ -287,16 +290,17 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
             initial_send_window_size,
             remote_max_concurrency,
             StreamRecvClose::new(
-                FlowControl::new(
-                    initial_recv_window_size,
+                FlowControlSend::new(
                     initial_send_window_size,
-                    StreamSendClose::new(
-                        StreamRecvOpen::new(
-                            initial_recv_window_size,
-                            local_max_concurrency,
-                            StreamStates::new(
-                                PingPong::new(
-                                    FramedRead::new(framed))))))))
+                    FlowControlRecv::new(
+                        initial_recv_window_size,
+                        StreamSendClose::new(
+                            StreamRecvOpen::new(
+                                initial_recv_window_size,
+                                local_max_concurrency,
+                                StreamStates::new(
+                                    PingPong::new(
+                                        FramedRead::new(framed)))))))))
     });
 
     connection::new(transport)
