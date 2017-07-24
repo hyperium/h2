@@ -1,87 +1,5 @@
 use ConnectionError;
-use frame::SettingSet;
 use proto::*;
-
-/// Exposes settings to "upper" layers of the transport (i.e. from Settings up to---and
-/// above---Connection).
-pub trait ControlSettings {
-    fn update_local_settings(&mut self, set: SettingSet) -> Result<(), ConnectionError>;
-
-    fn remote_push_enabled(&self) -> Option<bool>;
-    fn remote_max_concurrent_streams(&self) -> Option<u32>;
-    fn remote_initial_window_size(&self) -> WindowSize;
-}
-
-// macro_rules! proxy_control_settings {
-//     ($outer:ident) => (
-//         impl<T: ControlSettings> ControlSettings for $outer<T> {
-//             fn update_local_settings(&mut self, set: SettingSet) -> Result<(), ConnectionError> {
-//                 self.inner.update_local_settings(set)
-//             }
-//
-//             fn remote_push_enabled(&self) -> Option<bool> {
-//                 self.inner.remote_push_enabled(set)
-//             }
-//
-//             fn remote_max_concurrent_streams(&self) -> Option<u32> {
-//                 self.inner.remote_max_concurrent_streams(set)
-//             }
-//
-//             fn remote_initial_window_size(&self) -> WindowSize {
-//                 self.inner.remote_initial_window_size(set)
-//             }
-//         }
-//     )
-// }
-
-/// Allows settings updates to be pushed "down" the transport (i.e. from Settings down to
-/// FramedWrite).
-pub trait ApplySettings {
-    fn apply_local_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError>;
-    fn apply_remote_settings(&mut self, set: &SettingSet) -> Result<(), ConnectionError>;
-}
-
-macro_rules! proxy_apply_settings {
-    ($outer:ident) => (
-        impl<T: ApplySettings> ApplySettings for $outer<T> {
-            fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-                self.inner.apply_local_settings(set)
-            }
-
-            fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-                self.inner.apply_remote_settings(set)
-            }
-        }
-    )
-}
-
-/// Exposes flow control states to "upper" layers of the transport (i.e. above
-/// FlowControl).
-pub trait ControlFlow {
-    /// Polls for the next window update from the remote.
-    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError>;
-
-    /// Increases the local receive capacity of a stream.
-    ///
-    /// This may cause a window update to be sent to the remote.
-    ///
-    /// Fails if the given stream is not active.
-    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError>;
-}
-
-macro_rules! proxy_control_flow {
-    ($outer:ident) => (
-        impl<T: ControlFlow> ControlFlow for $outer<T> {
-            fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-                self.inner.poll_window_update()
-            }
-
-            fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-                self.inner.expand_window(id, incr)
-            }
-        }
-    )
-}
 
 /// Exposes stream states to "upper" layers of the transport (i.e. from StreamTracker up
 /// to Connection).
@@ -277,25 +195,6 @@ macro_rules! proxy_control_streams {
 
             fn is_recv_open(&mut self, id: StreamId) -> bool  {
                 self.inner.is_recv_open(id)
-            }
-        }
-    )
-}
-
-pub trait ControlPing {
-    fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError>;
-    fn take_pong(&mut self) -> Option<PingPayload>;
-}
-
-macro_rules! proxy_control_ping {
-    ($outer:ident) => (
-        impl<T: ControlPing> ControlPing for $outer<T> {
-            fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-                self.inner.start_ping(body)
-            }
-
-            fn take_pong(&mut self) -> Option<PingPayload> {
-                self.inner.take_pong()
             }
         }
     )

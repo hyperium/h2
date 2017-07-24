@@ -7,9 +7,23 @@ use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
+// First, pull in the internal interfaces that support macros used throughout this module.
+
 #[macro_use]
-mod ifaces;
-use self::ifaces::*;
+mod apply_settings;
+#[macro_use]
+mod control_flow;
+#[macro_use]
+mod control_ping;
+mod control_settings;
+#[macro_use]
+mod control_streams;
+
+use self::apply_settings::ApplySettings;
+use self::control_flow::ControlFlow;
+use self::control_ping::ControlPing;
+use self::control_settings::ControlSettings;
+use self::control_streams::ControlStreams;
 
 mod connection;
 mod flow_control;
@@ -39,7 +53,7 @@ use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
 use self::stream_send_open::StreamSendOpen;
-use self::stream_store::StreamStore;
+use self::stream_store::StreamStates;
 
 /// Represents the internals of an HTTP/2 connection.
 ///
@@ -59,7 +73,7 @@ use self::stream_store::StreamStore;
 ///
 /// ### The stream transport
 ///
-/// The states of all HTTP/2 connections are stored centrally in the `StreamStore` at the
+/// The states of all HTTP/2 connections are stored centrally in the `StreamStates` at the
 /// bottom of the stream transport. Several modules above this access this state via the
 /// `ControlStreams` API to drive changes to the stream state.  In each direction (send
 /// from local to remote, and recv from remote to local), there is an Stream\*Open module
@@ -103,7 +117,7 @@ use self::stream_store::StreamStore;
 /// - Ensures that the local peer's max stream concurrency is not violated.
 ///   - Emits StreamRefused resets to the remote.
 ///
-/// #### `StreamStore`
+/// #### `StreamStates`
 ///
 /// - Holds the state of all local & remote active streams.
 /// - Holds the cause of all reset/closed streams.
@@ -138,7 +152,7 @@ type Streams<T, P> =
             FlowControl<
                 StreamSendClose<
                     StreamRecvOpen<
-                        StreamStore<T, P>>>>>>;
+                        StreamStates<T, P>>>>>>;
 
 type Codec<T, B> =
     FramedRead<
@@ -238,7 +252,7 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
                         StreamRecvOpen::new(
                             initial_recv_window_size,
                             local_max_concurrency,
-                            StreamStore::new(
+                            StreamStates::new(
                                 PingPong::new(
                                     FramedRead::new(framed))))))))
     });
