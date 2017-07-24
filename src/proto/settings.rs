@@ -214,14 +214,5 @@ impl<T: AsyncRead> AsyncRead for Settings<T> {
     }
 }
 
-impl<T: ControlFlow> ControlFlow for Settings<T> {
-    fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-        self.inner.poll_window_update()
-    }
-
-    fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.expand_window(id, incr)
-    }
-}
-
+proxy_control_flow!(Settings);
 proxy_control_ping!(Settings);
