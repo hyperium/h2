@@ -19,19 +19,6 @@ impl<T, U> StreamSendClose<T>
     }
 }
 
-/// Proxy.
-impl<T> Stream for StreamSendClose<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: ControlStreams,
-{
-    type Item = Frame;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        self.inner.poll()
-    }
-}
-
 /// Tracks END_STREAM frames sent from the local peer.
 impl<T, U> Sink for StreamSendClose<T>
     where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
@@ -63,18 +50,9 @@ impl<T, U> Sink for StreamSendClose<T>
     }
 }
 
-/// Proxy.
-impl<T, U> ReadySink for StreamSendClose<T>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ReadySink,
-          T: ControlStreams,
-{
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
-    }
-}
-
 proxy_apply_settings!(StreamSendClose);
 proxy_control_flow!(StreamSendClose);
 proxy_control_streams!(StreamSendClose);
 proxy_control_ping!(StreamSendClose);
+proxy_stream!(StreamSendClose);
+proxy_ready_sink!(StreamSendClose; ControlStreams);

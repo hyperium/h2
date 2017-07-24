@@ -51,35 +51,9 @@ impl<T> Stream for StreamRecvClose<T>
     }
 }
 
-// Proxy.
-impl<T, U> Sink for StreamRecvClose<T>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ControlStreams,
-{
-    type SinkItem = Frame<U>;
-    type SinkError = ConnectionError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Frame<U>, ConnectionError> {
-        self.inner.start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_complete()
-    }
-}
-
-// Proxy.
-impl<T, U> ReadySink for StreamRecvClose<T>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ReadySink,
-          T: ControlStreams,
-{
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
-    }
-}
-
 proxy_apply_settings!(StreamRecvClose);
 proxy_control_flow!(StreamRecvClose);
 proxy_control_streams!(StreamRecvClose);
 proxy_control_ping!(StreamRecvClose);
+proxy_sink!(StreamRecvClose);
+proxy_ready_sink!(StreamRecvClose);

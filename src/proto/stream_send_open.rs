@@ -45,20 +45,6 @@ impl<T: ApplySettings> ApplySettings for StreamSendOpen<T> {
     }
 }
 
-/// Proxy.
-impl<T> Stream for StreamSendOpen<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: ControlStreams,
-{
-    type Item = Frame;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        trace!("poll");
-        self.inner.poll()
-    }
-}
-
 /// Helper.
 impl<T: ControlStreams> StreamSendOpen<T> {
     fn check_not_reset(&self, id: StreamId) -> Result<(), ConnectionError> {
@@ -144,18 +130,8 @@ impl<T, U> Sink for StreamSendOpen<T>
     }
 }
 
-/// Proxy.
-impl<T, U> ReadySink for StreamSendOpen<T>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-          T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ControlStreams,
-          T: ReadySink,
-{
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
-    }
-}
-
 proxy_control_flow!(StreamSendOpen);
 proxy_control_streams!(StreamSendOpen);
 proxy_control_ping!(StreamSendOpen);
+proxy_stream!(StreamSendOpen);
+proxy_ready_sink!(StreamSendOpen; ControlStreams);

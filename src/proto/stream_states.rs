@@ -279,43 +279,8 @@ impl<T, P: Peer> ControlStreams for StreamStates<T, P> {
     }
 }
 
-/// Proxy.
-impl<T, P> Stream for StreamStates<T, P>
-    where T: Stream<Item = Frame, Error = ConnectionError>,
-{
-    type Item = Frame;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        self.inner.poll()
-    }
-}
-
-/// Proxy.
-impl<T, P, U> Sink for StreamStates<T, P>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-{
-    type SinkItem = Frame<U>;
-    type SinkError = ConnectionError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Frame<U>, ConnectionError> {
-        self.inner.start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_complete()
-    }
-}
-
-/// Proxy.
-impl<T, P, U> ReadySink for StreamStates<T, P>
-    where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
-          T: ReadySink,
-{
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
-    }
-}
-
 proxy_apply_settings!(StreamStates, P);
 proxy_control_ping!(StreamStates, P);
+proxy_stream!(StreamStates, P);
+proxy_sink!(StreamStates, P);
+proxy_ready_sink!(StreamStates, P);

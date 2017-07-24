@@ -19,6 +19,48 @@ mod control_settings;
 #[macro_use]
 mod control_streams;
 
+macro_rules! proxy_stream {
+    ($struct:ident $(, $targs:ident)*) => (
+        impl<T: Stream$(, $targs)*> Stream for $struct<T$(, $targs)*> {
+            type Item = T::Item;
+            type Error = T::Error;
+            fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
+                self.inner.poll()
+            }
+        }
+    )
+}
+
+macro_rules! proxy_sink {
+    ($struct:ident $(, $targs:ident)*) => (
+        impl<T, U$(, $targs)*> Sink for $struct<T$(, $targs)*>
+            where T: Sink<SinkItem = frame::Frame<U>, SinkError = ConnectionError>
+        {
+            type SinkItem = frame::Frame<U>;
+            type SinkError = ConnectionError;
+            fn start_send(&mut self, it: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
+                self.inner.start_send(it)
+            }
+            fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
+                self.inner.poll_complete()
+            }
+        }
+    )
+}
+
+macro_rules! proxy_ready_sink {
+    ($struct:ident $(, $targs:ident)*$(; $constraint:ident)*) => (
+        impl<T, U$(, $targs)*> ReadySink for $struct<T$(, $targs)*>
+            where T: Sink<SinkItem = Frame<U>, SinkError = ConnectionError>,
+                  T: ReadySink $(+ $constraint)*
+        {
+            fn poll_ready(&mut self) -> Poll<(), T::SinkError> {
+                self.inner.poll_ready()
+            }
+        }
+    )
+}
+
 use self::apply_settings::ApplySettings;
 use self::control_flow::ControlFlow;
 use self::control_ping::ControlPing;
