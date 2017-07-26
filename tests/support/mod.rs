@@ -16,12 +16,20 @@ pub use self::futures::{
 pub use self::http::{
     request,
     response,
+    method,
     status,
 };
 
 pub use self::h2::{
     client,
     server,
+};
+
+pub use self::bytes::{
+    Buf,
+    BufMut,
+    Bytes,
+    BytesMut,
 };
 
 pub trait MockH2 {
@@ -43,4 +51,28 @@ pub mod frames {
 
     pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
     pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
+}
+
+#[macro_export]
+macro_rules! assert_user_err {
+    ($actual:expr, $err:ident) => {{
+        use h2::error::{ConnectionError, User};
+
+        match $actual {
+            ConnectionError::User(e) => assert_eq!(e, User::$err),
+            _ => panic!("unexpected connection error type"),
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! assert_proto_err {
+    ($actual:expr, $err:ident) => {{
+        use h2::error::{ConnectionError, Reason};
+
+        match $actual {
+            ConnectionError::Proto(e) => assert_eq!(e, Reason::$err),
+            _ => panic!("unexpected connection error type"),
+        }
+    }};
 }
