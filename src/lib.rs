@@ -25,14 +25,14 @@ extern crate byteorder;
 #[macro_use]
 extern crate log;
 
+extern crate string;
+
 pub mod client;
 pub mod error;
 mod hpack;
 mod proto;
 mod frame;
 pub mod server;
-
-mod util;
 
 pub use error::{ConnectionError, Reason};
 pub use frame::StreamId;

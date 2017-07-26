@@ -78,20 +78,7 @@ impl Peer for Client {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let mut pseudo = frame::Pseudo::request(method, uri.path().into());
-
-        // If the URI includes a scheme component, add it to the pseudo headers
-        //
-        // TODO: Scheme must be set...
-        if let Some(scheme) = uri.scheme() {
-            pseudo.set_scheme(scheme.into());
-        }
-
-        // If the URI includes an authority component, add it to the pseudo
-        // headers
-        if let Some(authority) = uri.authority() {
-            pseudo.set_authority(authority.into());
-        }
+        let pseudo = frame::Pseudo::request(method, uri);
 
         // Create the HEADERS frame
         let mut frame = frame::Headers::new(id, pseudo, headers);

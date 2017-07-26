@@ -1,9 +1,9 @@
 use super::DecoderError;
-use util::byte_str::ByteStr;
 
 use http::{Method, StatusCode};
 use http::header::{HeaderName, HeaderValue};
 use bytes::Bytes;
+use string::{String, TryFrom};
 
 /// HTTP/2.0 Header
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -12,10 +12,11 @@ pub enum Header<T = HeaderName> {
         name: T,
         value: HeaderValue,
     },
-    Authority(ByteStr),
+    // TODO: Change these types to `http::uri` types.
+    Authority(String<Bytes>),
     Method(Method),
-    Scheme(ByteStr),
-    Path(ByteStr),
+    Scheme(String<Bytes>),
+    Path(String<Bytes>),
     Status(StatusCode),
 }
 
@@ -56,7 +57,7 @@ impl Header {
         if name[0] == b':' {
             match &name[1..] {
                 b"authority" => {
-                    let value = try!(ByteStr::from_utf8(value));
+                    let value = try!(String::try_from(value));
                     Ok(Header::Authority(value))
                 }
                 b"method" => {
@@ -64,11 +65,11 @@ impl Header {
                     Ok(Header::Method(method))
                 }
                 b"scheme" => {
-                    let value = try!(ByteStr::from_utf8(value));
+                    let value = try!(String::try_from(value));
                     Ok(Header::Scheme(value))
                 }
                 b"path" => {
-                    let value = try!(ByteStr::from_utf8(value));
+                    let value = try!(String::try_from(value));
                     Ok(Header::Path(value))
                 }
                 b"status" => {
@@ -231,16 +232,16 @@ impl<'a> Name<'a> {
                 })
             }
             Name::Authority => {
-                Ok(Header::Authority(try!(ByteStr::from_utf8(value))))
+                Ok(Header::Authority(try!(String::try_from(value))))
             }
             Name::Method => {
                 Ok(Header::Method(try!(Method::from_bytes(&*value))))
             }
             Name::Scheme => {
-                Ok(Header::Scheme(try!(ByteStr::from_utf8(value))))
+                Ok(Header::Scheme(try!(String::try_from(value))))
             }
             Name::Path => {
-                Ok(Header::Path(try!(ByteStr::from_utf8(value))))
+                Ok(Header::Path(try!(String::try_from(value))))
             }
             Name::Status => {
                 match StatusCode::from_bytes(&value) {

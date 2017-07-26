@@ -1,13 +1,14 @@
 use super::{huffman, Header};
 use frame;
-use util::byte_str::FromUtf8Error;
 
 use http::{method, header, status};
 use bytes::{Buf, Bytes, BytesMut};
+use string::String;
 
 use std::cmp;
 use std::io::Cursor;
 use std::collections::VecDeque;
+use std::str::Utf8Error;
 
 /// Decodes headers using HPACK
 #[derive(Debug)]
@@ -487,8 +488,8 @@ impl Table {
 
 // ===== impl DecoderError =====
 
-impl From<FromUtf8Error> for DecoderError {
-    fn from(_: FromUtf8Error) -> DecoderError {
+impl From<Utf8Error> for DecoderError {
+    fn from(_: Utf8Error) -> DecoderError {
         // TODO: Better error?
         DecoderError::InvalidUtf8
     }
@@ -532,16 +533,15 @@ impl From<DecoderError> for frame::Error {
 pub fn get_static(idx: usize) -> Header {
     use http::{status, method, header};
     use http::header::HeaderValue;
-    use util::byte_str::ByteStr;
 
     match idx {
-        1 => Header::Authority(ByteStr::from_static("")),
+        1 => Header::Authority(from_static("")),
         2 => Header::Method(method::GET),
         3 => Header::Method(method::POST),
-        4 => Header::Path(ByteStr::from_static("/")),
-        5 => Header::Path(ByteStr::from_static("/index.html")),
-        6 => Header::Scheme(ByteStr::from_static("http")),
-        7 => Header::Scheme(ByteStr::from_static("https")),
+        4 => Header::Path(from_static("/")),
+        5 => Header::Path(from_static("/index.html")),
+        6 => Header::Scheme(from_static("http")),
+        7 => Header::Scheme(from_static("https")),
         8 => Header::Status(status::OK),
         9 => Header::Status(status::NO_CONTENT),
         10 => Header::Status(status::PARTIAL_CONTENT),
@@ -739,4 +739,8 @@ pub fn get_static(idx: usize) -> Header {
         },
         _ => unreachable!(),
     }
+}
+
+fn from_static(s: &'static str) -> String<Bytes> {
+    unsafe { String::from_utf8_unchecked(Bytes::from_static(s.as_bytes())) }
 }
