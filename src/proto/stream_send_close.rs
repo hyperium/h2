@@ -1,5 +1,4 @@
 use ConnectionError;
-use error::Reason;
 use frame::{self, Frame};
 use proto::*;
 
@@ -34,10 +33,10 @@ impl<T, U> Sink for StreamSendClose<T>
         if !id.is_zero() {
             if eos {
                 if let &Frame::Reset(ref rst) = &frame {
-                    self.inner.reset_stream(id, rst.reason());
+                    self.streams_mut().reset_stream(id, rst.reason());
                 } else {
-                    debug_assert!(self.inner.is_active(id));
-                    self.inner.close_send_half(id)?;
+                    debug_assert!(self.streams().is_active(id));
+                    self.streams_mut().close_send_half(id)?;
                 }
             }
         }

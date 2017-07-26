@@ -50,7 +50,7 @@ impl<T: ControlStreams> ControlFlowSend for FlowControlSend<T> {
 
         // TODO this should probably account for stream priority?
         while let Some(id) = self.pending_streams.pop_front() {
-            if let Some(mut flow) = self.send_flow_controller(id) {
+            if let Some(mut flow) = self.streams_mut().send_flow_controller(id) {
                 if let Some(incr) = flow.apply_window_update() {
                     return Ok(Async::Ready(WindowUpdate::new(id, incr)));
                 }
@@ -84,7 +84,7 @@ impl<T> Stream for FlowControlSend<T>
                     } else {
                         // The remote may send window updates for streams that the local
                         // now considers closed. It's okay.
-                        if let Some(fc) = self.inner.send_flow_controller(id) {
+                        if let Some(fc) = self.streams_mut().send_flow_controller(id) {
                             fc.expand_window(sz);
                         }
                     }
@@ -110,7 +110,7 @@ impl<T, U> Sink for FlowControlSend<T>
     type SinkError = T::SinkError;
 
     fn start_send(&mut self, frame: Frame<U>) -> StartSend<T::SinkItem, T::SinkError> {
-        debug_assert!(self.inner.get_reset(frame.stream_id()).is_none());
+        debug_assert!(self.streams().get_reset(frame.stream_id()).is_none());
 
         // Ensures that the underlying transport is will accept the frame. It's important
         //  that this be checked before claiming capacity from the flow controllers.
@@ -130,8 +130,9 @@ impl<T, U> Sink for FlowControlSend<T>
             }
 
             // Ensure there's enough capacity on stream.
-            let mut fc = self.inner.send_flow_controller(v.stream_id())
+            let mut fc = self.inner.streams_mut().send_flow_controller(v.stream_id())
                 .expect("no remote stream for data frame");
+
             if fc.claim_window(sz).is_err() {
                 return Err(error::User::FlowControlViolation.into())
             }
@@ -195,7 +196,7 @@ impl<T> ApplySettings for FlowControlSend<T>
                 return Ok(());
             }
 
-            self.inner.update_inital_send_window_size(old_window_size, new_window_size);
+            self.streams_mut().update_inital_send_window_size(old_window_size, new_window_size);
             self.initial_window_size = new_window_size;
         }
 

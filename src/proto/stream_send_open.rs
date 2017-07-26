@@ -49,7 +49,7 @@ impl<T: ApplySettings> ApplySettings for StreamSendOpen<T> {
 impl<T: ControlStreams> StreamSendOpen<T> {
     fn check_not_reset(&self, id: StreamId) -> Result<(), ConnectionError> {
         // Ensure that the stream hasn't been closed otherwise.
-        match self.inner.get_reset(id) {
+        match self.streams().get_reset(id) {
             Some(reason) => Err(StreamReset(reason).into()),
             None => Ok(()),
         }
@@ -82,15 +82,15 @@ impl<T, U> Sink for StreamSendOpen<T>
 
             &Frame::Headers(..) => {
                 self.check_not_reset(id)?;
-                if T::local_valid_id(id) {
-                    if self.inner.is_local_active(id) {
+                if self.streams().is_valid_local_stream_id(id) {
+                    if self.streams().is_local_active(id) {
                         // Can't send a a HEADERS frame on a local stream that's active,
                         // because we've already sent headers.  This will have to change
                         // to support PUSH_PROMISE.
                         return Err(UnexpectedFrameType.into());
                     }
 
-                    if !T::local_can_open() {
+                    if !self.streams().can_local_open() {
                         // A server tried to start a stream with a HEADERS frame.
                         return Err(UnexpectedFrameType.into());
                     }
@@ -98,15 +98,15 @@ impl<T, U> Sink for StreamSendOpen<T>
                     if let Some(max) = self.max_concurrency {
                         // Don't allow this stream to overflow the remote's max stream
                         // concurrency.
-                        if (max as usize) < self.inner.local_active_len() {
+                        if (max as usize) < self.streams().local_active_len() {
                             return Err(Rejected.into());
                         }
                     }
 
-                    self.inner.local_open(id, self.initial_window_size)?;
+                    self.inner.streams_mut().local_open(id, self.initial_window_size)?;
                 } else {
                     // On remote streams,
-                    if self.inner.remote_open_send_half(id, self.initial_window_size).is_err() {
+                    if self.inner.streams_mut().remote_open_send_half(id, self.initial_window_size).is_err() {
                         return Err(InvalidStreamId.into());
                     }
                 }
@@ -116,7 +116,7 @@ impl<T, U> Sink for StreamSendOpen<T>
             // the stream is open (i.e. has already sent headers).
             _ => {
                 self.check_not_reset(id)?;
-                if !self.inner.is_send_open(id) {
+                if !self.streams().is_send_open(id) {
                     return Err(InactiveStreamId.into());
                 }
             }
