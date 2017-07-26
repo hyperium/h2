@@ -71,6 +71,10 @@ impl<T, P, B> Connection<T, P, B>
         self.inner.take_pong()
     }
 
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+        self.inner.poll_ready()
+    }
+
     pub fn send_data(self,
                      id: StreamId,
                      data: B,
@@ -244,16 +248,5 @@ impl<T, P, B> Sink for Connection<T, P, B>
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         trace!("poll_complete");
         self.inner.poll_complete()
-    }
-}
-
-impl<T, P, B> ReadySink for Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
-{
-    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
-        trace!("poll_ready");
-        self.inner.poll_ready()
     }
 }
