@@ -77,23 +77,7 @@ pub trait Peer {
     /// Message type polled from the transport
     type Poll;
 
-    /// Returns `true` if `id` is a valid StreamId for a stream initiated by the
-    /// local node.
-    fn is_valid_local_stream_id(id: StreamId) -> bool;
-
-    /// Returns `true` if `id` is a valid StreamId for a stream initiated by the
-    /// remote node.
-    fn is_valid_remote_stream_id(id: StreamId) -> bool;
-
-    fn local_can_open() -> bool;
-    fn remote_can_open() -> bool {
-        !Self::local_can_open()
-    }
-
-    //fn can_reserve_local_stream() -> bool;
-    // fn can_reserve_remote_stream() -> bool {
-    //     !self.can_reserve_local_stream
-    // }
+    fn is_server() -> bool;
 
     #[doc(hidden)]
     fn convert_send_message(

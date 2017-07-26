@@ -44,7 +44,7 @@ impl<T, U> FlowControlRecv<T>
 /// Exposes a public upward API for flow control.
 impl<T: ControlStreams> ControlFlowRecv for FlowControlRecv<T> {
     fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        let added = match self.recv_flow_controller(id) {
+        let added = match self.streams_mut().recv_flow_controller(id) {
             None => false,
             Some(mut fc) => {
                 fc.expand_window(incr);
@@ -57,7 +57,7 @@ impl<T: ControlStreams> ControlFlowRecv for FlowControlRecv<T> {
                 self.pending_streams.push_back(id);
             }
             Ok(())
-        } else if let Some(rst) = self.inner.get_reset(id) {
+        } else if let Some(rst) = self.streams().get_reset(id) {
             Err(error::User::StreamReset(rst).into())
         } else {
             Err(error::User::InvalidStreamId.into())
@@ -80,8 +80,8 @@ impl<T, U> FlowControlRecv<T>
         }
 
         while let Some(id) = self.pending_streams.pop_front() {
-            if self.inner.get_reset(id).is_none() {
-                let update = self.recv_flow_controller(id).and_then(|s| s.apply_window_update());
+            if self.streams().get_reset(id).is_none() {
+                let update = self.streams_mut().recv_flow_controller(id).and_then(|s| s.apply_window_update());
                 if let Some(incr) = update {
                     try_ready!(self.try_send(frame::WindowUpdate::new(id, incr)));
                 }
@@ -124,8 +124,9 @@ impl<T> Stream for FlowControlRecv<T>
                         return Err(error::Reason::FlowControlError.into());
                     }
 
-                    let fc = self.inner.recv_flow_controller(id)
+                    let fc = self.inner.streams_mut().recv_flow_controller(id)
                         .expect("receiving data with no flow controller");
+
                     if fc.claim_window(sz).is_err() {
                         // TODO this should cause a GO_AWAY
                         return Err(error::Reason::FlowControlError.into());
@@ -206,7 +207,7 @@ impl<T> ApplySettings for FlowControlRecv<T>
                 return Ok(());
             }
 
-            self.inner.update_inital_recv_window_size(old_window_size, new_window_size);
+            self.streams_mut().update_inital_recv_window_size(old_window_size, new_window_size);
             self.initial_window_size = new_window_size;
         }
         Ok(())

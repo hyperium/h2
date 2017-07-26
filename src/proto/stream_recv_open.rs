@@ -42,7 +42,7 @@ impl<T, U> StreamRecvOpen<T>
         let f = frame::Reset::new(id, RefusedStream);
         match self.inner.start_send(f.into())? {
             AsyncSink::Ready => {
-                self.inner.reset_stream(id, RefusedStream);
+                self.streams_mut().reset_stream(id, RefusedStream);
                 Ok(Async::Ready(()))
             }
             AsyncSink::NotReady(_) => {
@@ -81,7 +81,7 @@ impl<T> ApplySettings for StreamRecvOpen<T>
 impl<T: ControlStreams> StreamRecvOpen<T> {
     fn check_not_reset(&self, id: StreamId) -> Result<(), ConnectionError> {
         // Ensure that the stream hasn't been closed otherwise.
-        match self.inner.get_reset(id) {
+        match self.streams().get_reset(id) {
             Some(reason) => Err(reason.into()),
             None => Ok(()),
         }
@@ -127,20 +127,20 @@ impl<T, U> Stream for StreamRecvOpen<T>
                 &Frame::Headers(..) => {
                     self.check_not_reset(id)?;
 
-                    if T::remote_valid_id(id) {
-                        if self.inner.is_remote_active(id) {
+                    if self.streams().is_valid_remote_stream_id(id) {
+                        if self.streams().is_remote_active(id) {
                             // Can't send a a HEADERS frame on a remote stream that's
                             // active, because we've already received headers.  This will
                             // have to change to support PUSH_PROMISE.
                             return Err(ProtocolError.into());
                         }
 
-                        if !T::remote_can_open() {
+                        if !self.streams().can_remote_open() {
                             return Err(ProtocolError.into());
                         }
 
                         if let Some(max) = self.max_concurrency {
-                            if (max as usize) < self.inner.remote_active_len() {
+                            if (max as usize) < self.streams().remote_active_len() {
                                 debug!("refusing stream that would exceed max_concurrency={}", max);
                                 self.send_refuse(id)?;
 
@@ -149,17 +149,17 @@ impl<T, U> Stream for StreamRecvOpen<T>
                             }
                         }
 
-                        self.inner.remote_open(id, self.initial_window_size)?;
+                        self.inner.streams_mut().remote_open(id, self.initial_window_size)?;
                     } else {
                         // On remote streams,
-                        self.inner.local_open_recv_half(id, self.initial_window_size)?;
+                        self.inner.streams_mut().local_open_recv_half(id, self.initial_window_size)?;
                     }
                 }
 
                 // All other stream frames are sent only when
                 _ => {
                     self.check_not_reset(id)?;
-                    if !self.inner.is_recv_open(id) {
+                    if !self.streams().is_recv_open(id) {
                         return Err(ProtocolError.into());
                     }
                 }

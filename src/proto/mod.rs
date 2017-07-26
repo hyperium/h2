@@ -97,7 +97,7 @@ use self::stream_recv_close::StreamRecvClose;
 use self::stream_recv_open::StreamRecvOpen;
 use self::stream_send_close::StreamSendClose;
 use self::stream_send_open::StreamSendOpen;
-use self::stream_states::StreamStates;
+use self::stream_states::{StreamStates, Streams};
 
 /// Represents the internals of an HTTP/2 connection.
 ///
@@ -187,22 +187,22 @@ use self::stream_states::StreamStates;
 ///
 /// - Encodes frames to bytes.
 ///
-type Transport<T, P, B>=
+type Transport<T, B>=
     Settings<
-        Streams<
+        Streams2<
             PingPong<
                 Codec<T, B>,
-                B>,
-            P>>;
+                B>>>;
 
-type Streams<T, P> =
+// TODO: rename
+type Streams2<T> =
     StreamSendOpen<
         FlowControlSend<
             StreamSendClose<
                 StreamRecvClose<
                     FlowControlRecv<
                         StreamRecvOpen<
-                            StreamStates<T, P>>>>>>>;
+                            StreamStates<T>>>>>>>;
 
 type Codec<T, B> =
     FramedRead<
@@ -303,7 +303,7 @@ pub fn from_server_handshaker<T, P, B>(settings: Settings<FramedWrite<T, B::Buf>
                             StreamRecvOpen::new(
                                 initial_recv_window_size,
                                 local_max_concurrency,
-                                StreamStates::new(
+                                StreamStates::new::<P>(
                                     PingPong::new(
                                         FramedRead::new(framed)))))))))
     });

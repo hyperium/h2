@@ -13,13 +13,13 @@ use std::marker::PhantomData;
 /// An H2 connection
 #[derive(Debug)]
 pub struct Connection<T, P, B: IntoBuf = Bytes> {
-    inner: Transport<T, P, B::Buf>,
+    inner: Transport<T, B::Buf>,
     // Set to `true` as long as the connection is in a valid state.
     active: bool,
     _phantom: PhantomData<(P, B)>,
 }
 
-pub fn new<T, P, B>(transport: Transport<T, P, B::Buf>)
+pub fn new<T, P, B>(transport: Transport<T, B::Buf>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
