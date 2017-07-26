@@ -13,6 +13,7 @@ byteorder = "1.0"
 log = "0.3.8"
 fnv = "1.0.5"
 ordermap = "0.2.10"
+string = { git = "https://github.com/carllerche/string" }
 
 [dev-dependencies]
 mock-io = { git = "https://github.com/carllerche/mock-io" }

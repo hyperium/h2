@@ -1,13 +1,13 @@
 use super::StreamId;
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
-use util::byte_str::ByteStr;
 
-use http::{request, response, version, uri, Method, StatusCode};
+use http::{request, response, version, uri, Method, StatusCode, Uri};
 use http::header::{self, HeaderMap, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
 use byteorder::{BigEndian, ByteOrder};
+use string::String;
 
 use std::io::Cursor;
 
@@ -84,9 +84,9 @@ pub struct StreamDependency {
 pub struct Pseudo {
     // Request
     method: Option<Method>,
-    scheme: Option<ByteStr>,
-    authority: Option<ByteStr>,
-    path: Option<ByteStr>,
+    scheme: Option<String<Bytes>>,
+    authority: Option<String<Bytes>>,
+    path: Option<String<Bytes>>,
 
     // Response
     status: Option<StatusCode>,
@@ -225,17 +225,17 @@ impl Headers {
 
         if let Some(scheme) = self.pseudo.scheme {
             // TODO: Don't unwrap
-            parts.scheme = Some(uri::Scheme::try_from_shared(scheme.into()).unwrap());
+            parts.scheme = Some(uri::Scheme::try_from_shared(scheme.into_inner()).unwrap());
         }
 
         if let Some(authority) = self.pseudo.authority {
             // TODO: Don't unwrap
-            parts.authority = Some(uri::Authority::try_from_shared(authority.into()).unwrap());
+            parts.authority = Some(uri::Authority::try_from_shared(authority.into_inner()).unwrap());
         }
 
         if let Some(path) = self.pseudo.path {
             // TODO: Don't unwrap
-            parts.origin_form = Some(uri::OriginForm::try_from_shared(path.into()).unwrap());
+            parts.origin_form = Some(uri::OriginForm::try_from_shared(path.into_inner()).unwrap());
         }
 
         request.uri = parts.into();
@@ -297,14 +297,39 @@ impl From<Headers> for Frame {
 // ===== impl Pseudo =====
 
 impl Pseudo {
-    pub fn request(method: Method, path: ByteStr) -> Self {
-        Pseudo {
+    pub fn request(method: Method, uri: Uri) -> Self {
+        let parts = uri::Parts::from(uri);
+
+        fn to_string(src: Bytes) -> String<Bytes> {
+            unsafe { String::from_utf8_unchecked(src) }
+        }
+
+        let path = parts.origin_form
+            .map(|v| v.into())
+            .unwrap_or_else(|| Bytes::from_static(b"/"));
+
+        let mut pseudo = Pseudo {
             method: Some(method),
             scheme: None,
             authority: None,
-            path: Some(path),
+            path: Some(to_string(path)),
             status: None,
+        };
+
+        // If the URI includes a scheme component, add it to the pseudo headers
+        //
+        // TODO: Scheme must be set...
+        if let Some(scheme) = parts.scheme {
+            pseudo.set_scheme(to_string(scheme.into()));
         }
+
+        // If the URI includes an authority component, add it to the pseudo
+        // headers
+        if let Some(authority) = parts.authority {
+            pseudo.set_authority(to_string(authority.into()));
+        }
+
+        pseudo
     }
 
     pub fn response(status: StatusCode) -> Self {
@@ -317,11 +342,11 @@ impl Pseudo {
         }
     }
 
-    pub fn set_scheme(&mut self, scheme: ByteStr) {
+    pub fn set_scheme(&mut self, scheme: String<Bytes>) {
         self.scheme = Some(scheme);
     }
 
-    pub fn set_authority(&mut self, authority: ByteStr) {
+    pub fn set_authority(&mut self, authority: String<Bytes>) {
         self.authority = Some(authority);
     }
 }

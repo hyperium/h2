@@ -6,7 +6,7 @@ use hpack::{Header, Decoder, Encoder, Encode};
 
 use http::header::{HeaderName, HeaderValue};
 
-use self::bytes::BytesMut;
+use self::bytes::{BytesMut, Bytes};
 use self::quickcheck::{QuickCheck, Arbitrary, Gen, TestResult};
 use self::rand::{StdRng, Rng, SeedableRng};
 
@@ -183,7 +183,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
         match g.next_u32() % 5 {
             0 => {
                 let value = gen_string(g, 4, 20);
-                Header::Authority(value.into())
+                Header::Authority(to_shared(value))
             }
             1 => {
                 let method = match g.next_u32() % 6 {
@@ -212,7 +212,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                     _ => unreachable!(),
                 };
 
-                Header::Scheme(value.into())
+                Header::Scheme(to_shared(value.to_string()))
             }
             3 => {
                 let value = match g.next_u32() % 100 {
@@ -221,7 +221,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                     _ => gen_string(g, 2, 20),
                 };
 
-                Header::Path(value.into())
+                Header::Path(to_shared(value))
             }
             4 => {
                 let status = (g.gen::<u16>() % 500) + 100;
@@ -345,4 +345,9 @@ fn gen_string(g: &mut StdRng, min: usize, max: usize) -> String {
     }).collect();
 
     String::from_utf8(bytes).unwrap()
+}
+
+fn to_shared(src: String) -> ::string::String<Bytes> {
+    let b: Bytes = src.into();
+    unsafe { ::string::String::from_utf8_unchecked(b) }
 }
