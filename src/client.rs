@@ -41,7 +41,8 @@ pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
             debug!("client connection bound");
 
             // Use default local settings for now
-            proto::from_io(io, Default::default())
+            // proto::from_io(io, Default::default())
+            unimplemented!();
         })
         .map_err(ConnectionError::from);
 

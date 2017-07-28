@@ -46,6 +46,8 @@ pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
           B: 'static, // TODO: Why is this required but not in client?
 {
+    unimplemented!();
+    /*
     let local_settings = frame::SettingSet::default();
     let transport = proto::server_handshaker(io, local_settings.clone());
 
@@ -56,6 +58,7 @@ pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
         ;
 
     Handshake { inner: Box::new(handshake) }
+    */
 }
 
 impl<T> Flush<T> {
