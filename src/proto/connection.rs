@@ -120,14 +120,10 @@ impl<T, P, B> Connection<T, P, B>
 
             match try_ready!(self.codec.poll()) {
                 Some(Headers(frame)) => {
+                    // Update stream state while ensuring that the headers frame
+                    // can be received
                     if let Some(frame) = try!(self.streams.recv_headers(frame)) {
-                        // Convert the frame
-                        let frame = Frame::Headers {
-                            id: frame.stream_id(),
-                            end_of_stream: frame.is_end_stream(),
-                            headers: P::convert_poll_message(frame),
-                        };
-
+                        let frame = Self::convert_poll_message(frame);
                         return Ok(Some(frame).into());
                     }
                 }
@@ -170,6 +166,19 @@ impl<T, P, B> Connection<T, P, B>
                     unimplemented!();
                 }
                 None => return Ok(Async::Ready(None)),
+            }
+        }
+    }
+
+    fn convert_poll_message(frame: frame::Headers) -> Frame<P::Poll> {
+        if frame.is_trailers() {
+            // TODO: return trailers
+            unimplemented!();
+        } else {
+            Frame::Headers {
+                id: frame.stream_id(),
+                end_of_stream: frame.is_end_stream(),
+                headers: P::convert_poll_message(frame),
             }
         }
     }

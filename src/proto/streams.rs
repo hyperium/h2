@@ -1,4 +1,4 @@
-use {frame, Peer, StreamId, ConnectionError};
+use {frame, Peer, StreamId, FrameSize, ConnectionError};
 use proto::*;
 use error::Reason::*;
 
@@ -16,9 +16,6 @@ pub struct Streams {
     /// Streams
     streams: OrderMap<StreamId, state::Stream>,
 
-    /// Flow control logic handler
-    flow_control: FlowControl,
-
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 }
@@ -32,14 +29,29 @@ struct Inner {
     /// True when running in context of an H2 server
     is_server: bool,
 
+    /// Maximum number of remote initiated streams
+    max_remote_initiated: Option<usize>,
+
     /// Current number of remote initiated streams
     num_remote_initiated: usize,
+
+    /// Initial window size of remote initiated streams
+    init_remote_window_sz: usize,
+
+    /// Maximum number of locally initiated streams
+    max_local_initiated: Option<usize>,
 
     /// Current number of locally initiated streams
     num_local_initiated: usize,
 
-    /// Configuration options
-    config: Config,
+    /// Initial window size of locally initiated streams
+    init_local_window_sz: usize,
+
+    /// Connection level flow control governing received data
+    recv_flow_control: state::FlowControl,
+
+    /// Connection level flow control governing sent data
+    send_flow_control: state::FlowControl,
 }
 
 #[derive(Debug)]
@@ -48,13 +60,13 @@ pub struct Config {
     pub max_remote_initiated: Option<usize>,
 
     /// Initial window size of remote initiated streams
-    pub init_remote_window_sz: WindowSize,
+    pub init_remote_window_sz: usize,
 
     /// Maximum number of locally initiated streams
     pub max_local_initiated: Option<usize>,
 
     /// Initial window size of locally initiated streams
-    pub init_local_window_sz: WindowSize,
+    pub init_local_window_sz: usize,
 }
 
 impl Streams {
@@ -62,12 +74,16 @@ impl Streams {
         Streams {
             inner: Inner {
                 is_server: P::is_server(),
+                max_remote_initiated: config.max_remote_initiated,
                 num_remote_initiated: 0,
+                init_remote_window_sz: config.init_remote_window_sz,
+                max_local_initiated: config.max_local_initiated,
                 num_local_initiated: 0,
-                config: config,
+                init_local_window_sz: config.init_local_window_sz,
+                recv_flow_control: state::FlowControl::new(config.init_remote_window_sz),
+                send_flow_control: state::FlowControl::new(config.init_local_window_sz),
             },
             streams: OrderMap::default(),
-            flow_control: FlowControl::new(),
             refused: None,
         }
     }
@@ -82,6 +98,14 @@ impl Streams {
         let state = match self.streams.entry(id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
+                // Trailers cannot open a stream. Trailers are header frames
+                // that do not contain pseudo headers. Requests MUST contain a
+                // method and responses MUST contain a status. If they do not,t
+                // hey are considered to be malformed.
+                if frame.is_trailers() {
+                    return Err(ProtocolError.into());
+                }
+
                 if let Some(state) = try!(self.inner.remote_open(id)) {
                     e.insert(state)
                 } else {
@@ -93,7 +117,11 @@ impl Streams {
             }
         };
 
-        try!(self.inner.recv_headers(state));
+        if frame.is_trailers() {
+            try!(self.inner.recv_trailers(id, state, frame.is_end_stream()));
+        } else {
+            try!(self.inner.recv_headers(id, state, frame.is_end_stream()));
+        }
 
         Ok(Some(frame))
     }
@@ -101,7 +129,17 @@ impl Streams {
     pub fn recv_data(&mut self, frame: &frame::Data)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        let id = frame.stream_id();
+        let sz = frame.payload().len();
+
+        let state = match self.streams.get_mut(&id) {
+            Some(state) => state,
+            None => return Err(ProtocolError.into()),
+        };
+
+        // Ensure there's enough capacity on the connection before acting on the
+        // stream.
+        self.inner.recv_data(id, state, sz, frame.is_end_stream())
     }
 
     pub fn recv_reset(&mut self, frame: &frame::Reset)
@@ -156,7 +194,7 @@ impl Inner {
             return Err(ProtocolError.into());
         }
 
-        if let Some(max) = self.config.max_remote_initiated {
+        if let Some(max) = self.max_remote_initiated {
             if max <= self.num_remote_initiated {
                 return Ok(None);
             }
@@ -169,8 +207,63 @@ impl Inner {
     }
 
     /// Transition the stream state based on receiving headers
-    fn recv_headers(&mut self, state: &mut state::Stream) -> Result<(), ConnectionError> {
-        state.remote_open(self.config.init_remote_window_sz)
+    fn recv_headers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        try!(state.recv_open(self.init_remote_window_sz, eos));
+
+        if state.is_closed() {
+            self.stream_closed(id);
+        }
+
+        Ok(())
+    }
+
+    fn recv_trailers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    fn recv_data(&mut self, id: StreamId, state: &mut state::Stream, sz: usize, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        match state.recv_flow_control() {
+            Some(flow) => {
+                // Ensure there's enough capacity on the connection before
+                // acting on the stream.
+                try!(self.recv_flow_control.ensure_window(sz));
+
+                // Claim the window on the stream
+                try!(flow.claim_window(sz));
+
+                // Claim the window on the connection.
+                self.recv_flow_control.claim_window(sz)
+                    .expect("local connection flow control error");
+            }
+            None => return Err(ProtocolError.into()),
+        }
+
+        state.recv_close();
+
+        if state.is_closed() {
+            self.stream_closed(id)
+        }
+
+        Ok(())
+    }
+
+    fn stream_closed(&mut self, id: StreamId) {
+        if self.is_local_init(id) {
+            self.num_local_initiated -= 1;
+        } else {
+            self.num_remote_initiated -= 1;
+        }
+    }
+
+    fn is_local_init(&self, id: StreamId) -> bool {
+        assert!(!id.is_zero());
+        self.is_server == id.is_server_initiated()
     }
 
     /// Returns true if the remote peer can initiate a stream with the given ID.

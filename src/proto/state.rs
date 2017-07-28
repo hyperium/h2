@@ -69,25 +69,21 @@ pub enum Peer {
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
     /// Amount that may be claimed.
-    window_size: WindowSize,
+    window_size: usize,
 
     /// Amount to be removed by future increments.
-    underflow: WindowSize,
+    underflow: usize,
 
     /// The amount that has been incremented but not yet advertised (to the application or
     /// the remote).
-    next_window_update: WindowSize,
+    next_window_update: usize,
 }
-
-/// Flow control error
-#[derive(Clone, Copy, Debug)]
-pub struct WindowUnderflow;
 
 impl Stream {
     /// Opens the send-half of a stream if it is not already open.
     ///
     /// Returns true iff the send half was not previously open.
-    pub fn local_open(&mut self, sz: WindowSize) -> Result<bool, ConnectionError> {
+    pub fn send_open(&mut self, sz: usize) -> Result<bool, ConnectionError> {
         unimplemented!();
         /*
         use self::Stream::*;
@@ -132,7 +128,7 @@ impl Stream {
 
     /// Open the receive have of the stream, this action is taken when a HEADERS
     /// frame is received.
-    pub fn remote_open(&mut self, sz: WindowSize) -> Result<(), ConnectionError> {
+    pub fn recv_open(&mut self, sz: usize, eos: bool) -> Result<(), ConnectionError> {
         use self::Stream::*;
         use self::Peer::*;
 
@@ -140,19 +136,31 @@ impl Stream {
 
         *self = match *self {
             Idle => {
-                Open {
-                    local: AwaitingHeaders,
-                    remote: remote,
+                if eos {
+                    HalfClosedRemote(AwaitingHeaders)
+                } else {
+                    Open {
+                        local: AwaitingHeaders,
+                        remote: remote,
+                    }
                 }
             }
             Open { local, remote: AwaitingHeaders } => {
-                Open {
-                    local,
-                    remote: remote,
+                if eos {
+                    HalfClosedRemote(local)
+                } else {
+                    Open {
+                        local,
+                        remote: remote,
+                    }
                 }
             }
             HalfClosedLocal(AwaitingHeaders) => {
-                HalfClosedLocal(remote)
+                if eos {
+                    Closed(None)
+                } else {
+                    HalfClosedLocal(remote)
+                }
             }
             _ => {
                 // All other transitions result in a protocol error
@@ -161,6 +169,35 @@ impl Stream {
         };
 
         return Ok(());
+    }
+
+    /// Indicates that the remote side will not send more data to the local.
+    pub fn recv_close(&mut self) -> Result<(), ConnectionError> {
+        use self::Stream::*;
+
+        match *self {
+            Open { local, .. } => {
+                // The remote side will continue to receive data.
+                trace!("recv_close: Open => HalfClosedRemote({:?})", local);
+                *self = HalfClosedRemote(local);
+                Ok(())
+            }
+            HalfClosedLocal(..) => {
+                trace!("recv_close: HalfClosedLocal => Closed");
+                *self = Closed(None);
+                Ok(())
+            }
+            _ => Err(ProtocolError.into()),
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        use self::Stream::*;
+
+        match *self {
+            Closed(_) => true,
+            _ => false,
+        }
     }
 
     /*
@@ -239,27 +276,27 @@ impl Stream {
             }
         }
     }
-
-    pub fn recv_flow_controller(&mut self) -> Option<&mut FlowControl> {
-        use self::Stream::*;
-
-        match self {
-            &mut Open { ref mut local, .. } |
-            &mut HalfClosedRemote(ref mut local) => local.flow_controller(),
-            _ => None,
-        }
-    }
-
-    pub fn send_flow_controller(&mut self) -> Option<&mut FlowControl> {
-        use self::Stream::*;
-
-        match self {
-            &mut Open { ref mut remote, .. } |
-            &mut HalfClosedLocal(ref mut remote) => remote.flow_controller(),
-            _ => None,
-        }
-    }
     */
+
+    pub fn recv_flow_control(&mut self) -> Option<&mut FlowControl> {
+        use self::Stream::*;
+
+        match *self {
+            Open { ref mut remote, .. } |
+            HalfClosedLocal(ref mut remote) => remote.flow_control(),
+            _ => None,
+        }
+    }
+
+    pub fn send_flow_control(&mut self) -> Option<&mut FlowControl> {
+        use self::Stream::*;
+
+        match *self {
+            Open { ref mut local, .. } |
+            HalfClosedRemote(ref mut local) => local.flow_control(),
+            _ => None,
+        }
+    }
 }
 
 impl Default for Stream {
@@ -275,8 +312,8 @@ impl Default for Peer {
 }
 
 impl Peer {
-    fn streaming(sz: WindowSize) -> Peer {
-        Peer::Streaming(FlowControl::with_initial_size(sz))
+    fn streaming(sz: usize) -> Peer {
+        Peer::Streaming(FlowControl::new(sz))
     }
 
     fn is_streaming(&self) -> bool {
@@ -288,18 +325,18 @@ impl Peer {
         }
     }
 
-    fn flow_controller(&mut self) -> Option<&mut FlowControl> {
+    fn flow_control(&mut self) -> Option<&mut FlowControl> {
         use self::Peer::*;
 
-        match self {
-            &mut Streaming(ref mut fc) => Some(fc),
+        match *self {
+            Streaming(ref mut flow) => Some(flow),
             _ => None,
         }
     }
 }
 
 impl FlowControl {
-    pub fn with_initial_size(window_size: WindowSize) -> FlowControl {
+    pub fn new(window_size: usize) -> FlowControl {
         FlowControl {
             window_size,
             underflow: 0,
@@ -307,18 +344,10 @@ impl FlowControl {
         }
     }
 
-    // pub fn with_next_update(next_window_update: WindowSize) -> FlowControl {
-    //     FlowControl {
-    //         window_size: 0,
-    //         underflow: 0,
-    //         next_window_update,
-    //     }
-    // }
-
     /// Reduce future capacity of the window.
     ///
     /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
-    pub fn shrink_window(&mut self, decr: WindowSize) {
+    pub fn shrink_window(&mut self, decr: usize) {
         if decr < self.next_window_update {
             self.next_window_update -= decr
         } else {
@@ -328,25 +357,27 @@ impl FlowControl {
     }
 
     /// Returns true iff `claim_window(sz)` would return succeed.
-    pub fn check_window(&mut self, sz: WindowSize) -> bool {
-        sz <= self.window_size
+    pub fn ensure_window(&mut self, sz: usize) -> Result<(), ConnectionError> {
+        if sz <= self.window_size {
+            Ok(())
+        } else {
+            Err(FlowControlError.into())
+        }
     }
 
     /// Claims the provided amount from the window, if there is enough space.
     ///
     /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
     /// have been previously claimed.
-    pub fn claim_window(&mut self, sz: WindowSize) -> Result<(), WindowUnderflow> {
-        if !self.check_window(sz) {
-            return Err(WindowUnderflow);
-        }
+    pub fn claim_window(&mut self, sz: usize) -> Result<(), ConnectionError> {
+        try!(self.ensure_window(sz));
 
         self.window_size -= sz;
         Ok(())
     }
 
     /// Increase the _unadvertised_ window capacity.
-    pub fn expand_window(&mut self, sz: WindowSize) {
+    pub fn expand_window(&mut self, sz: usize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;
@@ -358,7 +389,7 @@ impl FlowControl {
     }
 
     /// Obtains and applies an unadvertised window update.
-    pub fn apply_window_update(&mut self) -> Option<WindowSize> {
+    pub fn apply_window_update(&mut self) -> Option<usize> {
         if self.next_window_update == 0 {
             return None;
         }
@@ -367,11 +398,5 @@ impl FlowControl {
         self.next_window_update = 0;
         self.window_size += incr;
         Some(incr)
-    }
-}
-
-impl Default for FlowControl {
-    fn default() -> Self {
-        Self::with_initial_size(DEFAULT_INITIAL_WINDOW_SIZE)
     }
 }
