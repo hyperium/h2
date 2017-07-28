@@ -153,13 +153,11 @@ impl<T: Sink> Sink for FramedRead<T> {
     }
 }
 
-/*
-impl<T: ReadySink> ReadySink for FramedRead<T> {
-    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
+impl<T: AsyncWrite, B: Buf> FramedRead<FramedWrite<T, B>> {
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         self.inner.get_mut().poll_ready()
     }
 }
-*/
 
 impl<T: io::Write> io::Write for FramedRead<T> {
     fn write(&mut self, src: &[u8]) -> io::Result<usize> {

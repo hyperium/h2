@@ -156,6 +156,12 @@ impl Streams {
         unimplemented!();
     }
 
+    pub fn send_headers(&mut self, frame: &frame::Headers)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
     /// Send any pending refusals.
     pub fn send_refuse<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
         where T: AsyncWrite,

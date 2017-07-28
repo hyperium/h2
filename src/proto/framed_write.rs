@@ -65,7 +65,7 @@ impl<T, B> FramedWrite<T, B>
         }
     }
 
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         if !self.has_capacity() {
             // Try flushing
             try!(self.poll_complete());
