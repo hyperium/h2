@@ -1,6 +1,7 @@
 use {frame, Peer, StreamId, FrameSize, ConnectionError};
 use proto::*;
 use error::Reason::*;
+use error::User::*;
 
 use ordermap::{OrderMap, Entry};
 
@@ -93,7 +94,7 @@ impl Streams {
     {
         let id = frame.stream_id();
 
-        try!(validate_stream_id(id));
+        try!(validate_stream_id(id, ProtocolError));
 
         let state = match self.streams.entry(id) {
             Entry::Occupied(e) => e.into_mut(),
@@ -159,7 +160,52 @@ impl Streams {
     pub fn send_headers(&mut self, frame: &frame::Headers)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        let id = frame.stream_id();
+
+        trace!("send_headers; id={:?}", id);
+
+        try!(validate_stream_id(id, InvalidStreamId));
+
+        let state = match self.streams.entry(id) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                // Trailers cannot open a stream. Trailers are header frames
+                // that do not contain pseudo headers. Requests MUST contain a
+                // method and responses MUST contain a status. If they do not,t
+                // hey are considered to be malformed.
+                if frame.is_trailers() {
+                    // TODO: Should this be a different error?
+                    return Err(UnexpectedFrameType.into());
+                }
+
+                let state = try!(self.inner.local_open(id));
+                e.insert(state)
+            }
+        };
+
+        if frame.is_trailers() {
+            try!(self.inner.send_trailers(id, state, frame.is_end_stream()));
+        } else {
+            try!(self.inner.send_headers(id, state, frame.is_end_stream()));
+        }
+
+        Ok(())
+    }
+
+    pub fn send_data<B: Buf>(&mut self, frame: &frame::Data<B>)
+        -> Result<(), ConnectionError>
+    {
+        let id = frame.stream_id();
+        let sz = frame.payload().remaining();
+
+        let state = match self.streams.get_mut(&id) {
+            Some(state) => state,
+            None => return Err(UnexpectedFrameType.into()),
+        };
+
+        // Ensure there's enough capacity on the connection before acting on the
+        // stream.
+        self.inner.send_data(id, state, sz, frame.is_end_stream())
     }
 
     /// Send any pending refusals.
@@ -238,22 +284,90 @@ impl Inner {
             Some(flow) => {
                 // Ensure there's enough capacity on the connection before
                 // acting on the stream.
-                try!(self.recv_flow_control.ensure_window(sz));
+                try!(self.recv_flow_control.ensure_window(sz, FlowControlError));
 
                 // Claim the window on the stream
-                try!(flow.claim_window(sz));
+                try!(flow.claim_window(sz, FlowControlError));
 
                 // Claim the window on the connection.
-                self.recv_flow_control.claim_window(sz)
+                self.recv_flow_control.claim_window(sz, FlowControlError)
                     .expect("local connection flow control error");
             }
             None => return Err(ProtocolError.into()),
         }
 
-        state.recv_close();
+        if eos {
+            state.recv_close();
+
+            if state.is_closed() {
+                self.stream_closed(id)
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update state reflecting a new, locally opened stream
+    ///
+    /// Returns the stream state if successful. `None` if refused
+    fn local_open(&mut self, id: StreamId) -> Result<state::Stream, ConnectionError> {
+        if !self.can_local_open(id) {
+            return Err(UnexpectedFrameType.into());
+        }
+
+        if let Some(max) = self.max_local_initiated {
+            if max <= self.num_local_initiated {
+                return Err(Rejected.into());
+            }
+        }
+
+        // Increment the number of locally initiated streams
+        self.num_local_initiated += 1;
+
+        Ok(state::Stream::default())
+    }
+
+    fn send_headers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        try!(state.send_open(self.init_local_window_sz, eos));
 
         if state.is_closed() {
-            self.stream_closed(id)
+            self.stream_closed(id);
+        }
+
+        Ok(())
+    }
+
+    fn send_trailers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    fn send_data(&mut self, id: StreamId, state: &mut state::Stream, sz: usize, eos: bool)
+        -> Result<(), ConnectionError>
+    {
+        match state.send_flow_control() {
+            Some(flow) => {
+                try!(self.send_flow_control.ensure_window(sz, FlowControlViolation));
+
+                // Claim the window on the stream
+                try!(flow.claim_window(sz, FlowControlViolation));
+
+                // Claim the window on the connection
+                self.send_flow_control.claim_window(sz, FlowControlViolation)
+                    .expect("local connection flow control error");
+            }
+            None => return Err(UnexpectedFrameType.into()),
+        }
+
+        if eos {
+            state.send_close();
+
+            if state.is_closed() {
+                self.stream_closed(id)
+            }
         }
 
         Ok(())
@@ -282,12 +396,24 @@ impl Inner {
         // Ensure that the ID is a valid server initiated ID
         id.is_server_initiated()
     }
+
+    /// Returns true if the local actor can initiate a stream with the given ID.
+    fn can_local_open(&self, id: StreamId) -> bool {
+        if !self.is_server {
+            // Clients cannot open streams
+            return false;
+        }
+
+        id.is_server_initiated()
+    }
 }
 
 /// Ensures non-zero stream ID
-fn validate_stream_id(id: StreamId) -> Result<(), ConnectionError> {
+fn validate_stream_id<E: Into<ConnectionError>>(id: StreamId, err: E)
+    -> Result<(), ConnectionError>
+{
     if id.is_zero() {
-        Err(ProtocolError.into())
+        Err(err.into())
     } else {
         Ok(())
     }

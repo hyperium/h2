@@ -1,6 +1,7 @@
 use ConnectionError;
 use error::Reason;
 use error::Reason::*;
+use error::User::*;
 use proto::*;
 
 /// Represents the state of an H2 stream
@@ -81,49 +82,47 @@ pub struct FlowControl {
 
 impl Stream {
     /// Opens the send-half of a stream if it is not already open.
-    ///
-    /// Returns true iff the send half was not previously open.
-    pub fn send_open(&mut self, sz: usize) -> Result<bool, ConnectionError> {
-        unimplemented!();
-        /*
+    pub fn send_open(&mut self, sz: usize, eos: bool) -> Result<(), ConnectionError> {
         use self::Stream::*;
         use self::Peer::*;
 
-        // Try to avoid copying `self` by first checking to see whether the stream needs
-        // to be updated.
-        match self {
-            &mut Idle |
-            &mut Closed(_) |
-            &mut HalfClosedRemote(..) => {
-                return Err(ProtocolError.into());
+        let local = Peer::streaming(sz);
+
+        *self = match *self {
+            Idle => {
+                if eos {
+                    HalfClosedLocal(AwaitingHeaders)
+                } else {
+                    Open {
+                        local,
+                        remote: AwaitingHeaders,
+                    }
+                }
             }
-
-            &mut Open { remote: Streaming(..), .. } |
-            &mut HalfClosedLocal(Streaming(..)) => {
-                return Ok(false);
+            Open { local: AwaitingHeaders, remote } => {
+                if eos {
+                    HalfClosedLocal(remote)
+                } else {
+                    Open {
+                        local,
+                        remote,
+                    }
+                }
             }
-
-            &mut Open { remote: AwaitingHeaders, .. } |
-            &mut HalfClosedLocal(AwaitingHeaders) => {}
-        }
-
-        match *self {
-            Open { local, remote: AwaitingHeaders } => {
-                *self = Open {
-                    local,
-                    remote: Peer::streaming(sz),
-                };
+            HalfClosedRemote(AwaitingHeaders) => {
+                if eos {
+                    Closed(None)
+                } else {
+                    HalfClosedRemote(local)
+                }
             }
-
-            HalfClosedLocal(AwaitingHeaders) => {
-                *self = HalfClosedLocal(Peer::streaming(sz));
+            _ => {
+                // All other transitions result in a protocol error
+                return Err(UnexpectedFrameType.into());
             }
+        };
 
-            _ => unreachable!()
-        }
-
-        Ok(true)
-        */
+        return Ok(());
     }
 
     /// Open the receive have of the stream, this action is taken when a HEADERS
@@ -141,7 +140,7 @@ impl Stream {
                 } else {
                     Open {
                         local: AwaitingHeaders,
-                        remote: remote,
+                        remote,
                     }
                 }
             }
@@ -151,7 +150,7 @@ impl Stream {
                 } else {
                     Open {
                         local,
-                        remote: remote,
+                        remote,
                     }
                 }
             }
@@ -184,6 +183,26 @@ impl Stream {
             }
             HalfClosedLocal(..) => {
                 trace!("recv_close: HalfClosedLocal => Closed");
+                *self = Closed(None);
+                Ok(())
+            }
+            _ => Err(ProtocolError.into()),
+        }
+    }
+
+    /// Indicates that the local side will not send more data to the local.
+    pub fn send_close(&mut self) -> Result<(), ConnectionError> {
+        use self::Stream::*;
+
+        match *self {
+            Open { remote, .. } => {
+                // The remote side will continue to receive data.
+                trace!("send_close: Open => HalfClosedLocal({:?})", remote);
+                *self = HalfClosedLocal(remote);
+                Ok(())
+            }
+            HalfClosedRemote(..) => {
+                trace!("send_close: HalfClosedRemote => Closed");
                 *self = Closed(None);
                 Ok(())
             }
@@ -357,11 +376,13 @@ impl FlowControl {
     }
 
     /// Returns true iff `claim_window(sz)` would return succeed.
-    pub fn ensure_window(&mut self, sz: usize) -> Result<(), ConnectionError> {
+    pub fn ensure_window<T>(&mut self, sz: usize, err: T) -> Result<(), ConnectionError>
+        where T: Into<ConnectionError>,
+    {
         if sz <= self.window_size {
             Ok(())
         } else {
-            Err(FlowControlError.into())
+            Err(err.into())
         }
     }
 
@@ -369,8 +390,11 @@ impl FlowControl {
     ///
     /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
     /// have been previously claimed.
-    pub fn claim_window(&mut self, sz: usize) -> Result<(), ConnectionError> {
-        try!(self.ensure_window(sz));
+    pub fn claim_window<T>(&mut self, sz: usize, err: T)
+        -> Result<(), ConnectionError>
+        where T: Into<ConnectionError>,
+    {
+        self.ensure_window(sz, err)?;
 
         self.window_size -= sz;
         Ok(())

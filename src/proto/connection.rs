@@ -170,7 +170,7 @@ impl<T, P, B> Connection<T, P, B>
                     self.ping_pong.recv_ping(v);
                 }
                 Some(WindowUpdate(v)) => {
-                    unimplemented!();
+                    self.streams.recv_window_update(v);
                 }
                 None => return Ok(Async::Ready(None)),
             }
@@ -266,7 +266,12 @@ impl<T, P, B> Sink for Connection<T, P, B>
             }
 
             Frame::Data { id, data, end_of_stream } => {
-                frame::Data::from_buf(id, data.into_buf(), end_of_stream).into()
+                let frame = frame::Data::from_buf(
+                    id, data.into_buf(), end_of_stream);
+
+                self.streams.send_data(&frame)?;
+
+                frame.into()
             }
 
             Frame::Reset { id, error } => frame::Reset::new(id, error).into(),
