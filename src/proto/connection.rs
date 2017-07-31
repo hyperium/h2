@@ -48,7 +48,7 @@ impl<T, P, B> Connection<T, P, B>
 {
     /// Polls for the next update to a remote flow control window.
     pub fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-        unimplemented!();
+        self.streams.poll_window_update()
     }
 
     /// Increases the capacity of a local flow control window.
@@ -64,7 +64,7 @@ impl<T, P, B> Connection<T, P, B>
         unimplemented!();
     }
 
-    pub fn remote_max_concurrent_streams(&self) -> Option<u32> {
+    pub fn remote_max_concurrent_streams(&self) -> Option<usize> {
         unimplemented!();
     }
 
@@ -73,10 +73,6 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     pub fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        unimplemented!();
-    }
-
-    pub fn take_pong(&mut self) -> Option<PingPayload> {
         unimplemented!();
     }
 
@@ -90,7 +86,11 @@ impl<T, P, B> Connection<T, P, B>
                      end_of_stream: bool)
         -> sink::Send<Self>
     {
-        unimplemented!();
+        self.send(Frame::Data {
+            id,
+            data,
+            end_of_stream,
+        })
     }
 
     // ===== Private =====

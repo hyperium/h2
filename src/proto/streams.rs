@@ -15,11 +15,13 @@ pub struct Streams {
     inner: Inner,
 
     /// Streams
-    streams: OrderMap<StreamId, state::Stream>,
+    streams: StreamMap,
 
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 }
+
+type StreamMap = OrderMap<StreamId, state::Stream>;
 
 /// Fields needed to manage state related to managing the set of streams. This
 /// is mostly split out to make ownership happy.
@@ -53,6 +55,15 @@ struct Inner {
 
     /// Connection level flow control governing sent data
     send_flow_control: state::FlowControl,
+
+    /// Holds the list of streams on which local window updates may be sent.
+    // XXX It would be cool if this didn't exist.
+    pending_window_updates: VecDeque<StreamId>,
+
+    /// When `poll_window_update` is not ready, then the calling task is saved to
+    /// be notified later. Access to poll_window_update must not be shared across tasks,
+    /// as we only track a single task (and *not* i.e. a task per stream id).
+    blocked: Option<task::Task>,
 }
 
 #[derive(Debug)]
@@ -83,6 +94,8 @@ impl Streams {
                 init_local_window_sz: config.init_local_window_sz,
                 recv_flow_control: state::FlowControl::new(config.init_remote_window_sz),
                 send_flow_control: state::FlowControl::new(config.init_local_window_sz),
+                pending_window_updates: VecDeque::new(),
+                blocked: None,
             },
             streams: OrderMap::default(),
             refused: None,
@@ -150,7 +163,22 @@ impl Streams {
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) {
-        unimplemented!();
+        let id = frame.stream_id();
+        let sz = frame.size_increment() as usize;
+
+        if id.is_zero() {
+            self.inner.expand_connection_window(sz);
+        } else {
+            // The remote may send window updates for streams that the local now
+            // considers closed. It's ok...
+            if let Some(state) = self.streams.get_mut(&id) {
+                self.inner.expand_stream_window(sz, state);
+            }
+        }
+
+        if let Some(task) = self.inner.blocked.take() {
+            task.notify();
+        }
     }
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise) {
@@ -206,6 +234,12 @@ impl Streams {
         // Ensure there's enough capacity on the connection before acting on the
         // stream.
         self.inner.send_data(id, state, sz, frame.is_end_stream())
+    }
+
+    pub fn poll_window_update(&mut self)
+        -> Poll<WindowUpdate, ConnectionError>
+    {
+        self.inner.poll_window_update(&mut self.streams)
     }
 
     /// Send any pending refusals.
@@ -405,6 +439,49 @@ impl Inner {
         }
 
         id.is_server_initiated()
+    }
+
+    /// Get pending window updates
+    fn poll_window_update(&mut self, streams: &mut StreamMap)
+        -> Poll<WindowUpdate, ConnectionError>
+    {
+        // This biases connection window updates, which probably makes sense.
+        //
+        // TODO: We probably don't want to expose connection level updates
+        if let Some(incr) = self.send_flow_control.apply_window_update() {
+            return Ok(Async::Ready(WindowUpdate::new(StreamId::zero(), incr)));
+        }
+
+        // TODO this should probably account for stream priority?
+        let update = self.pending_window_updates.pop_front()
+            .and_then(|id| {
+                streams.get_mut(&id)
+                    .and_then(|state| state.send_flow_control())
+                    .and_then(|flow| flow.apply_window_update())
+                    .map(|incr| WindowUpdate::new(id, incr))
+            });
+
+        if let Some(update) = update {
+            return Ok(Async::Ready(update));
+        }
+
+        // Update the task.
+        //
+        // TODO: Extract this "gate" logic
+        self.blocked = Some(task::current());
+
+        return Ok(Async::NotReady);
+    }
+
+    fn expand_connection_window(&mut self, sz: usize) {
+        self.send_flow_control.expand_window(sz);
+    }
+
+    fn expand_stream_window(&mut self, sz: usize, state: &mut state::Stream) {
+        // It's fine for this to be None and silently ignored.
+        if let Some(flow) = state.send_flow_control() {
+            flow.expand_window(sz);
+        }
     }
 }
 

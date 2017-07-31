@@ -17,6 +17,7 @@ use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Streams;
 
+use StreamId;
 use error::{Reason, ConnectionError};
 use frame::Frame;
 
@@ -28,8 +29,11 @@ pub type PingPayload = [u8; 8];
 
 pub type WindowSize = u32;
 
-#[derive(Debug)]
-pub struct WindowUpdate;
+#[derive(Debug, Copy, Clone)]
+pub struct WindowUpdate {
+    stream_id: StreamId,
+    increment: usize,
+}
 
 type Codec<T, B> =
     FramedRead<
@@ -37,3 +41,20 @@ type Codec<T, B> =
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
+
+impl WindowUpdate {
+    pub fn new(stream_id: StreamId, increment: usize) -> WindowUpdate {
+        WindowUpdate {
+            stream_id,
+            increment
+        }
+    }
+
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
+    pub fn increment(&self) -> usize {
+        self.increment
+    }
+}
