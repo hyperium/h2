@@ -32,7 +32,7 @@ pub type WindowSize = u32;
 #[derive(Debug, Copy, Clone)]
 pub struct WindowUpdate {
     stream_id: StreamId,
-    increment: usize,
+    increment: WindowSize,
 }
 
 type Codec<T, B> =
@@ -41,9 +41,10 @@ type Codec<T, B> =
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
+pub const MAX_WINDOW_SIZE: WindowSize = ::std::u32::MAX;
 
 impl WindowUpdate {
-    pub fn new(stream_id: StreamId, increment: usize) -> WindowUpdate {
+    pub fn new(stream_id: StreamId, increment: WindowSize) -> WindowUpdate {
         WindowUpdate {
             stream_id,
             increment
@@ -54,7 +55,7 @@ impl WindowUpdate {
         self.stream_id
     }
 
-    pub fn increment(&self) -> usize {
+    pub fn increment(&self) -> WindowSize {
         self.increment
     }
 }

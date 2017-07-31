@@ -70,19 +70,19 @@ pub enum Peer {
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
     /// Amount that may be claimed.
-    window_size: usize,
+    window_size: WindowSize,
 
     /// Amount to be removed by future increments.
-    underflow: usize,
+    underflow: WindowSize,
 
     /// The amount that has been incremented but not yet advertised (to the application or
     /// the remote).
-    next_window_update: usize,
+    next_window_update: WindowSize,
 }
 
 impl Stream {
     /// Opens the send-half of a stream if it is not already open.
-    pub fn send_open(&mut self, sz: usize, eos: bool) -> Result<(), ConnectionError> {
+    pub fn send_open(&mut self, sz: WindowSize, eos: bool) -> Result<(), ConnectionError> {
         use self::Stream::*;
         use self::Peer::*;
 
@@ -127,7 +127,7 @@ impl Stream {
 
     /// Open the receive have of the stream, this action is taken when a HEADERS
     /// frame is received.
-    pub fn recv_open(&mut self, sz: usize, eos: bool) -> Result<(), ConnectionError> {
+    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<(), ConnectionError> {
         use self::Stream::*;
         use self::Peer::*;
 
@@ -253,7 +253,7 @@ impl Default for Peer {
 }
 
 impl Peer {
-    fn streaming(sz: usize) -> Peer {
+    fn streaming(sz: WindowSize) -> Peer {
         Peer::Streaming(FlowControl::new(sz))
     }
 
@@ -277,7 +277,7 @@ impl Peer {
 }
 
 impl FlowControl {
-    pub fn new(window_size: usize) -> FlowControl {
+    pub fn new(window_size: WindowSize) -> FlowControl {
         FlowControl {
             window_size,
             underflow: 0,
@@ -288,7 +288,7 @@ impl FlowControl {
     /// Reduce future capacity of the window.
     ///
     /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
-    pub fn shrink_window(&mut self, decr: usize) {
+    pub fn shrink_window(&mut self, decr: WindowSize) {
         if decr < self.next_window_update {
             self.next_window_update -= decr
         } else {
@@ -298,7 +298,7 @@ impl FlowControl {
     }
 
     /// Returns true iff `claim_window(sz)` would return succeed.
-    pub fn ensure_window<T>(&mut self, sz: usize, err: T) -> Result<(), ConnectionError>
+    pub fn ensure_window<T>(&mut self, sz: WindowSize, err: T) -> Result<(), ConnectionError>
         where T: Into<ConnectionError>,
     {
         if sz <= self.window_size {
@@ -312,7 +312,7 @@ impl FlowControl {
     ///
     /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
     /// have been previously claimed.
-    pub fn claim_window<T>(&mut self, sz: usize, err: T)
+    pub fn claim_window<T>(&mut self, sz: WindowSize, err: T)
         -> Result<(), ConnectionError>
         where T: Into<ConnectionError>,
     {
@@ -323,7 +323,7 @@ impl FlowControl {
     }
 
     /// Increase the _unadvertised_ window capacity.
-    pub fn expand_window(&mut self, sz: usize) {
+    pub fn expand_window(&mut self, sz: WindowSize) {
         if sz <= self.underflow {
             self.underflow -= sz;
             return;
@@ -334,8 +334,19 @@ impl FlowControl {
         self.underflow = 0;
     }
 
+    /// Obtains the unadvertised window update.
+    ///
+    /// This does not apply the window update to `self`.
+    pub fn peek_window_update(&mut self) -> Option<WindowSize> {
+        if self.next_window_update == 0 {
+            None
+        } else {
+            Some(self.next_window_update)
+        }
+    }
+
     /// Obtains and applies an unadvertised window update.
-    pub fn apply_window_update(&mut self) -> Option<usize> {
+    pub fn apply_window_update(&mut self) -> Option<WindowSize> {
         if self.next_window_update == 0 {
             return None;
         }

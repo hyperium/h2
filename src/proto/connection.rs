@@ -52,8 +52,8 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Increases the capacity of a local flow control window.
-    pub fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        unimplemented!();
+    pub fn expand_window(&mut self, id: StreamId, incr: usize) -> Result<(), ConnectionError> {
+        self.streams.expand_window(id, incr)
     }
 
     pub fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
@@ -77,7 +77,7 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        unimplemented!();
+        self.poll_send_ready()
     }
 
     pub fn send_data(self,
@@ -105,7 +105,7 @@ impl<T, P, B> Connection<T, P, B>
         try_ready!(self.ping_pong.send_pongs(&mut self.codec));
 
         // Send any pending stream refusals
-        try_ready!(self.streams.send_refuse(&mut self.codec));
+        try_ready!(self.streams.poll_complete(&mut self.codec));
 
         Ok(Async::Ready(()))
     }
@@ -201,7 +201,11 @@ impl<T, B> Connection<T, Client, B>
                         end_of_stream: bool)
         -> sink::Send<Self>
     {
-        unimplemented!();
+        self.send(Frame::Headers {
+            id: id,
+            headers: request,
+            end_of_stream: end_of_stream,
+        })
     }
 }
 
@@ -215,7 +219,11 @@ impl<T, B> Connection<T, Server, B>
                         end_of_stream: bool)
         -> sink::Send<Self>
     {
-        unimplemented!();
+        self.send(Frame::Headers {
+            id: id,
+            headers: response,
+            end_of_stream: end_of_stream,
+        })
     }
 }
 

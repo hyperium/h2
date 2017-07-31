@@ -16,9 +16,6 @@ pub struct Streams {
 
     /// Streams
     streams: StreamMap,
-
-    /// Refused StreamId, this represents a frame that must be sent out.
-    refused: Option<StreamId>,
 }
 
 type StreamMap = OrderMap<StreamId, state::Stream>;
@@ -39,7 +36,7 @@ struct Inner {
     num_remote_initiated: usize,
 
     /// Initial window size of remote initiated streams
-    init_remote_window_sz: usize,
+    init_remote_window_sz: WindowSize,
 
     /// Maximum number of locally initiated streams
     max_local_initiated: Option<usize>,
@@ -48,7 +45,7 @@ struct Inner {
     num_local_initiated: usize,
 
     /// Initial window size of locally initiated streams
-    init_local_window_sz: usize,
+    init_local_window_sz: WindowSize,
 
     /// Connection level flow control governing received data
     recv_flow_control: state::FlowControl,
@@ -58,12 +55,19 @@ struct Inner {
 
     /// Holds the list of streams on which local window updates may be sent.
     // XXX It would be cool if this didn't exist.
-    pending_window_updates: VecDeque<StreamId>,
+    pending_recv_window_updates: VecDeque<StreamId>,
+
+    /// Holds the list of streams on which local window updates may be sent.
+    // XXX It would be cool if this didn't exist.
+    pending_send_window_updates: VecDeque<StreamId>,
 
     /// When `poll_window_update` is not ready, then the calling task is saved to
     /// be notified later. Access to poll_window_update must not be shared across tasks,
     /// as we only track a single task (and *not* i.e. a task per stream id).
     blocked: Option<task::Task>,
+
+    /// Refused StreamId, this represents a frame that must be sent out.
+    refused: Option<StreamId>,
 }
 
 #[derive(Debug)]
@@ -72,13 +76,13 @@ pub struct Config {
     pub max_remote_initiated: Option<usize>,
 
     /// Initial window size of remote initiated streams
-    pub init_remote_window_sz: usize,
+    pub init_remote_window_sz: WindowSize,
 
     /// Maximum number of locally initiated streams
     pub max_local_initiated: Option<usize>,
 
     /// Initial window size of locally initiated streams
-    pub init_local_window_sz: usize,
+    pub init_local_window_sz: WindowSize,
 }
 
 impl Streams {
@@ -94,11 +98,12 @@ impl Streams {
                 init_local_window_sz: config.init_local_window_sz,
                 recv_flow_control: state::FlowControl::new(config.init_remote_window_sz),
                 send_flow_control: state::FlowControl::new(config.init_local_window_sz),
-                pending_window_updates: VecDeque::new(),
+                pending_recv_window_updates: VecDeque::new(),
+                pending_send_window_updates: VecDeque::new(),
                 blocked: None,
+                refused: None,
             },
             streams: OrderMap::default(),
-            refused: None,
         }
     }
 
@@ -120,13 +125,9 @@ impl Streams {
                     return Err(ProtocolError.into());
                 }
 
-                if let Some(state) = try!(self.inner.remote_open(id)) {
-                    e.insert(state)
-                } else {
-                    // Stream is refused
-                    assert!(self.refused.is_none());
-                    self.refused = Some(id);
-                    return Ok(None);
+                match try!(self.inner.remote_open(id)) {
+                    Some(state) => e.insert(state),
+                    None => return Ok(None),
                 }
             }
         };
@@ -144,7 +145,14 @@ impl Streams {
         -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
+
         let sz = frame.payload().len();
+
+        if sz > MAX_WINDOW_SIZE as usize {
+            unimplemented!();
+        }
+
+        let sz = sz as WindowSize;
 
         let state = match self.streams.get_mut(&id) {
             Some(state) => state,
@@ -164,7 +172,7 @@ impl Streams {
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) {
         let id = frame.stream_id();
-        let sz = frame.size_increment() as usize;
+        let sz = frame.size_increment();
 
         if id.is_zero() {
             self.inner.expand_connection_window(sz);
@@ -226,6 +234,13 @@ impl Streams {
         let id = frame.stream_id();
         let sz = frame.payload().remaining();
 
+        if sz > MAX_WINDOW_SIZE as usize {
+            // TODO: handle overflow
+            unimplemented!();
+        }
+
+        let sz = sz as WindowSize;
+
         let state = match self.streams.get_mut(&id) {
             Some(state) => state,
             None => return Err(UnexpectedFrameType.into()),
@@ -242,32 +257,22 @@ impl Streams {
         self.inner.poll_window_update(&mut self.streams)
     }
 
-    /// Send any pending refusals.
-    pub fn send_refuse<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+    pub fn expand_window(&mut self, id: StreamId, incr: usize)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    pub fn poll_complete<T, B>(&mut self, dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
     {
-        if let Some(stream_id) = self.refused.take() {
-            let frame = frame::Reset::new(stream_id, RefusedStream);
+        try_ready!(self.inner.send_refuse(dst));
+        try_ready!(self.inner.send_connection_window_update(dst));
+        try_ready!(self.inner.send_stream_window_update(&mut self.streams, dst));
 
-            match dst.start_send(frame.into())? {
-                AsyncSink::Ready => {
-                    self.reset(stream_id, RefusedStream);
-                    return Ok(Async::Ready(()));
-                }
-                AsyncSink::NotReady(_) => {
-                    self.refused = Some(stream_id);
-                    return Ok(Async::NotReady);
-                }
-            }
-        }
-
-        Ok(Async::Ready(()))
-    }
-
-    /// Reset a stream
-    fn reset(&mut self, stream_id: StreamId, reason: Reason) {
-        unimplemented!();
+        Ok(().into())
     }
 }
 
@@ -276,12 +281,15 @@ impl Inner {
     ///
     /// Returns the stream state if successful. `None` if refused
     fn remote_open(&mut self, id: StreamId) -> Result<Option<state::Stream>, ConnectionError> {
+        assert!(self.refused.is_none());
+
         if !self.can_remote_open(id) {
             return Err(ProtocolError.into());
         }
 
         if let Some(max) = self.max_remote_initiated {
             if max <= self.num_remote_initiated {
+                self.refused = Some(id);
                 return Ok(None);
             }
         }
@@ -311,7 +319,11 @@ impl Inner {
         unimplemented!();
     }
 
-    fn recv_data(&mut self, id: StreamId, state: &mut state::Stream, sz: usize, eos: bool)
+    fn recv_data(&mut self,
+                 id: StreamId,
+                 state: &mut state::Stream,
+                 sz: WindowSize,
+                 eos: bool)
         -> Result<(), ConnectionError>
     {
         match state.recv_flow_control() {
@@ -379,7 +391,11 @@ impl Inner {
         unimplemented!();
     }
 
-    fn send_data(&mut self, id: StreamId, state: &mut state::Stream, sz: usize, eos: bool)
+    fn send_data(&mut self,
+                 id: StreamId,
+                 state: &mut state::Stream,
+                 sz: WindowSize,
+                 eos: bool)
         -> Result<(), ConnectionError>
     {
         match state.send_flow_control() {
@@ -453,7 +469,7 @@ impl Inner {
         }
 
         // TODO this should probably account for stream priority?
-        let update = self.pending_window_updates.pop_front()
+        let update = self.pending_recv_window_updates.pop_front()
             .and_then(|id| {
                 streams.get_mut(&id)
                     .and_then(|state| state.send_flow_control())
@@ -473,15 +489,91 @@ impl Inner {
         return Ok(Async::NotReady);
     }
 
-    fn expand_connection_window(&mut self, sz: usize) {
+    fn expand_connection_window(&mut self, sz: WindowSize) {
         self.send_flow_control.expand_window(sz);
     }
 
-    fn expand_stream_window(&mut self, sz: usize, state: &mut state::Stream) {
+    fn expand_stream_window(&mut self, sz: WindowSize, state: &mut state::Stream) {
         // It's fine for this to be None and silently ignored.
         if let Some(flow) = state.send_flow_control() {
             flow.expand_window(sz);
         }
+    }
+
+    /// Send any pending refusals.
+    fn send_refuse<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+              B: Buf,
+    {
+        if let Some(stream_id) = self.refused.take() {
+            let frame = frame::Reset::new(stream_id, RefusedStream);
+
+            match dst.start_send(frame.into())? {
+                AsyncSink::Ready => {
+                    self.reset(stream_id, RefusedStream);
+                    return Ok(Async::Ready(()));
+                }
+                AsyncSink::NotReady(_) => {
+                    self.refused = Some(stream_id);
+                    return Ok(Async::NotReady);
+                }
+            }
+        }
+
+        Ok(Async::Ready(()))
+    }
+
+    /// Send connection level window update
+    fn send_connection_window_update<T, B>(&mut self, dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+              B: Buf,
+    {
+        if let Some(incr) = self.recv_flow_control.peek_window_update() {
+            let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
+
+            if dst.start_send(frame.into())?.is_ready() {
+                assert_eq!(Some(incr), self.recv_flow_control.apply_window_update());
+            } else {
+                return Ok(Async::NotReady);
+            }
+        }
+
+        Ok(().into())
+    }
+
+    /// Send stream level window update
+    fn send_stream_window_update<T, B>(&mut self,
+                                       streams: &mut StreamMap,
+                                       dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+              B: Buf,
+    {
+        while let Some(id) = self.pending_send_window_updates.pop_front() {
+            let flow = streams.get_mut(&id)
+                .and_then(|state| state.recv_flow_control());
+
+
+            if let Some(flow) = flow {
+                if let Some(incr) = flow.peek_window_update() {
+                    let frame = frame::WindowUpdate::new(id, incr);
+
+                    if dst.start_send(frame.into())?.is_ready() {
+                        assert_eq!(Some(incr), flow.apply_window_update());
+                    } else {
+                        self.pending_send_window_updates.push_front(id);
+                        return Ok(Async::NotReady);
+                    }
+                }
+            }
+        }
+
+        Ok(().into())
+    }
+
+    fn reset(&mut self, stream_id: StreamId, reason: Reason) {
+        unimplemented!();
     }
 }
 
