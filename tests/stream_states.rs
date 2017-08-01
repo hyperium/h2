@@ -235,7 +235,7 @@ fn send_data_after_headers_eos() {
 
     // Send the data
     let err = h2.send_data(id, body.into(), true).wait().unwrap_err();
-    assert_user_err!(err, InactiveStreamId);
+    assert_user_err!(err, UnexpectedFrameType);
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn send_data_without_headers() {
     let b = Bytes::from_static(b"hello world");
     let err = h2.send_data(1.into(), b, true).wait().unwrap_err();
 
-    assert_user_err!(err, InactiveStreamId);
+    assert_user_err!(err, UnexpectedFrameType);
 }
 
 #[test]

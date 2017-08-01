@@ -370,9 +370,7 @@ impl Inner {
     ///
     /// Returns the stream state if successful. `None` if refused
     fn local_open(&mut self, id: StreamId) -> Result<state::Stream, ConnectionError> {
-        if !self.can_local_open(id) {
-            return Err(UnexpectedFrameType.into());
-        }
+        try!(self.ensure_can_local_open(id));
 
         if let Some(max) = self.max_local_initiated {
             if max <= self.num_local_initiated {
@@ -411,18 +409,29 @@ impl Inner {
                  eos: bool)
         -> Result<(), ConnectionError>
     {
-        match state.send_flow_control() {
-            Some(flow) => {
-                try!(self.send_flow_control.ensure_window(sz, FlowControlViolation));
+        // Make borrow checker happy
+        loop {
+            match state.send_flow_control() {
+                Some(flow) => {
+                    try!(self.send_flow_control.ensure_window(sz, FlowControlViolation));
 
-                // Claim the window on the stream
-                try!(flow.claim_window(sz, FlowControlViolation));
+                    // Claim the window on the stream
+                    try!(flow.claim_window(sz, FlowControlViolation));
 
-                // Claim the window on the connection
-                self.send_flow_control.claim_window(sz, FlowControlViolation)
-                    .expect("local connection flow control error");
+                    // Claim the window on the connection
+                    self.send_flow_control.claim_window(sz, FlowControlViolation)
+                        .expect("local connection flow control error");
+
+                    break;
+                }
+                None => {}
             }
-            None => return Err(UnexpectedFrameType.into()),
+
+            if state.is_closed() {
+                return Err(InactiveStreamId.into())
+            } else {
+                return Err(UnexpectedFrameType.into())
+            }
         }
 
         if eos {
@@ -451,23 +460,28 @@ impl Inner {
 
     /// Returns true if the remote peer can initiate a stream with the given ID.
     fn can_remote_open(&self, id: StreamId) -> bool {
-        if self.is_server {
-            // Remote is a client and cannot open streams
+        if !self.is_server {
+            // Remote is a server and cannot open streams. PushPromise is
+            // registered by reserving, so does not go through this path.
             return false;
         }
 
         // Ensure that the ID is a valid server initiated ID
-        id.is_server_initiated()
+        id.is_client_initiated()
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn can_local_open(&self, id: StreamId) -> bool {
-        if !self.is_server {
-            // Clients cannot open streams
-            return false;
+    fn ensure_can_local_open(&self, id: StreamId) -> Result<(), ConnectionError> {
+        if self.is_server {
+            // Servers cannot open streams. PushPromise must first be reserved.
+            return Err(UnexpectedFrameType.into());
         }
 
-        id.is_server_initiated()
+        if !id.is_client_initiated() {
+            return Err(InvalidStreamId.into());
+        }
+
+        Ok(())
     }
 
     /// Get pending window updates
