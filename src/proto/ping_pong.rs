@@ -10,12 +10,19 @@ pub struct PingPong<B> {
     received_pong: Option<PingPayload>,
     // TODO: factor this out
     blocked_ping: Option<task::Task>,
-    expecting_pong: bool,
 }
 
 impl<B> PingPong<B>
     where B: Buf,
 {
+    pub fn new() -> Self {
+        PingPong {
+            sending_pong: None,
+            received_pong: None,
+            blocked_ping: None,
+        }
+    }
+
     /// Process a ping
     pub fn recv_ping(&mut self, ping: Ping) {
         // The caller should always check that `send_pongs` returns ready before
@@ -37,7 +44,7 @@ impl<B> PingPong<B>
     }
 
     /// Send any pending pongs.
-    pub fn send_pongs<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
         if let Some(pong) = self.sending_pong.take() {

@@ -61,7 +61,7 @@ pub enum Frame<T, B = Bytes> {
     },
     PushPromise {
         id: StreamId,
-        promise: (),
+        promised_id: StreamId,
     },
     Reset {
         id: StreamId,

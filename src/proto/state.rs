@@ -257,15 +257,6 @@ impl Peer {
         Peer::Streaming(FlowControl::new(sz))
     }
 
-    fn is_streaming(&self) -> bool {
-        use self::Peer::*;
-
-        match self {
-            &Streaming(..) => true,
-            _ => false,
-        }
-    }
-
     fn flow_control(&mut self) -> Option<&mut FlowControl> {
         use self::Peer::*;
 
@@ -282,18 +273,6 @@ impl FlowControl {
             window_size,
             underflow: 0,
             next_window_update: 0,
-        }
-    }
-
-    /// Reduce future capacity of the window.
-    ///
-    /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
-    pub fn shrink_window(&mut self, decr: WindowSize) {
-        if decr < self.next_window_update {
-            self.next_window_update -= decr
-        } else {
-            self.underflow += decr - self.next_window_update;
-            self.next_window_update = 0;
         }
     }
 

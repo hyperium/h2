@@ -1,30 +1,47 @@
+use {frame, ConnectionError};
 use proto::*;
-use frame::{self, SettingSet};
 
 #[derive(Debug)]
 pub struct Settings {
-    remote_push_enabled: Option<bool>,
-    remote_max_concurrent_streams: Option<u32>,
-    remote_initial_window_size: WindowSize,
-
-    // Number of acks remaining to send to the peer
-    remaining_acks: usize,
-
-    // Holds a new set of local values to be applied.
-    pending_local: Option<SettingSet>,
-
-    // True when we have received a settings frame from the remote.
-    received_remote: bool,
+    pending_ack: bool,
 }
 
 impl Settings {
+    pub fn new() -> Self {
+        Settings {
+            pending_ack: false,
+        }
+    }
+
     pub fn recv_settings(&mut self, frame: frame::Settings) {
         if frame.is_ack() {
             debug!("received remote settings ack");
             // TODO: handle acks
         } else {
-            unimplemented!();
-            // self.remaining_acks += 1;
+            assert!(!self.pending_ack);
+            self.pending_ack = true;
         }
+    }
+
+    pub fn send_pending_ack<T, B>(&mut self, dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+              B: Buf,
+    {
+        if self.pending_ack {
+            let frame = frame::Settings::ack();
+
+            match dst.start_send(frame.into())? {
+                AsyncSink::Ready => {
+                    self.pending_ack = false;
+                    return Ok(().into());
+                }
+                AsyncSink::NotReady(_) => {
+                    return Ok(Async::NotReady);
+                }
+            }
+        }
+
+        Ok(().into())
     }
 }

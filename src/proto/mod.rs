@@ -1,6 +1,4 @@
-
 mod connection;
-mod flow_control;
 mod framed_read;
 mod framed_write;
 mod ping_pong;
@@ -10,20 +8,20 @@ mod streams;
 
 pub use self::connection::Connection;
 
-use self::flow_control::FlowControl;
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Streams;
 
-use StreamId;
-use error::{Reason, ConnectionError};
+use {StreamId, Peer};
+use error::Reason;
 use frame::Frame;
 
 use futures::*;
-use bytes::{Buf};
+use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::codec::length_delimited;
 
 pub type PingPayload = [u8; 8];
 
@@ -42,6 +40,38 @@ type Codec<T, B> =
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
 pub const MAX_WINDOW_SIZE: WindowSize = ::std::u32::MAX;
+
+/// Create a transport prepared to handle the server handshake.
+///
+/// When the server is performing the handshake, it is able to only send
+/// `Settings` frames and is expected to receive the client preface as a byte
+/// stream. To represent this, `Settings<FramedWrite<T>>` is returned.
+pub fn framed_write<T, B>(io: T) -> FramedWrite<T, B>
+    where T: AsyncRead + AsyncWrite,
+          B: Buf,
+{
+    FramedWrite::new(io)
+}
+
+/// Create a full H2 transport from the server handshaker
+pub fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, B::Buf>)
+    -> Connection<T, P, B>
+    where T: AsyncRead + AsyncWrite,
+          P: Peer,
+          B: IntoBuf,
+{
+    // Delimit the frames.
+    let framed = length_delimited::Builder::new()
+        .big_endian()
+        .length_field_length(3)
+        .length_adjustment(9)
+        .num_skip(0) // Don't skip the header
+        .new_read(framed_write);
+
+    let codec = FramedRead::new(framed);
+
+    connection::new(codec)
+}
 
 impl WindowUpdate {
     pub fn new(stream_id: StreamId, increment: WindowSize) -> WindowUpdate {

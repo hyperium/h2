@@ -1,4 +1,4 @@
-use {frame, Peer, StreamId, FrameSize, ConnectionError};
+use {frame, Peer, StreamId, ConnectionError};
 use proto::*;
 use error::Reason::*;
 use error::User::*;
@@ -164,7 +164,7 @@ impl Streams {
         self.inner.recv_data(id, state, sz, frame.is_end_stream())
     }
 
-    pub fn recv_reset(&mut self, frame: &frame::Reset)
+    pub fn recv_reset(&mut self, _frame: &frame::Reset)
         -> Result<(), ConnectionError>
     {
         unimplemented!();
@@ -189,7 +189,9 @@ impl Streams {
         }
     }
 
-    pub fn recv_push_promise(&mut self, frame: frame::PushPromise) {
+    pub fn recv_push_promise(&mut self, _frame: frame::PushPromise)
+        -> Result<(), ConnectionError>
+    {
         unimplemented!();
     }
 
@@ -257,18 +259,29 @@ impl Streams {
         self.inner.poll_window_update(&mut self.streams)
     }
 
-    pub fn expand_window(&mut self, id: StreamId, incr: usize)
-        -> Result<(), ConnectionError>
-    {
-        unimplemented!();
+    pub fn expand_window(&mut self, id: StreamId, sz: WindowSize) {
+        if id.is_zero() {
+            self.inner.expand_connection_window(sz);
+        } else {
+            if let Some(state) = self.streams.get_mut(&id) {
+                self.inner.expand_stream_window(sz, state);
+            }
+        }
     }
 
-    pub fn poll_complete<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_refusal<T, B>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
     {
-        try_ready!(self.inner.send_refuse(dst));
+        self.inner.send_pending_refusal(dst)
+    }
+
+    pub fn send_pending_window_updates<T, B>(&mut self, dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+              B: Buf,
+    {
         try_ready!(self.inner.send_connection_window_update(dst));
         try_ready!(self.inner.send_stream_window_update(&mut self.streams, dst));
 
@@ -313,7 +326,7 @@ impl Inner {
         Ok(())
     }
 
-    fn recv_trailers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+    fn recv_trailers(&mut self, _id: StreamId, _state: &mut state::Stream, _eos: bool)
         -> Result<(), ConnectionError>
     {
         unimplemented!();
@@ -343,7 +356,7 @@ impl Inner {
         }
 
         if eos {
-            state.recv_close();
+            try!(state.recv_close());
 
             if state.is_closed() {
                 self.stream_closed(id)
@@ -385,7 +398,7 @@ impl Inner {
         Ok(())
     }
 
-    fn send_trailers(&mut self, id: StreamId, state: &mut state::Stream, eos: bool)
+    fn send_trailers(&mut self, _id: StreamId, _state: &mut state::Stream, _eos: bool)
         -> Result<(), ConnectionError>
     {
         unimplemented!();
@@ -413,7 +426,7 @@ impl Inner {
         }
 
         if eos {
-            state.send_close();
+            try!(state.send_close());
 
             if state.is_closed() {
                 self.stream_closed(id)
@@ -501,7 +514,7 @@ impl Inner {
     }
 
     /// Send any pending refusals.
-    fn send_refuse<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+    fn send_pending_refusal<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
     {
@@ -572,7 +585,7 @@ impl Inner {
         Ok(().into())
     }
 
-    fn reset(&mut self, stream_id: StreamId, reason: Reason) {
+    fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();
     }
 }

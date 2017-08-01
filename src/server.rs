@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use {frame, proto, Peer, ConnectionError, StreamId};
 
 use http;

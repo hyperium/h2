@@ -12,10 +12,6 @@ pub struct Ping {
 }
 
 impl Ping {
-    pub fn ping(payload: Payload) -> Ping {
-        Ping { ack: false, payload }
-    }
-
     pub fn pong(payload: Payload) -> Ping {
         Ping { ack: true, payload }
     }

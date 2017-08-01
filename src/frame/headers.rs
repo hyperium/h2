@@ -49,9 +49,6 @@ pub struct PushPromise {
 }
 
 impl PushPromise {
-    pub fn stream_id(&self) -> StreamId {
-        self.stream_id
-    }
 }
 
 #[derive(Debug)]

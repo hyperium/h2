@@ -1,6 +1,5 @@
 use {hpack, ConnectionError, FrameSize};
 use frame::{self, Frame};
-use proto::*;
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -91,18 +90,6 @@ impl<T, B> FramedWrite<T, B>
     }
 }
 
-/*
-impl<T, B> ApplySettings for FramedWrite<T, B> {
-    fn apply_local_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        Ok(())
-    }
-
-    fn apply_remote_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        Ok(())
-    }
-}
-*/
-
 impl<T, B> Sink for FramedWrite<T, B>
     where T: AsyncWrite,
           B: Buf,
@@ -116,6 +103,8 @@ impl<T, B> Sink for FramedWrite<T, B>
         if !try!(self.poll_ready()).is_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
+
+        trace!("send; frame={:?}", item);
 
         match item {
             Frame::Data(mut v) => {
@@ -200,26 +189,6 @@ impl<T, B> Sink for FramedWrite<T, B>
         self.inner.shutdown().map_err(Into::into)
     }
 }
-
-/*
-impl<T, B> ReadySink for FramedWrite<T, B>
-    where T: AsyncWrite,
-          B: Buf,
-{
-    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
-        if !self.has_capacity() {
-            // Try flushing
-            try!(self.poll_complete());
-
-            if !self.has_capacity() {
-                return Ok(Async::NotReady);
-            }
-        }
-
-        Ok(Async::Ready(()))
-    }
-}
-*/
 
 impl<T: Stream, B> Stream for FramedWrite<T, B> {
     type Item = T::Item;
