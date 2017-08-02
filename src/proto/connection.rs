@@ -20,7 +20,7 @@ pub struct Connection<T, P, B: IntoBuf = Bytes> {
     // TODO: Remove <B>
     ping_pong: PingPong<B::Buf>,
     settings: Settings,
-    streams: Streams,
+    streams: Streams<P>,
 
     _phantom: PhantomData<P>,
 }
@@ -32,7 +32,7 @@ pub fn new<T, P, B>(codec: Codec<T, B::Buf>)
           B: IntoBuf,
 {
     // TODO: Actually configure
-    let streams = Streams::new::<P>(streams::Config {
+    let streams = Streams::new(streams::Config {
         max_remote_initiated: None,
         init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
         max_local_initiated: None,
@@ -63,9 +63,11 @@ impl<T, P, B> Connection<T, P, B>
     /// # Panics
     ///
     /// THis function panics if `incr` is not a valid window size.
-    pub fn expand_window(&mut self, id: StreamId, incr: usize) {
+    pub fn expand_window(&mut self, id: StreamId, incr: usize)
+    -> Result<(), ConnectionError>
+    {
         assert!(incr <= MAX_WINDOW_SIZE as usize);
-        self.streams.expand_window(id, incr as WindowSize);
+        self.streams.expand_window(id, incr as WindowSize)
     }
 
     pub fn update_local_settings(&mut self, _local: frame::SettingSet) -> Result<(), ConnectionError> {
@@ -81,10 +83,6 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     pub fn remote_push_enabled(&self) -> Option<bool> {
-        unimplemented!();
-    }
-
-    pub fn start_ping(&mut self, _body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         unimplemented!();
     }
 
@@ -108,6 +106,10 @@ impl<T, P, B> Connection<T, P, B>
             data,
             end_of_stream,
         })
+    }
+
+    pub fn start_ping(&mut self, _body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        unimplemented!();
     }
 
     // ===== Private =====
@@ -210,7 +212,7 @@ impl<T, P, B> Connection<T, P, B>
                 }
                 Some(WindowUpdate(frame)) => {
                     trace!("recv WINDOW_UPDATE; frame={:?}", frame);
-                    self.streams.recv_window_update(frame);
+                    try!(self.streams.recv_window_update(frame));
                 }
                 None => {
                     trace!("codec closed");
