@@ -1,10 +1,13 @@
+mod flow_control;
 mod recv;
 mod send;
 mod state;
 mod store;
 
+use self::flow_control::FlowControl;
 use self::recv::Recv;
 use self::send::Send;
+use self::state::State;
 use self::store::{Store, Entry};
 
 use {frame, Peer, StreamId, ConnectionError};
@@ -12,7 +15,7 @@ use proto::*;
 use error::Reason::*;
 use error::User::*;
 
-// TODO: All the VecDeques should become linked lists using the state::Stream
+// TODO: All the VecDeques should become linked lists using the State
 // values.
 #[derive(Debug)]
 pub struct Streams<P> {

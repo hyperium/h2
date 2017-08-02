@@ -1,14 +1,13 @@
 extern crate slab;
 
-use proto::*;
-use super::state;
+use super::*;
 
 use std::collections::{HashMap, hash_map};
 
 /// Storage for streams
 #[derive(Debug)]
 pub struct Store {
-    slab: slab::Slab<state::Stream>,
+    slab: slab::Slab<State>,
     ids: HashMap<StreamId, usize>,
 }
 
@@ -19,12 +18,12 @@ pub enum Entry<'a> {
 
 pub struct OccupiedEntry<'a> {
     ids: hash_map::OccupiedEntry<'a, StreamId, usize>,
-    slab: &'a mut slab::Slab<state::Stream>,
+    slab: &'a mut slab::Slab<State>,
 }
 
 pub struct VacantEntry<'a> {
     ids: hash_map::VacantEntry<'a, StreamId, usize>,
-    slab: &'a mut slab::Slab<state::Stream>,
+    slab: &'a mut slab::Slab<State>,
 }
 
 impl Store {
@@ -35,7 +34,7 @@ impl Store {
         }
     }
 
-    pub fn get_mut(&mut self, id: &StreamId) -> Option<&mut state::Stream> {
+    pub fn get_mut(&mut self, id: &StreamId) -> Option<&mut State> {
         if let Some(handle) = self.ids.get(id) {
             Some(&mut self.slab[*handle])
         } else {
@@ -64,13 +63,13 @@ impl Store {
 }
 
 impl<'a> OccupiedEntry<'a> {
-    pub fn into_mut(self) -> &'a mut state::Stream {
+    pub fn into_mut(self) -> &'a mut State {
         &mut self.slab[*self.ids.get()]
     }
 }
 
 impl<'a> VacantEntry<'a> {
-    pub fn insert(self, value: state::Stream) -> &'a mut state::Stream {
+    pub fn insert(self, value: State) -> &'a mut State {
         // Insert the value in the slab
         let handle = self.slab.insert(value);
 

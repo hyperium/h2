@@ -1,6 +1,6 @@
 use {frame, Peer, ConnectionError};
 use proto::*;
-use super::{state, Config, Store};
+use super::*;
 
 use error::User::*;
 
@@ -21,7 +21,7 @@ pub struct Send<P> {
     init_window_sz: WindowSize,
 
     /// Connection level flow control governing sent data
-    flow_control: state::FlowControl,
+    flow_control: FlowControl,
 
     /// Holds the list of streams on which local window updates may be sent.
     // XXX It would be cool if this didn't exist.
@@ -41,7 +41,7 @@ impl<P: Peer> Send<P> {
             max_streams: config.max_local_initiated,
             num_streams: 0,
             init_window_sz: config.init_local_window_sz,
-            flow_control: state::FlowControl::new(config.init_local_window_sz),
+            flow_control: FlowControl::new(config.init_local_window_sz),
             pending_window_updates: VecDeque::new(),
             blocked: None,
             _p: PhantomData,
@@ -51,7 +51,7 @@ impl<P: Peer> Send<P> {
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId) -> Result<state::Stream, ConnectionError> {
+    pub fn open(&mut self, id: StreamId) -> Result<State, ConnectionError> {
         try!(self.ensure_can_open(id));
 
         if let Some(max) = self.max_streams {
@@ -63,16 +63,16 @@ impl<P: Peer> Send<P> {
         // Increment the number of locally initiated streams
         self.num_streams += 1;
 
-        Ok(state::Stream::default())
+        Ok(State::default())
     }
 
-    pub fn send_headers(&mut self, state: &mut state::Stream, eos: bool)
+    pub fn send_headers(&mut self, state: &mut State, eos: bool)
         -> Result<(), ConnectionError>
     {
         state.send_open(self.init_window_sz, eos)
     }
 
-    pub fn send_eos(&mut self, state: &mut state::Stream)
+    pub fn send_eos(&mut self, state: &mut State)
         -> Result<(), ConnectionError>
     {
         state.send_close()
@@ -80,7 +80,7 @@ impl<P: Peer> Send<P> {
 
     pub fn send_data<B: Buf>(&mut self,
                              frame: &frame::Data<B>,
-                             state: &mut state::Stream)
+                             state: &mut State)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().remaining();
@@ -171,7 +171,7 @@ impl<P: Peer> Send<P> {
 
     pub fn recv_stream_window_update(&mut self,
                                      frame: frame::WindowUpdate,
-                                     state: &mut state::Stream)
+                                     state: &mut State)
         -> Result<(), ConnectionError>
     {
         if let Some(flow) = state.send_flow_control() {

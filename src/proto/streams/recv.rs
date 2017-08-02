@@ -1,6 +1,6 @@
 use {frame, Peer, ConnectionError};
 use proto::*;
-use super::{state, Config, Store};
+use super::*;
 
 use error::Reason::*;
 
@@ -19,7 +19,7 @@ pub struct Recv<P> {
     init_window_sz: WindowSize,
 
     /// Connection level flow control governing received data
-    flow_control: state::FlowControl,
+    flow_control: FlowControl,
 
     pending_window_updates: VecDeque<StreamId>,
 
@@ -35,7 +35,7 @@ impl<P: Peer> Recv<P> {
             max_streams: config.max_remote_initiated,
             num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
-            flow_control: state::FlowControl::new(config.init_remote_window_sz),
+            flow_control: FlowControl::new(config.init_remote_window_sz),
             pending_window_updates: VecDeque::new(),
             refused: None,
             _p: PhantomData,
@@ -45,7 +45,7 @@ impl<P: Peer> Recv<P> {
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId) -> Result<Option<state::Stream>, ConnectionError> {
+    pub fn open(&mut self, id: StreamId) -> Result<Option<State>, ConnectionError> {
         assert!(self.refused.is_none());
 
         try!(self.ensure_can_open(id));
@@ -60,17 +60,17 @@ impl<P: Peer> Recv<P> {
         // Increment the number of remote initiated streams
         self.num_streams += 1;
 
-        Ok(Some(state::Stream::default()))
+        Ok(Some(State::default()))
     }
 
     /// Transition the stream state based on receiving headers
-    pub fn recv_headers(&mut self, state: &mut state::Stream, eos: bool)
+    pub fn recv_headers(&mut self, state: &mut State, eos: bool)
         -> Result<(), ConnectionError>
     {
         state.recv_open(self.init_window_sz, eos)
     }
 
-    pub fn recv_eos(&mut self, state: &mut state::Stream)
+    pub fn recv_eos(&mut self, state: &mut State)
         -> Result<(), ConnectionError>
     {
         state.recv_close()
@@ -78,7 +78,7 @@ impl<P: Peer> Recv<P> {
 
     pub fn recv_data(&mut self,
                      frame: &frame::Data,
-                     state: &mut state::Stream)
+                     state: &mut State)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().len();
@@ -168,7 +168,7 @@ impl<P: Peer> Recv<P> {
     pub fn expand_stream_window(&mut self,
                                 id: StreamId,
                                 sz: WindowSize,
-                                state: &mut state::Stream)
+                                state: &mut State)
         -> Result<(), ConnectionError>
     {
         // TODO: handle overflow
