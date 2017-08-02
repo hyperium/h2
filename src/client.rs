@@ -1,4 +1,5 @@
-use {frame, proto, Peer, ConnectionError, StreamId};
+use {frame, ConnectionError, StreamId};
+use proto::{self, Connection};
 
 use http;
 use futures::{Future, Poll, Sink, AsyncSink};
@@ -10,55 +11,63 @@ use std::fmt;
 /// In progress H2 connection binding
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     // TODO: unbox
-    inner: Box<Future<Item = Connection<T, B>, Error = ConnectionError>>,
+    inner: Box<Future<Item = Client<T, B>, Error = ConnectionError>>,
 }
+
+#[derive(Debug)]
+struct Peer;
 
 /// Marker type indicating a client peer
-#[derive(Debug)]
-pub struct Client;
-
-pub type Connection<T, B = Bytes> = super::Connection<T, Client, B>;
-
-pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
-    where T: AsyncRead + AsyncWrite + 'static,
-{
-    handshake2(io)
+pub struct Client<T, B: IntoBuf> {
+    connection: Connection<T, Peer, B>,
 }
 
-/// Bind an H2 client connection.
-///
-/// Returns a future which resolves to the connection value once the H2
-/// handshake has been completed.
-pub fn handshake2<T, B>(io: T) -> Handshake<T, B>
+impl<T> Client<T, Bytes>
+    where T: AsyncRead + AsyncWrite + 'static,
+{
+    pub fn handshake(io: T) -> Handshake<T, Bytes> {
+        Client::handshake2(io)
+    }
+}
+
+impl<T, B> Client<T, B>
+    // TODO: Get rid of 'static
     where T: AsyncRead + AsyncWrite + 'static,
           B: IntoBuf + 'static,
 {
-    use tokio_io::io;
+    /// Bind an H2 client connection.
+    ///
+    /// Returns a future which resolves to the connection value once the H2
+    /// handshake has been completed.
+    pub fn handshake2(io: T) -> Handshake<T, B> {
+        use tokio_io::io;
 
-    debug!("binding client connection");
+        debug!("binding client connection");
 
-    let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-        .map_err(ConnectionError::from)
-        .and_then(|(io, _)| {
-            debug!("client connection bound");
+        let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+            .map_err(ConnectionError::from)
+            .and_then(|(io, _)| {
+                debug!("client connection bound");
 
-            let mut framed_write = proto::framed_write(io);
-            let settings = frame::Settings::default();
+                let mut framed_write = proto::framed_write(io);
+                let settings = frame::Settings::default();
 
-            // Send initial settings frame
-            match framed_write.start_send(settings.into()) {
-                Ok(AsyncSink::Ready) => {
-                    Ok(proto::from_framed_write(framed_write))
+                // Send initial settings frame
+                match framed_write.start_send(settings.into()) {
+                    Ok(AsyncSink::Ready) => {
+                        let conn = proto::from_framed_write(framed_write);
+                        Ok(Client { connection: conn })
+                    }
+                    Ok(_) => unreachable!(),
+                    Err(e) => Err(ConnectionError::from(e)),
                 }
-                Ok(_) => unreachable!(),
-                Err(e) => Err(ConnectionError::from(e)),
-            }
-        });
+            });
 
-    Handshake { inner: Box::new(handshake) }
+        Handshake { inner: Box::new(handshake) }
+    }
 }
 
-impl Peer for Client {
+impl proto::Peer for Peer {
     type Send = http::request::Head;
     type Poll = http::response::Head;
 
@@ -98,7 +107,7 @@ impl Peer for Client {
 }
 
 impl<T, B: IntoBuf> Future for Handshake<T, B> {
-    type Item = Connection<T, B>;
+    type Item = Client<T, B>;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -109,8 +118,21 @@ impl<T, B: IntoBuf> Future for Handshake<T, B> {
 impl<T, B> fmt::Debug for Handshake<T, B>
     where T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
+          B::Buf: fmt::Debug + IntoBuf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "client::Handshake")
+    }
+}
+
+impl<T, B> fmt::Debug for Client<T, B>
+    where T: fmt::Debug,
+          B: fmt::Debug + IntoBuf,
+          B::Buf: fmt::Debug + IntoBuf,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Client")
+            .field("connection", &self.connection)
+            .finish()
     }
 }

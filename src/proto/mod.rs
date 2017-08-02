@@ -13,14 +13,34 @@ use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Streams;
 
-use {StreamId, Peer};
+use StreamId;
 use error::Reason;
-use frame::Frame;
+use frame::{self, Frame};
 
 use futures::*;
 use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
+
+/// Either a Client or a Server
+pub trait Peer {
+    /// Message type sent into the transport
+    type Send;
+
+    /// Message type polled from the transport
+    type Poll;
+
+    fn is_server() -> bool;
+
+    #[doc(hidden)]
+    fn convert_send_message(
+        id: StreamId,
+        headers: Self::Send,
+        end_of_stream: bool) -> frame::Headers;
+
+    #[doc(hidden)]
+    fn convert_poll_message(headers: frame::Headers) -> Self::Poll;
+}
 
 pub type PingPayload = [u8; 8];
 
@@ -69,7 +89,7 @@ pub fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, B::Buf>)
 
     let codec = FramedRead::new(framed);
 
-    connection::new(codec)
+    Connection::new(codec)
 }
 
 impl WindowUpdate {

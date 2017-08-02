@@ -14,7 +14,7 @@ use self::send::Send;
 use self::state::State;
 use self::store::{Store, Entry};
 
-use {frame, Peer, StreamId, ConnectionError};
+use {frame, StreamId, ConnectionError};
 use proto::*;
 use error::Reason::*;
 use error::User::*;

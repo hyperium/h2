@@ -1,4 +1,4 @@
-use {frame, Peer, ConnectionError};
+use {frame, ConnectionError};
 use proto::*;
 use super::*;
 

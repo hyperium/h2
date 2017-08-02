@@ -1,8 +1,6 @@
-use {ConnectionError, Frame, Peer};
+use {ConnectionError, Frame};
 use HeaderMap;
 use frame::{self, StreamId};
-use client::Client;
-use server::Server;
 
 use proto::*;
 
@@ -26,34 +24,29 @@ pub struct Connection<T, P, B: IntoBuf = Bytes> {
     _phantom: PhantomData<P>,
 }
 
-pub fn new<T, P, B>(codec: Codec<T, B::Buf>)
-    -> Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
-{
-    // TODO: Actually configure
-    let streams = Streams::new(streams::Config {
-        max_remote_initiated: None,
-        init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-        max_local_initiated: None,
-        init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-    });
-
-    Connection {
-        codec: codec,
-        ping_pong: PingPong::new(),
-        settings: Settings::new(),
-        streams: streams,
-        _phantom: PhantomData,
-    }
-}
-
 impl<T, P, B> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
           B: IntoBuf,
 {
+    pub fn new(codec: Codec<T, B::Buf>) -> Connection<T, P, B> {
+        // TODO: Actually configure
+        let streams = Streams::new(streams::Config {
+            max_remote_initiated: None,
+            init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            max_local_initiated: None,
+            init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+        });
+
+        Connection {
+            codec: codec,
+            ping_pong: PingPong::new(),
+            settings: Settings::new(),
+            streams: streams,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Polls for the next update to a remote flow control window.
     pub fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
         self.streams.poll_window_update()
@@ -250,6 +243,7 @@ impl<T, P, B> Connection<T, P, B>
     }
 }
 
+/*
 impl<T, B> Connection<T, Client, B>
     where T: AsyncRead + AsyncWrite,
           B: IntoBuf,
@@ -296,6 +290,7 @@ impl<T, B> Connection<T, Server, B>
         })
     }
 }
+*/
 
 impl<T, P, B> Stream for Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
