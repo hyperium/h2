@@ -18,8 +18,6 @@ extern crate bytes;
 // Hash function used for HPACK encoding and tracking stream states.
 extern crate fnv;
 
-extern crate ordermap;
-
 extern crate byteorder;
 
 #[macro_use]

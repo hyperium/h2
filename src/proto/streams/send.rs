@@ -1,6 +1,6 @@
 use {frame, Peer, ConnectionError};
 use proto::*;
-use super::{Config, StreamMap};
+use super::{Config, Store};
 
 use error::User::*;
 
@@ -125,7 +125,7 @@ impl<P: Peer> Send<P> {
     }
 
     /// Get pending window updates
-    pub fn poll_window_update(&mut self, streams: &mut StreamMap)
+    pub fn poll_window_update(&mut self, streams: &mut Store)
         -> Poll<WindowUpdate, ConnectionError>
     {
         // This biases connection window updates, which probably makes sense.

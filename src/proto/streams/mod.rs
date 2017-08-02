@@ -1,15 +1,15 @@
 mod recv;
 mod send;
+mod store;
 
 use self::recv::Recv;
 use self::send::Send;
+use self::store::{Store, Entry};
 
 use {frame, Peer, StreamId, ConnectionError};
 use proto::*;
 use error::Reason::*;
 use error::User::*;
-
-use ordermap::{OrderMap, Entry};
 
 // TODO: All the VecDeques should become linked lists using the state::Stream
 // values.
@@ -19,10 +19,8 @@ pub struct Streams<P> {
     inner: Inner<P>,
 
     /// Streams
-    streams: StreamMap,
+    streams: Store,
 }
-
-type StreamMap = OrderMap<StreamId, state::Stream>;
 
 /// Fields needed to manage state related to managing the set of streams. This
 /// is mostly split out to make ownership happy.
@@ -59,7 +57,7 @@ impl<P: Peer> Streams<P> {
                 recv: Recv::new(&config),
                 send: Send::new(&config),
             },
-            streams: OrderMap::default(),
+            streams: Store::new(),
         }
     }
 

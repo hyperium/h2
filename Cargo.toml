@@ -12,7 +12,7 @@ http = { git = "https://github.com/carllerche/http" }
 byteorder = "1.0"
 log = "0.3.8"
 fnv = "1.0.5"
-ordermap = "0.2.10"
+slab = "0.4.0"
 string = { git = "https://github.com/carllerche/string" }
 
 [dev-dependencies]

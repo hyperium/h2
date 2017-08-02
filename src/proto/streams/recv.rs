@@ -1,6 +1,6 @@
 use {frame, Peer, ConnectionError};
 use proto::*;
-use super::{Config, StreamMap};
+use super::{Config, Store};
 
 use error::Reason::*;
 
@@ -201,7 +201,7 @@ impl<P: Peer> Recv<P> {
 
     /// Send stream level window update
     pub fn send_stream_window_update<T, B>(&mut self,
-                                           streams: &mut StreamMap,
+                                           streams: &mut Store,
                                            dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
