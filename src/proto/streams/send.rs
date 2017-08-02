@@ -72,10 +72,10 @@ impl<P: Peer> Send<P> {
         state.send_open(self.init_window_sz, eos)
     }
 
-    pub fn send_trailers(&mut self, _state: &mut state::Stream, _eos: bool)
+    pub fn send_eos(&mut self, state: &mut state::Stream)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        state.send_close()
     }
 
     pub fn send_data<B: Buf>(&mut self,

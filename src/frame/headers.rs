@@ -1,9 +1,10 @@
 use super::StreamId;
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
+use HeaderMap;
 
 use http::{request, response, version, uri, Method, StatusCode, Uri};
-use http::header::{self, HeaderMap, HeaderName, HeaderValue};
+use http::header::{self, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
 use byteorder::{BigEndian, ByteOrder};
@@ -23,7 +24,7 @@ pub struct Headers {
     stream_dep: Option<StreamDependency>,
 
     /// The decoded header fields
-    fields: HeaderMap<HeaderValue>,
+    fields: HeaderMap,
 
     /// Pseudo headers, these are broken out as they must be sent as part of the
     /// headers frame.
@@ -110,7 +111,7 @@ const ALL: u8 = END_STREAM
 // ===== impl Headers =====
 
 impl Headers {
-    pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap<HeaderValue>) -> Self {
+    pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap) -> Self {
         Headers {
             stream_id: stream_id,
             stream_dep: None,
@@ -249,6 +250,10 @@ impl Headers {
         request.headers = self.fields;
 
         request
+    }
+
+    pub fn into_fields(self) -> HeaderMap {
+        self.fields
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)

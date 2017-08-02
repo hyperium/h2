@@ -1,4 +1,5 @@
 use {ConnectionError, Frame, Peer};
+use HeaderMap;
 use frame::{self, StreamId};
 use client::Client;
 use server::Server;
@@ -108,6 +109,17 @@ impl<T, P, B> Connection<T, P, B>
         })
     }
 
+    pub fn send_trailers(self,
+                         id: StreamId,
+                         headers: HeaderMap)
+        -> sink::Send<Self>
+    {
+        self.send(Frame::Trailers {
+            id,
+            headers,
+        })
+    }
+
     pub fn start_ping(&mut self, _body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
         unimplemented!();
     }
@@ -167,7 +179,7 @@ impl<T, P, B> Connection<T, P, B>
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
                     // Update stream state while ensuring that the headers frame
-                    // can be received
+                    // can be received.
                     if let Some(frame) = try!(self.streams.recv_headers(frame)) {
                         let frame = Self::convert_poll_message(frame);
                         return Ok(Some(frame).into());
@@ -224,8 +236,10 @@ impl<T, P, B> Connection<T, P, B>
 
     fn convert_poll_message(frame: frame::Headers) -> Frame<P::Poll> {
         if frame.is_trailers() {
-            // TODO: return trailers
-            unimplemented!();
+            Frame::Trailers {
+                id: frame.stream_id(),
+                headers: frame.into_fields()
+            }
         } else {
             Frame::Headers {
                 id: frame.stream_id(),
@@ -328,7 +342,6 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
                 frame::Frame::Headers(frame)
             }
-
             Frame::Data { id, data, end_of_stream } => {
                 let frame = frame::Data::from_buf(
                     id, data.into_buf(), end_of_stream);
@@ -337,13 +350,20 @@ impl<T, P, B> Sink for Connection<T, P, B>
 
                 frame.into()
             }
-
             Frame::Reset { id, error } => frame::Reset::new(id, error).into(),
-
-            /*
             Frame::Trailers { id, headers } => {
-                unimplemented!();
+                let mut frame = frame::Headers::new(
+                    id,
+                    frame::Pseudo::default(),
+                    headers);
+
+                frame.set_end_stream();
+
+                self.streams.send_headers(&frame)?;
+
+                frame::Frame::Headers(frame)
             }
+            /*
             Frame::PushPromise { id, promise } => {
                 unimplemented!();
             }

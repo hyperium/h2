@@ -87,7 +87,12 @@ impl<P: Peer> Streams<P> {
         };
 
         if frame.is_trailers() {
-            try!(self.inner.recv.recv_trailers(state, frame.is_end_stream()));
+            if !frame.is_end_stream() {
+                // TODO: What error should this return?
+                unimplemented!();
+            }
+
+            try!(self.inner.recv.recv_eos(state));
         } else {
             try!(self.inner.recv.recv_headers(state, frame.is_end_stream()));
         }
@@ -174,7 +179,7 @@ impl<P: Peer> Streams<P> {
         };
 
         if frame.is_trailers() {
-            try!(self.inner.send.send_trailers(state, frame.is_end_stream()));
+            try!(self.inner.send.send_eos(state));
         } else {
             try!(self.inner.send.send_headers(state, frame.is_end_stream()));
         }

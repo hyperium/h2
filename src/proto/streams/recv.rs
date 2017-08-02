@@ -70,10 +70,10 @@ impl<P: Peer> Recv<P> {
         state.recv_open(self.init_window_sz, eos)
     }
 
-    pub fn recv_trailers(&mut self, _state: &mut state::Stream, _eos: bool)
+    pub fn recv_eos(&mut self, state: &mut state::Stream)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        state.recv_close()
     }
 
     pub fn recv_data(&mut self,
