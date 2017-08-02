@@ -1,33 +1,49 @@
-use {ConnectionError, Frame};
-use client::Client;
-use error;
+use {ConnectionError, Frame, Peer};
 use frame::{self, StreamId};
-use proto::*;
+use client::Client;
 use server::Server;
 
-use bytes::{Bytes, IntoBuf};
+use proto::*;
+
 use http::{request, response};
+use bytes::{Bytes, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
+
 use std::marker::PhantomData;
 
 /// An H2 connection
 #[derive(Debug)]
 pub struct Connection<T, P, B: IntoBuf = Bytes> {
-    inner: Transport<T, B::Buf>,
-    // Set to `true` as long as the connection is in a valid state.
-    active: bool,
-    _phantom: PhantomData<(P, B)>,
+    // Codec
+    codec: Codec<T, B::Buf>,
+
+    // TODO: Remove <B>
+    ping_pong: PingPong<B::Buf>,
+    settings: Settings,
+    streams: Streams<P>,
+
+    _phantom: PhantomData<P>,
 }
 
-pub fn new<T, P, B>(transport: Transport<T, B::Buf>)
+pub fn new<T, P, B>(codec: Codec<T, B::Buf>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
           B: IntoBuf,
 {
+    // TODO: Actually configure
+    let streams = Streams::new(streams::Config {
+        max_remote_initiated: None,
+        init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+        max_local_initiated: None,
+        init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+    });
+
     Connection {
-        inner: transport,
-        active: true,
+        codec: codec,
+        ping_pong: PingPong::new(),
+        settings: Settings::new(),
+        streams: streams,
         _phantom: PhantomData,
     }
 }
@@ -39,40 +55,44 @@ impl<T, P, B> Connection<T, P, B>
 {
     /// Polls for the next update to a remote flow control window.
     pub fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-        self.inner.poll_window_update()
+        self.streams.poll_window_update()
     }
 
     /// Increases the capacity of a local flow control window.
-    pub fn expand_window(&mut self, id: StreamId, incr: WindowSize) -> Result<(), ConnectionError> {
-        self.inner.expand_window(id, incr)
+    ///
+    /// # Panics
+    ///
+    /// THis function panics if `incr` is not a valid window size.
+    pub fn expand_window(&mut self, id: StreamId, incr: usize)
+    -> Result<(), ConnectionError>
+    {
+        assert!(incr <= MAX_WINDOW_SIZE as usize);
+        self.streams.expand_window(id, incr as WindowSize)
     }
 
-    pub fn update_local_settings(&mut self, local: frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.update_local_settings(local)
+    pub fn update_local_settings(&mut self, _local: frame::SettingSet) -> Result<(), ConnectionError> {
+        unimplemented!();
     }
 
     pub fn remote_initial_window_size(&self) -> u32 {
-        self.inner.remote_initial_window_size()
+        unimplemented!();
     }
 
-    pub fn remote_max_concurrent_streams(&self) -> Option<u32> {
-        self.inner.remote_max_concurrent_streams()
+    pub fn remote_max_concurrent_streams(&self) -> Option<usize> {
+        unimplemented!();
     }
 
     pub fn remote_push_enabled(&self) -> Option<bool> {
-        self.inner.remote_push_enabled()
-    }
-
-    pub fn start_ping(&mut self, body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        self.inner.start_ping(body)
-    }
-
-    pub fn take_pong(&mut self) -> Option<PingPayload> {
-        self.inner.take_pong()
+        unimplemented!();
     }
 
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.poll_ready()
+        try_ready!(self.poll_send_ready());
+
+        // TODO: Once there is write buffering, this shouldn't be needed
+        try_ready!(self.codec.poll_ready());
+
+        Ok(().into())
     }
 
     pub fn send_data(self,
@@ -81,12 +101,138 @@ impl<T, P, B> Connection<T, P, B>
                      end_of_stream: bool)
         -> sink::Send<Self>
     {
-        trace!("send_data: id={:?}", id);
         self.send(Frame::Data {
             id,
             data,
             end_of_stream,
         })
+    }
+
+    pub fn start_ping(&mut self, _body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
+        unimplemented!();
+    }
+
+    // ===== Private =====
+
+    /// Returns `Ready` when the `Connection` is ready to receive a frame from
+    /// the socket.
+    fn poll_recv_ready(&mut self) -> Poll<(), ConnectionError> {
+        // Pong, settings ack, and stream refusals are high priority frames to
+        // send. If the write buffer is full, we stop reading any further frames
+        // until these high priority writes can be committed to the buffer.
+
+        try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
+        try_ready!(self.settings.send_pending_ack(&mut self.codec));
+        try_ready!(self.streams.send_pending_refusal(&mut self.codec));
+
+        Ok(().into())
+    }
+
+    /// Returns `Ready` when the `Connection` is ready to accept a frame from
+    /// the user
+    ///
+    /// This function is currently used by poll_complete, but at some point it
+    /// will probably not be required.
+    fn poll_send_ready(&mut self) -> Poll<(), ConnectionError> {
+        try_ready!(self.poll_recv_ready());
+
+        // Ensure all window updates have been sent.
+        try_ready!(self.streams.send_pending_window_updates(&mut self.codec));
+
+        Ok(().into())
+    }
+
+    /// Try to receive the next frame
+    fn recv_frame(&mut self) -> Poll<Option<Frame<P::Poll>>, ConnectionError> {
+        use frame::Frame::*;
+
+        loop {
+            // First, ensure that the `Connection` is able to receive a frame
+            try_ready!(self.poll_recv_ready());
+
+            trace!("polling codec");
+
+            let frame = match try!(self.codec.poll()) {
+                Async::Ready(frame) => frame,
+                Async::NotReady => {
+                    // Receiving new frames may depend on ensuring that the write buffer
+                    // is clear (e.g. if window updates need to be sent), so `poll_complete`
+                    // is called here.
+                    let _ = try!(self.poll_complete());
+                    return Ok(Async::NotReady);
+                }
+            };
+
+            match frame {
+                Some(Headers(frame)) => {
+                    trace!("recv HEADERS; frame={:?}", frame);
+                    // Update stream state while ensuring that the headers frame
+                    // can be received
+                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
+                        let frame = Self::convert_poll_message(frame);
+                        return Ok(Some(frame).into());
+                    }
+                }
+                Some(Data(frame)) => {
+                    trace!("recv DATA; frame={:?}", frame);
+                    try!(self.streams.recv_data(&frame));
+
+                    let frame = Frame::Data {
+                        id: frame.stream_id(),
+                        end_of_stream: frame.is_end_stream(),
+                        data: frame.into_payload(),
+                    };
+
+                    return Ok(Some(frame).into());
+                }
+                Some(Reset(frame)) => {
+                    trace!("recv RST_STREAM; frame={:?}", frame);
+                    try!(self.streams.recv_reset(&frame));
+
+                    let frame = Frame::Reset {
+                        id: frame.stream_id(),
+                        error: frame.reason(),
+                    };
+
+                    return Ok(Some(frame).into());
+                }
+                Some(PushPromise(frame)) => {
+                    trace!("recv PUSH_PROMISE; frame={:?}", frame);
+                    try!(self.streams.recv_push_promise(frame));
+                }
+                Some(Settings(frame)) => {
+                    trace!("recv SETTINGS; frame={:?}", frame);
+                    self.settings.recv_settings(frame);
+
+                    // TODO: ACK must be sent THEN settings applied.
+                }
+                Some(Ping(frame)) => {
+                    trace!("recv PING; frame={:?}", frame);
+                    self.ping_pong.recv_ping(frame);
+                }
+                Some(WindowUpdate(frame)) => {
+                    trace!("recv WINDOW_UPDATE; frame={:?}", frame);
+                    try!(self.streams.recv_window_update(frame));
+                }
+                None => {
+                    trace!("codec closed");
+                    return Ok(Async::Ready(None));
+                }
+            }
+        }
+    }
+
+    fn convert_poll_message(frame: frame::Headers) -> Frame<P::Poll> {
+        if frame.is_trailers() {
+            // TODO: return trailers
+            unimplemented!();
+        } else {
+            Frame::Headers {
+                id: frame.stream_id(),
+                end_of_stream: frame.is_end_stream(),
+                headers: P::convert_poll_message(frame),
+            }
+        }
     }
 }
 
@@ -124,6 +270,17 @@ impl<T, B> Connection<T, Server, B>
             end_of_stream: end_of_stream,
         })
     }
+
+    pub fn send_push_promise(self,
+                             id: StreamId,
+                             promised_id: StreamId)
+        -> sink::Send<Self>
+    {
+        self.send(Frame::PushPromise {
+            id,
+            promised_id,
+        })
+    }
 }
 
 impl<T, P, B> Stream for Connection<T, P, B>
@@ -135,55 +292,8 @@ impl<T, P, B> Stream for Connection<T, P, B>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
-        use frame::Frame::*;
-        trace!("poll");
-
-        if !self.active {
-            return Err(error::User::Corrupt.into());
-        }
-
-        loop {
-            let frame = match try!(self.inner.poll()) {
-                Async::Ready(f) => f,
-
-                // XXX is this necessary?
-                Async::NotReady => {
-                    // Receiving new frames may depend on ensuring that the write buffer
-                    // is clear (e.g. if window updates need to be sent), so `poll_complete`
-                    // is called here.
-                    try_ready!(self.poll_complete());
-
-                    // If the write buffer is cleared, attempt to poll the underlying
-                    // stream once more because it, may have been made ready.
-                    try_ready!(self.inner.poll())
-                }
-            };
-
-            trace!("poll; frame={:?}", frame);
-            let frame = match frame {
-                Some(Headers(v)) => Frame::Headers {
-                    id: v.stream_id(),
-                    end_of_stream: v.is_end_stream(),
-                    headers: P::convert_poll_message(v),
-                },
-
-                Some(Data(v)) => Frame::Data {
-                    id: v.stream_id(),
-                    end_of_stream: v.is_end_stream(),
-                    data: v.into_payload(),
-                },
-
-                Some(Reset(v)) => Frame::Reset {
-                    id: v.stream_id(),
-                    error: v.reason(),
-                },
-
-                Some(frame) => panic!("unexpected frame; frame={:?}", frame),
-                None => return Ok(Async::Ready(None)),
-            };
-
-            return Ok(Async::Ready(Some(frame)));
-        }
+        // TODO: intercept errors and flag the connection
+        self.recv_frame()
     }
 }
 
@@ -199,14 +309,9 @@ impl<T, P, B> Sink for Connection<T, P, B>
     fn start_send(&mut self, item: Self::SinkItem)
         -> StartSend<Self::SinkItem, Self::SinkError>
     {
-        trace!("start_send");
+        // TODO: Ensure connection is not corrupt
 
-        if !self.active {
-            return Err(error::User::Corrupt.into());
-        }
-
-        // Ensure the transport is ready to send a frame before we transform the external
-        // `Frame` into an internal `frame::Frame`.
+        // Ensure that the connection is ready to accept a new frame
         if !try!(self.poll_ready()).is_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
@@ -216,12 +321,21 @@ impl<T, P, B> Sink for Connection<T, P, B>
                 // This is a one-way conversion. By checking `poll_ready` first (above),
                 // it's already been determined that the inner `Sink` can accept the item.
                 // If the item is rejected, then there is a bug.
-                let f = P::convert_send_message(id, headers, end_of_stream);
-                frame::Frame::Headers(f)
+                let frame = P::convert_send_message(id, headers, end_of_stream);
+
+                // Update the stream state
+                self.streams.send_headers(&frame)?;
+
+                frame::Frame::Headers(frame)
             }
 
             Frame::Data { id, data, end_of_stream } => {
-                frame::Data::from_buf(id, data.into_buf(), end_of_stream).into()
+                let frame = frame::Data::from_buf(
+                    id, data.into_buf(), end_of_stream);
+
+                self.streams.send_data(&frame)?;
+
+                frame.into()
             }
 
             Frame::Reset { id, error } => frame::Reset::new(id, error).into(),
@@ -240,13 +354,21 @@ impl<T, P, B> Sink for Connection<T, P, B>
             _ => unimplemented!(),
         };
 
-        let res = self.inner.start_send(frame)?;
+        // Write the frame to the socket
+        let res = self.codec.start_send(frame)?;
+
+        // Ensure that the write was accepted. This is always true due to the
+        // check at the top of the function
         assert!(res.is_ready());
+
+        // Return success
         Ok(AsyncSink::Ready)
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        trace!("poll_complete");
-        self.inner.poll_complete()
+        try_ready!(self.poll_send_ready());
+        try_ready!(self.codec.poll_complete());
+
+        Ok(().into())
     }
 }

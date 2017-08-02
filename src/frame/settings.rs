@@ -66,19 +66,8 @@ impl Settings {
         }
     }
 
-    pub fn new(values: SettingSet) -> Settings {
-        Settings {
-            flags: SettingsFlags::empty(),
-            values: values,
-        }
-    }
-
     pub fn is_ack(&self) -> bool {
         self.flags.is_ack()
-    }
-
-    pub fn into_set(self) -> SettingSet {
-        self.values
     }
 
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {

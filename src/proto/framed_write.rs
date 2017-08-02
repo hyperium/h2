@@ -1,6 +1,5 @@
 use {hpack, ConnectionError, FrameSize};
 use frame::{self, Frame};
-use proto::{ApplySettings, ReadySink};
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -65,6 +64,19 @@ impl<T, B> FramedWrite<T, B>
         }
     }
 
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+        if !self.has_capacity() {
+            // Try flushing
+            try!(self.poll_complete());
+
+            if !self.has_capacity() {
+                return Ok(Async::NotReady);
+            }
+        }
+
+        Ok(Async::Ready(()))
+    }
+
     fn has_capacity(&self) -> bool {
         self.next.is_none() && self.buf.get_ref().remaining_mut() >= MIN_BUFFER_CAPACITY
     }
@@ -75,16 +87,6 @@ impl<T, B> FramedWrite<T, B>
 
     fn frame_len(&self, data: &frame::Data<B>) -> usize {
         cmp::min(self.max_frame_size as usize, data.payload().remaining())
-    }
-}
-
-impl<T, B> ApplySettings for FramedWrite<T, B> {
-    fn apply_local_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        Ok(())
-    }
-
-    fn apply_remote_settings(&mut self, _set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        Ok(())
     }
 }
 
@@ -101,6 +103,8 @@ impl<T, B> Sink for FramedWrite<T, B>
         if !try!(self.poll_ready()).is_ready() {
             return Ok(AsyncSink::NotReady(item));
         }
+
+        trace!("send; frame={:?}", item);
 
         match item {
             Frame::Data(mut v) => {
@@ -183,24 +187,6 @@ impl<T, B> Sink for FramedWrite<T, B>
     fn close(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_complete());
         self.inner.shutdown().map_err(Into::into)
-    }
-}
-
-impl<T, B> ReadySink for FramedWrite<T, B>
-    where T: AsyncWrite,
-          B: Buf,
-{
-    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
-        if !self.has_capacity() {
-            // Try flushing
-            try!(self.poll_complete());
-
-            if !self.has_capacity() {
-                return Ok(Async::NotReady);
-            }
-        }
-
-        Ok(Async::Ready(()))
     }
 }
 

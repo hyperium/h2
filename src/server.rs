@@ -1,7 +1,9 @@
+#![allow(warnings)]
+
 use {frame, proto, Peer, ConnectionError, StreamId};
 
 use http;
-use futures::{Future, Sink, Poll, Async};
+use futures::{Future, Sink, Poll, Async, AsyncSink, IntoFuture};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -46,13 +48,24 @@ pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
           B: 'static, // TODO: Why is this required but not in client?
 {
-    let local_settings = frame::SettingSet::default();
-    let transport = proto::server_handshaker(io, local_settings.clone());
+    let mut framed_write = proto::framed_write(io);
+    let settings = frame::Settings::default();
+
+   // Send initial settings frame
+    match framed_write.start_send(settings.into()) {
+        Ok(AsyncSink::Ready) => {}
+        Ok(_) => unreachable!(),
+        Err(e) => {
+            return Handshake {
+                inner: Box::new(Err(ConnectionError::from(e)).into_future()),
+            }
+        }
+    }
 
     // Flush pending settings frame and then wait for the client preface
-    let handshake = Flush::new(transport)
+    let handshake = Flush::new(framed_write)
         .and_then(ReadPreface::new)
-        .map(move |t| proto::from_server_handshaker(t, local_settings))
+        .map(move |framed_write| proto::from_framed_write(framed_write))
         ;
 
     Handshake { inner: Box::new(handshake) }

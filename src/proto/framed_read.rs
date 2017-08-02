@@ -1,7 +1,7 @@
 use {hpack, ConnectionError};
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
-use proto::{ApplySettings, ReadySink};
+use proto::*;
 
 use futures::*;
 
@@ -105,6 +105,7 @@ impl<T> FramedRead<T> {
     }
 }
 
+/*
 impl<T: ApplySettings> ApplySettings for FramedRead<T> {
     fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
         self.inner.get_mut().apply_local_settings(set)
@@ -114,6 +115,7 @@ impl<T: ApplySettings> ApplySettings for FramedRead<T> {
         self.inner.get_mut().apply_remote_settings(set)
     }
 }
+*/
 
 impl<T> Stream for FramedRead<T>
     where T: AsyncRead,
@@ -151,8 +153,8 @@ impl<T: Sink> Sink for FramedRead<T> {
     }
 }
 
-impl<T: ReadySink> ReadySink for FramedRead<T> {
-    fn poll_ready(&mut self) -> Poll<(), Self::SinkError> {
+impl<T: AsyncWrite, B: Buf> FramedRead<FramedWrite<T, B>> {
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         self.inner.get_mut().poll_ready()
     }
 }

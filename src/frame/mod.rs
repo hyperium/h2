@@ -3,6 +3,8 @@ use error::{ConnectionError, Reason};
 
 use bytes::Bytes;
 
+use std::fmt;
+
 /// A helper macro that unpacks a sequence of 4 bytes found in the buffer with
 /// the given identifier, starting at the given offset, into the given integer
 /// type. Obviously, the integer type should be able to support at least 4
@@ -54,7 +56,6 @@ pub use self::settings::{
 
 pub const HEADER_LEN: usize = 9;
 
-#[derive(Debug /*, Clone, PartialEq */)]
 pub enum Frame<T = Bytes> {
     Data(Data<T>),
     Headers(Headers),
@@ -66,50 +67,20 @@ pub enum Frame<T = Bytes> {
 }
 
 impl<T> Frame<T> {
-    pub fn is_connection_frame(&self) -> bool {
+}
+
+impl<T> fmt::Debug for Frame<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         use self::Frame::*;
 
-        match self {
-            &Headers(..) |
-            &Data(..) |
-            &PushPromise(..) |
-            &Reset(..) => false,
-
-            &WindowUpdate(ref v) => v.stream_id().is_zero(),
-
-            &Ping(_) |
-            &Settings(_) => true,
-        }
-    }
-
-    pub fn stream_id(&self) -> StreamId {
-        use self::Frame::*;
-
-        match self {
-            &Headers(ref v) => v.stream_id(),
-            &Data(ref v) => v.stream_id(),
-            &PushPromise(ref v) => v.stream_id(),
-            &WindowUpdate(ref v) => v.stream_id(),
-            &Reset(ref v) => v.stream_id(),
-
-            &Ping(_) |
-            &Settings(_) => StreamId::zero(),
-        }
-    }
-
-    pub fn is_end_stream(&self) -> bool {
-        use self::Frame::*;
-
-        match self {
-            &Headers(ref v) => v.is_end_stream(),
-            &Data(ref v) => v.is_end_stream(),
-
-            &PushPromise(_) |
-            &WindowUpdate(_) |
-            &Ping(_) |
-            &Settings(_) => false,
-
-            &Reset(_) => true,
+        match *self {
+            Data(..) => write!(fmt, "Frame::Data(..)"),
+            Headers(ref frame) => write!(fmt, "Frame::Headers({:?})", frame),
+            PushPromise(ref frame) => write!(fmt, "Frame::PushPromise({:?})", frame),
+            Settings(ref frame) => write!(fmt, "Frame::Settings({:?})", frame),
+            Ping(ref frame) => write!(fmt, "Frame::Ping({:?})", frame),
+            WindowUpdate(ref frame) => write!(fmt, "Frame::WindowUpdate({:?})", frame),
+            Reset(ref frame) => write!(fmt, "Frame::Reset({:?})", frame),
         }
     }
 }

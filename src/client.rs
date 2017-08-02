@@ -1,7 +1,7 @@
 use {frame, proto, Peer, ConnectionError, StreamId};
 
 use http;
-use futures::{Future, Poll};
+use futures::{Future, Poll, Sink, AsyncSink};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -29,21 +29,31 @@ pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
 ///
 /// Returns a future which resolves to the connection value once the H2
 /// handshake has been completed.
-pub fn handshake2<T, B: IntoBuf>(io: T) -> Handshake<T, B>
+pub fn handshake2<T, B>(io: T) -> Handshake<T, B>
     where T: AsyncRead + AsyncWrite + 'static,
+          B: IntoBuf + 'static,
 {
     use tokio_io::io;
 
     debug!("binding client connection");
 
     let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-        .map(|(io, _)| {
+        .map_err(ConnectionError::from)
+        .and_then(|(io, _)| {
             debug!("client connection bound");
 
-            // Use default local settings for now
-            proto::from_io(io, Default::default())
-        })
-        .map_err(ConnectionError::from);
+            let mut framed_write = proto::framed_write(io);
+            let settings = frame::Settings::default();
+
+            // Send initial settings frame
+            match framed_write.start_send(settings.into()) {
+                Ok(AsyncSink::Ready) => {
+                    Ok(proto::from_framed_write(framed_write))
+                }
+                Ok(_) => unreachable!(),
+                Err(e) => Err(ConnectionError::from(e)),
+            }
+        });
 
     Handshake { inner: Box::new(handshake) }
 }

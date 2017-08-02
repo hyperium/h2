@@ -49,9 +49,6 @@ pub struct PushPromise {
 }
 
 impl PushPromise {
-    pub fn stream_id(&self) -> StreamId {
-        self.stream_id
-    }
 }
 
 #[derive(Debug)]
@@ -175,6 +172,14 @@ impl Headers {
             pseudo: pseudo,
             flags: flags,
         })
+    }
+
+    /// Returns `true` if the frame represents trailers
+    ///
+    /// Trailers are header frames that contain no pseudo headers.
+    pub fn is_trailers(&self) -> bool {
+        self.pseudo.method.is_none() &&
+            self.pseudo.status.is_none()
     }
 
     pub fn stream_id(&self) -> StreamId {
