@@ -1,6 +1,6 @@
 use {frame, Peer, ConnectionError};
 use proto::*;
-use super::{Config, Store};
+use super::{state, Config, Store};
 
 use error::User::*;
 

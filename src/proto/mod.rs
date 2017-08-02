@@ -3,7 +3,6 @@ mod framed_read;
 mod framed_write;
 mod ping_pong;
 mod settings;
-mod state;
 mod streams;
 
 pub use self::connection::Connection;

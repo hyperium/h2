@@ -1,6 +1,7 @@
 extern crate slab;
 
 use proto::*;
+use super::state;
 
 use std::collections::{HashMap, hash_map};
 
