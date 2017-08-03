@@ -3,7 +3,8 @@ use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use HeaderMap;
 
-use http::{request, response, version, uri, Method, StatusCode, Uri};
+use http::{self, request, response, version, uri, Method, StatusCode, Uri};
+use http::{Request, Response};
 use http::header::{self, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
@@ -199,31 +200,28 @@ impl Headers {
         self.flags.set_end_stream()
     }
 
-    pub fn into_response(self) -> response::Head {
-        let mut response = response::Head::default();
+    pub fn into_response(self) -> http::Result<Response<()>> {
+        let mut b = Response::builder();
 
         if let Some(status) = self.pseudo.status {
-            response.status = status;
-        } else {
-            unimplemented!();
+            b.status(status);
         }
 
-        response.headers = self.fields;
-        response
+        let mut response = try!(b.body(()));
+        *response.headers_mut() = self.fields;
+
+        Ok(response)
     }
 
-    pub fn into_request(self) -> request::Head {
-        let mut request = request::Head::default();
+    pub fn into_request(self) -> http::Result<Request<()>> {
+        let mut b = Request::builder();
 
         // TODO: should we distinguish between HTTP_2 and HTTP_2C?
         // carllerche/http#42
-        request.version = version::HTTP_2;
+        b.version(version::HTTP_2);
 
         if let Some(method) = self.pseudo.method {
-            request.method = method;
-        } else {
-            // TODO: invalid request
-            unimplemented!();
+            b.method(method);
         }
 
         // Convert the URI
@@ -244,12 +242,12 @@ impl Headers {
             parts.origin_form = Some(uri::OriginForm::try_from_shared(path.into_inner()).unwrap());
         }
 
-        request.uri = parts.into();
+        b.uri(parts);
 
-        // Set the header fields
-        request.headers = self.fields;
+        let mut request = try!(b.body(()));
+        *request.headers_mut() = self.fields;
 
-        request
+        Ok(request)
     }
 
     pub fn into_fields(self) -> HeaderMap {

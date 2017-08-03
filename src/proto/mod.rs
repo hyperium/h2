@@ -13,7 +13,7 @@ use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Streams;
 
-use StreamId;
+use {StreamId, ConnectionError};
 use error::Reason;
 use frame::{self, Frame};
 
@@ -39,7 +39,7 @@ pub trait Peer {
         end_of_stream: bool) -> frame::Headers;
 
     #[doc(hidden)]
-    fn convert_poll_message(headers: frame::Headers) -> Self::Poll;
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError>;
 }
 
 pub type PingPayload = [u8; 8];

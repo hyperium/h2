@@ -1,7 +1,8 @@
 use {frame, ConnectionError, StreamId};
 use proto::{self, Connection};
+use error::Reason::*;
 
-use http;
+use http::{self, Request, Response};
 use futures::{Future, Poll, Sink, AsyncSink};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
@@ -65,11 +66,15 @@ impl<T, B> Client<T, B>
 
         Handshake { inner: Box::new(handshake) }
     }
+
+    pub fn request(&mut self) {
+        unimplemented!();
+    }
 }
 
 impl proto::Peer for Peer {
-    type Send = http::request::Head;
-    type Poll = http::response::Head;
+    type Send = Request<()>;
+    type Poll = Response<()>;
 
     fn is_server() -> bool {
         false
@@ -77,15 +82,12 @@ impl proto::Peer for Peer {
 
     fn convert_send_message(
         id: StreamId,
-        headers: Self::Send,
+        request: Self::Send,
         end_of_stream: bool) -> frame::Headers
     {
-        use http::request::Head;
+        use http::request::Parts;
 
-        // Extract the components of the HTTP request
-        let Head { method, uri, headers, .. } = headers;
-
-        // TODO: Ensure that the version is set to H2
+        let (Parts { method, uri, headers, .. }, _) = request.into_parts();
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
@@ -101,8 +103,10 @@ impl proto::Peer for Peer {
         frame
     }
 
-    fn convert_poll_message(headers: frame::Headers) -> Self::Poll {
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError> {
         headers.into_response()
+            // TODO: Is this always a protocol error?
+            .map_err(|_| ProtocolError.into())
     }
 }
 

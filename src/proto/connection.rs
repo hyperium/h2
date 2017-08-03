@@ -174,7 +174,7 @@ impl<T, P, B> Connection<T, P, B>
                     // Update stream state while ensuring that the headers frame
                     // can be received.
                     if let Some(frame) = try!(self.streams.recv_headers(frame)) {
-                        let frame = Self::convert_poll_message(frame);
+                        let frame = Self::convert_poll_message(frame)?;
                         return Ok(Some(frame).into());
                     }
                 }
@@ -227,18 +227,18 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    fn convert_poll_message(frame: frame::Headers) -> Frame<P::Poll> {
+    fn convert_poll_message(frame: frame::Headers) -> Result<Frame<P::Poll>, ConnectionError> {
         if frame.is_trailers() {
-            Frame::Trailers {
+            Ok(Frame::Trailers {
                 id: frame.stream_id(),
                 headers: frame.into_fields()
-            }
+            })
         } else {
-            Frame::Headers {
+            Ok(Frame::Headers {
                 id: frame.stream_id(),
                 end_of_stream: frame.is_end_stream(),
-                headers: P::convert_poll_message(frame),
-            }
+                headers: P::convert_poll_message(frame)?,
+            })
         }
     }
 }
