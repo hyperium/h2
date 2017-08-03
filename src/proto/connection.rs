@@ -19,7 +19,7 @@ pub struct Connection<T, P, B: IntoBuf = Bytes> {
     // TODO: Remove <B>
     ping_pong: PingPong<B::Buf>,
     settings: Settings,
-    streams: Streams<P>,
+    streams: Streams<P, B::Buf>,
 
     _phantom: PhantomData<P>,
 }
@@ -255,7 +255,7 @@ impl<T, B> Connection<T, client::Peer, B>
 {
     /// Initialize a new HTTP/2.0 stream and send the message.
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<Stream<client::Peer>, ConnectionError>
+        -> Result<StreamRef<client::Peer, B::Buf>, ConnectionError>
     {
         self.streams.send_request(request, end_of_stream)
     }

@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub struct Send<P> {
+pub(super) struct Send<P, B> {
     /// Maximum number of locally initiated streams
     max_streams: Option<usize>,
 
@@ -30,6 +30,9 @@ pub struct Send<P> {
     // XXX It would be cool if this didn't exist.
     pending_window_updates: VecDeque<StreamId>,
 
+    /// Holds frames that are waiting to be written to the socket
+    buffer: Buffer<B>,
+
     /// When `poll_window_update` is not ready, then the calling task is saved to
     /// be notified later. Access to poll_window_update must not be shared across tasks,
     /// as we only track a single task (and *not* i.e. a task per stream id).
@@ -38,7 +41,10 @@ pub struct Send<P> {
     _p: PhantomData<P>,
 }
 
-impl<P: Peer> Send<P> {
+impl<P, B> Send<P, B>
+    where P: Peer,
+          B: Buf,
+{
     pub fn new(config: &Config) -> Self {
         let next_stream_id = if P::is_server() {
             2
@@ -53,6 +59,7 @@ impl<P: Peer> Send<P> {
             init_window_sz: config.init_local_window_sz,
             flow_control: FlowControl::new(config.init_local_window_sz),
             pending_window_updates: VecDeque::new(),
+            buffer: Buffer::new(),
             blocked: None,
             _p: PhantomData,
         }
@@ -61,7 +68,7 @@ impl<P: Peer> Send<P> {
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self) -> Result<(StreamId, State), ConnectionError> {
+    pub fn open(&mut self) -> Result<(StreamId, Stream<B>), ConnectionError> {
         try!(self.ensure_can_open());
 
         if let Some(max) = self.max_streams {
@@ -70,7 +77,7 @@ impl<P: Peer> Send<P> {
             }
         }
 
-        let ret = (self.next_stream_id, State::default());
+        let ret = (self.next_stream_id, Stream::new());
 
         // Increment the number of locally initiated streams
         self.num_streams += 1;
@@ -79,21 +86,24 @@ impl<P: Peer> Send<P> {
         Ok(ret)
     }
 
-    pub fn send_headers(&mut self, state: &mut State, eos: bool)
+    pub fn send_headers(&mut self, stream: &mut Stream<B>, frame: frame::Headers)
         -> Result<(), ConnectionError>
     {
-        state.send_open(self.init_window_sz, eos)
+        // Update the state
+        stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
+        // stream.send_buf.headers = Some(frame);
+        Ok(())
     }
 
-    pub fn send_eos(&mut self, state: &mut State)
+    pub fn send_eos(&mut self, stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
-        state.send_close()
+        stream.state.send_close()
     }
 
-    pub fn send_data<B: Buf>(&mut self,
-                             frame: &frame::Data<B>,
-                             state: &mut State)
+    pub fn send_data(&mut self,
+                     frame: &frame::Data<B>,
+                     stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().remaining();
@@ -107,7 +117,7 @@ impl<P: Peer> Send<P> {
 
         // Make borrow checker happy
         loop {
-            match state.send_flow_control() {
+            match stream.send_flow_control() {
                 Some(flow) => {
                     try!(self.flow_control.ensure_window(sz, FlowControlViolation));
 
@@ -123,7 +133,7 @@ impl<P: Peer> Send<P> {
                 None => {}
             }
 
-            if state.is_closed() {
+            if stream.state.is_closed() {
                 return Err(InactiveStreamId.into())
             } else {
                 return Err(UnexpectedFrameType.into())
@@ -131,14 +141,14 @@ impl<P: Peer> Send<P> {
         }
 
         if frame.is_end_stream() {
-            try!(state.send_close());
+            try!(stream.state.send_close());
         }
 
         Ok(())
     }
 
     /// Get pending window updates
-    pub fn poll_window_update(&mut self, streams: &mut Store)
+    pub fn poll_window_update(&mut self, streams: &mut Store<B>)
         -> Poll<WindowUpdate, ConnectionError>
     {
         // This biases connection window updates, which probably makes sense.
@@ -152,7 +162,7 @@ impl<P: Peer> Send<P> {
         let update = self.pending_window_updates.pop_front()
             .and_then(|id| {
                 streams.get_mut(&id)
-                    .and_then(|state| state.send_flow_control())
+                    .and_then(|stream| stream.send_flow_control())
                     .and_then(|flow| flow.apply_window_update())
                     .map(|incr| WindowUpdate::new(id, incr))
             });
@@ -184,10 +194,10 @@ impl<P: Peer> Send<P> {
 
     pub fn recv_stream_window_update(&mut self,
                                      frame: frame::WindowUpdate,
-                                     state: &mut State)
+                                     stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
-        if let Some(flow) = state.send_flow_control() {
+        if let Some(flow) = stream.send_flow_control() {
             // TODO: Handle invalid increment
             flow.expand_window(frame.size_increment());
         }

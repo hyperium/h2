@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub struct Recv<P> {
+pub(super) struct Recv<P, B> {
     /// Maximum number of remote initiated streams
     max_streams: Option<usize>,
 
@@ -26,10 +26,13 @@ pub struct Recv<P> {
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
-    _p: PhantomData<P>,
+    _p: PhantomData<(P, B)>,
 }
 
-impl<P: Peer> Recv<P> {
+impl<P, B> Recv<P, B>
+    where P: Peer,
+          B: Buf,
+{
     pub fn new(config: &Config) -> Self {
         Recv {
             max_streams: config.max_remote_initiated,
@@ -45,7 +48,7 @@ impl<P: Peer> Recv<P> {
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId) -> Result<Option<State>, ConnectionError> {
+    pub fn open(&mut self, id: StreamId) -> Result<Option<Stream<B>>, ConnectionError> {
         assert!(self.refused.is_none());
 
         try!(self.ensure_can_open(id));
@@ -60,25 +63,25 @@ impl<P: Peer> Recv<P> {
         // Increment the number of remote initiated streams
         self.num_streams += 1;
 
-        Ok(Some(State::default()))
+        Ok(Some(Stream::new()))
     }
 
     /// Transition the stream state based on receiving headers
-    pub fn recv_headers(&mut self, state: &mut State, eos: bool)
+    pub fn recv_headers(&mut self, stream: &mut Stream<B>, eos: bool)
         -> Result<(), ConnectionError>
     {
-        state.recv_open(self.init_window_sz, eos)
+        stream.state.recv_open(self.init_window_sz, eos)
     }
 
-    pub fn recv_eos(&mut self, state: &mut State)
+    pub fn recv_eos(&mut self, stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
-        state.recv_close()
+        stream.state.recv_close()
     }
 
     pub fn recv_data(&mut self,
                      frame: &frame::Data,
-                     state: &mut State)
+                     stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().len();
@@ -89,7 +92,7 @@ impl<P: Peer> Recv<P> {
 
         let sz = sz as WindowSize;
 
-        match state.recv_flow_control() {
+        match stream.recv_flow_control() {
             Some(flow) => {
                 // Ensure there's enough capacity on the connection before
                 // acting on the stream.
@@ -106,7 +109,7 @@ impl<P: Peer> Recv<P> {
         }
 
         if frame.is_end_stream() {
-            try!(state.recv_close());
+            try!(stream.state.recv_close());
         }
 
         Ok(())
@@ -133,10 +136,9 @@ impl<P: Peer> Recv<P> {
     }
 
     /// Send any pending refusals.
-    pub fn send_pending_refusal<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
-              B: Buf,
     {
         if let Some(stream_id) = self.refused.take() {
             let frame = frame::Reset::new(stream_id, RefusedStream);
@@ -168,11 +170,11 @@ impl<P: Peer> Recv<P> {
     pub fn expand_stream_window(&mut self,
                                 id: StreamId,
                                 sz: WindowSize,
-                                state: &mut State)
+                                stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
         // TODO: handle overflow
-        if let Some(flow) = state.recv_flow_control() {
+        if let Some(flow) = stream.recv_flow_control() {
             flow.expand_window(sz);
             self.pending_window_updates.push_back(id);
         }
@@ -181,10 +183,9 @@ impl<P: Peer> Recv<P> {
     }
 
     /// Send connection level window update
-    pub fn send_connection_window_update<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_connection_window_update<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
-              B: Buf,
     {
         if let Some(incr) = self.flow_control.peek_window_update() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
@@ -200,16 +201,15 @@ impl<P: Peer> Recv<P> {
     }
 
     /// Send stream level window update
-    pub fn send_stream_window_update<T, B>(&mut self,
-                                           streams: &mut Store,
-                                           dst: &mut Codec<T, B>)
+    pub fn send_stream_window_update<T>(&mut self,
+                                        streams: &mut Store<B>,
+                                        dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
-              B: Buf,
     {
         while let Some(id) = self.pending_window_updates.pop_front() {
             let flow = streams.get_mut(&id)
-                .and_then(|state| state.recv_flow_control());
+                .and_then(|stream| stream.recv_flow_control());
 
 
             if let Some(flow) = flow {

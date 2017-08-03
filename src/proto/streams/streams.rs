@@ -7,13 +7,14 @@ use std::sync::{Arc, Mutex};
 // TODO: All the VecDeques should become linked lists using the State
 // values.
 #[derive(Debug)]
-pub struct Streams<P> {
-    inner: Arc<Mutex<Inner<P>>>,
+pub struct Streams<P, B> {
+    inner: Arc<Mutex<Inner<P, B>>>,
 }
 
+/// Reference to the stream state
 #[derive(Debug)]
-pub struct Stream<P> {
-    inner: Arc<Mutex<Inner<P>>>,
+pub struct StreamRef<P, B> {
+    inner: Arc<Mutex<Inner<P, B>>>,
     id: StreamId,
 }
 
@@ -22,21 +23,24 @@ pub struct Stream<P> {
 ///
 /// TODO: better name
 #[derive(Debug)]
-struct Inner<P> {
-    actions: Actions<P>,
-    store: Store,
+struct Inner<P, B> {
+    actions: Actions<P, B>,
+    store: Store<B>,
 }
 
 #[derive(Debug)]
-struct Actions<P> {
+struct Actions<P, B> {
     /// Manages state transitions initiated by receiving frames
-    recv: Recv<P>,
+    recv: Recv<P, B>,
 
     /// Manages state transitions initiated by sending frames
-    send: Send<P>,
+    send: Send<P, B>,
 }
 
-impl<P: Peer> Streams<P> {
+impl<P, B> Streams<P, B>
+    where P: Peer,
+          B: Buf,
+{
     pub fn new(config: Config) -> Self {
         Streams {
             inner: Arc::new(Mutex::new(Inner {
@@ -56,7 +60,7 @@ impl<P: Peer> Streams<P> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let state = match me.store.entry(id) {
+        let stream = match me.store.entry(id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 // Trailers cannot open a stream. Trailers are header frames
@@ -68,7 +72,7 @@ impl<P: Peer> Streams<P> {
                 }
 
                 match try!(me.actions.recv.open(id)) {
-                    Some(state) => e.insert(state),
+                    Some(stream) => e.insert(stream),
                     None => return Ok(None),
                 }
             }
@@ -80,12 +84,12 @@ impl<P: Peer> Streams<P> {
                 unimplemented!();
             }
 
-            try!(me.actions.recv.recv_eos(state));
+            try!(me.actions.recv.recv_eos(stream));
         } else {
-            try!(me.actions.recv.recv_headers(state, frame.is_end_stream()));
+            try!(me.actions.recv.recv_headers(stream, frame.is_end_stream()));
         }
 
-        if state.is_closed() {
+        if stream.state.is_closed() {
             me.actions.dec_num_streams(id);
         }
 
@@ -99,16 +103,16 @@ impl<P: Peer> Streams<P> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let state = match me.store.get_mut(&id) {
-            Some(state) => state,
+        let stream = match me.store.get_mut(&id) {
+            Some(stream) => stream,
             None => return Err(ProtocolError.into()),
         };
 
         // Ensure there's enough capacity on the connection before acting on the
         // stream.
-        try!(me.actions.recv.recv_data(frame, state));
+        try!(me.actions.recv.recv_data(frame, stream));
 
-        if state.is_closed() {
+        if stream.state.is_closed() {
             me.actions.dec_num_streams(id);
         }
 
@@ -180,23 +184,23 @@ impl<P: Peer> Streams<P> {
         */
     }
 
-    pub fn send_data<B: Buf>(&mut self, frame: &frame::Data<B>)
+    pub fn send_data(&mut self, frame: &frame::Data<B>)
         -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let state = match me.store.get_mut(&id) {
-            Some(state) => state,
+        let stream = match me.store.get_mut(&id) {
+            Some(stream) => stream,
             None => return Err(UnexpectedFrameType.into()),
         };
 
         // Ensure there's enough capacity on the connection before acting on the
         // stream.
-        try!(me.actions.send.send_data(frame, state));
+        try!(me.actions.send.send_data(frame, stream));
 
-        if state.is_closed() {
+        if stream.state.is_closed() {
             me.actions.dec_num_streams(id);
         }
 
@@ -228,20 +232,18 @@ impl<P: Peer> Streams<P> {
         Ok(())
     }
 
-    pub fn send_pending_refusal<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
-              B: Buf,
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
         me.actions.recv.send_pending_refusal(dst)
     }
 
-    pub fn send_pending_window_updates<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_window_updates<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
-              B: Buf,
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -252,41 +254,46 @@ impl<P: Peer> Streams<P> {
     }
 }
 
-impl Streams<client::Peer> {
+impl<B> Streams<client::Peer, B>
+    where B: Buf,
+{
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<Stream<client::Peer>, ConnectionError>
+        -> Result<StreamRef<client::Peer, B>, ConnectionError>
     {
         let id = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let (id, mut state) = me.actions.send.open()?;
+            let (id, mut stream) = me.actions.send.open()?;
 
             // Convert the message
             let headers = client::Peer::convert_send_message(
                 id, request, end_of_stream);
 
-            me.actions.send.send_headers(&mut state, end_of_stream)?;
+            me.actions.send.send_headers(&mut stream, headers)?;
 
             // Given that the stream has been initialized, it should not be in the
             // closed state.
-            debug_assert!(!state.is_closed());
+            debug_assert!(!stream.state.is_closed());
 
             // Store the state
-            me.store.insert(id, state);
+            me.store.insert(id, stream);
 
             id
         };
 
-        Ok(Stream {
+        Ok(StreamRef {
             inner: self.inner.clone(),
             id: id,
         })
     }
 }
 
-impl<P: Peer> Actions<P> {
+impl<P, B> Actions<P, B>
+    where P: Peer,
+          B: Buf,
+{
     fn dec_num_streams(&mut self, id: StreamId) {
         if self.is_local_init(id) {
             self.send.dec_num_streams();

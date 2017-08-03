@@ -1,3 +1,4 @@
+mod buffer;
 mod flow_control;
 mod recv;
 mod send;
@@ -6,13 +7,15 @@ mod store;
 mod stream;
 mod streams;
 
-pub use self::streams::{Streams, Stream};
+pub use self::streams::{Streams, StreamRef};
 
+use self::buffer::Buffer;
 use self::flow_control::FlowControl;
 use self::recv::Recv;
 use self::send::Send;
 use self::state::State;
 use self::store::{Store, Entry};
+use self::stream::Stream;
 
 use {frame, StreamId, ConnectionError};
 use proto::*;

@@ -25,8 +25,7 @@ pub struct Client<T, B: IntoBuf> {
 
 /// Client half of an active HTTP/2.0 stream.
 pub struct Stream<B: IntoBuf> {
-    inner: proto::Stream<Peer>,
-    _p: ::std::marker::PhantomData<B>,
+    inner: proto::StreamRef<Peer, B::Buf>,
 }
 
 impl<T> Client<T, Bytes>
@@ -86,7 +85,6 @@ impl<T, B> Client<T, B>
         self.connection.send_request(request, end_of_stream)
             .map(|stream| Stream {
                 inner: stream,
-                _p: ::std::marker::PhantomData,
             })
     }
 }

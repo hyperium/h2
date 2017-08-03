@@ -20,6 +20,8 @@ extern crate fnv;
 
 extern crate byteorder;
 
+extern crate slab;
+
 #[macro_use]
 extern crate log;
 
