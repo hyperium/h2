@@ -6,7 +6,7 @@ mod store;
 mod stream;
 mod streams;
 
-pub use self::streams::Streams;
+pub use self::streams::{Streams, Stream};
 
 use self::flow_control::FlowControl;
 use self::recv::Recv;
@@ -18,6 +18,8 @@ use {frame, StreamId, ConnectionError};
 use proto::*;
 use error::Reason::*;
 use error::User::*;
+
+use http::{Request, Response};
 
 #[derive(Debug)]
 pub struct Config {

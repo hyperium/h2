@@ -6,18 +6,18 @@ mod settings;
 mod streams;
 
 pub use self::connection::Connection;
+pub use self::streams::{Streams, Stream};
 
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::PingPong;
 use self::settings::Settings;
-use self::streams::Streams;
 
 use {StreamId, ConnectionError};
 use error::Reason;
 use frame::{self, Frame};
 
-use futures::*;
+use futures::{self, task, Poll, Async, AsyncSink, Sink, Stream as Stream2};
 use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;

@@ -17,6 +17,9 @@ pub struct Send<P> {
     /// Current number of locally initiated streams
     num_streams: usize,
 
+    /// Stream identifier to use for next initialized stream.
+    next_stream_id: StreamId,
+
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
@@ -37,9 +40,16 @@ pub struct Send<P> {
 
 impl<P: Peer> Send<P> {
     pub fn new(config: &Config) -> Self {
+        let next_stream_id = if P::is_server() {
+            2
+        } else {
+            1
+        };
+
         Send {
             max_streams: config.max_local_initiated,
             num_streams: 0,
+            next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
             flow_control: FlowControl::new(config.init_local_window_sz),
             pending_window_updates: VecDeque::new(),
@@ -51,8 +61,8 @@ impl<P: Peer> Send<P> {
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId) -> Result<State, ConnectionError> {
-        try!(self.ensure_can_open(id));
+    pub fn open(&mut self) -> Result<(StreamId, State), ConnectionError> {
+        try!(self.ensure_can_open());
 
         if let Some(max) = self.max_streams {
             if max <= self.num_streams {
@@ -60,10 +70,13 @@ impl<P: Peer> Send<P> {
             }
         }
 
+        let ret = (self.next_stream_id, State::default());
+
         // Increment the number of locally initiated streams
         self.num_streams += 1;
+        self.next_stream_id.increment();
 
-        Ok(State::default())
+        Ok(ret)
     }
 
     pub fn send_headers(&mut self, state: &mut State, eos: bool)
@@ -191,15 +204,13 @@ impl<P: Peer> Send<P> {
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self, id: StreamId) -> Result<(), ConnectionError> {
+    fn ensure_can_open(&self) -> Result<(), ConnectionError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
             return Err(UnexpectedFrameType.into());
         }
 
-        if !id.is_client_initiated() {
-            return Err(InvalidStreamId.into());
-        }
+        // TODO: Handle StreamId overflow
 
         Ok(())
     }

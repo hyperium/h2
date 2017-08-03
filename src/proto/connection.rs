@@ -1,10 +1,10 @@
-use {ConnectionError, Frame};
+use {client, ConnectionError, Frame};
 use HeaderMap;
 use frame::{self, StreamId};
 
 use proto::*;
 
-use http::{request, response};
+use http::{Request, Response};
 use bytes::{Bytes, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -80,6 +80,7 @@ impl<T, P, B> Connection<T, P, B>
         unimplemented!();
     }
 
+    /// Returns `Ready` when the connection is ready to receive a frame.
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_send_ready());
 
@@ -89,6 +90,7 @@ impl<T, P, B> Connection<T, P, B>
         Ok(().into())
     }
 
+    /*
     pub fn send_data(self,
                      id: StreamId,
                      data: B,
@@ -112,10 +114,7 @@ impl<T, P, B> Connection<T, P, B>
             headers,
         })
     }
-
-    pub fn start_ping(&mut self, _body: PingPayload) -> StartSend<PingPayload, ConnectionError> {
-        unimplemented!();
-    }
+    */
 
     // ===== Private =====
 
@@ -227,6 +226,13 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
+    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+        try_ready!(self.poll_send_ready());
+        try_ready!(self.codec.poll_complete());
+
+        Ok(().into())
+    }
+
     fn convert_poll_message(frame: frame::Headers) -> Result<Frame<P::Poll>, ConnectionError> {
         if frame.is_trailers() {
             Ok(Frame::Trailers {
@@ -240,6 +246,18 @@ impl<T, P, B> Connection<T, P, B>
                 headers: P::convert_poll_message(frame)?,
             })
         }
+    }
+}
+
+impl<T, B> Connection<T, client::Peer, B>
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf,
+{
+    /// Initialize a new HTTP/2.0 stream and send the message.
+    pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
+        -> Result<Stream<client::Peer>, ConnectionError>
+    {
+        self.streams.send_request(request, end_of_stream)
     }
 }
 
@@ -292,20 +310,7 @@ impl<T, B> Connection<T, Server, B>
 }
 */
 
-impl<T, P, B> Stream for Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
-{
-    type Item = Frame<P::Poll>;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
-        // TODO: intercept errors and flag the connection
-        self.recv_frame()
-    }
-}
-
+/*
 impl<T, P, B> Sink for Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,
@@ -379,11 +384,5 @@ impl<T, P, B> Sink for Connection<T, P, B>
         // Return success
         Ok(AsyncSink::Ready)
     }
-
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_send_ready());
-        try_ready!(self.codec.poll_complete());
-
-        Ok(().into())
-    }
 }
+*/

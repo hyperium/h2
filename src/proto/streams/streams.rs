@@ -1,3 +1,4 @@
+use client;
 use proto::*;
 use super::*;
 
@@ -8,6 +9,12 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug)]
 pub struct Streams<P> {
     inner: Arc<Mutex<Inner<P>>>,
+}
+
+#[derive(Debug)]
+pub struct Stream<P> {
+    inner: Arc<Mutex<Inner<P>>>,
+    id: StreamId,
 }
 
 /// Fields needed to manage state related to managing the set of streams. This
@@ -139,28 +146,22 @@ impl<P: Peer> Streams<P> {
         unimplemented!();
     }
 
-    pub fn send_headers(&mut self, frame: &frame::Headers)
+    pub fn send_headers(&mut self, headers: frame::Headers)
         -> Result<(), ConnectionError>
     {
+        unimplemented!();
+        /*
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        trace!("send_headers; id={:?}", id);
+        // let (id, state) = me.actions.send.open());
+
 
         let state = match me.store.entry(id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
-                // Trailers cannot open a stream. Trailers are header frames
-                // that do not contain pseudo headers. Requests MUST contain a
-                // method and responses MUST contain a status. If they do not,t
-                // hey are considered to be malformed.
-                if frame.is_trailers() {
-                    // TODO: Should this be a different error?
-                    return Err(UnexpectedFrameType.into());
-                }
-
-                let state = try!(me.actions.send.open(id));
+                let (id, state) = try!(me.actions.send.open());
                 e.insert(state)
             }
         };
@@ -176,6 +177,7 @@ impl<P: Peer> Streams<P> {
         }
 
         Ok(())
+        */
     }
 
     pub fn send_data<B: Buf>(&mut self, frame: &frame::Data<B>)
@@ -247,6 +249,40 @@ impl<P: Peer> Streams<P> {
         try_ready!(me.actions.recv.send_stream_window_update(&mut me.store, dst));
 
         Ok(().into())
+    }
+}
+
+impl Streams<client::Peer> {
+    pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
+        -> Result<Stream<client::Peer>, ConnectionError>
+    {
+        let id = {
+            let mut me = self.inner.lock().unwrap();
+            let me = &mut *me;
+
+            // Initialize a new stream. This fails if the connection is at capacity.
+            let (id, mut state) = me.actions.send.open()?;
+
+            // Convert the message
+            let headers = client::Peer::convert_send_message(
+                id, request, end_of_stream);
+
+            me.actions.send.send_headers(&mut state, end_of_stream)?;
+
+            // Given that the stream has been initialized, it should not be in the
+            // closed state.
+            debug_assert!(!state.is_closed());
+
+            // Store the state
+            me.store.insert(id, state);
+
+            id
+        };
+
+        Ok(Stream {
+            inner: self.inner.clone(),
+            id: id,
+        })
     }
 }
 

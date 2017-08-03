@@ -16,11 +16,17 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 }
 
 #[derive(Debug)]
-struct Peer;
+pub(crate) struct Peer;
 
 /// Marker type indicating a client peer
 pub struct Client<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
+}
+
+/// Client half of an active HTTP/2.0 stream.
+pub struct Stream<B: IntoBuf> {
+    inner: proto::Stream<Peer>,
+    _p: ::std::marker::PhantomData<B>,
 }
 
 impl<T> Client<T, Bytes>
@@ -67,10 +73,81 @@ impl<T, B> Client<T, B>
         Handshake { inner: Box::new(handshake) }
     }
 
-    pub fn request(&mut self) {
+    /// Returns `Ready` when the connection can initialize a new HTTP 2.0
+    /// stream.
+    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+        unimplemented!();
+    }
+
+    /// Send a request on a new HTTP 2.0 stream
+    pub fn request(&mut self, request: Request<()>, end_of_stream: bool)
+        -> Result<Stream<B>, ConnectionError>
+    {
+        self.connection.send_request(request, end_of_stream)
+            .map(|stream| Stream {
+                inner: stream,
+                _p: ::std::marker::PhantomData,
+            })
+    }
+}
+
+impl<T, B> fmt::Debug for Client<T, B>
+    where T: fmt::Debug,
+          B: fmt::Debug + IntoBuf,
+          B::Buf: fmt::Debug + IntoBuf,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Client")
+            .field("connection", &self.connection)
+            .finish()
+    }
+}
+
+// ===== impl Handshake =====
+
+impl<T, B: IntoBuf> Future for Handshake<T, B> {
+    type Item = Client<T, B>;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl<T, B> fmt::Debug for Handshake<T, B>
+    where T: fmt::Debug,
+          B: fmt::Debug + IntoBuf,
+          B::Buf: fmt::Debug + IntoBuf,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "client::Handshake")
+    }
+}
+
+// ===== impl Stream =====
+
+impl<B: IntoBuf> Stream<B> {
+    /// Receive the HTTP/2.0 response, if it is ready.
+    pub fn poll_response(&mut self) -> Poll<(), ConnectionError> {
+        unimplemented!();
+    }
+
+    /// Send data
+    pub fn send_data(&mut self, data: B, end_of_stream: bool)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    /// Send trailers
+    pub fn send_trailers(&mut self, trailers: ())
+        -> Result<(), ConnectionError>
+    {
         unimplemented!();
     }
 }
+
+// ===== impl Peer =====
 
 impl proto::Peer for Peer {
     type Send = Request<()>;
@@ -107,36 +184,5 @@ impl proto::Peer for Peer {
         headers.into_response()
             // TODO: Is this always a protocol error?
             .map_err(|_| ProtocolError.into())
-    }
-}
-
-impl<T, B: IntoBuf> Future for Handshake<T, B> {
-    type Item = Client<T, B>;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
-    }
-}
-
-impl<T, B> fmt::Debug for Handshake<T, B>
-    where T: fmt::Debug,
-          B: fmt::Debug + IntoBuf,
-          B::Buf: fmt::Debug + IntoBuf,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "client::Handshake")
-    }
-}
-
-impl<T, B> fmt::Debug for Client<T, B>
-    where T: fmt::Debug,
-          B: fmt::Debug + IntoBuf,
-          B::Buf: fmt::Debug + IntoBuf,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Client")
-            .field("connection", &self.connection)
-            .finish()
     }
 }

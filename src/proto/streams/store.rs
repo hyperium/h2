@@ -42,6 +42,11 @@ impl Store {
         }
     }
 
+    pub fn insert(&mut self, id: StreamId, val: State) {
+        let handle = self.slab.insert(val);
+        assert!(self.ids.insert(id, handle).is_none());
+    }
+
     pub fn entry(&mut self, id: StreamId) -> Entry {
         use self::hash_map::Entry::*;
 

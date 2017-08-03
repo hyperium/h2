@@ -117,6 +117,11 @@ fn recv_invalid_server_stream_id() {
     assert_proto_err!(err, ProtocolError);
 }
 
+#[test]
+#[ignore]
+fn sending_request_on_closed_soket() {
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
