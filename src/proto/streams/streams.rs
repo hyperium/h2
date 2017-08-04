@@ -60,7 +60,7 @@ impl<P, B> Streams<P, B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = match me.store.entry(id) {
+        let stream = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 // Trailers cannot open a stream. Trailers are header frames
@@ -103,7 +103,7 @@ impl<P, B> Streams<P, B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = match me.store.get_mut(&id) {
+        let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => return Err(ProtocolError.into()),
         };
@@ -136,7 +136,7 @@ impl<P, B> Streams<P, B>
         } else {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
-            if let Some(state) = me.store.get_mut(&id) {
+            if let Some(state) = me.store.find_mut(&id) {
                 try!(me.actions.send.recv_stream_window_update(frame, state));
             }
         }
@@ -191,7 +191,7 @@ impl<P, B> Streams<P, B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = match me.store.get_mut(&id) {
+        let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => return Err(UnexpectedFrameType.into()),
         };
@@ -224,7 +224,7 @@ impl<P, B> Streams<P, B>
         if id.is_zero() {
             try!(me.actions.recv.expand_connection_window(sz));
         } else {
-            if let Some(state) = me.store.get_mut(&id) {
+            if let Some(state) = me.store.find_mut(&id) {
                 try!(me.actions.recv.expand_stream_window(id, sz, state));
             }
         }
@@ -271,14 +271,13 @@ impl<B> Streams<client::Peer, B>
             let headers = client::Peer::convert_send_message(
                 id, request, end_of_stream);
 
-            me.actions.send.send_headers(&mut stream, headers)?;
+            let mut stream = me.store.insert(id, stream);
+
+            me.actions.send.send_headers(headers, &mut stream)?;
 
             // Given that the stream has been initialized, it should not be in the
             // closed state.
             debug_assert!(!stream.state.is_closed());
-
-            // Store the state
-            me.store.insert(id, stream);
 
             id
         };

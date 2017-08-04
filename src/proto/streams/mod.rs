@@ -1,5 +1,6 @@
 mod buffer;
 mod flow_control;
+mod prioritize;
 mod recv;
 mod send;
 mod state;
@@ -11,6 +12,7 @@ pub use self::streams::{Streams, StreamRef};
 
 use self::buffer::Buffer;
 use self::flow_control::FlowControl;
+use self::prioritize::Prioritize;
 use self::recv::Recv;
 use self::send::Send;
 use self::state::State;

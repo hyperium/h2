@@ -2,6 +2,7 @@ use super::*;
 
 use slab;
 
+use std::ops;
 use std::collections::{HashMap, hash_map};
 
 /// Storage for streams
@@ -10,6 +11,16 @@ pub(super) struct Store<B> {
     slab: slab::Slab<Stream<B>>,
     ids: HashMap<StreamId, usize>,
 }
+
+/// "Pointer" to an entry in the store
+pub(super) struct Ptr<'a, B: 'a> {
+    key: Key,
+    store: &'a mut Store<B>,
+}
+
+/// References an entry in the store.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Key(usize);
 
 pub(super) enum Entry<'a, B: 'a> {
     Occupied(OccupiedEntry<'a, B>),
@@ -26,6 +37,8 @@ pub(super) struct VacantEntry<'a, B: 'a> {
     slab: &'a mut slab::Slab<Stream<B>>,
 }
 
+// ===== impl Store =====
+
 impl<B> Store<B> {
     pub fn new() -> Self {
         Store {
@@ -34,7 +47,7 @@ impl<B> Store<B> {
         }
     }
 
-    pub fn get_mut(&mut self, id: &StreamId) -> Option<&mut Stream<B>> {
+    pub fn find_mut(&mut self, id: &StreamId) -> Option<&mut Stream<B>> {
         if let Some(handle) = self.ids.get(id) {
             Some(&mut self.slab[*handle])
         } else {
@@ -42,12 +55,17 @@ impl<B> Store<B> {
         }
     }
 
-    pub fn insert(&mut self, id: StreamId, val: Stream<B>) {
-        let handle = self.slab.insert(val);
-        assert!(self.ids.insert(id, handle).is_none());
+    pub fn insert(&mut self, id: StreamId, val: Stream<B>) -> Ptr<B> {
+        let key = self.slab.insert(val);
+        assert!(self.ids.insert(id, key).is_none());
+
+        Ptr {
+            key: Key(key),
+            store: self,
+        }
     }
 
-    pub fn entry(&mut self, id: StreamId) -> Entry<B> {
+    pub fn find_entry(&mut self, id: StreamId) -> Entry<B> {
         use self::hash_map::Entry::*;
 
         match self.ids.entry(id) {
@@ -67,12 +85,53 @@ impl<B> Store<B> {
     }
 }
 
+// ===== impl Ptr =====
+
+impl<'a, B: 'a> Ptr<'a, B> {
+    pub fn key(&self) -> Key {
+        self.key
+    }
+
+    pub fn resolve(&mut self, key: Key) -> Ptr<B> {
+        Ptr {
+            key: key,
+            store: self.store,
+        }
+    }
+}
+
+impl<'a, B: 'a> ops::Deref for Ptr<'a, B> {
+    type Target = Stream<B>;
+
+    fn deref(&self) -> &Stream<B> {
+        &self.store.slab[self.key.0]
+    }
+}
+
+impl<'a, B: 'a> ops::DerefMut for Ptr<'a, B> {
+    fn deref_mut(&mut self) -> &mut Stream<B> {
+        &mut self.store.slab[self.key.0]
+    }
+}
+
+// ===== impl OccupiedEntry =====
+
 impl<'a, B> OccupiedEntry<'a, B> {
+    pub fn get(&self) -> &Stream<B> {
+        &self.slab[*self.ids.get()]
+    }
+
+    pub fn get_mut(&mut self) -> &mut Stream<B> {
+        &mut self.slab[*self.ids.get()]
+    }
+
     pub fn into_mut(self) -> &'a mut Stream<B> {
         &mut self.slab[*self.ids.get()]
     }
 }
 
+// ===== impl VacantEntry =====
+//
 impl<'a, B> VacantEntry<'a, B> {
     pub fn insert(self, value: Stream<B>) -> &'a mut Stream<B> {
         // Insert the value in the slab

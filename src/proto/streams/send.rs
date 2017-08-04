@@ -30,8 +30,7 @@ pub(super) struct Send<P, B> {
     // XXX It would be cool if this didn't exist.
     pending_window_updates: VecDeque<StreamId>,
 
-    /// Holds frames that are waiting to be written to the socket
-    buffer: Buffer<B>,
+    prioritize: Prioritize<B>,
 
     /// When `poll_window_update` is not ready, then the calling task is saved to
     /// be notified later. Access to poll_window_update must not be shared across tasks,
@@ -58,8 +57,8 @@ impl<P, B> Send<P, B>
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
             flow_control: FlowControl::new(config.init_local_window_sz),
+            prioritize: Prioritize::new(),
             pending_window_updates: VecDeque::new(),
-            buffer: Buffer::new(),
             blocked: None,
             _p: PhantomData,
         }
@@ -86,12 +85,17 @@ impl<P, B> Send<P, B>
         Ok(ret)
     }
 
-    pub fn send_headers(&mut self, stream: &mut Stream<B>, frame: frame::Headers)
+    pub fn send_headers(&mut self,
+                        frame: frame::Headers,
+                        stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
         // Update the state
         stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
-        // stream.send_buf.headers = Some(frame);
+
+        // Queue the frame for sending
+        self.prioritize.queue_frame(frame.into(), stream);
+
         Ok(())
     }
 
@@ -161,7 +165,7 @@ impl<P, B> Send<P, B>
         // TODO this should probably account for stream priority?
         let update = self.pending_window_updates.pop_front()
             .and_then(|id| {
-                streams.get_mut(&id)
+                streams.find_mut(&id)
                     .and_then(|stream| stream.send_flow_control())
                     .and_then(|flow| flow.apply_window_update())
                     .map(|incr| WindowUpdate::new(id, incr))

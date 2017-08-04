@@ -296,8 +296,8 @@ impl Headers {
     }
 }
 
-impl From<Headers> for Frame {
-    fn from(src: Headers) -> Frame {
+impl<T> From<Headers> for Frame<T> {
+    fn from(src: Headers) -> Self {
         Frame::Headers(src)
     }
 }

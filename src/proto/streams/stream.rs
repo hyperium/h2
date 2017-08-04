@@ -7,6 +7,12 @@ pub(super) struct Stream<B> {
 
     /// Frames pending for this stream being sent to the socket
     pub pending_send: buffer::Deque<B>,
+
+    /// Next stream pending send
+    pub next_pending_send: Option<store::Key>,
+
+    /// True if the stream is currently pending send
+    pub is_pending_send: bool,
 }
 
 impl<B> Stream<B> {
@@ -14,6 +20,8 @@ impl<B> Stream<B> {
         Stream {
             state: State::default(),
             pending_send: buffer::Deque::new(),
+            next_pending_send: None,
+            is_pending_send: false,
         }
     }
 

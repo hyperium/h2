@@ -208,7 +208,7 @@ impl<P, B> Recv<P, B>
         where T: AsyncWrite,
     {
         while let Some(id) = self.pending_window_updates.pop_front() {
-            let flow = streams.get_mut(&id)
+            let flow = streams.find_mut(&id)
                 .and_then(|stream| stream.recv_flow_control());
 
 
