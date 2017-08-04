@@ -1,4 +1,4 @@
-use {frame, ConnectionError};
+use {client, frame, ConnectionError};
 use proto::*;
 use super::*;
 
@@ -23,6 +23,9 @@ pub(super) struct Recv<P, B> {
 
     pending_window_updates: VecDeque<StreamId>,
 
+    /// Holds frames that are waiting to be read
+    buffer: Buffer<Bytes>,
+
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
@@ -40,6 +43,7 @@ impl<P, B> Recv<P, B>
             init_window_sz: config.init_remote_window_sz,
             flow_control: FlowControl::new(config.init_remote_window_sz),
             pending_window_updates: VecDeque::new(),
+            buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
         }
@@ -67,10 +71,24 @@ impl<P, B> Recv<P, B>
     }
 
     /// Transition the stream state based on receiving headers
-    pub fn recv_headers(&mut self, stream: &mut Stream<B>, eos: bool)
-        -> Result<(), ConnectionError>
+    pub fn recv_headers(&mut self,
+                        frame: frame::Headers,
+                        stream: &mut store::Ptr<B>)
+        -> Result<Option<frame::Headers>, ConnectionError>
     {
-        stream.state.recv_open(self.init_window_sz, eos)
+        stream.state.recv_open(self.init_window_sz, frame.is_end_stream())?;
+
+        // Only servers can receive a headers frame that initiates the stream.
+        // This is verified in `Streams` before calling this function.
+        if P::is_server() {
+            Ok(Some(frame))
+        } else {
+            // Push the frame onto the recv buffer
+            stream.pending_recv.push_back(&mut self.buffer, frame.into());
+            stream.notify_recv();
+
+            Ok(None)
+        }
     }
 
     pub fn recv_eos(&mut self, stream: &mut Stream<B>)
@@ -231,5 +249,27 @@ impl<P, B> Recv<P, B>
 
     fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();
+    }
+}
+
+impl<B> Recv<client::Peer, B>
+    where B: Buf,
+{
+    pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
+        -> Poll<Response<()>, ConnectionError> {
+        // If the buffer is not empty, then the first frame must be a HEADERS
+        // frame or the user violated the contract.
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Headers(v)) => {
+                // TODO: This error should probably be caught on receipt of the
+                // frame vs. now.
+                Ok(client::Peer::convert_poll_message(v)?.into())
+            }
+            Some(frame) => unimplemented!(),
+            None => {
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            }
+        }
     }
 }

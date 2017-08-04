@@ -90,6 +90,112 @@ impl<T, P, B> Connection<T, P, B>
         Ok(().into())
     }
 
+    /// Advances the internal state of the connection.
+    pub fn poll(&mut self) -> Poll<Option<()>, ConnectionError> {
+        use frame::Frame::*;
+
+        loop {
+            // First, ensure that the `Connection` is able to receive a frame
+            try_ready!(self.poll_recv_ready());
+
+            trace!("polling codec");
+
+            let frame = match try!(self.codec.poll()) {
+                Async::Ready(frame) => frame,
+                Async::NotReady => {
+                    // Flush any pending writes
+                    let _ = try!(self.poll_complete());
+                    return Ok(Async::NotReady);
+                }
+            };
+
+            match frame {
+                Some(Headers(frame)) => {
+                    trace!("recv HEADERS; frame={:?}", frame);
+
+                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
+                        unimplemented!();
+                    }
+
+                    /*
+                    // Update stream state while ensuring that the headers frame
+                    // can be received.
+                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
+                        let frame = Self::convert_poll_message(frame)?;
+                        return Ok(Some(frame).into());
+                    }
+                    */
+                }
+                Some(Data(frame)) => {
+                    unimplemented!();
+                    /*
+                    trace!("recv DATA; frame={:?}", frame);
+                    try!(self.streams.recv_data(&frame));
+
+                    let frame = Frame::Data {
+                        id: frame.stream_id(),
+                        end_of_stream: frame.is_end_stream(),
+                        data: frame.into_payload(),
+                    };
+
+                    return Ok(Some(frame).into());
+                    */
+                }
+                Some(Reset(frame)) => {
+                    unimplemented!();
+                    /*
+                    trace!("recv RST_STREAM; frame={:?}", frame);
+                    try!(self.streams.recv_reset(&frame));
+
+                    let frame = Frame::Reset {
+                        id: frame.stream_id(),
+                        error: frame.reason(),
+                    };
+
+                    return Ok(Some(frame).into());
+                    */
+                }
+                Some(PushPromise(frame)) => {
+                    unimplemented!();
+                    /*
+                    trace!("recv PUSH_PROMISE; frame={:?}", frame);
+                    try!(self.streams.recv_push_promise(frame));
+                    */
+                }
+                Some(Settings(frame)) => {
+                    trace!("recv SETTINGS; frame={:?}", frame);
+                    self.settings.recv_settings(frame);
+
+                    // TODO: ACK must be sent THEN settings applied.
+                }
+                Some(Ping(frame)) => {
+                    unimplemented!();
+                    /*
+                    trace!("recv PING; frame={:?}", frame);
+                    self.ping_pong.recv_ping(frame);
+                    */
+                }
+                Some(WindowUpdate(frame)) => {
+                    unimplemented!();
+                    /*
+                    trace!("recv WINDOW_UPDATE; frame={:?}", frame);
+                    try!(self.streams.recv_window_update(frame));
+                    */
+                }
+                None => {
+                    unimplemented!();
+                    /*
+                    trace!("codec closed");
+                    return Ok(Async::Ready(None));
+                    */
+                }
+            }
+        }
+
+        // TODO: Flush the write buffer
+        unimplemented!();
+    }
+
     /*
     pub fn send_data(self,
                      id: StreamId,
@@ -138,96 +244,17 @@ impl<T, P, B> Connection<T, P, B>
     /// This function is currently used by poll_complete, but at some point it
     /// will probably not be required.
     fn poll_send_ready(&mut self) -> Poll<(), ConnectionError> {
+        // TODO: Is this function needed?
         try_ready!(self.poll_recv_ready());
-
-        // Ensure all window updates have been sent.
-        try_ready!(self.streams.send_pending_window_updates(&mut self.codec));
 
         Ok(().into())
     }
 
-    /// Try to receive the next frame
-    fn recv_frame(&mut self) -> Poll<Option<Frame<P::Poll>>, ConnectionError> {
-        use frame::Frame::*;
-
-        loop {
-            // First, ensure that the `Connection` is able to receive a frame
-            try_ready!(self.poll_recv_ready());
-
-            trace!("polling codec");
-
-            let frame = match try!(self.codec.poll()) {
-                Async::Ready(frame) => frame,
-                Async::NotReady => {
-                    // Receiving new frames may depend on ensuring that the write buffer
-                    // is clear (e.g. if window updates need to be sent), so `poll_complete`
-                    // is called here.
-                    let _ = try!(self.poll_complete());
-                    return Ok(Async::NotReady);
-                }
-            };
-
-            match frame {
-                Some(Headers(frame)) => {
-                    trace!("recv HEADERS; frame={:?}", frame);
-                    // Update stream state while ensuring that the headers frame
-                    // can be received.
-                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
-                        let frame = Self::convert_poll_message(frame)?;
-                        return Ok(Some(frame).into());
-                    }
-                }
-                Some(Data(frame)) => {
-                    trace!("recv DATA; frame={:?}", frame);
-                    try!(self.streams.recv_data(&frame));
-
-                    let frame = Frame::Data {
-                        id: frame.stream_id(),
-                        end_of_stream: frame.is_end_stream(),
-                        data: frame.into_payload(),
-                    };
-
-                    return Ok(Some(frame).into());
-                }
-                Some(Reset(frame)) => {
-                    trace!("recv RST_STREAM; frame={:?}", frame);
-                    try!(self.streams.recv_reset(&frame));
-
-                    let frame = Frame::Reset {
-                        id: frame.stream_id(),
-                        error: frame.reason(),
-                    };
-
-                    return Ok(Some(frame).into());
-                }
-                Some(PushPromise(frame)) => {
-                    trace!("recv PUSH_PROMISE; frame={:?}", frame);
-                    try!(self.streams.recv_push_promise(frame));
-                }
-                Some(Settings(frame)) => {
-                    trace!("recv SETTINGS; frame={:?}", frame);
-                    self.settings.recv_settings(frame);
-
-                    // TODO: ACK must be sent THEN settings applied.
-                }
-                Some(Ping(frame)) => {
-                    trace!("recv PING; frame={:?}", frame);
-                    self.ping_pong.recv_ping(frame);
-                }
-                Some(WindowUpdate(frame)) => {
-                    trace!("recv WINDOW_UPDATE; frame={:?}", frame);
-                    try!(self.streams.recv_window_update(frame));
-                }
-                None => {
-                    trace!("codec closed");
-                    return Ok(Async::Ready(None));
-                }
-            }
-        }
-    }
-
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_send_ready());
+
+        // Ensure all window updates have been sent.
+        try_ready!(self.streams.poll_complete(&mut self.codec));
         try_ready!(self.codec.poll_complete());
 
         Ok(().into())

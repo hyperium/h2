@@ -151,6 +151,15 @@ impl<P, B> Send<P, B>
         Ok(())
     }
 
+    pub fn poll_complete<T>(&mut self,
+                            store: &mut Store<B>,
+                            dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+    {
+        self.prioritize.poll_complete(store, dst)
+    }
+
     /// Get pending window updates
     pub fn poll_window_update(&mut self, streams: &mut Store<B>)
         -> Poll<WindowUpdate, ConnectionError>

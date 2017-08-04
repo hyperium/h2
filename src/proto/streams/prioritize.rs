@@ -14,7 +14,9 @@ struct Indices {
     tail: store::Key,
 }
 
-impl<B> Prioritize<B> {
+impl<B> Prioritize<B>
+    where B: Buf,
+{
     pub fn new() -> Prioritize<B> {
         Prioritize {
             pending_send: None,
@@ -57,5 +59,35 @@ impl<B> Prioritize<B> {
         }
 
         stream.is_pending_send = true;
+    }
+
+    pub fn poll_complete<T>(&mut self,
+                            store: &mut Store<B>,
+                            dst: &mut Codec<T, B>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+    {
+        loop {
+            // Ensure codec is ready
+            try_ready!(dst.poll_ready());
+
+            match self.pop_frame(store) {
+                Some(frame) => {
+                    // TODO: data frames should be handled specially...
+                    let res = dst.start_send(frame)?;
+
+                    // We already verified that `dst` is ready to accept the
+                    // write
+                    assert!(res.is_ready());
+                }
+                None => break,
+            }
+        }
+
+        Ok(().into())
+    }
+
+    fn pop_frame(&mut self, store: &mut Store<B>) -> Option<Frame<B>> {
+        unimplemented!();
     }
 }

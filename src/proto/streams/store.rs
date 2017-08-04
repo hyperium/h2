@@ -47,6 +47,13 @@ impl<B> Store<B> {
         }
     }
 
+    pub fn resolve(&mut self, key: Key) -> Ptr<B> {
+        Ptr {
+            key: key,
+            store: self,
+        }
+    }
+
     pub fn find_mut(&mut self, id: &StreamId) -> Option<&mut Stream<B>> {
         if let Some(handle) = self.ids.get(id) {
             Some(&mut self.slab[*handle])
@@ -117,6 +124,10 @@ impl<'a, B: 'a> ops::DerefMut for Ptr<'a, B> {
 // ===== impl OccupiedEntry =====
 
 impl<'a, B> OccupiedEntry<'a, B> {
+    pub fn key(&self) -> Key {
+        Key(*self.ids.get())
+    }
+
     pub fn get(&self) -> &Stream<B> {
         &self.slab[*self.ids.get()]
     }
@@ -133,13 +144,13 @@ impl<'a, B> OccupiedEntry<'a, B> {
 // ===== impl VacantEntry =====
 //
 impl<'a, B> VacantEntry<'a, B> {
-    pub fn insert(self, value: Stream<B>) -> &'a mut Stream<B> {
+    pub fn insert(self, value: Stream<B>) -> Key {
         // Insert the value in the slab
-        let handle = self.slab.insert(value);
+        let key = self.slab.insert(value);
 
         // Insert the handle in the ID map
-        self.ids.insert(handle);
+        self.ids.insert(key);
 
-        &mut self.slab[handle]
+        Key(key)
     }
 }

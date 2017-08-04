@@ -15,7 +15,7 @@ pub struct Streams<P, B> {
 #[derive(Debug)]
 pub struct StreamRef<P, B> {
     inner: Arc<Mutex<Inner<P, B>>>,
-    id: StreamId,
+    key: store::Key,
 }
 
 /// Fields needed to manage state related to managing the set of streams. This
@@ -53,6 +53,7 @@ impl<P, B> Streams<P, B>
         }
     }
 
+    /// Process inbound headers
     pub fn recv_headers(&mut self, frame: frame::Headers)
         -> Result<Option<frame::Headers>, ConnectionError>
     {
@@ -60,8 +61,8 @@ impl<P, B> Streams<P, B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = match me.store.find_entry(id) {
-            Entry::Occupied(e) => e.into_mut(),
+        let key = match me.store.find_entry(id) {
+            Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
                 // Trailers cannot open a stream. Trailers are header frames
                 // that do not contain pseudo headers. Requests MUST contain a
@@ -78,22 +79,28 @@ impl<P, B> Streams<P, B>
             }
         };
 
-        if frame.is_trailers() {
+        let mut stream = me.store.resolve(key);
+
+        let ret = if frame.is_trailers() {
+            unimplemented!();
+            /*
             if !frame.is_end_stream() {
                 // TODO: What error should this return?
                 unimplemented!();
             }
 
             try!(me.actions.recv.recv_eos(stream));
+            */
         } else {
-            try!(me.actions.recv.recv_headers(stream, frame.is_end_stream()));
-        }
+            try!(me.actions.recv.recv_headers(frame, &mut stream))
+        };
 
+        // TODO: move this into a fn
         if stream.state.is_closed() {
             me.actions.dec_num_streams(id);
         }
 
-        Ok(Some(frame))
+        Ok(ret)
     }
 
     pub fn recv_data(&mut self, frame: &frame::Data)
@@ -241,16 +248,20 @@ impl<P, B> Streams<P, B>
         me.actions.recv.send_pending_refusal(dst)
     }
 
-    pub fn send_pending_window_updates<T>(&mut self, dst: &mut Codec<T, B>)
+    pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
+
+        // TODO: sending window updates should be part of Prioritize
+        /*
         try_ready!(me.actions.recv.send_connection_window_update(dst));
         try_ready!(me.actions.recv.send_stream_window_update(&mut me.store, dst));
+        */
 
-        Ok(().into())
+        me.actions.send.poll_complete(&mut me.store, dst)
     }
 }
 
@@ -260,7 +271,7 @@ impl<B> Streams<client::Peer, B>
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<client::Peer, B>, ConnectionError>
     {
-        let id = {
+        let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
@@ -279,13 +290,26 @@ impl<B> Streams<client::Peer, B>
             // closed state.
             debug_assert!(!stream.state.is_closed());
 
-            id
+            stream.key()
         };
 
         Ok(StreamRef {
             inner: self.inner.clone(),
-            id: id,
+            key: key,
         })
+    }
+}
+
+impl<B> StreamRef<client::Peer, B>
+    where B: Buf,
+{
+    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_response(&mut stream)
     }
 }
 

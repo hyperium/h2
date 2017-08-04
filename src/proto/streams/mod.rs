@@ -25,6 +25,7 @@ use error::Reason::*;
 use error::User::*;
 
 use http::{Request, Response};
+use bytes::Bytes;
 
 #[derive(Debug)]
 pub struct Config {

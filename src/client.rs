@@ -126,8 +126,8 @@ impl<T, B> fmt::Debug for Handshake<T, B>
 
 impl<B: IntoBuf> Stream<B> {
     /// Receive the HTTP/2.0 response, if it is ready.
-    pub fn poll_response(&mut self) -> Poll<(), ConnectionError> {
-        unimplemented!();
+    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+        self.inner.poll_response()
     }
 
     /// Send data
