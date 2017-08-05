@@ -35,29 +35,9 @@ fn send_recv_headers_only() {
     let mut stream = h2.request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::NO_CONTENT);
 
-    // Try to get response
-    println!("GOT: {:?}", resp);
-
-    // let resp = stream.select2(h2).wait().ok().unwrap();
-
-    /*
-    // Get the response
-
-    info!("getting response");
-    let (resp, h2) = h2.into_future().wait().unwrap();
-
-    match resp.unwrap() {
-        Frame::Headers { headers, .. } => {
-            assert_eq!(headers.status, status::NO_CONTENT);
-        }
-        _ => panic!("unexpected frame"),
-    }
-
-    // No more frames
-    info!("ensure no more responses");
-    assert!(Stream::wait(h2).next().is_none());;
-    */
+    h2.wait().unwrap();
 }
 
 /*
