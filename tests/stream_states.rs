@@ -34,8 +34,13 @@ fn send_recv_headers_only() {
     info!("sending request");
     let stream = h2.request(request, true).unwrap();
 
-    let resp = stream.select2(h2).wait().ok().unwrap();
-    println!("GOT: {:?}", resp);
+    // Wait
+    h2.wait().ok().unwrap();
+
+    // Try to get response
+    println!("GOT: {:?}", stream.wait().ok().unwrap());
+
+    // let resp = stream.select2(h2).wait().ok().unwrap();
 
     /*
     // Get the response
