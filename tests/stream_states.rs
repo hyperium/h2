@@ -32,13 +32,12 @@ fn send_recv_headers_only() {
         .body(()).unwrap();
 
     info!("sending request");
-    let stream = h2.request(request, true).unwrap();
+    let mut stream = h2.request(request, true).unwrap();
 
-    // Wait
-    h2.wait().ok().unwrap();
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
 
     // Try to get response
-    println!("GOT: {:?}", stream.wait().ok().unwrap());
+    println!("GOT: {:?}", resp);
 
     // let resp = stream.select2(h2).wait().ok().unwrap();
 
