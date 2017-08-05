@@ -38,27 +38,8 @@ impl<B> Prioritize<B>
             return;
         }
 
-        // The next pointer shouldn't be set
-        debug_assert!(stream.next_pending_send.is_none());
-
         // Queue the stream
-        match self.pending_send {
-            Some(ref mut idxs) => {
-                // Update the current tail node to point to `stream`
-                stream.resolve(idxs.tail).next_pending_send = Some(stream.key());
-
-                // Update the tail pointer
-                idxs.tail = stream.key();
-            }
-            None => {
-                self.pending_send = Some(Indices {
-                    head: stream.key(),
-                    tail: stream.key(),
-                });
-            }
-        }
-
-        stream.is_pending_send = true;
+        self.push_sender(stream);
     }
 
     pub fn poll_complete<T>(&mut self,
@@ -88,6 +69,59 @@ impl<B> Prioritize<B>
     }
 
     fn pop_frame(&mut self, store: &mut Store<B>) -> Option<Frame<B>> {
-        unimplemented!();
+        match self.pop_sender(store) {
+            Some(mut stream) => {
+                let frame = stream.pending_send.pop_front(&mut self.buffer).unwrap();
+
+                if !stream.pending_send.is_empty() {
+                    self.push_sender(&mut stream);
+                }
+
+                Some(frame)
+            }
+            None => None,
+        }
+    }
+
+    fn push_sender(&mut self, stream: &mut store::Ptr<B>) {
+        // The next pointer shouldn't be set
+        debug_assert!(stream.next_pending_send.is_none());
+
+        // Queue the stream
+        match self.pending_send {
+            Some(ref mut idxs) => {
+                // Update the current tail node to point to `stream`
+                stream.resolve(idxs.tail).next_pending_send = Some(stream.key());
+
+                // Update the tail pointer
+                idxs.tail = stream.key();
+            }
+            None => {
+                self.pending_send = Some(Indices {
+                    head: stream.key(),
+                    tail: stream.key(),
+                });
+            }
+        }
+
+        stream.is_pending_send = true;
+    }
+
+    fn pop_sender<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>> {
+        if let Some(mut idxs) = self.pending_send {
+            let mut stream = store.resolve(idxs.head);
+
+            if idxs.head == idxs.tail {
+                assert!(stream.next_pending_send.is_none());
+                self.pending_send = None;
+            } else {
+                idxs.head = stream.next_pending_send.take().unwrap();
+                self.pending_send = Some(idxs);
+            }
+
+            return Some(stream);
+        }
+
+        None
     }
 }

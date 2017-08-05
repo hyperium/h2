@@ -19,7 +19,7 @@ pub(super) struct Ptr<'a, B: 'a> {
 }
 
 /// References an entry in the store.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key(usize);
 
 pub(super) enum Entry<'a, B: 'a> {

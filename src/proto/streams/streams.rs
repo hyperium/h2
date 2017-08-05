@@ -271,6 +271,11 @@ impl<B> Streams<client::Peer, B>
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<client::Peer, B>, ConnectionError>
     {
+        // TODO: There is a hazard with assigning a stream ID before the
+        // prioritize layer. If prioritization reorders new streams, this
+        // implicitly closes the earlier stream IDs.
+        //
+        // See: carllerche/h2#11
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;

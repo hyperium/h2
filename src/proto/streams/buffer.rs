@@ -18,7 +18,7 @@ pub struct Deque<B> {
 }
 
 /// Tracks the head & tail for a sequence of frames in a `Buffer`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 struct Indices {
     head: usize,
     tail: usize,
@@ -27,7 +27,7 @@ struct Indices {
 #[derive(Debug)]
 struct Slot<B> {
     frame: Frame<B>,
-    next: usize,
+    next: Option<usize>,
 }
 
 impl<B> Buffer<B> {
@@ -50,11 +50,42 @@ impl<B> Deque<B> {
         self.indices.is_none()
     }
 
-    pub fn push_back(&mut self, buf: &mut Buffer<B>, val: Frame<B>) {
-        unimplemented!();
+    pub fn push_back(&mut self, buf: &mut Buffer<B>, frame: Frame<B>) {
+        let key = buf.slab.insert(Slot {
+            frame,
+            next: None,
+        });
+
+        match self.indices {
+            Some(ref mut idxs) => {
+                buf.slab[idxs.tail].next = Some(key);
+                idxs.tail = key;
+            }
+            None => {
+                self.indices = Some(Indices {
+                    head: key,
+                    tail: key,
+                });
+            }
+        }
     }
 
     pub fn pop_front(&mut self, buf: &mut Buffer<B>) -> Option<Frame<B>> {
-        unimplemented!();
+        match self.indices {
+            Some(mut idxs) => {
+                let mut slot = buf.slab.remove(idxs.head);
+
+                if idxs.head == idxs.tail {
+                    assert!(slot.next.is_none());
+                    self.indices = None;
+                } else {
+                    idxs.head = slot.next.take().unwrap();
+                    self.indices = Some(idxs);
+                }
+
+                return Some(slot.frame);
+            }
+            None => None,
+        }
     }
 }

@@ -91,7 +91,7 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Advances the internal state of the connection.
-    pub fn poll(&mut self) -> Poll<Option<()>, ConnectionError> {
+    pub fn poll(&mut self) -> Poll<(), ConnectionError> {
         use frame::Frame::*;
 
         loop {
@@ -183,11 +183,9 @@ impl<T, P, B> Connection<T, P, B>
                     */
                 }
                 None => {
-                    unimplemented!();
-                    /*
+                    // TODO: Is this correct?
                     trace!("codec closed");
-                    return Ok(Async::Ready(None));
-                    */
+                    return Ok(Async::Ready(()));
                 }
             }
         }

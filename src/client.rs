@@ -24,6 +24,7 @@ pub struct Client<T, B: IntoBuf> {
 }
 
 /// Client half of an active HTTP/2.0 stream.
+#[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<Peer, B::Buf>,
 }
@@ -89,6 +90,19 @@ impl<T, B> Client<T, B>
     }
 }
 
+impl<T, B> Future for Client<T, B>
+    // TODO: Get rid of 'static
+    where T: AsyncRead + AsyncWrite + 'static,
+          B: IntoBuf + 'static,
+{
+    type Item = ();
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<(), ConnectionError> {
+        self.connection.poll()
+    }
+}
+
 impl<T, B> fmt::Debug for Client<T, B>
     where T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
@@ -142,6 +156,15 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ConnectionError>
     {
         unimplemented!();
+    }
+}
+
+impl<B: IntoBuf> Future for Stream<B> {
+    type Item = Response<()>;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.poll_response()
     }
 }
 

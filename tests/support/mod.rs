@@ -18,12 +18,12 @@ pub use self::http::{
     response,
     method,
     status,
+    Request,
+    Response,
 };
 
-pub use self::h2::{
-    client,
-    server,
-};
+pub use self::h2::client::{self, Client};
+// pub use self::h2::server;
 
 pub use self::bytes::{
     Buf,
