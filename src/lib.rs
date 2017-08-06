@@ -34,8 +34,10 @@ mod proto;
 mod frame;
 // pub mod server;
 
+pub use client::Client;
 pub use error::{ConnectionError, Reason};
 pub use frame::StreamId;
+pub use proto::WindowSize;
 
 use bytes::Bytes;
 

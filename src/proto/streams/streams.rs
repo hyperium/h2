@@ -103,7 +103,7 @@ impl<P, B> Streams<P, B>
         Ok(ret)
     }
 
-    pub fn recv_data(&mut self, frame: &frame::Data)
+    pub fn recv_data(&mut self, frame: frame::Data)
         -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
@@ -316,6 +316,15 @@ impl<B> StreamRef<client::Peer, B>
 
         me.actions.recv.poll_response(&mut stream)
     }
+
+    pub fn poll_data(&mut self) -> Poll<Option<frame::Data<Bytes>>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_data(&mut stream)
+    }
 }
 
 impl<P, B> Actions<P, B>
@@ -323,14 +332,14 @@ impl<P, B> Actions<P, B>
           B: Buf,
 {
     fn dec_num_streams(&mut self, id: StreamId) {
-        if self.is_local_init(id) {
+        if Self::is_local_init(id) {
             self.send.dec_num_streams();
         } else {
             self.recv.dec_num_streams();
         }
     }
 
-    fn is_local_init(&self, id: StreamId) -> bool {
+    fn is_local_init(id: StreamId) -> bool {
         assert!(!id.is_zero());
         P::is_server() == id.is_server_initiated()
     }
