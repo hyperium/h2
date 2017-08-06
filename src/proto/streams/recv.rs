@@ -1,4 +1,4 @@
-use {client, frame, ConnectionError};
+use {client, frame, BodyType, ConnectionError};
 use proto::*;
 use super::*;
 
@@ -73,7 +73,7 @@ impl<P, B> Recv<P, B>
     /// Transition the stream state based on receiving headers
     pub fn recv_headers(&mut self,
                         frame: frame::Headers,
-                        stream: &mut store::Ptr<B>)
+                        stream: &mut Stream<B>)
         -> Result<Option<frame::Headers>, ConnectionError>
     {
         stream.state.recv_open(self.init_window_sz, frame.is_end_stream())?;
@@ -98,35 +98,43 @@ impl<P, B> Recv<P, B>
     }
 
     pub fn recv_data(&mut self,
-                     frame: &frame::Data,
+                     frame: frame::Data,
                      stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().len();
+        let eos = frame.is_end_stream();
 
         if sz > MAX_WINDOW_SIZE as usize {
             unimplemented!();
         }
 
-        let sz = sz as WindowSize;
+        if sz > 0 {
+            match stream.recv_flow_control() {
+                None => return Err(ProtocolError.into()),
+                Some(flow) => {
+                    let sz = sz as WindowSize;
 
-        match stream.recv_flow_control() {
-            Some(flow) => {
-                // Ensure there's enough capacity on the connection before
-                // acting on the stream.
-                try!(self.flow_control.ensure_window(sz, FlowControlError));
+                    // Ensure there's enough capacity on the connection before
+                    // acting on the stream.
+                    try!(self.flow_control.ensure_window(sz, FlowControlError));
 
-                // Claim the window on the stream
-                try!(flow.claim_window(sz, FlowControlError));
+                    // Claim the window on the stream
+                    try!(flow.claim_window(sz, FlowControlError));
 
-                // Claim the window on the connection.
-                self.flow_control.claim_window(sz, FlowControlError)
-                    .expect("local connection flow control error");
+                    // Claim the window on the connection.
+                    self.flow_control.claim_window(sz, FlowControlError)
+                        .expect("local connection flow control error");
+                }
             }
-            None => return Err(ProtocolError.into()),
         }
 
-        if frame.is_end_stream() {
+        if sz > 0 || eos {
+            stream.pending_recv.push_back(&mut self.buffer, frame.into());
+            stream.notify_recv();
+        }
+
+        if eos {
             try!(stream.state.recv_close());
         }
 
@@ -255,8 +263,9 @@ impl<P, B> Recv<P, B>
 impl<B> Recv<client::Peer, B>
     where B: Buf,
 {
-    pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
-        -> Poll<Response<()>, ConnectionError> {
+    pub fn poll_response(&mut self, stream: &mut Stream<B>)
+        -> Poll<Response<BodyType>, ConnectionError>
+    {
         // If the buffer is not empty, then the first frame must be a HEADERS
         // frame or the user violated the contract.
         match stream.pending_recv.pop_front(&mut self.buffer) {
@@ -266,6 +275,26 @@ impl<B> Recv<client::Peer, B>
                 Ok(client::Peer::convert_poll_message(v)?.into())
             }
             Some(frame) => unimplemented!(),
+            None => {
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            }
+        }
+    }
+
+    pub fn poll_data(&mut self, stream: &mut Stream<B>, sz: WindowSize)
+        -> Poll<Option<Bytes>, ConnectionError>
+    {
+        // TODO(ver): split frames into the proper number of bytes, returning unconsumed
+        // bytes onto pending_recv.
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Data(v)) => {
+                unimplemented!()
+            }
+            Some(f) => {
+                stream.pending_recv.push_back(&mut self.buffer, f);
+                Ok(Async::Ready(None))
+            },
             None => {
                 stream.recv_task = Some(task::current());
                 Ok(Async::NotReady)

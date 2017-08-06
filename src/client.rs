@@ -1,4 +1,4 @@
-use {frame, ConnectionError, StreamId};
+use {frame, BodyType, ConnectionError, StreamId, WindowSize};
 use proto::{self, Connection};
 use error::Reason::*;
 
@@ -76,7 +76,7 @@ impl<T, B> Client<T, B>
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        unimplemented!();
+        self.connection.poll_ready()
     }
 
     /// Send a request on a new HTTP 2.0 stream
@@ -140,8 +140,12 @@ impl<T, B> fmt::Debug for Handshake<T, B>
 
 impl<B: IntoBuf> Stream<B> {
     /// Receive the HTTP/2.0 response, if it is ready.
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+    pub fn poll_response(&mut self) -> Poll<Response<BodyType>, ConnectionError> {
         self.inner.poll_response()
+    }
+
+    pub fn poll_data(&mut self, sz: WindowSize) -> Poll<Option<Bytes>, ConnectionError> {
+        self.inner.poll_data(sz)
     }
 
     /// Send data
@@ -160,7 +164,7 @@ impl<B: IntoBuf> Stream<B> {
 }
 
 impl<B: IntoBuf> Future for Stream<B> {
-    type Item = Response<()>;
+    type Item = Response<BodyType>;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -172,7 +176,7 @@ impl<B: IntoBuf> Future for Stream<B> {
 
 impl proto::Peer for Peer {
     type Send = Request<()>;
-    type Poll = Response<()>;
+    type Poll = Response<BodyType>;
 
     fn is_server() -> bool {
         false
@@ -202,8 +206,17 @@ impl proto::Peer for Peer {
     }
 
     fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError> {
+        let body = if headers.is_end_stream() {
+            BodyType::Empty
+        } else {
+            BodyType::Stream
+        };
         headers.into_response()
             // TODO: Is this always a protocol error?
             .map_err(|_| ProtocolError.into())
+            .map(move |r| {
+                let (p, _) = r.into_parts();
+                Response::from_parts(p, body)
+            })
     }
 }

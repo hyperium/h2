@@ -34,14 +34,21 @@ mod proto;
 mod frame;
 // pub mod server;
 
+pub use client::Client;
 pub use error::{ConnectionError, Reason};
 pub use frame::StreamId;
+pub use proto::WindowSize;
 
 use bytes::Bytes;
 
 pub type FrameSize = u32;
 // TODO: remove if carllerche/http#90 lands
 pub type HeaderMap = http::HeaderMap<http::header::HeaderValue>;
+
+pub enum BodyType {
+    Empty,
+    Stream,
+}
 
 /// An H2 connection frame
 #[derive(Debug)]
