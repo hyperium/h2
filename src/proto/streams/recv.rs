@@ -1,4 +1,4 @@
-use {client, frame, ConnectionError};
+use {client, frame, BodyType, ConnectionError};
 use proto::*;
 use super::*;
 
@@ -264,7 +264,7 @@ impl<B> Recv<client::Peer, B>
     where B: Buf,
 {
     pub fn poll_response(&mut self, stream: &mut Stream<B>)
-        -> Poll<Response<()>, ConnectionError>
+        -> Poll<Response<BodyType>, ConnectionError>
     {
         // If the buffer is not empty, then the first frame must be a HEADERS
         // frame or the user violated the contract.

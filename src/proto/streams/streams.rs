@@ -1,4 +1,4 @@
-use client;
+use {client, BodyType};
 use proto::*;
 use super::*;
 
@@ -308,7 +308,7 @@ impl<B> Streams<client::Peer, B>
 impl<B> StreamRef<client::Peer, B>
     where B: Buf,
 {
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+    pub fn poll_response(&mut self) -> Poll<Response<BodyType>, ConnectionError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 

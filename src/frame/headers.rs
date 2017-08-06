@@ -1,7 +1,6 @@
+use {hpack, BodyType, HeaderMap};
 use super::StreamId;
-use hpack;
 use frame::{self, Frame, Head, Kind, Error};
-use HeaderMap;
 
 use http::{self, request, response, version, uri, Method, StatusCode, Uri};
 use http::{Request, Response};
@@ -200,14 +199,20 @@ impl Headers {
         self.flags.set_end_stream()
     }
 
-    pub fn into_response(self) -> http::Result<Response<()>> {
+    pub fn into_response(self) -> http::Result<Response<BodyType>> {
         let mut b = Response::builder();
 
         if let Some(status) = self.pseudo.status {
             b.status(status);
         }
 
-        let mut response = try!(b.body(()));
+        let body = if self.is_end_stream() {
+            BodyType::Empty
+        } else {
+            BodyType::Stream
+        };
+
+        let mut response = try!(b.body(body));
         *response.headers_mut() = self.fields;
 
         Ok(response)
