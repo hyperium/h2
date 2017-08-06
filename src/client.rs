@@ -1,4 +1,4 @@
-use {frame, BodyType, ConnectionError, StreamId};
+use {frame, BodyType, ConnectionError, StreamId, WindowSize};
 use proto::{self, Connection};
 use error::Reason::*;
 
@@ -142,6 +142,10 @@ impl<B: IntoBuf> Stream<B> {
     /// Receive the HTTP/2.0 response, if it is ready.
     pub fn poll_response(&mut self) -> Poll<Response<BodyType>, ConnectionError> {
         self.inner.poll_response()
+    }
+
+    pub fn poll_data(&mut self, sz: WindowSize) -> Poll<Option<Bytes>, ConnectionError> {
+        self.inner.poll_data(sz)
     }
 
     /// Send data

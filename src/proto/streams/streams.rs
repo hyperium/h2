@@ -317,13 +317,13 @@ impl<B> StreamRef<client::Peer, B>
         me.actions.recv.poll_response(&mut stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<frame::Data<Bytes>>, ConnectionError> {
+    pub fn poll_data(&mut self, sz: WindowSize) -> Poll<Option<Bytes>, ConnectionError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.key);
 
-        me.actions.recv.poll_data(&mut stream)
+        me.actions.recv.poll_data(&mut stream, sz)
     }
 }
 

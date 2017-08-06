@@ -282,12 +282,14 @@ impl<B> Recv<client::Peer, B>
         }
     }
 
-    pub fn poll_data(&mut self, stream: &mut Stream<B>)
-        -> Poll<Option<frame::Data<Bytes>>, ConnectionError>
+    pub fn poll_data(&mut self, stream: &mut Stream<B>, sz: WindowSize)
+        -> Poll<Option<Bytes>, ConnectionError>
     {
+        // TODO(ver): split frames into the proper number of bytes, returning unconsumed
+        // bytes onto pending_recv.
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Frame::Data(v)) => {
-                Ok(Async::Ready(Some(v)))
+                unimplemented!()
             }
             Some(f) => {
                 stream.pending_recv.push_back(&mut self.buffer, f);
