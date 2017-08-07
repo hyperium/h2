@@ -236,8 +236,12 @@ impl<P, B> Recv<P, B>
             .take_while(&mut self.buffer, |frame| frame.is_data());
 
         if frames.is_empty() {
-            stream.recv_task = Some(task::current());
-            Ok(Async::NotReady)
+            if stream.state.is_recv_closed() {
+                Ok(None.into())
+            } else {
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            }
         } else {
             Ok(Some(Chunk {
                 pending_recv: frames,

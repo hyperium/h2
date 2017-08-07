@@ -203,6 +203,13 @@ impl State {
         }
     }
 
+    pub fn is_recv_closed(&self) -> bool {
+        match self.inner {
+            Closed(..) | HalfClosedRemote(..) => true,
+            _ => false,
+        }
+    }
+
     pub fn recv_flow_control(&mut self) -> Option<&mut FlowControl> {
         match self.inner {
             Open { ref mut remote, .. } |

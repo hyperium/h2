@@ -368,6 +368,19 @@ impl<P, B> Clone for StreamRef<P, B> {
 
 // ===== impl Chunk =====
 
+impl<P, B> Chunk<P, B>
+    where P: Peer,
+          B: Buf,
+{
+    // TODO: Come up w/ a better API
+    pub fn pop_bytes(&mut self) -> Option<Bytes> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.recv.pop_bytes(&mut self.recv)
+    }
+}
+
 impl<P, B> Drop for Chunk<P, B>
     where P: Peer,
           B: Buf,

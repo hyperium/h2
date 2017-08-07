@@ -5,8 +5,6 @@ extern crate log;
 pub mod support;
 use support::*;
 
-use h2::Frame;
-
 #[test]
 fn send_recv_headers_only() {
     let _ = env_logger::init();
@@ -103,9 +101,10 @@ fn send_recv_data() {
 
     assert!(Stream::wait(h2).next().is_none());;
 }
+*/
 
 #[test]
-fn send_headers_recv_data() {
+fn send_headers_recv_data_single_frame() {
     let _ = env_logger::init();
 
     let mock = mock_io::Builder::new()
@@ -123,51 +122,40 @@ fn send_headers_recv_data() {
         ])
         .build();
 
-    let h2 = client::handshake(mock)
+    let mut h2 = Client::handshake(mock)
         .wait().unwrap();
 
     // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
-    // Get the response headers
-    let (resp, h2) = h2.into_future().wait().unwrap();
+    info!("sending request");
+    let mut stream = h2.request(request, true).unwrap();
 
-    match resp.unwrap() {
-        Frame::Headers { headers, .. } => {
-            assert_eq!(headers.status, status::OK);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::OK);
 
-    // Get the response body
-    let (data, h2) = h2.into_future().wait().unwrap();
+    // Take the body
+    let (_, body) = resp.into_parts();
 
-    match data.unwrap() {
-        Frame::Data { id, data, end_of_stream, .. } => {
-            assert_eq!(id, 1.into());
-            assert_eq!(data, &b"hello"[..]);
-            assert!(!end_of_stream);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    // Wait for all the data frames to be received
+    let mut chunks = h2.run(body.collect()).unwrap();
 
-    // Get the response body
-    let (data, h2) = h2.into_future().wait().unwrap();
+    // Only one chunk since two frames are coalesced.
+    assert_eq!(1, chunks.len());
 
-    match data.unwrap() {
-        Frame::Data { id, data, end_of_stream, .. } => {
-            assert_eq!(id, 1.into());
-            assert_eq!(data, &b"world"[..]);
-            assert!(end_of_stream);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"hello"[..]);
 
-    assert!(Stream::wait(h2).next().is_none());;
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"world"[..]);
+
+    // The H2 connection is closed
+    h2.wait().unwrap();
 }
 
+/*
 #[test]
 fn send_headers_twice_with_same_stream_id() {
     let _ = env_logger::init();

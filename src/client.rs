@@ -3,7 +3,7 @@ use proto::{self, Connection};
 use error::Reason::*;
 
 use http::{self, Request, Response};
-use futures::{Future, Poll, Sink, AsyncSink};
+use futures::{self, Future, Poll, Sink, AsyncSink};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -99,6 +99,19 @@ impl<T, B> Client<T, B>
     }
 }
 
+impl<T, B> Future for Client<T, B>
+    // TODO: Get rid of 'static
+    where T: AsyncRead + AsyncWrite + 'static,
+          B: IntoBuf + 'static,
+{
+    type Item = ();
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<(), ConnectionError> {
+        self.connection.poll()
+    }
+}
+
 impl<T, B> fmt::Debug for Client<T, B>
     where T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
@@ -164,6 +177,28 @@ impl<B: IntoBuf> Future for Stream<B> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.poll_response()
+    }
+}
+
+// ===== impl Body =====
+
+impl<B: IntoBuf> futures::Stream for Body<B> {
+    type Item = Chunk<B>;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let chunk = try_ready!(self.inner.poll_data())
+            .map(|inner| Chunk { inner });
+
+        Ok(chunk.into())
+    }
+}
+
+// ===== impl Chunk =====
+
+impl<B: IntoBuf> Chunk<B> {
+    pub fn pop_bytes(&mut self) -> Option<Bytes> {
+        self.inner.pop_bytes()
     }
 }
 
