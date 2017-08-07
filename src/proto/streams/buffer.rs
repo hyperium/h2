@@ -88,4 +88,53 @@ impl<B> Deque<B> {
             None => None,
         }
     }
+
+    pub fn take_while<F>(&mut self, buf: &mut Buffer<B>, mut f: F) -> Self
+        where F: FnMut(&Frame<B>) -> bool
+    {
+        match self.indices {
+            Some(mut idxs) => {
+                if !f(&buf.slab[idxs.head].frame) {
+                    return Deque::new();
+                }
+
+                let head = idxs.head;
+                let mut tail = idxs.head;
+
+                loop {
+                    let next = match buf.slab[tail].next {
+                        Some(next) => next,
+                        None => {
+                            self.indices = None;
+                            return Deque {
+                                indices: Some(idxs),
+                                _p: PhantomData,
+                            };
+                        }
+                    };
+
+                    if !f(&buf.slab[next].frame) {
+                        // Split the linked list
+                        buf.slab[tail].next = None;
+
+                        self.indices = Some(Indices {
+                            head: next,
+                            tail: idxs.tail,
+                        });
+
+                        return Deque {
+                            indices: Some(Indices {
+                                head: head,
+                                tail: tail,
+                            }),
+                            _p: PhantomData,
+                        }
+                    }
+
+                    tail = next;
+                }
+            }
+            None => Deque::new(),
+        }
+    }
 }

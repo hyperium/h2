@@ -32,6 +32,12 @@ pub(super) struct Recv<P, B> {
     _p: PhantomData<(P, B)>,
 }
 
+#[derive(Debug)]
+pub(super) struct Chunk {
+    /// Data frames pending receival
+    pub pending_recv: buffer::Deque<Bytes>,
+}
+
 impl<P, B> Recv<P, B>
     where P: Peer,
           B: Buf,
@@ -98,7 +104,7 @@ impl<P, B> Recv<P, B>
     }
 
     pub fn recv_data(&mut self,
-                     frame: &frame::Data,
+                     frame: frame::Data,
                      stream: &mut Stream<B>)
         -> Result<(), ConnectionError>
     {
@@ -129,6 +135,10 @@ impl<P, B> Recv<P, B>
         if frame.is_end_stream() {
             try!(stream.state.recv_close());
         }
+
+        // Push the frame onto the recv buffer
+        stream.pending_recv.push_back(&mut self.buffer, frame.into());
+        stream.notify_recv();
 
         Ok(())
     }
@@ -216,6 +226,33 @@ impl<P, B> Recv<P, B>
         }
 
         Ok(().into())
+    }
+
+
+    pub fn poll_chunk(&mut self, stream: &mut Stream<B>)
+        -> Poll<Option<Chunk>, ConnectionError>
+    {
+        let frames = stream.pending_recv
+            .take_while(&mut self.buffer, |frame| frame.is_data());
+
+        if frames.is_empty() {
+            stream.recv_task = Some(task::current());
+            Ok(Async::NotReady)
+        } else {
+            Ok(Some(Chunk {
+                pending_recv: frames,
+            }).into())
+        }
+    }
+
+    pub fn pop_bytes(&mut self, chunk: &mut Chunk) -> Option<Bytes> {
+        match chunk.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Data(frame)) => {
+                Some(frame.into_payload())
+            }
+            None => None,
+            _ => panic!("unexpected frame type"),
+        }
     }
 
     /// Send stream level window update

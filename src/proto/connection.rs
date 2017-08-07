@@ -127,19 +127,8 @@ impl<T, P, B> Connection<T, P, B>
                     */
                 }
                 Some(Data(frame)) => {
-                    unimplemented!();
-                    /*
                     trace!("recv DATA; frame={:?}", frame);
-                    try!(self.streams.recv_data(&frame));
-
-                    let frame = Frame::Data {
-                        id: frame.stream_id(),
-                        end_of_stream: frame.is_end_stream(),
-                        data: frame.into_payload(),
-                    };
-
-                    return Ok(Some(frame).into());
-                    */
+                    try!(self.streams.recv_data(frame));
                 }
                 Some(Reset(frame)) => {
                     unimplemented!();

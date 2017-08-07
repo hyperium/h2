@@ -18,6 +18,15 @@ pub struct StreamRef<P, B> {
     key: store::Key,
 }
 
+#[derive(Debug)]
+pub struct Chunk<P, B>
+    where P: Peer,
+          B: Buf,
+{
+    inner: Arc<Mutex<Inner<P, B>>>,
+    recv: recv::Chunk,
+}
+
 /// Fields needed to manage state related to managing the set of streams. This
 /// is mostly split out to make ownership happy.
 ///
@@ -103,7 +112,7 @@ impl<P, B> Streams<P, B>
         Ok(ret)
     }
 
-    pub fn recv_data(&mut self, frame: &frame::Data)
+    pub fn recv_data(&mut self, frame: frame::Data)
         -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
@@ -305,6 +314,34 @@ impl<B> Streams<client::Peer, B>
     }
 }
 
+// ===== impl StreamRef =====
+
+impl<P, B> StreamRef<P, B>
+    where P: Peer,
+          B: Buf,
+{
+    pub fn poll_data(&mut self) -> Poll<Option<Chunk<P, B>>, ConnectionError> {
+        let recv = {
+            let mut me = self.inner.lock().unwrap();
+            let me = &mut *me;
+
+            let mut stream = me.store.resolve(self.key);
+
+            try_ready!(me.actions.recv.poll_chunk(&mut stream))
+        };
+
+        // Convert to a chunk
+        let chunk = recv.map(|recv| {
+            Chunk {
+                inner: self.inner.clone(),
+                recv: recv,
+            }
+        });
+
+        Ok(chunk.into())
+    }
+}
+
 impl<B> StreamRef<client::Peer, B>
     where B: Buf,
 {
@@ -317,6 +354,34 @@ impl<B> StreamRef<client::Peer, B>
         me.actions.recv.poll_response(&mut stream)
     }
 }
+
+
+
+impl<P, B> Clone for StreamRef<P, B> {
+    fn clone(&self) -> Self {
+        StreamRef {
+            inner: self.inner.clone(),
+            key: self.key.clone(),
+        }
+    }
+}
+
+// ===== impl Chunk =====
+
+impl<P, B> Drop for Chunk<P, B>
+    where P: Peer,
+          B: Buf,
+{
+    fn drop(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        while let Some(_) = me.actions.recv.pop_bytes(&mut self.recv) {
+        }
+    }
+}
+
+// ===== impl Actions =====
 
 impl<P, B> Actions<P, B>
     where P: Peer,

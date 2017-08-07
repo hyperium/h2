@@ -23,10 +23,19 @@ pub struct Client<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
 
-/// Client half of an active HTTP/2.0 stream.
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<Peer, B::Buf>,
+}
+
+#[derive(Debug)]
+pub struct Body<B: IntoBuf> {
+    inner: proto::StreamRef<Peer, B::Buf>,
+}
+
+#[derive(Debug)]
+pub struct Chunk<B: IntoBuf> {
+    inner: proto::Chunk<Peer, B::Buf>,
 }
 
 impl<T> Client<T, Bytes>
@@ -90,19 +99,6 @@ impl<T, B> Client<T, B>
     }
 }
 
-impl<T, B> Future for Client<T, B>
-    // TODO: Get rid of 'static
-    where T: AsyncRead + AsyncWrite + 'static,
-          B: IntoBuf + 'static,
-{
-    type Item = ();
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<(), ConnectionError> {
-        self.connection.poll()
-    }
-}
-
 impl<T, B> fmt::Debug for Client<T, B>
     where T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
@@ -140,8 +136,11 @@ impl<T, B> fmt::Debug for Handshake<T, B>
 
 impl<B: IntoBuf> Stream<B> {
     /// Receive the HTTP/2.0 response, if it is ready.
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
-        self.inner.poll_response()
+    pub fn poll_response(&mut self) -> Poll<Response<Body<B>>, ConnectionError> {
+        let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
+        let body = Body { inner: self.inner.clone() };
+
+        Ok(Response::from_parts(parts, body).into())
     }
 
     /// Send data
@@ -160,7 +159,7 @@ impl<B: IntoBuf> Stream<B> {
 }
 
 impl<B: IntoBuf> Future for Stream<B> {
-    type Item = Response<()>;
+    type Item = Response<Body<B>>;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {

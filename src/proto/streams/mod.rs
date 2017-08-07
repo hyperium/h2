@@ -8,7 +8,7 @@ mod store;
 mod stream;
 mod streams;
 
-pub use self::streams::{Streams, StreamRef};
+pub use self::streams::{Streams, StreamRef, Chunk};
 
 use self::buffer::Buffer;
 use self::flow_control::FlowControl;

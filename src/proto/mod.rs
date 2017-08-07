@@ -6,7 +6,7 @@ mod settings;
 mod streams;
 
 pub use self::connection::Connection;
-pub use self::streams::{Streams, StreamRef};
+pub use self::streams::{Streams, StreamRef, Chunk};
 
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;

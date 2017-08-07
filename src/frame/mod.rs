@@ -67,6 +67,15 @@ pub enum Frame<T = Bytes> {
 }
 
 impl<T> Frame<T> {
+    /// Returns true if the frame is a DATA frame.
+    pub fn is_data(&self) -> bool {
+        use self::Frame::*;
+
+        match *self {
+            Data(..) => true,
+            _ => false,
+        }
+    }
 }
 
 impl<T> fmt::Debug for Frame<T> {
