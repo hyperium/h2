@@ -92,6 +92,16 @@ impl<T, P, B> Connection<T, P, B>
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), ConnectionError> {
+        match self.poll2() {
+            Err(e) => {
+                self.streams.recv_err(&e);
+                Err(e)
+            }
+            ret => ret,
+        }
+    }
+
+    fn poll2(&mut self) -> Poll<(), ConnectionError> {
         use frame::Frame::*;
 
         loop {
@@ -178,9 +188,6 @@ impl<T, P, B> Connection<T, P, B>
                 }
             }
         }
-
-        // TODO: Flush the write buffer
-        unimplemented!();
     }
 
     /*

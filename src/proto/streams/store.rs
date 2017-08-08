@@ -90,6 +90,14 @@ impl<B> Store<B> {
             }
         }
     }
+
+    pub fn for_each<F>(&mut self, mut f: F)
+        where F: FnMut(&mut Stream<B>)
+    {
+        for &id in self.ids.values() {
+            f(&mut self.slab[id])
+        }
+    }
 }
 
 // ===== impl Ptr =====
@@ -142,7 +150,7 @@ impl<'a, B> OccupiedEntry<'a, B> {
 }
 
 // ===== impl VacantEntry =====
-//
+
 impl<'a, B> VacantEntry<'a, B> {
     pub fn insert(self, value: Stream<B>) -> Key {
         // Insert the value in the slab

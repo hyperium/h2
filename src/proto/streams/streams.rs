@@ -141,6 +141,14 @@ impl<P, B> Streams<P, B>
         unimplemented!();
     }
 
+    pub fn recv_err(&mut self, err: &ConnectionError) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let actions = &mut me.actions;
+        me.store.for_each(|stream| actions.recv.recv_err(err, stream));
+    }
+
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
         -> Result<(), ConnectionError> {
         let id = frame.stream_id();

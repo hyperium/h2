@@ -66,7 +66,7 @@ enum Inner {
     HalfClosedLocal(Peer), // TODO: explicitly name this value
     HalfClosedRemote(Peer),
     // When reset, a reason is provided
-    Closed(Option<Reason>),
+    Closed(Option<Cause>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -74,6 +74,12 @@ enum Peer {
     AwaitingHeaders,
     /// Contains a FlowControl representing the _receiver_ of this this data stream.
     Streaming(FlowControl),
+}
+
+#[derive(Debug, Copy, Clone)]
+enum Cause {
+    Proto(Reason),
+    Io,
 }
 
 impl State {
@@ -178,6 +184,19 @@ impl State {
         }
     }
 
+    pub fn recv_err(&mut self, err: &ConnectionError) {
+        match self.inner {
+            Closed(..) => {}
+            _ => {
+                self.inner = Closed(match *err {
+                    ConnectionError::Proto(reason) => Some(Cause::Proto(reason)),
+                    ConnectionError::Io(..) => Some(Cause::Io),
+                    _ => panic!("cannot terminate stream with user error"),
+                });
+            }
+        }
+    }
+
     /// Indicates that the local side will not send more data to the local.
     pub fn send_close(&mut self) -> Result<(), ConnectionError> {
         match self.inner {
@@ -223,6 +242,21 @@ impl State {
             Open { ref mut local, .. } |
             HalfClosedRemote(ref mut local) => local.flow_control(),
             _ => None,
+        }
+    }
+
+    pub fn ensure_recv_open(&self) -> Result<(), ConnectionError> {
+        use std::io;
+
+        // TODO: Is this correct?
+        match self.inner {
+            Closed(Some(Cause::Proto(reason))) => {
+                Err(ConnectionError::Proto(reason))
+            }
+            Closed(Some(Cause::Io)) => {
+                Err(ConnectionError::Io(io::ErrorKind::BrokenPipe.into()))
+            }
+            _ => Ok(()),
         }
     }
 }

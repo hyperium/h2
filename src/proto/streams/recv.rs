@@ -143,6 +143,14 @@ impl<P, B> Recv<P, B>
         Ok(())
     }
 
+    pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B>) {
+        // Receive an error
+        stream.state.recv_err(err);
+
+        // If a receiver is waiting, notify it
+        stream.notify_recv();
+    }
+
     pub fn dec_num_streams(&mut self) {
         self.num_streams -= 1;
     }
@@ -308,6 +316,8 @@ impl<B> Recv<client::Peer, B>
             }
             Some(frame) => unimplemented!(),
             None => {
+                stream.state.ensure_recv_open()?;
+
                 stream.recv_task = Some(task::current());
                 Ok(Async::NotReady)
             }
