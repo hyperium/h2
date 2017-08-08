@@ -141,18 +141,8 @@ impl<T, P, B> Connection<T, P, B>
                     try!(self.streams.recv_data(frame));
                 }
                 Some(Reset(frame)) => {
-                    unimplemented!();
-                    /*
                     trace!("recv RST_STREAM; frame={:?}", frame);
-                    try!(self.streams.recv_reset(&frame));
-
-                    let frame = Frame::Reset {
-                        id: frame.stream_id(),
-                        error: frame.reason(),
-                    };
-
-                    return Ok(Some(frame).into());
-                    */
+                    try!(self.streams.recv_reset(frame));
                 }
                 Some(PushPromise(frame)) => {
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);

@@ -115,9 +115,10 @@ impl<P, B> Streams<P, B>
     pub fn recv_data(&mut self, frame: frame::Data)
         -> Result<(), ConnectionError>
     {
-        let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
+
+        let id = frame.stream_id();
 
         let mut stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
@@ -135,10 +136,26 @@ impl<P, B> Streams<P, B>
         Ok(())
     }
 
-    pub fn recv_reset(&mut self, _frame: &frame::Reset)
+    pub fn recv_reset(&mut self, frame: frame::Reset)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let id = frame.stream_id();
+
+        let mut stream = match me.store.find_mut(&id) {
+            Some(stream) => stream,
+            // TODO: should this be an error?
+            None => return Ok(()),
+        };
+
+        me.actions.recv.recv_reset(frame, &mut stream)?;
+
+        assert!(stream.state.is_closed());
+        me.actions.dec_num_streams(id);
+
+        Ok(())
     }
 
     pub fn recv_err(&mut self, err: &ConnectionError) {

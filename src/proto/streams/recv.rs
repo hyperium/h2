@@ -197,6 +197,17 @@ impl<P, B> Recv<P, B>
         Ok(())
     }
 
+    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream<B>)
+        -> Result<(), ConnectionError>
+    {
+        let err = ConnectionError::Proto(frame.reason());
+
+        // Notify the stream
+        stream.state.recv_err(&err);
+        stream.notify_recv();
+        Ok(())
+    }
+
     pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B>) {
         // Receive an error
         stream.state.recv_err(err);
