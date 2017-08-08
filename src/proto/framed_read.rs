@@ -92,7 +92,9 @@ impl<T> FramedRead<T> {
                 let _todo = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
                 unimplemented!();
             }
-            Kind::PushPromise |
+            Kind::PushPromise => {
+                frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..])?.into()
+            }
             Kind::Priority |
             Kind::Continuation |
             Kind::Unknown => {
@@ -117,7 +119,7 @@ impl<T: ApplySettings> ApplySettings for FramedRead<T> {
 }
 */
 
-impl<T> Stream for FramedRead<T>
+impl<T> futures::Stream for FramedRead<T>
     where T: AsyncRead,
 {
     type Item = Frame;

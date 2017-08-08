@@ -39,6 +39,10 @@ impl StreamId {
     pub fn is_zero(&self) -> bool {
         self.0 == 0
     }
+
+    pub fn increment(&mut self) {
+        self.0 += 2;
+    }
 }
 
 impl From<u32> for StreamId {

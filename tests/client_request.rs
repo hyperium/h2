@@ -14,78 +14,13 @@ fn handshake() {
         .write(SETTINGS_ACK)
         .build();
 
-    let h2 = client::handshake(mock)
+    let h2 = Client::handshake(mock)
         .wait().unwrap();
+
     trace!("hands have been shook");
 
     // At this point, the connection should be closed
-    assert!(Stream::wait(h2).next().is_none());
-}
-
-
-#[test]
-fn send_request_with_zero_stream_id() {
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .build();
-
-    let h2 = client::handshake(mock)
-        .wait().unwrap();
-
-    // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-
-    let err = h2.send_request(0.into(), request, true).wait().unwrap_err();
-    assert_user_err!(err, InvalidStreamId);
-}
-
-#[test]
-fn send_request_with_server_stream_id() {
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .build();
-
-    let h2 = client::handshake(mock)
-        .wait().unwrap();
-
-    // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-
-    let err = h2.send_request(2.into(), request, true).wait().unwrap_err();
-    assert_user_err!(err, InvalidStreamId);
-}
-
-#[test]
-#[ignore]
-fn request_without_scheme() {
-}
-
-#[test]
-#[ignore]
-fn request_with_h1_version() {
-}
-
-#[test]
-fn send_invalid_client_stream_id() {
-    let _ = ::env_logger::init();
-
-    for &id in &[0, 2] {
-        let mock = mock_io::Builder::new()
-            .handshake()
-            .build();
-
-        let h2 = client::handshake(mock)
-            .wait().unwrap();
-
-        // Send the request
-        let mut request = request::Head::default();
-        request.uri = "https://http2.akamai.com/".parse().unwrap();
-        let err = h2.send_request(id.into(), request, true).wait().unwrap_err();
-
-        assert_user_err!(err, InvalidStreamId);
-    }
+    h2.wait().unwrap();
 }
 
 #[test]
@@ -104,17 +39,38 @@ fn recv_invalid_server_stream_id() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 2, 137])
         .build();
 
-    let h2 = client::handshake(mock)
+    let mut h2 = Client::handshake(mock)
         .wait().unwrap();
 
     // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
-    // Get the response
-    let (err, _) = h2.into_future().wait().unwrap_err();
-    assert_proto_err!(err, ProtocolError);
+    info!("sending request");
+    let mut stream = h2.request(request, true).unwrap();
+
+    // The connection errors
+    assert_proto_err!(h2.wait().unwrap_err(), ProtocolError);
+
+    // The stream errors
+    assert_proto_err!(stream.wait().unwrap_err(), ProtocolError);
+}
+
+#[test]
+#[ignore]
+fn request_without_scheme() {
+}
+
+#[test]
+#[ignore]
+fn request_with_h1_version() {
+}
+
+
+#[test]
+#[ignore]
+fn sending_request_on_closed_soket() {
 }
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];

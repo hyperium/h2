@@ -5,8 +5,6 @@ extern crate log;
 pub mod support;
 use support::*;
 
-use h2::Frame;
-
 #[test]
 fn send_recv_headers_only() {
     let _ = env_logger::init();
@@ -23,31 +21,21 @@ fn send_recv_headers_only() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let h2 = client::handshake(mock)
+    let mut h2 = Client::handshake(mock)
         .wait().unwrap();
 
     // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
     info!("sending request");
-    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
+    let mut stream = h2.request(request, true).unwrap();
 
-    // Get the response
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::NO_CONTENT);
 
-    info!("getting response");
-    let (resp, h2) = h2.into_future().wait().unwrap();
-
-    match resp.unwrap() {
-        Frame::Headers { headers, .. } => {
-            assert_eq!(headers.status, status::NO_CONTENT);
-        }
-        _ => panic!("unexpected frame"),
-    }
-
-    // No more frames
-    info!("ensure no more responses");
-    assert!(Stream::wait(h2).next().is_none());;
+    h2.wait().unwrap();
 }
 
 #[test]
@@ -75,46 +63,44 @@ fn send_recv_data() {
         ])
         .build();
 
-    let h2 = client::handshake(mock).wait().expect("handshake");
+    let mut h2 = Client::handshake2(mock)
+        .wait().unwrap();
 
-    // Send the request
-    let mut request = request::Head::default();
-    request.method = method::POST;
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, false).wait().expect("send request");
+    let request = Request::builder()
+        .method(method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
-    let b = "hello";
+    info!("sending request");
+    let mut stream = h2.request(request, false).unwrap();
 
     // Send the data
-    let h2 = h2.send_data(1.into(), b.into(), true).wait().expect("send data");
+    stream.send_data("hello", true).unwrap();
 
-    // Get the response headers
-    let (resp, h2) = h2.into_future().wait().expect("into future");
+    // Get the response
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::OK);
 
-    match resp.expect("response headers") {
-        Frame::Headers { headers, .. } => {
-            assert_eq!(headers.status, status::OK);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    // Take the body
+    let (_, body) = resp.into_parts();
 
-    // Get the response body
-    let (data, h2) = h2.into_future().wait().expect("into future");
+    // Wait for all the data frames to be received
+    let mut chunks = h2.run(body.collect()).unwrap();
 
-    match data.expect("response data") {
-        Frame::Data { id, data, end_of_stream, .. } => {
-            assert_eq!(id, 1.into());
-            assert_eq!(data, &b"world"[..]);
-            assert!(end_of_stream);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    // Only one chunk since two frames are coalesced.
+    assert_eq!(1, chunks.len());
 
-    assert!(Stream::wait(h2).next().is_none());;
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"world"[..]);
+
+    assert!(chunks[0].pop_bytes().is_none());
+
+    // The H2 connection is closed
+    h2.wait().unwrap();
 }
 
 #[test]
-fn send_headers_recv_data() {
+fn send_headers_recv_data_single_frame() {
     let _ = env_logger::init();
 
     let mock = mock_io::Builder::new()
@@ -132,80 +118,42 @@ fn send_headers_recv_data() {
         ])
         .build();
 
-    let h2 = client::handshake(mock)
+    let mut h2 = Client::handshake(mock)
         .wait().unwrap();
 
     // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
-    // Get the response headers
-    let (resp, h2) = h2.into_future().wait().unwrap();
+    info!("sending request");
+    let mut stream = h2.request(request, true).unwrap();
 
-    match resp.unwrap() {
-        Frame::Headers { headers, .. } => {
-            assert_eq!(headers.status, status::OK);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::OK);
 
-    // Get the response body
-    let (data, h2) = h2.into_future().wait().unwrap();
+    // Take the body
+    let (_, body) = resp.into_parts();
 
-    match data.unwrap() {
-        Frame::Data { id, data, end_of_stream, .. } => {
-            assert_eq!(id, 1.into());
-            assert_eq!(data, &b"hello"[..]);
-            assert!(!end_of_stream);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    // Wait for all the data frames to be received
+    let mut chunks = h2.run(body.collect()).unwrap();
 
-    // Get the response body
-    let (data, h2) = h2.into_future().wait().unwrap();
+    // Only one chunk since two frames are coalesced.
+    assert_eq!(1, chunks.len());
 
-    match data.unwrap() {
-        Frame::Data { id, data, end_of_stream, .. } => {
-            assert_eq!(id, 1.into());
-            assert_eq!(data, &b"world"[..]);
-            assert!(end_of_stream);
-        }
-        _ => panic!("unexpected frame"),
-    }
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"hello"[..]);
 
-    assert!(Stream::wait(h2).next().is_none());;
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"world"[..]);
+
+    assert!(chunks[0].pop_bytes().is_none());
+
+    // The H2 connection is closed
+    h2.wait().unwrap();
 }
 
-#[test]
-fn send_headers_twice_with_same_stream_id() {
-    let _ = env_logger::init();
-
-    let mock = mock_io::Builder::new()
-        .handshake()
-        // Write GET /
-        .write(&[
-            0, 0, 0x10, 1, 5, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29,
-                0xAC, 0x4B, 0x8F, 0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84,
-        ])
-        .build();
-
-    let h2 = client::handshake(mock)
-        .wait().unwrap();
-
-    // Send the request
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, true).wait().unwrap();
-
-    // Send another request with the same stream ID
-    let mut request = request::Head::default();
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let err = h2.send_request(1.into(), request, true).wait().unwrap_err();
-
-    assert_user_err!(err, UnexpectedFrameType);
-}
-
+/*
 #[test]
 fn send_data_after_headers_eos() {
     let _ = env_logger::init();
@@ -239,21 +187,7 @@ fn send_data_after_headers_eos() {
 }
 
 #[test]
-fn send_data_without_headers() {
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .build();
-
-    let h2 = client::handshake(mock)
-        .wait().unwrap();
-
-    let b = Bytes::from_static(b"hello world");
-    let err = h2.send_data(1.into(), b, true).wait().unwrap_err();
-
-    assert_user_err!(err, UnexpectedFrameType);
-}
-
-#[test]
 #[ignore]
 fn exceed_max_streams() {
 }
+*/

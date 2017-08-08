@@ -31,10 +31,10 @@ fn recv_single_ping() {
         */
         .build();
 
+    /*
     let h2 = client::handshake(mock)
         .wait().unwrap();
 
-    /*
     // Send the request
     let mut request = request::Head::default();
     request.method = method::POST;

@@ -58,7 +58,7 @@ enum Inner {
     Idle,
     // TODO: these states shouldn't count against concurrency limits:
     //ReservedLocal,
-    //ReservedRemote,
+    ReservedRemote,
     Open {
         local: Peer,
         remote: Peer,
@@ -66,7 +66,7 @@ enum Inner {
     HalfClosedLocal(Peer), // TODO: explicitly name this value
     HalfClosedRemote(Peer),
     // When reset, a reason is provided
-    Closed(Option<Reason>),
+    Closed(Option<Cause>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -74,6 +74,12 @@ enum Peer {
     AwaitingHeaders,
     /// Contains a FlowControl representing the _receiver_ of this this data stream.
     Streaming(FlowControl),
+}
+
+#[derive(Debug, Copy, Clone)]
+enum Cause {
+    Proto(Reason),
+    Io,
 }
 
 impl State {
@@ -120,13 +126,30 @@ impl State {
 
     /// Open the receive have of the stream, this action is taken when a HEADERS
     /// frame is received.
-    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<(), ConnectionError> {
+    ///
+    /// Returns true if this transitions the state to Open
+    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<bool, ConnectionError> {
         let remote = Peer::streaming(sz);
+        let mut initial = false;
 
         self.inner = match self.inner {
             Idle => {
+                initial = true;
+
                 if eos {
                     HalfClosedRemote(AwaitingHeaders)
+                } else {
+                    Open {
+                        local: AwaitingHeaders,
+                        remote,
+                    }
+                }
+            }
+            ReservedRemote => {
+                initial = true;
+
+                if eos {
+                    Closed(None)
                 } else {
                     Open {
                         local: AwaitingHeaders,
@@ -157,7 +180,18 @@ impl State {
             }
         };
 
-        return Ok(());
+        return Ok(initial);
+    }
+
+    /// Transition from Idle -> ReservedRemote
+    pub fn reserve_remote(&mut self) -> Result<(), ConnectionError> {
+        match self.inner {
+            Idle => {
+                self.inner = ReservedRemote;
+                Ok(())
+            }
+            _ => Err(ProtocolError.into()),
+        }
     }
 
     /// Indicates that the remote side will not send more data to the local.
@@ -175,6 +209,19 @@ impl State {
                 Ok(())
             }
             _ => Err(ProtocolError.into()),
+        }
+    }
+
+    pub fn recv_err(&mut self, err: &ConnectionError) {
+        match self.inner {
+            Closed(..) => {}
+            _ => {
+                self.inner = Closed(match *err {
+                    ConnectionError::Proto(reason) => Some(Cause::Proto(reason)),
+                    ConnectionError::Io(..) => Some(Cause::Io),
+                    _ => panic!("cannot terminate stream with user error"),
+                });
+            }
         }
     }
 
@@ -196,9 +243,27 @@ impl State {
         }
     }
 
+    /// Returns true if a stream with the current state counts against the
+    /// concurrency limit.
+    pub fn is_counted(&self) -> bool {
+        match self.inner {
+            Open { .. } => true,
+            HalfClosedLocal(..) => true,
+            HalfClosedRemote(..) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match self.inner {
             Closed(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_recv_closed(&self) -> bool {
+        match self.inner {
+            Closed(..) | HalfClosedRemote(..) => true,
             _ => false,
         }
     }
@@ -216,6 +281,21 @@ impl State {
             Open { ref mut local, .. } |
             HalfClosedRemote(ref mut local) => local.flow_control(),
             _ => None,
+        }
+    }
+
+    pub fn ensure_recv_open(&self) -> Result<(), ConnectionError> {
+        use std::io;
+
+        // TODO: Is this correct?
+        match self.inner {
+            Closed(Some(Cause::Proto(reason))) => {
+                Err(ConnectionError::Proto(reason))
+            }
+            Closed(Some(Cause::Io)) => {
+                Err(ConnectionError::Io(io::ErrorKind::BrokenPipe.into()))
+            }
+            _ => Ok(()),
         }
     }
 }

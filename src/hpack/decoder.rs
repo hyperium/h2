@@ -495,29 +495,29 @@ impl From<Utf8Error> for DecoderError {
     }
 }
 
-impl From<header::InvalidValueError> for DecoderError {
-    fn from(_: header::InvalidValueError) -> DecoderError {
+impl From<header::InvalidHeaderValue> for DecoderError {
+    fn from(_: header::InvalidHeaderValue) -> DecoderError {
         // TODO: Better error?
         DecoderError::InvalidUtf8
     }
 }
 
-impl From<method::FromBytesError> for DecoderError {
-    fn from(_: method::FromBytesError) -> DecoderError {
+impl From<header::InvalidHeaderName> for DecoderError {
+    fn from(_: header::InvalidHeaderName) -> DecoderError {
         // TODO: Better error
         DecoderError::InvalidUtf8
     }
 }
 
-impl From<header::FromBytesError> for DecoderError {
-    fn from(_: header::FromBytesError) -> DecoderError {
+impl From<method::InvalidMethod> for DecoderError {
+    fn from(_: method::InvalidMethod) -> DecoderError {
         // TODO: Better error
         DecoderError::InvalidUtf8
     }
 }
 
-impl From<status::FromStrError> for DecoderError {
-    fn from(_: status::FromStrError) -> DecoderError {
+impl From<status::InvalidStatusCode> for DecoderError {
+    fn from(_: status::InvalidStatusCode) -> DecoderError {
         // TODO: Better error
         DecoderError::InvalidUtf8
     }

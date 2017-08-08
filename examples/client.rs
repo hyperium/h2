@@ -1,3 +1,4 @@
+/*
 extern crate h2;
 extern crate http;
 extern crate futures;
@@ -59,3 +60,6 @@ pub fn main() {
 
     core.run(tcp).unwrap();
 }
+*/
+
+pub fn main() {}

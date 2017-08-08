@@ -1,5 +1,5 @@
-// #![allow(warnings)]
-#![deny(missing_debug_implementations)]
+#![allow(warnings)]
+// #![deny(missing_debug_implementations)]
 
 #[macro_use]
 extern crate futures;
@@ -20,6 +20,8 @@ extern crate fnv;
 
 extern crate byteorder;
 
+extern crate slab;
+
 #[macro_use]
 extern crate log;
 
@@ -30,11 +32,10 @@ pub mod error;
 mod hpack;
 mod proto;
 mod frame;
-pub mod server;
+// pub mod server;
 
 pub use error::{ConnectionError, Reason};
 pub use frame::StreamId;
-pub use proto::Connection;
 
 use bytes::Bytes;
 
@@ -67,24 +68,4 @@ pub enum Frame<T, B = Bytes> {
         id: StreamId,
         error: Reason,
     },
-}
-
-/// Either a Client or a Server
-pub trait Peer {
-    /// Message type sent into the transport
-    type Send;
-
-    /// Message type polled from the transport
-    type Poll;
-
-    fn is_server() -> bool;
-
-    #[doc(hidden)]
-    fn convert_send_message(
-        id: StreamId,
-        headers: Self::Send,
-        end_of_stream: bool) -> frame::Headers;
-
-    #[doc(hidden)]
-    fn convert_poll_message(headers: frame::Headers) -> Self::Poll;
 }

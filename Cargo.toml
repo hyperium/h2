@@ -8,7 +8,7 @@ futures = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.1"
 bytes = "0.4"
-http = { git = "https://github.com/carllerche/http" }
+http = { git = "https://github.com/carllerche/http", branch = "uri-try-from-parts" }
 byteorder = "1.0"
 log = "0.3.8"
 fnv = "1.0.5"
