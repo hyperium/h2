@@ -8,23 +8,29 @@ extern crate openssl;
 extern crate io_dump;
 extern crate env_logger;
 
-use h2::client;
+use h2::client::Client;
 
-use http::request;
-
+use http::{method, Request};
 use futures::*;
 
 use tokio_core::reactor;
 use tokio_core::net::TcpStream;
 
+use std::net::ToSocketAddrs;
+
 pub fn main() {
     let _ = env_logger::init();
 
-    let mut core = reactor::Core::new().unwrap();;
+    // Sync DNS resolution.
+    let addr = "http2.akamai.com:443".to_socket_addrs()
+        .unwrap().next().unwrap();
 
-    let tcp = TcpStream::connect(
-        &"23.39.23.98:443".parse().unwrap(),
-        &core.handle());
+    println!("ADDR: {:?}", addr);
+
+    let mut core = reactor::Core::new().unwrap();;
+    let handle = core.handle();
+
+    let tcp = TcpStream::connect(&addr, &handle);
 
     let tcp = tcp.then(|res| {
         use openssl::ssl::{SslMethod, SslConnectorBuilder};
@@ -46,24 +52,29 @@ pub fn main() {
                 // Dump output to stdout
                 let tls = io_dump::Dump::to_stdout(tls);
 
-                client::handshake(tls)
+                println!("Starting client handshake");
+                Client::handshake(tls)
             })
             .then(|res| {
-                let conn = res.unwrap();
+                let mut h2 = res.unwrap();
 
-                let mut request = request::Head::default();
-                request.uri = "https://http2.akamai.com/".parse().unwrap();
-                // request.version = version::H2;
+                let request = Request::builder()
+                    .method(method::GET)
+                    .uri("https://http2.akamai.com/")
+                    .body(()).unwrap();
 
-                conn.send_request(1.into(), request, true)
-            })
-            .then(|res| {
-                let conn = res.unwrap();
-                // Get the next message
-                conn.for_each(|frame| {
-                    println!("RX: {:?}", frame);
-                    Ok(())
-                })
+                let stream = h2.request(request, true).unwrap();
+
+                let stream = stream.and_then(|response| {
+                    let (_, body) = response.into_parts();
+
+                    body.for_each(|chunk| {
+                        println!("RX: {:?}", chunk);
+                        Ok(())
+                    })
+                });
+
+                h2.join(stream)
             })
     });
 

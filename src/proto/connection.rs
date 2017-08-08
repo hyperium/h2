@@ -155,7 +155,7 @@ impl<T, P, B> Connection<T, P, B>
                     */
                 }
                 Some(PushPromise(frame)) => {
-                    unimplemented!();
+                    // TODO: implement
                     /*
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);
                     try!(self.streams.recv_push_promise(frame));

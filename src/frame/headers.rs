@@ -47,11 +47,11 @@ pub struct PushPromise {
     promised_id: StreamId,
 
     /// The associated flags
-    flags: HeadersFlag,
+    flags: PushPromiseFlag,
 }
 
-impl PushPromise {
-}
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct PushPromiseFlag(u8);
 
 #[derive(Debug)]
 pub struct Continuation {
@@ -299,6 +299,32 @@ impl Headers {
 impl<T> From<Headers> for Frame<T> {
     fn from(src: Headers) -> Self {
         Frame::Headers(src)
+    }
+}
+
+// ===== impl PushPromise =====
+
+impl PushPromise {
+    pub fn load(head: Head, payload: &[u8])
+        -> Result<Self, Error>
+    {
+        let flags = PushPromiseFlag(head.flag());
+
+        // TODO: Handle padding
+
+        let promised_id = StreamId::parse(&payload[..4]);
+
+        Ok(PushPromise {
+            stream_id: head.stream_id(),
+            promised_id: promised_id,
+            flags: flags,
+        })
+    }
+}
+
+impl<T> From<PushPromise> for Frame<T> {
+    fn from(src: PushPromise) -> Self {
+        Frame::PushPromise(src)
     }
 }
 
