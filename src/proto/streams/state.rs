@@ -58,7 +58,7 @@ enum Inner {
     Idle,
     // TODO: these states shouldn't count against concurrency limits:
     //ReservedLocal,
-    //ReservedRemote,
+    ReservedRemote,
     Open {
         local: Peer,
         remote: Peer,
@@ -126,13 +126,30 @@ impl State {
 
     /// Open the receive have of the stream, this action is taken when a HEADERS
     /// frame is received.
-    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<(), ConnectionError> {
+    ///
+    /// Returns true if this transitions the state to Open
+    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<bool, ConnectionError> {
         let remote = Peer::streaming(sz);
+        let mut initial = false;
 
         self.inner = match self.inner {
             Idle => {
+                initial = true;
+
                 if eos {
                     HalfClosedRemote(AwaitingHeaders)
+                } else {
+                    Open {
+                        local: AwaitingHeaders,
+                        remote,
+                    }
+                }
+            }
+            ReservedRemote => {
+                initial = true;
+
+                if eos {
+                    Closed(None)
                 } else {
                     Open {
                         local: AwaitingHeaders,
@@ -163,7 +180,18 @@ impl State {
             }
         };
 
-        return Ok(());
+        return Ok(initial);
+    }
+
+    /// Transition from Idle -> ReservedRemote
+    pub fn reserve_remote(&mut self) -> Result<(), ConnectionError> {
+        match self.inner {
+            Idle => {
+                self.inner = ReservedRemote;
+                Ok(())
+            }
+            _ => Err(ProtocolError.into()),
+        }
     }
 
     /// Indicates that the remote side will not send more data to the local.

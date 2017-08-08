@@ -2,16 +2,10 @@ use super::*;
 
 #[derive(Debug)]
 pub(super) struct Prioritize<B> {
-    pending_send: Option<Indices>,
+    pending_send: store::List<B>,
 
     /// Holds frames that are waiting to be written to the socket
     buffer: Buffer<B>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Indices {
-    head: store::Key,
-    tail: store::Key,
 }
 
 impl<B> Prioritize<B>
@@ -19,7 +13,7 @@ impl<B> Prioritize<B>
 {
     pub fn new() -> Prioritize<B> {
         Prioritize {
-            pending_send: None,
+            pending_send: store::List::new(),
             buffer: Buffer::new(),
         }
     }
@@ -32,7 +26,7 @@ impl<B> Prioritize<B>
         stream.pending_send.push_back(&mut self.buffer, frame);
 
         if stream.is_pending_send {
-            debug_assert!(self.pending_send.is_some());
+            debug_assert!(!self.pending_send.is_empty());
 
             // Already queued to have frame processed.
             return;
@@ -84,44 +78,20 @@ impl<B> Prioritize<B>
     }
 
     fn push_sender(&mut self, stream: &mut store::Ptr<B>) {
-        // The next pointer shouldn't be set
-        debug_assert!(stream.next_pending_send.is_none());
+        debug_assert!(!stream.is_pending_send);
 
-        // Queue the stream
-        match self.pending_send {
-            Some(ref mut idxs) => {
-                // Update the current tail node to point to `stream`
-                stream.resolve(idxs.tail).next_pending_send = Some(stream.key());
-
-                // Update the tail pointer
-                idxs.tail = stream.key();
-            }
-            None => {
-                self.pending_send = Some(Indices {
-                    head: stream.key(),
-                    tail: stream.key(),
-                });
-            }
-        }
+        self.pending_send.push(stream);
 
         stream.is_pending_send = true;
     }
 
     fn pop_sender<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>> {
-        if let Some(mut idxs) = self.pending_send {
-            let mut stream = store.resolve(idxs.head);
-
-            if idxs.head == idxs.tail {
-                assert!(stream.next_pending_send.is_none());
-                self.pending_send = None;
-            } else {
-                idxs.head = stream.next_pending_send.take().unwrap();
-                self.pending_send = Some(idxs);
+        match self.pending_send.pop(store) {
+            Some(mut stream) => {
+                stream.is_pending_send = false;
+                Some(stream)
             }
-
-            return Some(stream);
+            None => None,
         }
-
-        None
     }
 }

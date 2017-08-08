@@ -320,6 +320,14 @@ impl PushPromise {
             flags: flags,
         })
     }
+
+    pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
+    pub fn promised_id(&self) -> StreamId {
+        self.promised_id
+    }
 }
 
 impl<T> From<PushPromise> for Frame<T> {

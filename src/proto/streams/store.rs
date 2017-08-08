@@ -4,6 +4,7 @@ use slab;
 
 use std::ops;
 use std::collections::{HashMap, hash_map};
+use std::marker::PhantomData;
 
 /// Storage for streams
 #[derive(Debug)]
@@ -21,6 +22,19 @@ pub(super) struct Ptr<'a, B: 'a> {
 /// References an entry in the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key(usize);
+
+#[derive(Debug)]
+pub(super) struct List<B> {
+    indices: Option<store::Indices>,
+    _p: PhantomData<B>,
+}
+
+/// A linked list
+#[derive(Debug, Clone, Copy)]
+struct Indices {
+    pub head: Key,
+    pub tail: Key,
+}
 
 pub(super) enum Entry<'a, B: 'a> {
     Occupied(OccupiedEntry<'a, B>),
@@ -54,9 +68,12 @@ impl<B> Store<B> {
         }
     }
 
-    pub fn find_mut(&mut self, id: &StreamId) -> Option<&mut Stream<B>> {
-        if let Some(handle) = self.ids.get(id) {
-            Some(&mut self.slab[*handle])
+    pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<B>> {
+        if let Some(&key) = self.ids.get(id) {
+            Some(Ptr {
+                key: Key(key),
+                store: self,
+            })
         } else {
             None
         }
@@ -100,6 +117,68 @@ impl<B> Store<B> {
     }
 }
 
+// ===== impl List =====
+
+impl<B> List<B> {
+    pub fn new() -> Self {
+        List {
+            indices: None,
+            _p: PhantomData,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_none()
+    }
+
+    pub fn take(&mut self) -> Self {
+        List {
+            indices: self.indices.take(),
+            _p: PhantomData,
+        }
+    }
+
+    pub fn push(&mut self, stream: &mut store::Ptr<B>) {
+        // The next pointer shouldn't be set
+        debug_assert!(stream.next.is_none());
+
+        // Queue the stream
+        match self.indices {
+            Some(ref mut idxs) => {
+                // Update the current tail node to point to `stream`
+                stream.resolve(idxs.tail).next = Some(stream.key());
+
+                // Update the tail pointer
+                idxs.tail = stream.key();
+            }
+            None => {
+                self.indices = Some(store::Indices {
+                    head: stream.key(),
+                    tail: stream.key(),
+                });
+            }
+        }
+    }
+
+    pub fn pop<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>> {
+        if let Some(mut idxs) = self.indices {
+            let mut stream = store.resolve(idxs.head);
+
+            if idxs.head == idxs.tail {
+                assert!(stream.next.is_none());
+                self.indices = None;
+            } else {
+                idxs.head = stream.next.take().unwrap();
+                self.indices = Some(idxs);
+            }
+
+            return Some(stream);
+        }
+
+        None
+    }
+}
+
 // ===== impl Ptr =====
 
 impl<'a, B: 'a> Ptr<'a, B> {
@@ -107,11 +186,19 @@ impl<'a, B: 'a> Ptr<'a, B> {
         self.key
     }
 
+    pub fn store(&mut self) -> &mut Store<B> {
+        &mut self.store
+    }
+
     pub fn resolve(&mut self, key: Key) -> Ptr<B> {
         Ptr {
             key: key,
             store: self.store,
         }
+    }
+
+    pub fn into_mut(self) -> &'a mut Stream<B> {
+        &mut self.store.slab[self.key.0]
     }
 }
 

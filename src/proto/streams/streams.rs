@@ -119,14 +119,14 @@ impl<P, B> Streams<P, B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = match me.store.find_mut(&id) {
+        let mut stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => return Err(ProtocolError.into()),
         };
 
         // Ensure there's enough capacity on the connection before acting on the
         // stream.
-        try!(me.actions.recv.recv_data(frame, stream));
+        try!(me.actions.recv.recv_data(frame, &mut stream));
 
         if stream.state.is_closed() {
             me.actions.dec_num_streams(id);
@@ -160,18 +160,28 @@ impl<P, B> Streams<P, B>
         } else {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
-            if let Some(state) = me.store.find_mut(&id) {
-                try!(me.actions.send.recv_stream_window_update(frame, state));
+            if let Some(mut stream) = me.store.find_mut(&id) {
+                try!(me.actions.send.recv_stream_window_update(frame, &mut stream));
             }
         }
 
         Ok(())
     }
 
-    pub fn recv_push_promise(&mut self, _frame: frame::PushPromise)
+    pub fn recv_push_promise(&mut self, frame: frame::PushPromise)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let id = frame.stream_id();
+
+        let mut stream = match me.store.find_mut(&id) {
+            Some(stream) => stream,
+            None => return Err(ProtocolError.into()),
+        };
+
+        me.actions.recv.recv_push_promise(frame, &mut stream)
     }
 
     pub fn send_headers(&mut self, headers: frame::Headers)
@@ -208,31 +218,6 @@ impl<P, B> Streams<P, B>
         */
     }
 
-    /*
-    pub fn send_data(&mut self, frame: &frame::Data<B>)
-        -> Result<(), ConnectionError>
-    {
-        let id = frame.stream_id();
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let stream = match me.store.find_mut(&id) {
-            Some(stream) => stream,
-            None => return Err(UnexpectedFrameType.into()),
-        };
-
-        // Ensure there's enough capacity on the connection before acting on the
-        // stream.
-        try!(me.actions.send.send_data(frame, stream));
-
-        if stream.state.is_closed() {
-            me.actions.dec_num_streams(id);
-        }
-
-        Ok(())
-    }
-    */
-
     pub fn poll_window_update(&mut self)
         -> Poll<WindowUpdate, ConnectionError>
     {
@@ -250,8 +235,8 @@ impl<P, B> Streams<P, B>
         if id.is_zero() {
             try!(me.actions.recv.expand_connection_window(sz));
         } else {
-            if let Some(state) = me.store.find_mut(&id) {
-                try!(me.actions.recv.expand_stream_window(id, sz, state));
+            if let Some(mut stream) = me.store.find_mut(&id) {
+                try!(me.actions.recv.expand_stream_window(id, sz, &mut stream));
             }
         }
 

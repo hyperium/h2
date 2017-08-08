@@ -177,7 +177,7 @@ impl<P, B> Send<P, B>
         let update = self.pending_window_updates.pop_front()
             .and_then(|id| {
                 streams.find_mut(&id)
-                    .and_then(|stream| stream.send_flow_control())
+                    .and_then(|stream| stream.into_mut().send_flow_control())
                     .and_then(|flow| flow.apply_window_update())
                     .map(|incr| WindowUpdate::new(id, incr))
             });
@@ -209,7 +209,7 @@ impl<P, B> Send<P, B>
 
     pub fn recv_stream_window_update(&mut self,
                                      frame: frame::WindowUpdate,
-                                     stream: &mut Stream<B>)
+                                     stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
         if let Some(flow) = stream.send_flow_control() {
