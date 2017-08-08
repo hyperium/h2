@@ -2,6 +2,9 @@ use super::*;
 
 #[derive(Debug)]
 pub(super) struct Stream<B> {
+    /// The h2 stream identifier
+    pub id: StreamId,
+
     /// Current state of the stream
     pub state: State,
 
@@ -22,8 +25,9 @@ pub(super) struct Stream<B> {
 }
 
 impl<B> Stream<B> {
-    pub fn new() -> Stream<B> {
+    pub fn new(id: StreamId) -> Stream<B> {
         Stream {
+            id,
             state: State::default(),
             pending_recv: buffer::Deque::new(),
             recv_task: None,

@@ -200,6 +200,7 @@ impl<P, B> Streams<P, B>
         */
     }
 
+    /*
     pub fn send_data(&mut self, frame: &frame::Data<B>)
         -> Result<(), ConnectionError>
     {
@@ -222,6 +223,7 @@ impl<P, B> Streams<P, B>
 
         Ok(())
     }
+    */
 
     pub fn poll_window_update(&mut self)
         -> Poll<WindowUpdate, ConnectionError>
@@ -290,13 +292,13 @@ impl<B> Streams<client::Peer, B>
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let (id, mut stream) = me.actions.send.open()?;
+            let mut stream = me.actions.send.open()?;
 
             // Convert the message
             let headers = client::Peer::convert_send_message(
-                id, request, end_of_stream);
+                stream.id, request, end_of_stream);
 
-            let mut stream = me.store.insert(id, stream);
+            let mut stream = me.store.insert(stream.id, stream);
 
             me.actions.send.send_headers(headers, &mut stream)?;
 
@@ -320,6 +322,27 @@ impl<P, B> StreamRef<P, B>
     where P: Peer,
           B: Buf,
 {
+    pub fn send_data(&mut self, data: B, end_of_stream: bool)
+        -> Result<(), ConnectionError>
+    {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        // Create the data frame
+        let frame = frame::Data::from_buf(stream.id, data, end_of_stream);
+
+        // Send the data frame
+        me.actions.send.send_data(frame, &mut stream)?;
+
+        if stream.state.is_closed() {
+            me.actions.dec_num_streams(stream.id);
+        }
+
+        Ok(())
+    }
+
     pub fn poll_data(&mut self) -> Poll<Option<Chunk<P, B>>, ConnectionError> {
         let recv = {
             let mut me = self.inner.lock().unwrap();

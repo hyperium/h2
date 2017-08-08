@@ -67,7 +67,7 @@ impl<P, B> Send<P, B>
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self) -> Result<(StreamId, Stream<B>), ConnectionError> {
+    pub fn open(&mut self) -> Result<Stream<B>, ConnectionError> {
         try!(self.ensure_can_open());
 
         if let Some(max) = self.max_streams {
@@ -76,7 +76,7 @@ impl<P, B> Send<P, B>
             }
         }
 
-        let ret = (self.next_stream_id, Stream::new());
+        let ret = Stream::new(self.next_stream_id);
 
         // Increment the number of locally initiated streams
         self.num_streams += 1;
@@ -106,8 +106,8 @@ impl<P, B> Send<P, B>
     }
 
     pub fn send_data(&mut self,
-                     frame: &frame::Data<B>,
-                     stream: &mut Stream<B>)
+                     frame: frame::Data<B>,
+                     stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().remaining();
@@ -147,6 +147,8 @@ impl<P, B> Send<P, B>
         if frame.is_end_stream() {
             try!(stream.state.send_close());
         }
+
+        self.prioritize.queue_frame(frame.into(), stream);
 
         Ok(())
     }

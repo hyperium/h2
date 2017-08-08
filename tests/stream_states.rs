@@ -38,7 +38,6 @@ fn send_recv_headers_only() {
     h2.wait().unwrap();
 }
 
-/*
 #[test]
 fn send_recv_data() {
     let _ = env_logger::init();
@@ -64,14 +63,42 @@ fn send_recv_data() {
         ])
         .build();
 
-    let h2 = client::handshake(mock).wait().expect("handshake");
+    let mut h2 = Client::handshake2(mock)
+        .wait().unwrap();
 
-    // Send the request
-    let mut request = request::Head::default();
-    request.method = method::POST;
-    request.uri = "https://http2.akamai.com/".parse().unwrap();
-    let h2 = h2.send_request(1.into(), request, false).wait().expect("send request");
+    let request = Request::builder()
+        .method(method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(()).unwrap();
 
+    info!("sending request");
+    let mut stream = h2.request(request, false).unwrap();
+
+    // Send the data
+    stream.send_data("hello", true).unwrap();
+
+    // Get the response
+    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    assert_eq!(resp.status(), status::OK);
+
+    // Take the body
+    let (_, body) = resp.into_parts();
+
+    // Wait for all the data frames to be received
+    let mut chunks = h2.run(body.collect()).unwrap();
+
+    // Only one chunk since two frames are coalesced.
+    assert_eq!(1, chunks.len());
+
+    let data = chunks[0].pop_bytes().unwrap();
+    assert_eq!(data, &b"world"[..]);
+
+    assert!(chunks[0].pop_bytes().is_none());
+
+    // The H2 connection is closed
+    h2.wait().unwrap();
+
+    /*
     let b = "hello";
 
     // Send the data
@@ -100,8 +127,8 @@ fn send_recv_data() {
     }
 
     assert!(Stream::wait(h2).next().is_none());;
+    */
 }
-*/
 
 #[test]
 fn send_headers_recv_data_single_frame() {
@@ -150,6 +177,8 @@ fn send_headers_recv_data_single_frame() {
 
     let data = chunks[0].pop_bytes().unwrap();
     assert_eq!(data, &b"world"[..]);
+
+    assert!(chunks[0].pop_bytes().is_none());
 
     // The H2 connection is closed
     h2.wait().unwrap();

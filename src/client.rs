@@ -160,7 +160,7 @@ impl<B: IntoBuf> Stream<B> {
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        self.inner.send_data(data.into_buf(), end_of_stream)
     }
 
     /// Send trailers

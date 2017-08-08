@@ -73,7 +73,7 @@ impl<P, B> Recv<P, B>
         // Increment the number of remote initiated streams
         self.num_streams += 1;
 
-        Ok(Some(Stream::new()))
+        Ok(Some(Stream::new(id)))
     }
 
     /// Transition the stream state based on receiving headers
