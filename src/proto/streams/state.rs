@@ -243,6 +243,17 @@ impl State {
         }
     }
 
+    /// Returns true if a stream with the current state counts against the
+    /// concurrency limit.
+    pub fn is_counted(&self) -> bool {
+        match self.inner {
+            Open { .. } => true,
+            HalfClosedLocal(..) => true,
+            HalfClosedRemote(..) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match self.inner {
             Closed(_) => true,
