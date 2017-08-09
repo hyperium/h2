@@ -139,7 +139,7 @@ impl<B> Recv<B> where B: Buf {
         // Only servers can receive a headers frame that initiates the stream.
         // This is verified in `Streams` before calling this function.
         if P::is_server() {
-            self.pending_accept.push(stream);
+            self.pending_accept.push::<stream::Next>(stream);
         }
 
         Ok(())
@@ -226,7 +226,7 @@ impl<B> Recv<B> where B: Buf {
             let mut new_stream = stream.store()
                 .insert(frame.promised_id(), new_stream);
 
-            ppp.push(&mut new_stream);
+            ppp.push::<stream::Next>(&mut new_stream);
         }
 
         stream.pending_push_promises = ppp;
@@ -381,7 +381,7 @@ impl<B> Recv<B> where B: Buf {
     */
 
     pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
-        self.pending_accept.pop(store)
+        self.pending_accept.pop::<stream::Next>(store)
             .map(|ptr| ptr.key())
     }
 

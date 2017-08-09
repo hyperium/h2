@@ -24,6 +24,10 @@ pub(super) struct Send<B> {
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
+    /// List of streams waiting for outbound connection capacity
+    pending_capacity: store::List<B>,
+
+    /// Prioritization layer
     prioritize: Prioritize<B>,
 }
 
@@ -42,6 +46,7 @@ impl<B> Send<B> where B: Buf {
             num_streams: 0,
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
+            pending_capacity: store::List::new(),
             prioritize: Prioritize::new(config),
         }
     }
@@ -147,49 +152,21 @@ impl<B> Send<B> where B: Buf {
         self.prioritize.poll_complete(store, dst)
     }
 
-    /*
-    /// Get pending window updates
-    pub fn poll_window_update(&mut self, streams: &mut Store<B>)
-        -> Poll<WindowUpdate, ConnectionError>
-    {
-        // This biases connection window updates, which probably makes sense.
-        //
-        // TODO: We probably don't want to expose connection level updates
-        if let Some(incr) = self.flow_control.apply_window_update() {
-            return Ok(Async::Ready(WindowUpdate::new(StreamId::zero(), incr)));
-        }
-
-        // TODO this should probably account for stream priority?
-        let update = self.pending_window_updates.pop_front()
-            .and_then(|id| {
-                streams.find_mut(&id)
-                    .and_then(|stream| stream.into_mut().send_flow_control())
-                    .and_then(|flow| flow.apply_window_update())
-                    .map(|incr| WindowUpdate::new(id, incr))
-            });
-
-        if let Some(update) = update {
-            return Ok(Async::Ready(update));
-        }
-
-        // Update the task.
-        //
-        // TODO: Extract this "gate" logic
-        self.blocked = Some(task::current());
-
-        return Ok(Async::NotReady);
-    }
-    */
-
-    pub fn recv_connection_window_update(&mut self, frame: frame::WindowUpdate)
+    pub fn recv_connection_window_update(&mut self,
+                                         frame: frame::WindowUpdate,
+                                         store: &mut Store<B>)
         -> Result<(), ConnectionError>
     {
         self.prioritize.recv_window_update(frame)?;
 
         // TODO: If there is available connection capacity, release pending
         // streams.
+        //
+        // Walk each stream pending capacity and see if this change to the
+        // connection window can increase the advertised capacity of the stream.
 
-        Ok(())
+        unimplemented!();
+        // Ok(())
     }
 
     pub fn recv_stream_window_update(&mut self,
@@ -216,7 +193,10 @@ impl<B> Send<B> where B: Buf {
         if connection < effective_window_size {
             stream.unadvertised_send_window = effective_window_size - connection;
 
-            // TODO: Queue the stream in a pending connection capacity list.
+            if !stream.is_pending_send_capacity {
+                stream.is_pending_send_capacity = true;
+                self.pending_capacity.push::<stream::NextCapacity>(stream);
+            }
         }
 
         if stream.unadvertised_send_window == frame.size_increment() + unadvertised {
@@ -225,9 +205,9 @@ impl<B> Send<B> where B: Buf {
             return Ok(());
         }
 
-        // TODO: Notify the send task that there is additional capacity
+        stream.notify_send();
 
-        unimplemented!();
+        Ok(())
     }
 
     pub fn dec_num_streams(&mut self) {

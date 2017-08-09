@@ -161,7 +161,8 @@ impl<B> Streams<B>
         let me = &mut *me;
 
         if id.is_zero() {
-            try!(me.actions.send.recv_connection_window_update(frame));
+            me.actions.send.recv_connection_window_update(
+                frame, &mut me.store)?;
         } else {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...

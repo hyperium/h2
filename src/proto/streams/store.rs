@@ -29,6 +29,14 @@ pub(super) struct List<B> {
     _p: PhantomData<B>,
 }
 
+pub(super) trait Next {
+    fn next<B>(stream: &Stream<B>) -> Option<Key>;
+
+    fn set_next<B>(stream: &mut Stream<B>, key: Key);
+
+    fn take_next<B>(stream: &mut Stream<B>) -> Key;
+}
+
 /// A linked list
 #[derive(Debug, Clone, Copy)]
 struct Indices {
@@ -138,15 +146,18 @@ impl<B> List<B> {
         }
     }
 
-    pub fn push(&mut self, stream: &mut store::Ptr<B>) {
+    pub fn push<N>(&mut self, stream: &mut store::Ptr<B>)
+        where N: Next,
+    {
         // The next pointer shouldn't be set
-        debug_assert!(stream.next.is_none());
+        debug_assert!(N::next(stream).is_none());
 
         // Queue the stream
         match self.indices {
             Some(ref mut idxs) => {
                 // Update the current tail node to point to `stream`
-                stream.resolve(idxs.tail).next = Some(stream.key());
+                let key = stream.key();
+                N::set_next(&mut stream.resolve(idxs.tail), key);
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
@@ -160,15 +171,17 @@ impl<B> List<B> {
         }
     }
 
-    pub fn pop<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>> {
+    pub fn pop<'a, N>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
+        where N: Next,
+    {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
 
             if idxs.head == idxs.tail {
-                assert!(stream.next.is_none());
+                assert!(N::next(&*stream).is_none());
                 self.indices = None;
             } else {
-                idxs.head = stream.next.take().unwrap();
+                idxs.head = N::take_next(&mut *stream);
                 self.indices = Some(idxs);
             }
 

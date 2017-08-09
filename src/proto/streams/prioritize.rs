@@ -142,11 +142,17 @@ impl<B> Prioritize<B>
         // capacity list first.
 
         if self.flow_control.has_capacity() && !self.pending_capacity.is_empty() {
-            let mut stream = self.pending_capacity.pop(store).unwrap();
+            let mut stream = self.pending_capacity
+                .pop::<stream::Next>(store)
+                .unwrap();
+
             stream.is_pending_send = false;
             Some(stream)
         } else {
-            match self.pending_send.pop(store) {
+            let stream = self.pending_send
+                .pop::<stream::Next>(store);
+
+            match stream {
                 Some(mut stream) => {
                     stream.is_pending_send = false;
                     Some(stream)
@@ -159,6 +165,6 @@ impl<B> Prioritize<B>
 
 fn push_sender<B>(list: &mut store::List<B>, stream: &mut store::Ptr<B>) {
     debug_assert!(!stream.is_pending_send);
-    list.push(stream);
+    list.push::<stream::Next>(stream);
     stream.is_pending_send = true;
 }
