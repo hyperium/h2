@@ -1,4 +1,5 @@
 use {frame, ConnectionError, StreamId};
+use {Body, Chunk};
 use proto::{self, Connection};
 use error::Reason::*;
 
@@ -23,16 +24,6 @@ pub struct Client<T, B: IntoBuf> {
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
-}
-
-#[derive(Debug)]
-pub struct Body<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
-}
-
-#[derive(Debug)]
-pub struct Chunk<B: IntoBuf> {
-    inner: proto::Chunk<B::Buf>,
 }
 
 #[derive(Debug)]
@@ -71,8 +62,8 @@ impl<T, B> Client<T, B>
                 // Send initial settings frame
                 match framed_write.start_send(settings.into()) {
                     Ok(AsyncSink::Ready) => {
-                        let conn = proto::from_framed_write(framed_write);
-                        Ok(Client { connection: conn })
+                        let connection = proto::from_framed_write(framed_write);
+                        Ok(Client { connection })
                     }
                     Ok(_) => unreachable!(),
                     Err(e) => Err(ConnectionError::from(e)),
@@ -115,7 +106,7 @@ impl<T, B> Future for Client<T, B>
 impl<T, B> fmt::Debug for Client<T, B>
     where T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
-          B::Buf: fmt::Debug + IntoBuf,
+          B::Buf: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Client")
@@ -177,28 +168,6 @@ impl<B: IntoBuf> Future for Stream<B> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.poll_response()
-    }
-}
-
-// ===== impl Body =====
-
-impl<B: IntoBuf> futures::Stream for Body<B> {
-    type Item = Chunk<B>;
-    type Error = ConnectionError;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let chunk = try_ready!(self.inner.poll_data())
-            .map(|inner| Chunk { inner });
-
-        Ok(chunk.into())
-    }
-}
-
-// ===== impl Chunk =====
-
-impl<B: IntoBuf> Chunk<B> {
-    pub fn pop_bytes(&mut self) -> Option<Bytes> {
-        self.inner.pop_bytes()
     }
 }
 
