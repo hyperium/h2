@@ -1,4 +1,3 @@
-/*
 extern crate h2;
 extern crate http;
 extern crate futures;
@@ -7,10 +6,9 @@ extern crate tokio_core;
 extern crate io_dump;
 extern crate env_logger;
 
-use h2::client;
+use h2::client::Client;
 
 use http::*;
-
 use futures::*;
 
 use tokio_core::reactor;
@@ -27,39 +25,24 @@ pub fn main() {
 
     let tcp = tcp.then(|res| {
         let tcp = io_dump::Dump::to_stdout(res.unwrap());
-        client::handshake(tcp)
+        Client::handshake(tcp)
     })
     .then(|res| {
-        let conn = res.unwrap();
+        let mut client = res.unwrap();
 
         println!("sending request");
 
-        let mut request = request::Head::default();
-        request.method = method::POST;
-        request.uri = "https://http2.akamai.com/".parse().unwrap();
-        // request.version = version::H2;
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(()).unwrap();
 
-        conn.send_request(1.into(), request, true)
-    })
-    /*
-    .then(|res| {
-        let conn = res.unwrap();
-
-        conn.send_data(1.into(), "hello".into(), true)
-    })
-    */
-    .then(|res| {
-        let conn = res.unwrap();
-        // Get the next message
-        conn.for_each(|frame| {
-            println!("RX: {:?}", frame);
+        let stream = client.request(request, true);
+        client.join(stream.and_then(|response| {
+            println!("GOT RESPONSE: {:?}", response);
             Ok(())
-        })
+        }))
     })
     ;
 
     core.run(tcp).unwrap();
 }
-*/
-
-pub fn main() {}

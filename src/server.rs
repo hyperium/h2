@@ -4,7 +4,7 @@ use proto::{self, Connection};
 use error::Reason::*;
 
 use http::{self, Request, Response};
-use futures::{Future, Sink, Poll, Async, AsyncSink, IntoFuture};
+use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -86,6 +86,43 @@ impl<T, B> Server<T, B>
 
         Handshake { inner: Box::new(handshake) }
     }
+
+    pub fn poll_close(&mut self) -> Poll<(), ConnectionError> {
+        self.connection.poll()
+    }
+}
+
+impl<T, B> futures::Stream for Server<T, B>
+    where T: AsyncRead + AsyncWrite + 'static,
+          B: IntoBuf + 'static,
+{
+    type Item = (Request<Body<B>>, Stream<B>);
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
+        // Always try to advance the internal state. Getting NotReady also is
+        // needed to allow this function to return NotReady.
+        match self.poll_close()? {
+            Async::Ready(_) => {
+                // If the socket is closed, don't return anything
+                // TODO: drop any pending streams
+                return Ok(None.into())
+            }
+            _ => {}
+        }
+
+        if let Some(inner) = self.connection.next_incoming() {
+            let (head, _) = inner.take_request()?.into_parts();
+            let body = Body { inner: inner.clone() };
+
+            let request = Request::from_parts(head, body);
+            let incoming = Stream { inner };
+
+            return Ok(Some((request, incoming)).into());
+        }
+
+        Ok(Async::NotReady)
+    }
 }
 
 impl<T, B> fmt::Debug for Server<T, B>
@@ -97,6 +134,30 @@ impl<T, B> fmt::Debug for Server<T, B>
         fmt.debug_struct("Server")
             .field("connection", &self.connection)
             .finish()
+    }
+}
+
+// ===== impl Stream =====
+
+impl<B: IntoBuf> Stream<B> {
+    pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
+        -> Result<(), ConnectionError>
+    {
+        self.inner.send_response(response, end_of_stream)
+    }
+
+    /// Send data
+    pub fn send_data(&mut self, data: B, end_of_stream: bool)
+        -> Result<(), ConnectionError>
+    {
+        self.inner.send_data::<Peer>(data.into_buf(), end_of_stream)
+    }
+
+    /// Send trailers
+    pub fn send_trailers(&mut self, trailers: ())
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
     }
 }
 

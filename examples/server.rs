@@ -1,4 +1,3 @@
-/*
 extern crate h2;
 extern crate http;
 extern crate futures;
@@ -7,10 +6,9 @@ extern crate tokio_core;
 extern crate io_dump;
 extern crate env_logger;
 
-use h2::server;
+use h2::server::Server;
 
-use http::{response, status};
-
+use http::*;
 use futures::*;
 
 use tokio_core::reactor;
@@ -31,12 +29,18 @@ pub fn main() {
     let server = listener.incoming().for_each(move |(socket, _)| {
         let socket = io_dump::Dump::to_stdout(socket);
 
-        let connection = server::handshake(socket)
+        let connection = Server::handshake(socket)
             .then(|res| {
                 let conn = res.unwrap();
 
                 println!("H2 connection bound");
 
+                conn.for_each(|(request, stream)| {
+                    println!("GOT request: {:?}", request);
+                    Ok(())
+                })
+
+                /*
                 // Receive a request
                 conn.into_future()
                     .then(|res| {
@@ -60,6 +64,7 @@ pub fn main() {
 
                         conn.send_data(1.into(), "world".into(), true)
                     })
+                    */
             })
             .then(|res| {
                 let _ = res.unwrap();
@@ -73,6 +78,3 @@ pub fn main() {
 
     core.run(server).unwrap();
 }
-*/
-
-pub fn main() {}

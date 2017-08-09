@@ -1,4 +1,4 @@
-use {client, frame, ConnectionError};
+use {client, server, frame, ConnectionError};
 use proto::*;
 use super::*;
 
@@ -24,6 +24,9 @@ pub(super) struct Recv<B> {
     /// Streams that have pending window updates
     /// TODO: don't use a VecDeque
     pending_window_updates: VecDeque<StreamId>,
+
+    /// New streams to be accepted
+    pending_accept: store::List<B>,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Bytes>,
@@ -54,6 +57,7 @@ impl<B> Recv<B> where B: Buf {
             init_window_sz: config.init_remote_window_sz,
             flow_control: FlowControl::new(config.init_remote_window_sz),
             pending_window_updates: VecDeque::new(),
+            pending_accept: store::List::new(),
             buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
@@ -76,6 +80,19 @@ impl<B> Recv<B> where B: Buf {
         }
 
         Ok(Some(Stream::new(id)))
+    }
+
+    pub fn take_request(&mut self, stream: &mut store::Ptr<B>)
+        -> Result<Request<()>, ConnectionError>
+    {
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Headers(frame)) => {
+                // TODO: This error should probably be caught on receipt of the
+                // frame vs. now.
+                Ok(server::Peer::convert_poll_message(frame)?)
+            }
+            _ => panic!(),
+        }
     }
 
     pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
@@ -102,7 +119,7 @@ impl<B> Recv<B> where B: Buf {
     pub fn recv_headers<P: Peer>(&mut self,
                                  frame: frame::Headers,
                                  stream: &mut store::Ptr<B>)
-        -> Result<Option<frame::Headers>, ConnectionError>
+        -> Result<(), ConnectionError>
     {
         let is_initial = stream.state.recv_open(self.init_window_sz, frame.is_end_stream())?;
 
@@ -118,13 +135,14 @@ impl<B> Recv<B> where B: Buf {
         // Only servers can receive a headers frame that initiates the stream.
         // This is verified in `Streams` before calling this function.
         if P::is_server() {
-            Ok(Some(frame))
+            self.pending_accept.push(stream);
+            Ok(())
         } else {
             // Push the frame onto the recv buffer
             stream.pending_recv.push_back(&mut self.buffer, frame.into());
             stream.notify_recv();
 
-            Ok(None)
+            Ok(())
         }
     }
 
@@ -361,6 +379,10 @@ impl<B> Recv<B> where B: Buf {
         Ok(().into())
     }
 
+    pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
+        self.pending_accept.pop(store)
+            .map(|ptr| ptr.key())
+    }
 
     pub fn poll_chunk(&mut self, stream: &mut Stream<B>)
         -> Poll<Option<Chunk>, ConnectionError>

@@ -1,4 +1,4 @@
-use client;
+use {client, server};
 use proto::*;
 use super::*;
 
@@ -63,7 +63,7 @@ impl<B> Streams<B>
 
     /// Process inbound headers
     pub fn recv_headers<P: Peer>(&mut self, frame: frame::Headers)
-        -> Result<Option<frame::Headers>, ConnectionError>
+        -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
@@ -82,7 +82,7 @@ impl<B> Streams<B>
 
                 match try!(me.actions.recv.open::<P>(id)) {
                     Some(stream) => e.insert(stream),
-                    None => return Ok(None),
+                    None => return Ok(()),
                 }
             }
         };
@@ -222,6 +222,22 @@ impl<B> Streams<B>
         */
     }
 
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
+        let key = {
+            let mut me = self.inner.lock().unwrap();
+            let me = &mut *me;
+
+            me.actions.recv.next_incoming(&mut me.store)
+        };
+
+        key.map(|key| {
+            StreamRef {
+                inner: self.inner.clone(),
+                key,
+            }
+        })
+    }
+
     pub fn poll_window_update(&mut self)
         -> Poll<WindowUpdate, ConnectionError>
     {
@@ -332,6 +348,37 @@ impl<B> StreamRef<B>
         me.actions.transition::<P, _, _>(stream, |actions, stream| {
             // Send the data frame
             actions.send.send_data(frame, stream)
+        })
+    }
+
+    /// Called by the server after the stream is accepted. Given that clients
+    /// initialize streams by sending HEADERS, the request will always be
+    /// available.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the request isn't present.
+    pub fn take_request(&self) -> Result<Request<()>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+        me.actions.recv.take_request(&mut stream)
+    }
+
+    pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
+        -> Result<(), ConnectionError>
+    {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        let frame = server::Peer::convert_send_message(
+            stream.id, response, end_of_stream);
+
+        me.actions.transition::<server::Peer, _, _>(stream, |actions, stream| {
+            actions.send.send_headers(frame, stream)
         })
     }
 

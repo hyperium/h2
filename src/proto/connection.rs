@@ -1,4 +1,4 @@
-use {client, ConnectionError, Frame};
+use {client, server, ConnectionError, Frame};
 use HeaderMap;
 use frame::{self, StreamId};
 
@@ -122,19 +122,7 @@ impl<T, P, B> Connection<T, P, B>
             match frame {
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
-
-                    if let Some(frame) = try!(self.streams.recv_headers::<P>(frame)) {
-                        unimplemented!();
-                    }
-
-                    /*
-                    // Update stream state while ensuring that the headers frame
-                    // can be received.
-                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
-                        let frame = Self::convert_poll_message(frame)?;
-                        return Ok(Some(frame).into());
-                    }
-                    */
+                    try!(self.streams.recv_headers::<P>(frame));
                 }
                 Some(Data(frame)) => {
                     trace!("recv DATA; frame={:?}", frame);
@@ -266,6 +254,15 @@ impl<T, B> Connection<T, client::Peer, B>
         -> Result<StreamRef<B::Buf>, ConnectionError>
     {
         self.streams.send_request(request, end_of_stream)
+    }
+}
+
+impl<T, B> Connection<T, server::Peer, B>
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf,
+{
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
+        self.streams.next_incoming()
     }
 }
 
