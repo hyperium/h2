@@ -15,9 +15,6 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     inner: Box<Future<Item = Client<T, B>, Error = ConnectionError>>,
 }
 
-#[derive(Debug)]
-pub(crate) struct Peer;
-
 /// Marker type indicating a client peer
 pub struct Client<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
@@ -25,18 +22,21 @@ pub struct Client<T, B: IntoBuf> {
 
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<Peer, B::Buf>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 #[derive(Debug)]
 pub struct Body<B: IntoBuf> {
-    inner: proto::StreamRef<Peer, B::Buf>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 #[derive(Debug)]
 pub struct Chunk<B: IntoBuf> {
-    inner: proto::Chunk<Peer, B::Buf>,
+    inner: proto::Chunk<B::Buf>,
 }
+
+#[derive(Debug)]
+pub(crate) struct Peer;
 
 impl<T> Client<T, Bytes>
     where T: AsyncRead + AsyncWrite + 'static,
@@ -160,7 +160,7 @@ impl<B: IntoBuf> Stream<B> {
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
-        self.inner.send_data(data.into_buf(), end_of_stream)
+        self.inner.send_data::<Peer>(data.into_buf(), end_of_stream)
     }
 
     /// Send trailers

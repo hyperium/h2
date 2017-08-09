@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 use {frame, proto, Peer, ConnectionError, StreamId};
 
 use http;
@@ -12,14 +10,19 @@ use std::fmt;
 /// In progress H2 connection binding
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     // TODO: unbox
-    inner: Box<Future<Item = Connection<T, B>, Error = ConnectionError>>,
+    inner: Box<Future<Item = Server<T, B>, Error = ConnectionError>>,
 }
 
 /// Marker type indicating a client peer
 #[derive(Debug)]
-pub struct Server;
+pub struct Server<T, B: IntoBuf> {
+    connection: Connection<T, Peer, B>,
+}
 
-pub type Connection<T, B = Bytes> = super::Connection<T, Server, B>;
+#[derive(Debug)]
+pub struct Stream<B: IntoBuf> {
+    inner: proto::StreamRef<Peer, B::Buf>,
+}
 
 /// Flush a Sink
 struct Flush<T> {

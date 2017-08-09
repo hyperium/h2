@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub(super) struct Send<P, B> {
+pub(super) struct Send<B> {
     /// Maximum number of locally initiated streams
     max_streams: Option<usize>,
 
@@ -36,15 +36,12 @@ pub(super) struct Send<P, B> {
     /// be notified later. Access to poll_window_update must not be shared across tasks,
     /// as we only track a single task (and *not* i.e. a task per stream id).
     blocked: Option<task::Task>,
-
-    _p: PhantomData<P>,
 }
 
-impl<P, B> Send<P, B>
-    where P: Peer,
-          B: Buf,
-{
-    pub fn new(config: &Config) -> Self {
+impl<B> Send<B> where B: Buf {
+
+    /// Create a new `Send`
+    pub fn new<P: Peer>(config: &Config) -> Self {
         let next_stream_id = if P::is_server() {
             2
         } else {
@@ -60,15 +57,16 @@ impl<P, B> Send<P, B>
             prioritize: Prioritize::new(),
             pending_window_updates: VecDeque::new(),
             blocked: None,
-            _p: PhantomData,
         }
     }
 
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self) -> Result<Stream<B>, ConnectionError> {
-        try!(self.ensure_can_open());
+    pub fn open<P: Peer>(&mut self)
+        -> Result<Stream<B>, ConnectionError>
+    {
+        try!(self.ensure_can_open::<P>());
 
         if let Some(max) = self.max_streams {
             if max <= self.num_streams {
@@ -229,7 +227,7 @@ impl<P, B> Send<P, B>
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self) -> Result<(), ConnectionError> {
+    fn ensure_can_open<P: Peer>(&self) -> Result<(), ConnectionError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
             return Err(UnexpectedFrameType.into());

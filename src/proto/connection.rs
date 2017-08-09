@@ -19,7 +19,7 @@ pub struct Connection<T, P, B: IntoBuf = Bytes> {
     // TODO: Remove <B>
     ping_pong: PingPong<B::Buf>,
     settings: Settings,
-    streams: Streams<P, B::Buf>,
+    streams: Streams<B::Buf>,
 
     _phantom: PhantomData<P>,
 }
@@ -31,7 +31,7 @@ impl<T, P, B> Connection<T, P, B>
 {
     pub fn new(codec: Codec<T, B::Buf>) -> Connection<T, P, B> {
         // TODO: Actually configure
-        let streams = Streams::new(streams::Config {
+        let streams = Streams::new::<P>(streams::Config {
             max_remote_initiated: None,
             init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             max_local_initiated: None,
@@ -123,7 +123,7 @@ impl<T, P, B> Connection<T, P, B>
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
 
-                    if let Some(frame) = try!(self.streams.recv_headers(frame)) {
+                    if let Some(frame) = try!(self.streams.recv_headers::<P>(frame)) {
                         unimplemented!();
                     }
 
@@ -138,15 +138,15 @@ impl<T, P, B> Connection<T, P, B>
                 }
                 Some(Data(frame)) => {
                     trace!("recv DATA; frame={:?}", frame);
-                    try!(self.streams.recv_data(frame));
+                    try!(self.streams.recv_data::<P>(frame));
                 }
                 Some(Reset(frame)) => {
                     trace!("recv RST_STREAM; frame={:?}", frame);
-                    try!(self.streams.recv_reset(frame));
+                    try!(self.streams.recv_reset::<P>(frame));
                 }
                 Some(PushPromise(frame)) => {
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);
-                    self.streams.recv_push_promise(frame)?;
+                    self.streams.recv_push_promise::<P>(frame)?;
                 }
                 Some(Settings(frame)) => {
                     trace!("recv SETTINGS; frame={:?}", frame);
@@ -263,7 +263,7 @@ impl<T, B> Connection<T, client::Peer, B>
 {
     /// Initialize a new HTTP/2.0 stream and send the message.
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<client::Peer, B::Buf>, ConnectionError>
+        -> Result<StreamRef<B::Buf>, ConnectionError>
     {
         self.streams.send_request(request, end_of_stream)
     }

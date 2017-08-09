@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub(super) struct Recv<P, B> {
+pub(super) struct Recv<B> {
     /// Maximum number of remote initiated streams
     max_streams: Option<usize>,
 
@@ -31,7 +31,7 @@ pub(super) struct Recv<P, B> {
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
-    _p: PhantomData<(P, B)>,
+    _p: PhantomData<(B)>,
 }
 
 #[derive(Debug)]
@@ -46,10 +46,7 @@ struct Indices {
     tail: store::Key,
 }
 
-impl<P, B> Recv<P, B>
-    where P: Peer,
-          B: Buf,
-{
+impl<B> Recv<B> where B: Buf {
     pub fn new(config: &Config) -> Self {
         Recv {
             max_streams: config.max_remote_initiated,
@@ -66,10 +63,12 @@ impl<P, B> Recv<P, B>
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId) -> Result<Option<Stream<B>>, ConnectionError> {
+    pub fn open<P: Peer>(&mut self, id: StreamId)
+        -> Result<Option<Stream<B>>, ConnectionError>
+    {
         assert!(self.refused.is_none());
 
-        try!(self.ensure_can_open(id));
+        try!(self.ensure_can_open::<P>(id));
 
         if !self.can_inc_num_streams() {
             self.refused = Some(id);
@@ -79,10 +78,30 @@ impl<P, B> Recv<P, B>
         Ok(Some(Stream::new(id)))
     }
 
+    pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
+        -> Poll<Response<()>, ConnectionError> {
+        // If the buffer is not empty, then the first frame must be a HEADERS
+        // frame or the user violated the contract.
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Headers(v)) => {
+                // TODO: This error should probably be caught on receipt of the
+                // frame vs. now.
+                Ok(client::Peer::convert_poll_message(v)?.into())
+            }
+            Some(frame) => unimplemented!(),
+            None => {
+                stream.state.ensure_recv_open()?;
+
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            }
+        }
+    }
+
     /// Transition the stream state based on receiving headers
-    pub fn recv_headers(&mut self,
-                        frame: frame::Headers,
-                        stream: &mut store::Ptr<B>)
+    pub fn recv_headers<P: Peer>(&mut self,
+                                 frame: frame::Headers,
+                                 stream: &mut store::Ptr<B>)
         -> Result<Option<frame::Headers>, ConnectionError>
     {
         let is_initial = stream.state.recv_open(self.init_window_sz, frame.is_end_stream())?;
@@ -155,11 +174,13 @@ impl<P, B> Recv<P, B>
         Ok(())
     }
 
-    pub fn recv_push_promise(&mut self, frame: frame::PushPromise, stream: &mut store::Ptr<B>)
+    pub fn recv_push_promise<P: Peer>(&mut self,
+                                      frame: frame::PushPromise,
+                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
         // First, make sure that the values are legit
-        self.ensure_can_reserve(frame.promised_id())?;
+        self.ensure_can_reserve::<P>(frame.promised_id())?;
 
         // Make sure that the stream state is valid
         stream.state.ensure_recv_open()?;
@@ -241,7 +262,9 @@ impl<P, B> Recv<P, B>
     }
 
     /// Returns true if the remote peer can initiate a stream with the given ID.
-    fn ensure_can_open(&self, id: StreamId) -> Result<(), ConnectionError> {
+    fn ensure_can_open<P: Peer>(&self, id: StreamId)
+        -> Result<(), ConnectionError>
+    {
         if !P::is_server() {
             // Remote is a server and cannot open streams. PushPromise is
             // registered by reserving, so does not go through this path.
@@ -257,7 +280,9 @@ impl<P, B> Recv<P, B>
     }
 
     /// Returns true if the remote peer can reserve a stream with the given ID.
-    fn ensure_can_reserve(&self, promised_id: StreamId) -> Result<(), ConnectionError> {
+    fn ensure_can_reserve<P: Peer>(&self, promised_id: StreamId)
+        -> Result<(), ConnectionError>
+    {
         // TODO: Are there other rules?
         if P::is_server() {
             // The remote is a client and cannot reserve
@@ -398,29 +423,5 @@ impl<P, B> Recv<P, B>
 
     fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();
-    }
-}
-
-impl<B> Recv<client::Peer, B>
-    where B: Buf,
-{
-    pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
-        -> Poll<Response<()>, ConnectionError> {
-        // If the buffer is not empty, then the first frame must be a HEADERS
-        // frame or the user violated the contract.
-        match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Headers(v)) => {
-                // TODO: This error should probably be caught on receipt of the
-                // frame vs. now.
-                Ok(client::Peer::convert_poll_message(v)?.into())
-            }
-            Some(frame) => unimplemented!(),
-            None => {
-                stream.state.ensure_recv_open()?;
-
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
-            }
-        }
     }
 }
