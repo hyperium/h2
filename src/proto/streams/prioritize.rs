@@ -48,7 +48,7 @@ impl<B> Prioritize<B>
         self.flow_control.expand_window(frame.size_increment())?;
 
         // Imediately apply the update
-        self.flow.apply_window_update();
+        self.flow_control.apply_window_update();
 
         Ok(())
     }

@@ -184,7 +184,7 @@ impl<B> Send<B> where B: Buf {
     pub fn recv_connection_window_update(&mut self, frame: frame::WindowUpdate)
         -> Result<(), ConnectionError>
     {
-        self.priority.recv_window_update(frame)?;
+        self.prioritize.recv_window_update(frame)?;
 
         // TODO: If there is available connection capacity, release pending
         // streams.

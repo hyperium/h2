@@ -63,12 +63,14 @@ impl FlowControl {
         // TODO: Handle invalid increment
         if sz <= self.underflow {
             self.underflow -= sz;
-            return;
+            return Ok(());
         }
 
         let added = sz - self.underflow;
         self.next_window_update += added;
         self.underflow = 0;
+
+        Ok(())
     }
 
     /*
