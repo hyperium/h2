@@ -112,18 +112,6 @@ impl<T> FramedRead<T> {
     }
 }
 
-/*
-impl<T: ApplySettings> ApplySettings for FramedRead<T> {
-    fn apply_local_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.get_mut().apply_local_settings(set)
-    }
-
-    fn apply_remote_settings(&mut self, set: &frame::SettingSet) -> Result<(), ConnectionError> {
-        self.inner.get_mut().apply_remote_settings(set)
-    }
-}
-*/
-
 impl<T> futures::Stream for FramedRead<T>
     where T: AsyncRead,
 {
