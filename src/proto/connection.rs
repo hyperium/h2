@@ -94,6 +94,7 @@ impl<T, P, B> Connection<T, P, B>
     pub fn poll(&mut self) -> Poll<(), ConnectionError> {
         match self.poll2() {
             Err(e) => {
+                debug!("Connection::poll; err={:?}", e);
                 self.streams.recv_err(&e);
                 Err(e)
             }
@@ -143,18 +144,13 @@ impl<T, P, B> Connection<T, P, B>
                     // TODO: ACK must be sent THEN settings applied.
                 }
                 Some(Ping(frame)) => {
-                    unimplemented!();
-                    /*
                     trace!("recv PING; frame={:?}", frame);
                     self.ping_pong.recv_ping(frame);
-                    */
                 }
                 Some(WindowUpdate(frame)) => {
-                    unimplemented!();
-                    /*
                     trace!("recv WINDOW_UPDATE; frame={:?}", frame);
-                    try!(self.streams.recv_window_update(frame));
-                    */
+                    // TODO: implement
+                    // try!(self.streams.recv_window_update(frame));
                 }
                 None => {
                     // TODO: Is this correct?

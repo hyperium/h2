@@ -42,7 +42,9 @@ pub fn main() {
                         .status(status::OK)
                         .body(()).unwrap();
 
-                    stream.send_response(response, true).unwrap();
+                    if let Err(e) = stream.send_response(response, true) {
+                        println!(" error responding; err={:?}", e);
+                    }
 
                     Ok(())
                 })

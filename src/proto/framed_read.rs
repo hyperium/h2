@@ -95,8 +95,13 @@ impl<T> FramedRead<T> {
             Kind::PushPromise => {
                 frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..])?.into()
             }
-            Kind::Priority |
-            Kind::Continuation |
+            Kind::Priority => {
+                // TODO: implement
+                return Ok(None);
+            }
+            Kind::Continuation => {
+                unimplemented!();
+            }
             Kind::Unknown => {
                 unimplemented!()
             }
