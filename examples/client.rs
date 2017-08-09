@@ -36,7 +36,7 @@ pub fn main() {
             .uri("https://http2.akamai.com/")
             .body(()).unwrap();
 
-        let stream = client.request(request, true);
+        let stream = client.request(request, true).unwrap();
         client.join(stream.and_then(|response| {
             println!("GOT RESPONSE: {:?}", response);
             Ok(())

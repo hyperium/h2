@@ -112,6 +112,7 @@ impl<T, B> futures::Stream for Server<T, B>
         }
 
         if let Some(inner) = self.connection.next_incoming() {
+            trace!("received incoming");
             let (head, _) = inner.take_request()?.into_parts();
             let body = Body { inner: inner.clone() };
 

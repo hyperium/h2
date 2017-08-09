@@ -35,8 +35,15 @@ pub fn main() {
 
                 println!("H2 connection bound");
 
-                conn.for_each(|(request, stream)| {
+                conn.for_each(|(request, mut stream)| {
                     println!("GOT request: {:?}", request);
+
+                    let response = Response::builder()
+                        .status(status::OK)
+                        .body(()).unwrap();
+
+                    stream.send_response(response, true).unwrap();
+
                     Ok(())
                 })
 
