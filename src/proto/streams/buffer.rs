@@ -70,6 +70,26 @@ impl<B> Deque<B> {
         }
     }
 
+    pub fn push_front(&mut self, buf: &mut Buffer<B>, frame: Frame<B>) {
+        let key = buf.slab.insert(Slot {
+            frame,
+            next: None,
+        });
+
+        match self.indices {
+            Some(ref mut idxs) => {
+                buf.slab[key].next = Some(idxs.head);
+                idxs.head = key;
+            }
+            None => {
+                self.indices = Some(Indices {
+                    head: key,
+                    tail: key,
+                });
+            }
+        }
+    }
+
     pub fn pop_front(&mut self, buf: &mut Buffer<B>) -> Option<Frame<B>> {
         match self.indices {
             Some(mut idxs) => {

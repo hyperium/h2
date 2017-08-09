@@ -9,8 +9,8 @@ pub struct FlowControl {
     /// Amount to be removed by future increments.
     underflow: WindowSize,
 
-    /// The amount that has been incremented but not yet advertised (to the application or
-    /// the remote).
+    /// The amount that has been incremented but not yet advertised (to the
+    /// application or the remote).
     next_window_update: WindowSize,
 }
 
@@ -21,6 +21,14 @@ impl FlowControl {
             underflow: 0,
             next_window_update: 0,
         }
+    }
+
+    pub fn has_capacity(&self) -> bool {
+        self.window_size > 0
+    }
+
+    pub fn window_size(&self) -> WindowSize {
+        self.window_size
     }
 
     /// Returns true iff `claim_window(sz)` would return succeed.
@@ -49,7 +57,10 @@ impl FlowControl {
     }
 
     /// Increase the _unadvertised_ window capacity.
-    pub fn expand_window(&mut self, sz: WindowSize) {
+    pub fn expand_window(&mut self, sz: WindowSize)
+        -> Result<(), ConnectionError>
+    {
+        // TODO: Handle invalid increment
         if sz <= self.underflow {
             self.underflow -= sz;
             return;
@@ -60,6 +71,7 @@ impl FlowControl {
         self.underflow = 0;
     }
 
+    /*
     /// Obtains the unadvertised window update.
     ///
     /// This does not apply the window update to `self`.
@@ -70,6 +82,7 @@ impl FlowControl {
             Some(self.next_window_update)
         }
     }
+    */
 
     /// Obtains and applies an unadvertised window update.
     pub fn apply_window_update(&mut self) -> Option<WindowSize> {

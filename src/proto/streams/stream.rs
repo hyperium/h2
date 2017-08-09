@@ -28,6 +28,11 @@ pub(super) struct Stream<B> {
 
     /// True if the stream is currently pending send
     pub is_pending_send: bool,
+
+    /// A stream's capacity is never advertised past the connection's capacity.
+    /// This value represents the amount of the stream window that has been
+    /// temporarily withheld.
+    pub unadvertised_send_window: WindowSize,
 }
 
 impl<B> Stream<B> {
@@ -41,6 +46,7 @@ impl<B> Stream<B> {
             next: None,
             pending_push_promises: store::List::new(),
             is_pending_send: false,
+            unadvertised_send_window: 0,
         }
     }
 

@@ -1,7 +1,7 @@
 use hpack;
 use error::{ConnectionError, Reason};
 
-use bytes::Bytes;
+use bytes::{Bytes, Buf};
 
 use std::fmt;
 
@@ -74,6 +74,18 @@ impl<T> Frame<T> {
         match *self {
             Data(..) => true,
             _ => false,
+        }
+    }
+}
+
+impl<T: Buf> Frame<T> {
+    /// Returns the length of the frame as it applies to flow control.
+    pub fn flow_len(&self) -> usize {
+        use self::Frame::*;
+
+        match *self {
+            Data(ref frame) => frame.payload().remaining(),
+            _ => 0,
         }
     }
 }

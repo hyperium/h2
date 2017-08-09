@@ -154,7 +154,8 @@ impl<B> Streams<B>
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
-        -> Result<(), ConnectionError> {
+        -> Result<(), ConnectionError>
+    {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -238,14 +239,6 @@ impl<B> Streams<B>
         })
     }
 
-    pub fn poll_window_update(&mut self)
-        -> Poll<WindowUpdate, ConnectionError>
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions.send.poll_window_update(&mut me.store)
-    }
-
     pub fn expand_window(&mut self, id: StreamId, sz: WindowSize)
         -> Result<(), ConnectionError>
     {
@@ -278,12 +271,6 @@ impl<B> Streams<B>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
-
-        // TODO: sending window updates should be part of Prioritize
-        /*
-        try_ready!(me.actions.recv.send_connection_window_update(dst));
-        try_ready!(me.actions.recv.send_stream_window_update(&mut me.store, dst));
-        */
 
         me.actions.send.poll_complete(&mut me.store, dst)
     }

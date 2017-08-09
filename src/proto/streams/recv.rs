@@ -360,6 +360,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
+    /*
     /// Send connection level window update
     pub fn send_connection_window_update<T>(&mut self, dst: &mut Codec<T, B>)
         -> Poll<(), ConnectionError>
@@ -377,6 +378,7 @@ impl<B> Recv<B> where B: Buf {
 
         Ok(().into())
     }
+    */
 
     pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
         self.pending_accept.pop(store)
@@ -413,6 +415,7 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
+    /*
     /// Send stream level window update
     pub fn send_stream_window_update<T>(&mut self,
                                         streams: &mut Store<B>,
@@ -441,6 +444,7 @@ impl<B> Recv<B> where B: Buf {
 
         Ok(().into())
     }
+    */
 
     fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();

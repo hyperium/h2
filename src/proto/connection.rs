@@ -47,23 +47,6 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    /// Polls for the next update to a remote flow control window.
-    pub fn poll_window_update(&mut self) -> Poll<WindowUpdate, ConnectionError> {
-        self.streams.poll_window_update()
-    }
-
-    /// Increases the capacity of a local flow control window.
-    ///
-    /// # Panics
-    ///
-    /// THis function panics if `incr` is not a valid window size.
-    pub fn expand_window(&mut self, id: StreamId, incr: usize)
-    -> Result<(), ConnectionError>
-    {
-        assert!(incr <= MAX_WINDOW_SIZE as usize);
-        self.streams.expand_window(id, incr as WindowSize)
-    }
-
     pub fn update_local_settings(&mut self, _local: frame::SettingSet) -> Result<(), ConnectionError> {
         unimplemented!();
     }
@@ -149,8 +132,7 @@ impl<T, P, B> Connection<T, P, B>
                 }
                 Some(WindowUpdate(frame)) => {
                     trace!("recv WINDOW_UPDATE; frame={:?}", frame);
-                    // TODO: implement
-                    // try!(self.streams.recv_window_update(frame));
+                    self.streams.recv_window_update(frame)?;
                 }
                 None => {
                     // TODO: Is this correct?

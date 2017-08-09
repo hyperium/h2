@@ -9,6 +9,7 @@ use bytes::Buf;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 
+/// Manages state transitions related to outbound frames.
 #[derive(Debug)]
 pub(super) struct Send<B> {
     /// Maximum number of locally initiated streams
@@ -23,19 +24,7 @@ pub(super) struct Send<B> {
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
-    /// Connection level flow control governing sent data
-    flow_control: FlowControl,
-
-    /// Holds the list of streams on which local window updates may be sent.
-    // XXX It would be cool if this didn't exist.
-    pending_window_updates: VecDeque<StreamId>,
-
     prioritize: Prioritize<B>,
-
-    /// When `poll_window_update` is not ready, then the calling task is saved to
-    /// be notified later. Access to poll_window_update must not be shared across tasks,
-    /// as we only track a single task (and *not* i.e. a task per stream id).
-    blocked: Option<task::Task>,
 }
 
 impl<B> Send<B> where B: Buf {
@@ -53,10 +42,7 @@ impl<B> Send<B> where B: Buf {
             num_streams: 0,
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
-            flow_control: FlowControl::new(config.init_local_window_sz),
-            prioritize: Prioritize::new(),
-            pending_window_updates: VecDeque::new(),
-            blocked: None,
+            prioritize: Prioritize::new(config),
         }
     }
 
@@ -119,15 +105,16 @@ impl<B> Send<B> where B: Buf {
 
         // Make borrow checker happy
         loop {
+            let unadvertised = stream.unadvertised_send_window;
+
             match stream.send_flow_control() {
                 Some(flow) => {
-                    try!(self.flow_control.ensure_window(sz, FlowControlViolation));
+                    // Ensure that the size fits within the advertised size
+                    try!(flow.ensure_window(
+                            sz + unadvertised, FlowControlViolation));
 
-                    // Claim the window on the stream
-                    try!(flow.claim_window(sz, FlowControlViolation));
-
-                    // Claim the window on the connection
-                    self.flow_control.claim_window(sz, FlowControlViolation)
+                    // Now, claim the window on the stream
+                    flow.claim_window(sz, FlowControlViolation)
                         .expect("local connection flow control error");
 
                     break;
@@ -160,6 +147,7 @@ impl<B> Send<B> where B: Buf {
         self.prioritize.poll_complete(store, dst)
     }
 
+    /*
     /// Get pending window updates
     pub fn poll_window_update(&mut self, streams: &mut Store<B>)
         -> Poll<WindowUpdate, ConnectionError>
@@ -191,16 +179,15 @@ impl<B> Send<B> where B: Buf {
 
         return Ok(Async::NotReady);
     }
+    */
 
     pub fn recv_connection_window_update(&mut self, frame: frame::WindowUpdate)
         -> Result<(), ConnectionError>
     {
-        // TODO: Handle invalid increment
-        self.flow_control.expand_window(frame.size_increment());
+        self.priority.recv_window_update(frame)?;
 
-        if let Some(task) = self.blocked.take() {
-            task.notify();
-        }
+        // TODO: If there is available connection capacity, release pending
+        // streams.
 
         Ok(())
     }
@@ -210,6 +197,8 @@ impl<B> Send<B> where B: Buf {
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        unimplemented!();
+        /*
         if let Some(flow) = stream.send_flow_control() {
             // TODO: Handle invalid increment
             flow.expand_window(frame.size_increment());
@@ -220,6 +209,7 @@ impl<B> Send<B> where B: Buf {
         }
 
         Ok(())
+        */
     }
 
     pub fn dec_num_streams(&mut self) {
