@@ -24,11 +24,17 @@ impl FlowControl {
     }
 
     pub fn has_capacity(&self) -> bool {
-        self.window_size > 0
+        self.effective_window_size() > 0
     }
 
-    pub fn window_size(&self) -> WindowSize {
-        self.window_size
+    pub fn effective_window_size(&self) -> WindowSize {
+        let plus = self.window_size + self.next_window_update;
+
+        if self.underflow >= plus {
+            return 0;
+        }
+
+        plus - self.underflow
     }
 
     /// Returns true iff `claim_window(sz)` would return succeed.

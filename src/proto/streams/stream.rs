@@ -50,10 +50,12 @@ impl<B> Stream<B> {
         }
     }
 
+    // TODO: remove?
     pub fn send_flow_control(&mut self) -> Option<&mut FlowControl> {
         self.state.send_flow_control()
     }
 
+    // TODO: remove?
     pub fn recv_flow_control(&mut self) -> Option<&mut FlowControl> {
         self.state.recv_flow_control()
     }

@@ -197,19 +197,37 @@ impl<B> Send<B> where B: Buf {
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        let connection = self.prioritize.available_window();
+        let unadvertised = stream.unadvertised_send_window;
+
+        let effective_window_size = {
+            let mut flow = match stream.state.send_flow_control() {
+                Some(flow) => flow,
+                None => return Ok(()),
+            };
+
+            debug_assert!(unadvertised == 0 || connection == 0);
+
+            // Expand the full window
+            flow.expand_window(frame.size_increment())?;
+            flow.effective_window_size()
+        };
+
+        if connection < effective_window_size {
+            stream.unadvertised_send_window = effective_window_size - connection;
+
+            // TODO: Queue the stream in a pending connection capacity list.
+        }
+
+        if stream.unadvertised_send_window == frame.size_increment() + unadvertised {
+            // The entire window update is unadvertised, no need to do anything
+            // else
+            return Ok(());
+        }
+
+        // TODO: Notify the send task that there is additional capacity
+
         unimplemented!();
-        /*
-        if let Some(flow) = stream.send_flow_control() {
-            // TODO: Handle invalid increment
-            flow.expand_window(frame.size_increment());
-        }
-
-        if let Some(task) = self.blocked.take() {
-            task.notify();
-        }
-
-        Ok(())
-        */
     }
 
     pub fn dec_num_streams(&mut self) {

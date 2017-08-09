@@ -32,7 +32,7 @@ impl<B> Prioritize<B>
     }
 
     pub fn available_window(&self) -> WindowSize {
-        let win = self.flow_control.window_size();
+        let win = self.flow_control.effective_window_size();
 
         if self.buffered_data >= win as usize {
             0
@@ -109,7 +109,7 @@ impl<B> Prioritize<B>
                         Frame::Data(frame) => {
                             let len = frame.payload().remaining();
 
-                            if len > self.flow_control.window_size() as usize {
+                            if len > self.flow_control.effective_window_size() as usize {
                                 // TODO: This could be smarter...
                                 stream.pending_send.push_front(&mut self.buffer, frame.into());
 
