@@ -57,3 +57,9 @@ impl From<StreamId> for u32 {
         src.0
     }
 }
+
+impl PartialEq<u32> for StreamId {
+    fn eq(&self, other: &u32) -> bool {
+        self.0 == *other
+    }
+}

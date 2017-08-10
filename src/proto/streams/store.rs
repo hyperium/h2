@@ -229,11 +229,16 @@ impl<B> List<B> {
                         let next = N::take_next(&mut store[curr]);
                         N::set_next(&mut store[prev], next);
 
-                        // current is last element, but guaranteed to not be the
-                        // only one
-                        if next.is_none() {
-                            idxs.tail = prev;
-                            break;
+                        match next {
+                            Some(next) => {
+                                curr = next;
+                            }
+                            None => {
+                                // current is last element, but guaranteed to not be the
+                                // only one
+                                idxs.tail = prev;
+                                break;
+                            }
                         }
                     } else {
                         if let Some(next) = N::take_next(&mut store[curr]) {
@@ -321,5 +326,171 @@ impl<'a, B> VacantEntry<'a, B> {
         self.ids.insert(key);
 
         Key(key)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use super::stream::Next;
+
+    #[test]
+    fn test_retain_empty_list_and_store() {
+        let mut store = new_store();
+        let mut list = List::new();
+
+
+        retain(&mut store, &mut list, |_| panic!());
+
+        assert!(store.slab.is_empty());
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_retain_one_item() {
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &[1]);
+
+        // Keep
+        retain(&mut store, &mut list, |s| true);
+
+        let ids = get(&store, &list);
+        assert_eq!(ids, &[1]);
+
+        // Drop
+        retain(&mut store, &mut list, |s| false);
+
+        assert!(list.is_empty());
+        assert_eq!(1, store.slab.len());
+    }
+
+    #[test]
+    fn test_retain_none_long_list() {
+        let mut expect = vec![1, 2, 3, 4, 5];
+
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &expect);
+
+        retain(&mut store, &mut list, |s| {
+            assert_eq!(s.id, expect.remove(0));
+            false
+        });
+
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_retain_last_elem_long_list() {
+        let mut expect = vec![1, 2, 3, 4, 5];
+
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &expect);
+
+        retain(&mut store, &mut list, |s| {
+            if expect.len() > 1 {
+                assert_eq!(s.id, expect.remove(0));
+                false
+            } else {
+                assert_eq!(s.id, 5);
+                true
+            }
+        });
+
+        let ids = get(&store, &list);
+        assert_eq!(ids, &[5]);
+    }
+
+    #[test]
+    fn test_retain_first_elem_long_list() {
+        let mut expect = vec![1, 2, 3, 4, 5];
+
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &expect);
+
+        retain(&mut store, &mut list, |s| {
+            let e = expect.remove(0);
+            assert_eq!(s.id, e);
+            e == 1
+        });
+
+        let ids = get(&store, &list);
+        assert_eq!(ids, &[1]);
+    }
+
+    #[test]
+    fn test_drop_middle_elem_long_list() {
+        let mut expect = vec![1, 2, 3, 4, 5];
+
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &expect);
+
+        retain(&mut store, &mut list, |s| {
+            let e = expect.remove(0);
+            assert_eq!(s.id, e);
+            e != 3
+        });
+
+        let ids = get(&store, &list);
+        assert_eq!(ids, &[1, 2, 4, 5]);
+    }
+
+    #[test]
+    fn test_drop_two_middle_elem_long_list() {
+        let mut expect = vec![1, 2, 3, 4, 5];
+
+        let mut store = new_store();
+        let mut list = list_with(&mut store, &expect);
+
+        retain(&mut store, &mut list, |s| {
+            let e = expect.remove(0);
+            assert_eq!(s.id, e);
+            e != 3
+        });
+
+        let ids = get(&store, &list);
+        assert_eq!(ids, &[1, 2, 4, 5]);
+    }
+
+    fn new_store() -> Store<()> {
+        Store::new()
+    }
+
+    fn push(store: &mut Store<()>, list: &mut List<()>, id: u32) {
+        let id = StreamId::from(id);
+        let mut ptr = store.insert(id, Stream::new(id));
+        list.push::<Next>(&mut ptr);
+    }
+
+    fn list_with(store: &mut Store<()>, ids: &[u32]) -> List<()> {
+        let mut list = List::new();
+
+        for &id in ids {
+            push(store, &mut list, id);
+        }
+
+        list
+    }
+
+    fn pop(store: &mut Store<()>, list: &mut List<()>) -> Option<StreamId> {
+        list.pop::<Next>(store).map(|p| p.id)
+    }
+
+    fn retain<F>(store: &mut Store<()>, list: &mut List<()>, f: F)
+        where F: FnMut(&mut Stream<()>) -> bool
+    {
+        list.retain::<Next, F>(store, f);
+    }
+
+    fn get(store: &Store<()>, list: &List<()>) -> Vec<StreamId> {
+        let mut dst = vec![];
+
+        let mut curr = list.indices.map(|i| i.head);
+
+        while let Some(c) = curr {
+            dst.push(store[c].id);
+            curr = store[c].next;
+        }
+
+        dst
     }
 }
