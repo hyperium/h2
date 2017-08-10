@@ -171,16 +171,20 @@ impl Decoder {
             self.last_max_update = size;
         }
 
+        trace!("decode");
+
         while src.has_remaining() {
             // At this point we are always at the beginning of the next block
             // within the HPACK data. The type of the block can always be
             // determined from the first byte.
             match try!(Representation::load(peek_u8(src))) {
                 Indexed => {
+                    trace!("    Indexed; rem={:?}", src.remaining());
                     can_resize = false;
                     f(try!(self.decode_indexed(src)));
                 }
                 LiteralWithIndexing => {
+                    trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = try!(self.decode_literal(src, true));
 
@@ -190,11 +194,13 @@ impl Decoder {
                     f(entry);
                 }
                 LiteralWithoutIndexing => {
+                    trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = try!(self.decode_literal(src, false));
                     f(entry);
                 }
                 LiteralNeverIndexed => {
+                    trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = try!(self.decode_literal(src, false));
 
@@ -203,6 +209,7 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
+                    trace!("    SizeUpdate; rem={:?}", src.remaining());
                     if !can_resize {
                         return Err(DecoderError::InvalidMaxDynamicSize);
                     }
@@ -277,6 +284,7 @@ impl Decoder {
         let len = try!(decode_int(buf, 7));
 
         if len > buf.remaining() {
+            trace!("decode_string underflow; len={}; remaining={}", len, buf.remaining());
             return Err(DecoderError::StringUnderflow);
         }
 

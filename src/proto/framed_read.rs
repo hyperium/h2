@@ -50,6 +50,8 @@ impl<T> FramedRead<T> {
 
         let kind = head.kind();
 
+        trace!("    -> kind={:?}", kind);
+
         let frame = match kind {
             Kind::Settings => {
                 frame::Settings::load(head, &bytes[frame::HEADER_LEN..])?.into()

@@ -128,9 +128,17 @@ impl Headers {
     {
         let flags = HeadersFlag(head.flag());
 
+        trace!("loading headers; flags={:?}", flags);
+
         // Read the padding length
         if flags.is_padded() {
             let pad = src.get_u8() as usize;
+            let len = src.get_ref().len();
+
+            if pad >= len {
+                trace!("too much padding");
+                return Err(Error::TooMuchPadding);
+            }
 
             // Truncate the last `pad` bytes.
             let len = src.get_ref().len() - pad;
@@ -178,7 +186,7 @@ impl Headers {
         // priority.
         //
         // TODO: Provide a way to abort decoding if an error is hit.
-        try!(decoder.decode(src, |header| {
+        let res = decoder.decode(src, |header| {
             use hpack::Header::*;
 
             match header {
@@ -191,9 +199,15 @@ impl Headers {
                 Path(v) => set_pseudo!(path, v),
                 Status(v) => set_pseudo!(status, v),
             }
-        }));
+        });
+
+        if let Err(e) = res {
+            trace!("hpack decoding error; err={:?}", e);
+            return Err(e.into());
+        }
 
         if err {
+            trace!("repeated pseudo");
             return Err(hpack::DecoderError::RepeatedPseudo.into());
         }
 
