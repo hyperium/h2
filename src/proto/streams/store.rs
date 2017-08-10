@@ -32,9 +32,9 @@ pub(super) struct List<B> {
 pub(super) trait Next {
     fn next<B>(stream: &Stream<B>) -> Option<Key>;
 
-    fn set_next<B>(stream: &mut Stream<B>, key: Key);
+    fn set_next<B>(stream: &mut Stream<B>, key: Option<Key>);
 
-    fn take_next<B>(stream: &mut Stream<B>) -> Key;
+    fn take_next<B>(stream: &mut Stream<B>) -> Option<Key>;
 }
 
 /// A linked list
@@ -125,6 +125,20 @@ impl<B> Store<B> {
     }
 }
 
+impl<B> ops::Index<Key> for Store<B> {
+    type Output = Stream<B>;
+
+    fn index(&self, key: Key) -> &Self::Output {
+        self.slab.index(key.0)
+    }
+}
+
+impl<B> ops::IndexMut<Key> for Store<B> {
+    fn index_mut(&mut self, key: Key) -> &mut Self::Output {
+        self.slab.index_mut(key.0)
+    }
+}
+
 // ===== impl List =====
 
 impl<B> List<B> {
@@ -157,7 +171,7 @@ impl<B> List<B> {
             Some(ref mut idxs) => {
                 // Update the current tail node to point to `stream`
                 let key = stream.key();
-                N::set_next(&mut stream.resolve(idxs.tail), key);
+                N::set_next(&mut stream.resolve(idxs.tail), Some(key));
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
@@ -181,7 +195,7 @@ impl<B> List<B> {
                 assert!(N::next(&*stream).is_none());
                 self.indices = None;
             } else {
-                idxs.head = N::take_next(&mut *stream);
+                idxs.head = N::take_next(&mut *stream).unwrap();
                 self.indices = Some(idxs);
             }
 
@@ -189,6 +203,53 @@ impl<B> List<B> {
         }
 
         None
+    }
+
+    pub fn retain<N, F>(&mut self, store: &mut Store<B>, mut f: F)
+        where N: Next,
+              F: FnMut(&mut Stream<B>) -> bool,
+    {
+        if let Some(mut idxs) = self.indices {
+            let mut prev = None;
+            let mut curr = idxs.head;
+
+            loop {
+                if f(&mut store[curr]) {
+                    // Element is retained, walk to the next
+                    if let Some(next) = N::next(&mut store[curr]) {
+                        prev = Some(curr);
+                        curr = next;
+                    } else {
+                        // Tail
+                        break;
+                    }
+                } else {
+                    // Element is dropped
+                    if let Some(prev) = prev {
+                        let next = N::take_next(&mut store[curr]);
+                        N::set_next(&mut store[prev], next);
+
+                        // current is last element, but guaranteed to not be the
+                        // only one
+                        if next.is_none() {
+                            idxs.tail = prev;
+                            break;
+                        }
+                    } else {
+                        if let Some(next) = N::take_next(&mut store[curr]) {
+                            curr = next;
+                            idxs.head = next;
+                        } else {
+                            // Only element
+                            self.indices = None;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            self.indices = Some(idxs);
+        }
     }
 }
 

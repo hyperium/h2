@@ -97,13 +97,12 @@ impl store::Next for Next {
         stream.next
     }
 
-    fn set_next<B>(stream: &mut Stream<B>, key: store::Key) {
-        debug_assert!(stream.next.is_none());
-        stream.next = Some(key);
+    fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
+        stream.next = key;
     }
 
-    fn take_next<B>(stream: &mut Stream<B>) -> store::Key {
-        stream.next.take().unwrap()
+    fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
+        stream.next.take()
     }
 }
 
@@ -112,12 +111,11 @@ impl store::Next for NextCapacity {
         stream.next_capacity
     }
 
-    fn set_next<B>(stream: &mut Stream<B>, key: store::Key) {
-        debug_assert!(stream.next_capacity.is_none());
-        stream.next_capacity = Some(key);
+    fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
+        stream.next_capacity = key;
     }
 
-    fn take_next<B>(stream: &mut Stream<B>) -> store::Key {
-        stream.next_capacity.take().unwrap()
+    fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
+        stream.next_capacity.take()
     }
 }

@@ -159,14 +159,56 @@ impl<B> Send<B> where B: Buf {
     {
         self.prioritize.recv_window_update(frame)?;
 
-        // TODO: If there is available connection capacity, release pending
-        // streams.
-        //
+        // Get the current connection capacity
+        let connection = self.prioritize.available_window();
+
         // Walk each stream pending capacity and see if this change to the
         // connection window can increase the advertised capacity of the stream.
+        //
+        // TODO: This is not a hugely efficient operation. It could be better to
+        // change the pending_capacity structure to a red-black tree.
+        //
+        self.pending_capacity.retain::<stream::NextCapacity, _>(
+            store,
+            |stream| {
+                // Make sure that the stream is flagged as queued
+                debug_assert!(stream.is_pending_send_capacity);
 
-        unimplemented!();
-        // Ok(())
+                // Get the current unadvertised window
+                let unadvertised = stream.unadvertised_send_window;
+
+                if unadvertised == 0 {
+                    stream.is_pending_send_capacity = false;
+                    return false;
+                }
+
+                let effective_window_size = match stream.state.send_flow_control() {
+                    Some(flow) => flow.effective_window_size(),
+                    None => {
+                        // The state transitioned and this stream is no longer
+                        // waiting for updates
+                        stream.is_pending_send_capacity = false;
+                        return false;
+                    }
+                };
+
+                if connection <= effective_window_size - unadvertised {
+                    // The window is not increased, but we remain interested in
+                    // updates in the future.
+                    return true;
+                }
+
+                if connection >= effective_window_size {
+                    stream.unadvertised_send_window = 0;
+                } else {
+                    stream.unadvertised_send_window = effective_window_size - connection;
+                }
+
+                stream.notify_send();
+                true
+            });
+
+        Ok(())
     }
 
     pub fn recv_stream_window_update(&mut self,
