@@ -7,10 +7,11 @@ use http::{self, request, response, version, uri, Method, StatusCode, Uri};
 use http::{Request, Response};
 use http::header::{self, HeaderName, HeaderValue};
 
-use bytes::{BytesMut, Bytes};
+use bytes::{BytesMut, Bytes, Buf};
 use byteorder::{BigEndian, ByteOrder};
 use string::String;
 
+use std::fmt;
 use std::io::Cursor;
 
 /// Header frame
@@ -35,7 +36,7 @@ pub struct Headers {
     flags: HeadersFlag,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct HeadersFlag(u8);
 
 #[derive(Debug)]
@@ -127,7 +128,36 @@ impl Headers {
     {
         let flags = HeadersFlag(head.flag());
 
-        assert!(!flags.is_priority(), "unimplemented stream priority");
+        // Read the padding length
+        if flags.is_padded() {
+            let pad = src.get_u8() as usize;
+
+            // Truncate the last `pad` bytes.
+            let len = src.get_ref().len() - pad;
+            src.get_mut().truncate(len);
+        }
+
+        // Read the stream dependency
+        let stream_dep = if flags.is_priority() {
+            let mut buf = [0u8; 4];
+
+            // Read the next 4 bytes
+            src.copy_to_slice(&mut buf);
+
+            // Parse the stream ID and exclusive flag
+            let (stream_id, is_exclusive) = StreamId::parse(&buf);
+
+            // Read the weight
+            let weight = src.get_u8();
+
+            Some(StreamDependency {
+                stream_id,
+                weight,
+                is_exclusive,
+            })
+        } else {
+            None
+        };
 
         let mut pseudo = Pseudo::default();
         let mut fields = HeaderMap::new();
@@ -169,7 +199,7 @@ impl Headers {
 
         Ok(Headers {
             stream_id: head.stream_id(),
-            stream_dep: None,
+            stream_dep: stream_dep,
             fields: fields,
             pseudo: pseudo,
             flags: flags,
@@ -312,7 +342,7 @@ impl PushPromise {
 
         // TODO: Handle padding
 
-        let promised_id = StreamId::parse(&payload[..4]);
+        let (promised_id, _) = StreamId::parse(&payload[..4]);
 
         Ok(PushPromise {
             stream_id: head.stream_id(),
@@ -474,5 +504,16 @@ impl Default for HeadersFlag {
 impl From<HeadersFlag> for u8 {
     fn from(src: HeadersFlag) -> u8 {
         src.0
+    }
+}
+
+impl fmt::Debug for HeadersFlag {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("HeadersFlag")
+            .field("end_stream", &self.is_end_stream())
+            .field("end_headers", &self.is_end_headers())
+            .field("padded", &self.is_padded())
+            .field("priority", &self.is_priority())
+            .finish()
     }
 }

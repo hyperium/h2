@@ -9,11 +9,13 @@ const STREAM_ID_MASK: u32 = 1 << 31;
 impl StreamId {
     /// Parse the stream ID
     #[inline]
-    pub fn parse(buf: &[u8]) -> StreamId {
+    pub fn parse(buf: &[u8]) -> (StreamId, bool) {
         let unpacked = BigEndian::read_u32(buf);
+        let flag = unpacked & STREAM_ID_MASK == STREAM_ID_MASK;
+
         // Now clear the most significant bit, as that is reserved and MUST be
         // ignored when received.
-        StreamId(unpacked & !STREAM_ID_MASK)
+        (StreamId(unpacked & !STREAM_ID_MASK), flag)
     }
 
     pub fn is_client_initiated(&self) -> bool {

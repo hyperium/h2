@@ -38,10 +38,12 @@ impl Head {
 
     /// Parse an HTTP/2.0 frame header
     pub fn parse(header: &[u8]) -> Head {
+        let (stream_id, _) = StreamId::parse(&header[5..]);
+
         Head {
             kind: Kind::new(header[3]),
             flag: header[4],
-            stream_id: StreamId::parse(&header[5..]),
+            stream_id,
         }
     }
 
