@@ -79,7 +79,7 @@ impl<B> Send<B> where B: Buf {
                         stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        trace!("send_headers; frame={:?}", frame);
+        trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
         stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
 
