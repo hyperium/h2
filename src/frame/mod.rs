@@ -62,6 +62,7 @@ pub enum Frame<T = Bytes> {
     PushPromise(PushPromise),
     Settings(Settings),
     Ping(Ping),
+    GoAway(GoAway),
     WindowUpdate(WindowUpdate),
     Reset(Reset)
 }
@@ -100,6 +101,7 @@ impl<T> fmt::Debug for Frame<T> {
             PushPromise(ref frame) => write!(fmt, "Frame::PushPromise({:?})", frame),
             Settings(ref frame) => write!(fmt, "Frame::Settings({:?})", frame),
             Ping(ref frame) => write!(fmt, "Frame::Ping({:?})", frame),
+            GoAway(ref frame) => write!(fmt, "Frame::GoAway({:?})", frame),
             WindowUpdate(ref frame) => write!(fmt, "Frame::WindowUpdate({:?})", frame),
             Reset(ref frame) => write!(fmt, "Frame::Reset({:?})", frame),
         }

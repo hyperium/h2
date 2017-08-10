@@ -128,6 +128,12 @@ impl<T, P, B> Connection<T, P, B>
 
                     // TODO: ACK must be sent THEN settings applied.
                 }
+                Some(GoAway(frame)) => {
+                    // TODO: handle the last_stream_id. Also, should this be
+                    // handled as an error?
+                    let e = ConnectionError::Proto(frame.reason());
+                    return Ok(().into());
+                }
                 Some(Ping(frame)) => {
                     trace!("recv PING; frame={:?}", frame);
                     self.ping_pong.recv_ping(frame);

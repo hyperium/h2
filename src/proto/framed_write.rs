@@ -141,6 +141,10 @@ impl<T, B> Sink for FramedWrite<T, B>
                 v.encode(self.buf.get_mut());
                 trace!("encoded settings; rem={:?}", self.buf.remaining());
             }
+            Frame::GoAway(v) => {
+                v.encode(self.buf.get_mut());
+                trace!("encoded go_away; rem={:?}", self.buf.remaining());
+            }
             Frame::Ping(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded ping; rem={:?}", self.buf.remaining());

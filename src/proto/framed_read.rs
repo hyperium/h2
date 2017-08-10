@@ -64,7 +64,6 @@ impl<T> FramedRead<T> {
                 let _ = bytes.split_to(frame::HEADER_LEN);
                 frame::Data::load(head, bytes)?.into()
             }
-
             Kind::Headers => {
                 let mut buf = Cursor::new(bytes);
                 buf.set_position(frame::HEADER_LEN as u64);
@@ -80,16 +79,11 @@ impl<T> FramedRead<T> {
 
                 frame.into()
             }
-
             Kind::Reset => {
                 frame::Reset::load(head, &bytes[frame::HEADER_LEN..])?.into()
             }
-
-            // TODO
-
             Kind::GoAway => {
-                let _todo = try!(frame::GoAway::load(&bytes[frame::HEADER_LEN..]));
-                unimplemented!();
+                frame::GoAway::load(&bytes[frame::HEADER_LEN..])?.into()
             }
             Kind::PushPromise => {
                 frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..])?.into()
