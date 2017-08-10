@@ -26,6 +26,16 @@ pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
+#[derive(Debug)]
+pub struct Send<T> {
+    src: T,
+    dst: Option<Stream<Bytes>>,
+    // Pending data
+    buf: Option<Bytes>,
+    // True when this is the end of the stream
+    eos: bool,
+}
+
 /// Flush a Sink
 struct Flush<T> {
     inner: Option<T>,
@@ -87,6 +97,7 @@ impl<T, B> Server<T, B>
         Handshake { inner: Box::new(handshake) }
     }
 
+    /// Returns `Ready` when the underlying connection has closed.
     pub fn poll_close(&mut self) -> Poll<(), ConnectionError> {
         self.connection.poll()
     }
@@ -141,13 +152,21 @@ impl<T, B> fmt::Debug for Server<T, B>
 // ===== impl Stream =====
 
 impl<B: IntoBuf> Stream<B> {
+    /// Returns the current window size.
+    ///
+    /// This function also registers interest changes. The current task will be
+    /// notified when the window size is *increased*.
+    pub fn window_size(&mut self) -> usize {
+        self.inner.window_size()
+    }
+
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
         self.inner.send_response(response, end_of_stream)
     }
 
-    /// Send data
+    /// Send a single data frame
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
@@ -159,6 +178,67 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ConnectionError>
     {
         unimplemented!();
+    }
+}
+
+impl Stream<Bytes> {
+    /// Send the body
+    pub fn send<T>(self, src: T, end_of_stream: bool,) -> Send<T>
+        where T: futures::Stream<Item = Bytes, Error = ConnectionError>,
+    {
+        Send {
+            src: src,
+            dst: Some(self),
+            buf: None,
+            eos: end_of_stream,
+        }
+    }
+}
+
+// ===== impl Send =====
+
+impl<T> Future for Send<T>
+    where T: futures::Stream<Item = Bytes, Error = ConnectionError>,
+{
+    type Item = Stream<Bytes>;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        use futures::Stream;
+
+        loop {
+            if self.buf.is_none() {
+                self.buf = try_ready!(self.src.poll());
+            }
+
+            match self.buf.take() {
+                Some(mut buf) => {
+                    let cap = self.dst.as_mut().unwrap().window_size();
+
+                    if cap == 0 {
+                        self.buf = Some(buf);
+                        return Ok(Async::NotReady);
+                    } if cap >= buf.len() {
+                        self.dst.as_mut().unwrap().send_data(buf, false)?;
+                    } else {
+                        let chunk = buf.split_to(cap);
+                        self.buf = Some(buf);
+                        self.dst.as_mut().unwrap().send_data(chunk, false)?;
+
+                        return Ok(Async::NotReady);
+                    }
+                }
+                None => {
+                    // TODO: It would be nice to not have to send an extra
+                    // frame...
+                    if self.eos {
+                        self.dst.as_mut().unwrap().send_data(Bytes::new(), true)?;
+                    }
+
+                    return Ok(Async::Ready(self.dst.take().unwrap()));
+                }
+            }
+        }
     }
 }
 

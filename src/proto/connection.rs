@@ -103,6 +103,8 @@ impl<T, P, B> Connection<T, P, B>
                 }
             };
 
+            debug!("recv; frame={:?}", frame);
+
             match frame {
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);

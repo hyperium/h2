@@ -104,7 +104,7 @@ impl<T, B> Sink for FramedWrite<T, B>
             return Ok(AsyncSink::NotReady(item));
         }
 
-        trace!("send; frame={:?}", item);
+        debug!("send; frame={:?}", item);
 
         match item {
             Frame::Data(mut v) => {

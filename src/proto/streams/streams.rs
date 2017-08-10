@@ -190,40 +190,6 @@ impl<B> Streams<B>
         me.actions.recv.recv_push_promise::<P>(frame, &mut stream)
     }
 
-    pub fn send_headers(&mut self, headers: frame::Headers)
-        -> Result<(), ConnectionError>
-    {
-        unimplemented!();
-        /*
-        let id = frame.stream_id();
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        // let (id, state) = me.actions.send.open());
-
-
-        let state = match me.store.entry(id) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => {
-                let (id, state) = try!(me.actions.send.open());
-                e.insert(state)
-            }
-        };
-
-        if frame.is_trailers() {
-            try!(me.actions.send.send_eos(state));
-        } else {
-            try!(me.actions.send.send_headers(state, frame.is_end_stream()));
-        }
-
-        if state.is_closed() {
-            me.actions.dec_num_streams(id);
-        }
-
-        Ok(())
-        */
-    }
-
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let key = {
             let mut me = self.inner.lock().unwrap();
@@ -398,6 +364,15 @@ impl<B> StreamRef<B>
         });
 
         Ok(chunk.into())
+    }
+
+    /// Returns the current window size
+    pub fn window_size(&mut self) -> usize {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+        me.actions.send.window_size(&mut stream)
     }
 }
 

@@ -16,6 +16,10 @@ pub(super) struct Prioritize<B> {
 
     /// Holds frames that are waiting to be written to the socket
     buffer: Buffer<B>,
+
+    /// Holds the connection task. This signals the connection that there is
+    /// data to flush.
+    conn_task: Option<task::Task>,
 }
 
 impl<B> Prioritize<B>
@@ -28,6 +32,7 @@ impl<B> Prioritize<B>
             flow_control: FlowControl::new(config.init_local_window_sz),
             buffered_data: 0,
             buffer: Buffer::new(),
+            conn_task: None,
         }
     }
 
@@ -71,6 +76,10 @@ impl<B> Prioritize<B>
 
         // Queue the stream
         push_sender(&mut self.pending_send, stream);
+
+        if let Some(ref task) = self.conn_task {
+            task.notify();
+        }
     }
 
     pub fn poll_complete<T>(&mut self,
@@ -79,12 +88,16 @@ impl<B> Prioritize<B>
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
+        self.conn_task = Some(task::current());
+
+        trace!("poll_complete");
         loop {
             // Ensure codec is ready
             try_ready!(dst.poll_ready());
 
             match self.pop_frame(store) {
                 Some(frame) => {
+                    trace!("writing frame={:?}", frame);
                     // Subtract the data size
                     self.buffered_data -= frame.flow_len();
 

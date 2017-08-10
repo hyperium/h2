@@ -79,6 +79,7 @@ impl<B> Send<B> where B: Buf {
                         stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        trace!("send_headers; frame={:?}", frame);
         // Update the state
         stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
 
@@ -250,6 +251,26 @@ impl<B> Send<B> where B: Buf {
         stream.notify_send();
 
         Ok(())
+    }
+
+    pub fn window_size(&mut self, stream: &mut Stream<B>) -> usize {
+        if let Some(flow) = stream.state.send_flow_control() {
+            // Track the current task
+            stream.send_task = Some(task::current());
+
+            // We are observing the window, so apply the pending updates
+            flow.apply_window_update();
+
+            let mut window = flow.effective_window_size();
+
+            if stream.unadvertised_send_window > window {
+                return 0;
+            }
+
+            return (window - stream.unadvertised_send_window) as usize;
+        }
+
+        0
     }
 
     pub fn dec_num_streams(&mut self) {

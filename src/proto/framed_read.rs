@@ -49,7 +49,6 @@ impl<T> FramedRead<T> {
         }
 
         let kind = head.kind();
-        debug!("decoded; kind={:?}", kind);
 
         let frame = match kind {
             Kind::Settings => {
@@ -106,7 +105,6 @@ impl<T> FramedRead<T> {
                 unimplemented!()
             }
         };
-        debug!("decoded; frame={:?}", frame);
 
         Ok(Some(frame))
     }
@@ -128,7 +126,6 @@ impl<T> futures::Stream for FramedRead<T>
 
             trace!("poll; bytes={}B", bytes.len());
             if let Some(frame) = try!(self.decode_frame(bytes)) {
-                debug!("poll; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));
             }
         }
