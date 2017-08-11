@@ -136,7 +136,8 @@ impl<T> FramedRead<T> {
                 }
             }
             Kind::Unknown => {
-                unimplemented!()
+                // Unknown frames are ignored
+                return Ok(None);
             }
         };
 

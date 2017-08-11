@@ -281,8 +281,8 @@ impl<T: AsyncRead> Future for ReadPreface<T> {
             let n = try_nb!(self.inner.as_mut().unwrap().read(&mut buf[..rem]));
 
             if PREFACE[self.pos..self.pos+n] != buf[..n] {
-                // TODO: Invalid connection preface
-                unimplemented!();
+                // TODO: Should this just write the GO_AWAY frame directly?
+                return Err(ProtocolError.into());
             }
 
             self.pos += n;
