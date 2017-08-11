@@ -221,14 +221,15 @@ impl<B> Recv<B> where B: Buf {
 
     pub fn recv_push_promise<P: Peer>(&mut self,
                                       frame: frame::PushPromise,
-                                      stream: &mut store::Ptr<B>)
+                                      stream: store::Key,
+                                      store: &mut Store<B>)
         -> Result<(), ConnectionError>
     {
         // First, make sure that the values are legit
         self.ensure_can_reserve::<P>(frame.promised_id())?;
 
         // Make sure that the stream state is valid
-        stream.state.ensure_recv_open()?;
+        store[stream].state.ensure_recv_open()?;
 
         // TODO: Streams in the reserved states do not count towards the concurrency
         // limit. However, it seems like there should be a cap otherwise this
@@ -247,15 +248,17 @@ impl<B> Recv<B> where B: Buf {
         let mut new_stream = Stream::new(frame.promised_id());
         new_stream.state.reserve_remote();
 
-        let mut ppp = stream.pending_push_promises.take();
+        let mut ppp = store[stream].pending_push_promises.take();
 
         {
             // Store the stream
-            let mut new_stream = stream.store()
+            let mut new_stream = store
                 .insert(frame.promised_id(), new_stream);
 
             ppp.push::<stream::Next>(&mut new_stream);
         }
+
+        let stream = &mut store[stream];
 
         stream.pending_push_promises = ppp;
         stream.notify_recv();

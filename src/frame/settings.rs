@@ -6,31 +6,12 @@ use bytes::{BytesMut, BufMut, BigEndian};
 pub struct Settings {
     flags: SettingsFlags,
     // Fields
-    values: SettingSet,
-}
-
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct SettingSet {
     header_table_size: Option<u32>,
     enable_push: Option<u32>,
     max_concurrent_streams: Option<u32>,
     initial_window_size: Option<u32>,
     max_frame_size: Option<u32>,
     max_header_list_size: Option<u32>,
-}
-
-impl SettingSet {
-    pub fn enable_push(&self) -> Option<bool> {
-        self.enable_push.map(|n| n != 0)
-    }
-
-    pub fn initial_window_size(&self) -> Option<u32> {
-        self.initial_window_size
-    }
-
-    pub fn max_concurrent_streams(&self) -> Option<u32> {
-        self.max_concurrent_streams
-    }
 }
 
 /// An enum that lists all valid settings that can be sent in a SETTINGS
@@ -73,6 +54,22 @@ impl Settings {
         self.flags.is_ack()
     }
 
+    pub fn enable_push(&self) -> Option<bool> {
+        self.enable_push.map(|n| n != 0)
+    }
+
+    pub fn initial_window_size(&self) -> Option<u32> {
+        self.initial_window_size
+    }
+
+    pub fn max_concurrent_streams(&self) -> Option<u32> {
+        self.max_concurrent_streams
+    }
+
+    pub fn max_frame_size(&self) -> Option<u32> {
+        self.max_frame_size
+    }
+
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
         use self::Setting::*;
 
@@ -107,12 +104,12 @@ impl Settings {
         for raw in payload.chunks(6) {
             match Setting::load(raw) {
                 Some(HeaderTableSize(val)) => {
-                    settings.values.header_table_size = Some(val);
+                    settings.header_table_size = Some(val);
                 }
                 Some(EnablePush(val)) => {
                     match val {
                         0 | 1 => {
-                            settings.values.enable_push = Some(val);
+                            settings.enable_push = Some(val);
                         }
                         _ => {
                             return Err(Error::InvalidSettingValue);
@@ -120,24 +117,24 @@ impl Settings {
                     }
                 }
                 Some(MaxConcurrentStreams(val)) => {
-                    settings.values.max_concurrent_streams = Some(val);
+                    settings.max_concurrent_streams = Some(val);
                 }
                 Some(InitialWindowSize(val)) => {
                     if val as usize > MAX_INITIAL_WINDOW_SIZE {
                         return Err(Error::InvalidSettingValue);
                     } else {
-                        settings.values.initial_window_size = Some(val);
+                        settings.initial_window_size = Some(val);
                     }
                 }
                 Some(MaxFrameSize(val)) => {
                     if val < DEFAULT_MAX_FRAME_SIZE || val as usize > MAX_MAX_FRAME_SIZE {
                         return Err(Error::InvalidSettingValue);
                     } else {
-                        settings.values.max_frame_size = Some(val);
+                        settings.max_frame_size = Some(val);
                     }
                 }
                 Some(MaxHeaderListSize(val)) => {
-                    settings.values.max_header_list_size = Some(val);
+                    settings.max_header_list_size = Some(val);
                 }
                 None => {}
             }
@@ -171,27 +168,27 @@ impl Settings {
     fn for_each<F: FnMut(Setting)>(&self, mut f: F) {
         use self::Setting::*;
 
-        if let Some(v) = self.values.header_table_size {
+        if let Some(v) = self.header_table_size {
             f(HeaderTableSize(v));
         }
 
-        if let Some(v) = self.values.enable_push {
+        if let Some(v) = self.enable_push {
             f(EnablePush(v));
         }
 
-        if let Some(v) = self.values.max_concurrent_streams {
+        if let Some(v) = self.max_concurrent_streams {
             f(MaxConcurrentStreams(v));
         }
 
-        if let Some(v) = self.values.initial_window_size {
+        if let Some(v) = self.initial_window_size {
             f(InitialWindowSize(v));
         }
 
-        if let Some(v) = self.values.max_frame_size {
+        if let Some(v) = self.max_frame_size {
             f(MaxFrameSize(v));
         }
 
-        if let Some(v) = self.values.max_header_list_size {
+        if let Some(v) = self.max_header_list_size {
             f(MaxHeaderListSize(v));
         }
     }

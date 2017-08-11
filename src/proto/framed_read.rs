@@ -48,6 +48,10 @@ impl<T> FramedRead<T> {
         }
     }
 
+    pub fn apply_remote_settings(&mut self, _settings: &frame::Settings) {
+        // TODO: Is this needed?
+    }
+
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ConnectionError> {
         trace!("decoding frame from {}B", bytes.len());
 
@@ -141,6 +145,10 @@ impl<T> FramedRead<T> {
         };
 
         Ok(Some(frame))
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        self.inner.get_mut()
     }
 }
 

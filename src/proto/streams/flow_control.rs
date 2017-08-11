@@ -48,6 +48,21 @@ impl FlowControl {
         }
     }
 
+    /// Reduce future capacity of the window.
+    ///
+    /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
+    pub fn shrink_window(&mut self, dec: WindowSize) {
+        /*
+        if decr < self.next_window_update {
+            self.next_window_update -= decr
+        } else {
+            self.underflow += decr - self.next_window_update;
+            self.next_window_update = 0;
+        }
+        */
+    }
+
+
     /// Claims the provided amount from the window, if there is enough space.
     ///
     /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than

@@ -90,6 +90,14 @@ impl<T, B> FramedWrite<T, B>
     }
 }
 
+impl<T, B> FramedWrite<T, B> {
+    pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
+        if let Some(val) = settings.max_frame_size() {
+            self.max_frame_size = val;
+        }
+    }
+}
+
 impl<T, B> Sink for FramedWrite<T, B>
     where T: AsyncWrite,
           B: Buf,

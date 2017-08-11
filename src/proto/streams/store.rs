@@ -16,7 +16,7 @@ pub(super) struct Store<B> {
 /// "Pointer" to an entry in the store
 pub(super) struct Ptr<'a, B: 'a> {
     key: Key,
-    store: &'a mut Store<B>,
+    slab: &'a mut slab::Slab<Stream<B>>,
 }
 
 /// References an entry in the store.
@@ -72,7 +72,7 @@ impl<B> Store<B> {
     pub fn resolve(&mut self, key: Key) -> Ptr<B> {
         Ptr {
             key: key,
-            store: self,
+            slab: &mut self.slab,
         }
     }
 
@@ -80,7 +80,7 @@ impl<B> Store<B> {
         if let Some(&key) = self.ids.get(id) {
             Some(Ptr {
                 key: Key(key),
-                store: self,
+                slab: &mut self.slab,
             })
         } else {
             None
@@ -93,7 +93,7 @@ impl<B> Store<B> {
 
         Ptr {
             key: Key(key),
-            store: self,
+            slab: &mut self.slab,
         }
     }
 
@@ -117,10 +117,13 @@ impl<B> Store<B> {
     }
 
     pub fn for_each<F>(&mut self, mut f: F)
-        where F: FnMut(&mut Stream<B>)
+        where F: FnMut(Ptr<B>)
     {
-        for &id in self.ids.values() {
-            f(&mut self.slab[id])
+        for &key in self.ids.values() {
+            f(Ptr {
+                key: Key(key),
+                slab: &mut self.slab,
+            });
         }
     }
 }
@@ -265,19 +268,15 @@ impl<'a, B: 'a> Ptr<'a, B> {
         self.key
     }
 
-    pub fn store(&mut self) -> &mut Store<B> {
-        &mut self.store
-    }
-
     pub fn resolve(&mut self, key: Key) -> Ptr<B> {
         Ptr {
             key: key,
-            store: self.store,
+            slab: &mut *self.slab,
         }
     }
 
     pub fn into_mut(self) -> &'a mut Stream<B> {
-        &mut self.store.slab[self.key.0]
+        &mut self.slab[self.key.0]
     }
 }
 
@@ -285,13 +284,13 @@ impl<'a, B: 'a> ops::Deref for Ptr<'a, B> {
     type Target = Stream<B>;
 
     fn deref(&self) -> &Stream<B> {
-        &self.store.slab[self.key.0]
+        &self.slab[self.key.0]
     }
 }
 
 impl<'a, B: 'a> ops::DerefMut for Ptr<'a, B> {
     fn deref_mut(&mut self) -> &mut Stream<B> {
-        &mut self.store.slab[self.key.0]
+        &mut self.slab[self.key.0]
     }
 }
 

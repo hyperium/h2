@@ -1,3 +1,4 @@
+mod codec;
 mod connection;
 mod framed_read;
 mod framed_write;
@@ -8,6 +9,7 @@ mod streams;
 pub use self::connection::Connection;
 pub use self::streams::{Streams, StreamRef, Chunk};
 
+use self::codec::Codec;
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::PingPong;
@@ -52,10 +54,6 @@ pub struct WindowUpdate {
     increment: WindowSize,
 }
 
-type Codec<T, B> =
-    FramedRead<
-        FramedWrite<T, B>>;
-
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
 pub const MAX_WINDOW_SIZE: WindowSize = ::std::u32::MAX;
@@ -90,7 +88,7 @@ pub fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, B::Buf>)
         .max_frame_length(frame::DEFAULT_MAX_FRAME_SIZE as usize)
         .new_read(framed_write);
 
-    let codec = FramedRead::new(framed);
+    let codec = Codec::from_framed(FramedRead::new(framed));
 
     Connection::new(codec)
 }

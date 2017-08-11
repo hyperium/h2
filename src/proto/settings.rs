@@ -3,13 +3,16 @@ use proto::*;
 
 #[derive(Debug)]
 pub struct Settings {
-    pending_ack: bool,
+    /// Received SETTINGS frame pending processing. The ACK must be written to
+    /// the socket first then the settings applied **before** receiving any
+    /// further frames.
+    pending: Option<frame::Settings>,
 }
 
 impl Settings {
     pub fn new() -> Self {
         Settings {
-            pending_ack: false,
+            pending: None,
         }
     }
 
@@ -18,29 +21,30 @@ impl Settings {
             debug!("received remote settings ack");
             // TODO: handle acks
         } else {
-            assert!(!self.pending_ack);
-            self.pending_ack = true;
+            assert!(self.pending.is_none());
+            self.pending = Some(frame);
         }
     }
 
-    pub fn send_pending_ack<T, B>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_ack<T, B>(&mut self,
+                                  dst: &mut Codec<T, B>,
+                                  streams: &mut Streams<B>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
     {
-        if self.pending_ack {
+        if let Some(ref settings) = self.pending {
             let frame = frame::Settings::ack();
 
-            match dst.start_send(frame.into())? {
-                AsyncSink::Ready => {
-                    self.pending_ack = false;
-                    return Ok(().into());
-                }
-                AsyncSink::NotReady(_) => {
-                    return Ok(Async::NotReady);
-                }
+            if let AsyncSink::NotReady(_) = dst.start_send(frame.into())? {
+                return Ok(Async::NotReady);
             }
+
+            dst.apply_remote_settings(settings);
+            streams.apply_remote_settings(settings);
         }
+
+        self.pending = None;
 
         Ok(().into())
     }

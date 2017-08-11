@@ -273,6 +273,63 @@ impl<B> Send<B> where B: Buf {
         0
     }
 
+    pub fn apply_remote_settings(&mut self,
+                                 settings: &frame::Settings,
+                                 store: &mut Store<B>) {
+        if let Some(val) = settings.max_concurrent_streams() {
+            self.max_streams = Some(val as usize);
+        }
+
+        // Applies an update to the remote endpoint's initial window size.
+        //
+        // Per RFC 7540 §6.9.2:
+        //
+        // In addition to changing the flow-control window for streams that are
+        // not yet active, a SETTINGS frame can alter the initial flow-control
+        // window size for streams with active flow-control windows (that is,
+        // streams in the "open" or "half-closed (remote)" state). When the
+        // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
+        // the size of all stream flow-control windows that it maintains by the
+        // difference between the new value and the old value.
+        //
+        // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
+        // space in a flow-control window to become negative. A sender MUST
+        // track the negative flow-control window and MUST NOT send new
+        // flow-controlled frames until it receives WINDOW_UPDATE frames that
+        // cause the flow-control window to become positive.
+        if let Some(val) = settings.initial_window_size() {
+            let old_val = self.init_window_sz;
+            self.init_window_sz = val;
+
+            if val < old_val {
+                let dec = old_val - val;
+
+                store.for_each(|mut stream| {
+                    let stream = &mut *stream;
+
+                    if let Some(flow) = stream.state.send_flow_control() {
+                        flow.shrink_window(val);
+
+                        // Update the unadvertised number as well
+                        if stream.unadvertised_send_window < dec {
+                            stream.unadvertised_send_window = 0;
+                        } else {
+                            stream.unadvertised_send_window -= dec;
+                        }
+                    }
+                });
+            } else if val > old_val {
+                let inc = val - old_val;
+
+                store.for_each(|mut stream| {
+                    if let Some(flow) = stream.state.send_flow_control() {
+                        unimplemented!();
+                    }
+                });
+            }
+        }
+    }
+
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {
         if id >= self.next_stream_id {
             return Err(ProtocolError.into());

@@ -34,3 +34,6 @@ openssl = { version = "0.9.14", "features" = ["v102"] }
 tokio-openssl = "0.1.3"
 env_logger = "0.4.3"
 io-dump = { git = "https://github.com/carllerche/io-dump" }
+
+[replace]
+"tokio-io:0.1.2" = { git = "https://github.com/tokio-rs/tokio-io" }

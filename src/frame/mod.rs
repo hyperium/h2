@@ -46,7 +46,7 @@ pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
 pub use self::ping::Ping;
 pub use self::priority::{Priority, StreamDependency};
 pub use self::reset::Reset;
-pub use self::settings::{Settings, SettingSet};
+pub use self::settings::Settings;
 pub use self::stream_id::StreamId;
 pub use self::window_update::WindowUpdate;
 

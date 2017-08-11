@@ -47,22 +47,6 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    pub fn update_local_settings(&mut self, _local: frame::SettingSet) -> Result<(), ConnectionError> {
-        unimplemented!();
-    }
-
-    pub fn remote_initial_window_size(&self) -> u32 {
-        unimplemented!();
-    }
-
-    pub fn remote_max_concurrent_streams(&self) -> Option<usize> {
-        unimplemented!();
-    }
-
-    pub fn remote_push_enabled(&self) -> Option<bool> {
-        unimplemented!();
-    }
-
     /// Returns `Ready` when the connection is ready to receive a frame.
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         try_ready!(self.poll_send_ready());
@@ -125,8 +109,6 @@ impl<T, P, B> Connection<T, P, B>
                 Some(Settings(frame)) => {
                     trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
-
-                    // TODO: ACK must be sent THEN settings applied.
                 }
                 Some(GoAway(frame)) => {
                     // TODO: handle the last_stream_id. Also, should this be
@@ -160,12 +142,10 @@ impl<T, P, B> Connection<T, P, B>
     /// Returns `Ready` when the `Connection` is ready to receive a frame from
     /// the socket.
     fn poll_recv_ready(&mut self) -> Poll<(), ConnectionError> {
-        // Pong, settings ack, and stream refusals are high priority frames to
-        // send. If the write buffer is full, we stop reading any further frames
-        // until these high priority writes can be committed to the buffer.
-
+        // The order of these calls don't really matter too much as only one
+        // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
-        try_ready!(self.settings.send_pending_ack(&mut self.codec));
+        try_ready!(self.settings.send_pending_ack(&mut self.codec, &mut self.streams));
         try_ready!(self.streams.send_pending_refusal(&mut self.codec));
 
         Ok(().into())

@@ -154,7 +154,9 @@ impl<B> Streams<B>
         let me = &mut *me;
 
         let actions = &mut me.actions;
-        me.store.for_each(|stream| actions.recv.recv_err(err, stream));
+        me.store.for_each(|mut stream| {
+            actions.recv.recv_err(err, &mut *stream)
+        });
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
@@ -189,11 +191,11 @@ impl<B> Streams<B>
         let id = frame.stream_id();
 
         let mut stream = match me.store.find_mut(&id) {
-            Some(stream) => stream,
+            Some(stream) => stream.key(),
             None => return Err(ProtocolError.into()),
         };
 
-        me.actions.recv.recv_push_promise::<P>(frame, &mut stream)
+        me.actions.recv.recv_push_promise::<P>(frame, stream, &mut me.store)
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
@@ -246,6 +248,13 @@ impl<B> Streams<B>
         let me = &mut *me;
 
         me.actions.send.poll_complete(&mut me.store, dst)
+    }
+
+    pub fn apply_remote_settings(&mut self, frame: &frame::Settings) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.send.apply_remote_settings(frame, &mut me.store);
     }
 }
 
