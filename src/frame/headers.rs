@@ -123,40 +123,36 @@ impl Headers {
         }
     }
 
-    pub fn load(head: Head, src: &mut Cursor<Bytes>, decoder: &mut hpack::Decoder)
-        -> Result<Self, Error>
+    /// Loads the header frame but doesn't actually do HPACK decoding.
+    ///
+    /// HPACK decoding is done in the `load_hpack` step.
+    pub fn load(head: Head, mut src: BytesMut)
+        -> Result<(Self, BytesMut), Error>
     {
         let flags = HeadersFlag(head.flag());
+        let mut pad = 0;
 
         trace!("loading headers; flags={:?}", flags);
 
         // Read the padding length
         if flags.is_padded() {
-            let pad = src.get_u8() as usize;
-            let len = src.get_ref().len();
+            // TODO: Ensure payload is sized correctly
+            pad = src[0] as usize;
 
-            if pad >= len {
-                trace!("too much padding");
-                return Err(Error::TooMuchPadding);
-            }
-
-            // Truncate the last `pad` bytes.
-            let len = src.get_ref().len() - pad;
-            src.get_mut().truncate(len);
+            // Drop the padding
+            let _ = src.split_to(1);
         }
 
         // Read the stream dependency
         let stream_dep = if flags.is_priority() {
-            let mut buf = [0u8; 4];
-
-            // Read the next 4 bytes
-            src.copy_to_slice(&mut buf);
-
             // Parse the stream ID and exclusive flag
-            let (stream_id, is_exclusive) = StreamId::parse(&buf);
+            let (stream_id, is_exclusive) = StreamId::parse(&src[..4]);
 
             // Read the weight
-            let weight = src.get_u8();
+            let weight = src[4];
+
+            // Drop the next 5 bytes
+            let _ = src.split_to(5);
 
             Some(StreamDependency {
                 stream_id,
@@ -167,31 +163,56 @@ impl Headers {
             None
         };
 
-        let mut pseudo = Pseudo::default();
-        let mut fields = HeaderMap::new();
+        if pad > 0 {
+            if pad > src.len() {
+                return Err(Error::TooMuchPadding);
+            }
+
+            let len = src.len() - pad;
+            src.truncate(len);
+        }
+
+        let headers = Headers {
+            stream_id: head.stream_id(),
+            stream_dep: stream_dep,
+            fields: HeaderMap::new(),
+            pseudo: Pseudo::default(),
+            flags: flags,
+        };
+
+        Ok((headers, src))
+    }
+
+    pub fn load_hpack(&mut self,
+                      src: BytesMut,
+                      decoder: &mut hpack::Decoder)
+        -> Result<(), Error>
+    {
         let mut err = false;
 
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
-                if pseudo.$field.is_some() {
+                if self.pseudo.$field.is_some() {
                     err = true;
                 } else {
-                    pseudo.$field = Some($val);
+                    self.pseudo.$field = Some($val);
                 }
             }}
         }
+
+        let mut src = Cursor::new(src.freeze());
 
         // At this point, we're going to assume that the hpack encoded headers
         // contain the entire payload. Later, we need to check for stream
         // priority.
         //
         // TODO: Provide a way to abort decoding if an error is hit.
-        let res = decoder.decode(src, |header| {
+        let res = decoder.decode(&mut src, |header| {
             use hpack::Header::*;
 
             match header {
                 Field { name, value } => {
-                    fields.append(name, value);
+                    self.fields.append(name, value);
                 }
                 Authority(v) => set_pseudo!(authority, v),
                 Method(v) => set_pseudo!(method, v),
@@ -211,13 +232,7 @@ impl Headers {
             return Err(hpack::DecoderError::RepeatedPseudo.into());
         }
 
-        Ok(Headers {
-            stream_id: head.stream_id(),
-            stream_dep: stream_dep,
-            fields: fields,
-            pseudo: pseudo,
-            flags: flags,
-        })
+        Ok(())
     }
 
     /// Returns `true` if the frame represents trailers

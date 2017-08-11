@@ -2,10 +2,11 @@ use {hpack, ConnectionError};
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
 use proto::*;
+use error::Reason::*;
 
 use futures::*;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
@@ -24,7 +25,16 @@ pub struct FramedRead<T> {
 
 /// Partially loaded headers frame
 #[derive(Debug)]
-enum Partial {
+struct Partial {
+    /// Empty frame
+    frame: Continuable,
+
+    /// Partial header payload
+    buf: BytesMut,
+}
+
+#[derive(Debug)]
+enum Continuable {
     Headers(frame::Headers),
     // PushPromise(frame::PushPromise),
 }
@@ -38,14 +48,14 @@ impl<T> FramedRead<T> {
         }
     }
 
-    fn decode_frame(&mut self, mut bytes: Bytes) -> Result<Option<Frame>, ConnectionError> {
+    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ConnectionError> {
         trace!("decoding frame from {}B", bytes.len());
 
         // Parse the head
         let head = frame::Head::parse(&bytes);
 
         if self.partial.is_some() && head.kind() != Kind::Continuation {
-            unimplemented!();
+            return Err(ProtocolError.into());
         }
 
         let kind = head.kind();
@@ -64,22 +74,29 @@ impl<T> FramedRead<T> {
             }
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
-                frame::Data::load(head, bytes)?.into()
+                frame::Data::load(head, bytes.freeze())?.into()
             }
             Kind::Headers => {
-                let mut buf = Cursor::new(bytes);
-                buf.set_position(frame::HEADER_LEN as u64);
-
+                // Drop the frame header
                 // TODO: Change to drain: carllerche/bytes#130
-                let frame = try!(frame::Headers::load(head, &mut buf, &mut self.hpack));
+                let _ = bytes.split_to(frame::HEADER_LEN);
 
-                if !frame.is_end_headers() {
-                    // Wait for continuation frames
-                    self.partial = Some(Partial::Headers(frame));
+                // Parse the header frame w/o parsing the payload
+                let (mut headers, payload) = frame::Headers::load(head, bytes)?;
+
+                if headers.is_end_headers() {
+                    // Load the HPACK encoded headers & return the frame
+                    headers.load_hpack(payload, &mut self.hpack)?;
+                    headers.into()
+                } else {
+                    // Defer loading the frame
+                    self.partial = Some(Partial {
+                        frame: Continuable::Headers(headers),
+                        buf: payload,
+                    });
+
                     return Ok(None);
                 }
-
-                frame.into()
             }
             Kind::Reset => {
                 frame::Reset::load(head, &bytes[frame::HEADER_LEN..])?.into()
@@ -95,7 +112,28 @@ impl<T> FramedRead<T> {
                 return Ok(None);
             }
             Kind::Continuation => {
-                unimplemented!();
+                // TODO: Un-hack this
+                let end_of_headers = (head.flag() & 0x4) == 0x4;
+
+                let mut partial = match self.partial.take() {
+                    Some(partial) => partial,
+                    None => return Err(ProtocolError.into()),
+                };
+
+                // Extend the buf
+                partial.buf.extend_from_slice(&bytes[frame::HEADER_LEN..]);
+
+                if !end_of_headers {
+                    self.partial = Some(partial);
+                    return Ok(None);
+                }
+
+                match partial.frame {
+                    Continuable::Headers(mut frame) => {
+                        frame.load_hpack(partial.buf, &mut self.hpack)?;
+                        frame.into()
+                    }
+                }
             }
             Kind::Unknown => {
                 unimplemented!()
@@ -116,7 +154,7 @@ impl<T> futures::Stream for FramedRead<T>
         loop {
             trace!("poll");
             let bytes = match try_ready!(self.inner.poll()) {
-                Some(bytes) => bytes.freeze(),
+                Some(bytes) => bytes,
                 None => return Ok(Async::Ready(None)),
             };
 
