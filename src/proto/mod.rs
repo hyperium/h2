@@ -85,6 +85,9 @@ pub fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, B::Buf>)
         .length_field_length(3)
         .length_adjustment(9)
         .num_skip(0) // Don't skip the header
+        // TODO: make this configurable and allow it to be changed during
+        // runtime.
+        .max_frame_length(frame::DEFAULT_MAX_FRAME_SIZE as usize)
         .new_read(framed_write);
 
     let codec = FramedRead::new(framed);

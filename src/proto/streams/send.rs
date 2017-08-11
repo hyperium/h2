@@ -273,6 +273,14 @@ impl<B> Send<B> where B: Buf {
         0
     }
 
+    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {
+        if id >= self.next_stream_id {
+            return Err(ProtocolError.into());
+        }
+
+        Ok(())
+    }
+
     pub fn dec_num_streams(&mut self) {
         self.num_streams -= 1;
     }

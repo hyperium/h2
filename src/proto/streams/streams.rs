@@ -53,7 +53,7 @@ impl<B> Streams<B>
         Streams {
             inner: Arc::new(Mutex::new(Inner {
                 actions: Actions {
-                    recv: Recv::new(&config),
+                    recv: Recv::new::<P>(&config),
                     send: Send::new::<P>(&config),
                 },
                 store: Store::new(),
@@ -129,10 +129,17 @@ impl<B> Streams<B>
 
         let id = frame.stream_id();
 
+        if id.is_zero() {
+            return Err(ProtocolError.into());
+        }
+
         let mut stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
-            // TODO: should this be an error?
-            None => return Ok(()),
+            None => {
+                // TODO: Are there other error cases?
+                me.actions.ensure_not_idle::<P>(id)?;
+                return Ok(());
+            }
         };
 
         me.actions.transition::<P, _, _>(stream, |actions, stream| {
@@ -165,6 +172,8 @@ impl<B> Streams<B>
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
                 try!(me.actions.send.recv_stream_window_update(frame, &mut stream));
+            } else {
+                me.actions.recv.ensure_not_idle(id)?;
             }
         }
 
@@ -413,6 +422,16 @@ impl<B> Drop for Chunk<B>
 impl<B> Actions<B>
     where B: Buf,
 {
+    fn ensure_not_idle<P: Peer>(&mut self, id: StreamId)
+        -> Result<(), ConnectionError>
+    {
+        if self.is_local_init::<P>(id) {
+            self.send.ensure_not_idle(id)
+        } else {
+            self.recv.ensure_not_idle(id)
+        }
+    }
+
     fn dec_num_streams<P: Peer>(&mut self, id: StreamId) {
         if self.is_local_init::<P>(id) {
             self.send.dec_num_streams();

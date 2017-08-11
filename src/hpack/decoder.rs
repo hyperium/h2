@@ -36,6 +36,7 @@ pub enum DecoderError {
     IntegerOverflow,
     StringUnderflow,
     RepeatedPseudo,
+    UnexpectedEndOfStream,
 }
 
 enum Representation {
@@ -276,6 +277,10 @@ impl Decoder {
 
     fn decode_string(&mut self, buf: &mut Cursor<Bytes>) -> Result<Bytes, DecoderError> {
         const HUFF_FLAG: u8 = 0b10000000;
+
+        if !buf.has_remaining() {
+            return Err(DecoderError::UnexpectedEndOfStream);
+        }
 
         // The first bit in the first byte contains the huffman encoded flag.
         let huff = peek_u8(buf) & HUFF_FLAG == HUFF_FLAG;

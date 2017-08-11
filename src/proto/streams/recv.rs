@@ -21,6 +21,9 @@ pub(super) struct Recv<B> {
     /// Connection level flow control governing received data
     flow_control: FlowControl,
 
+    /// The lowest stream ID that is still idle
+    next_stream_id: StreamId,
+
     /// Streams that have pending window updates
     /// TODO: don't use a VecDeque
     pending_window_updates: VecDeque<StreamId>,
@@ -50,12 +53,19 @@ struct Indices {
 }
 
 impl<B> Recv<B> where B: Buf {
-    pub fn new(config: &Config) -> Self {
+    pub fn new<P: Peer>(config: &Config) -> Self {
+        let next_stream_id = if P::is_server() {
+            1
+        } else {
+            2
+        };
+
         Recv {
             max_streams: config.max_remote_initiated,
             num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
             flow_control: FlowControl::new(config.init_remote_window_sz),
+            next_stream_id: next_stream_id.into(),
             pending_window_updates: VecDeque::new(),
             pending_accept: store::List::new(),
             buffer: Buffer::new(),
@@ -127,6 +137,13 @@ impl<B> Recv<B> where B: Buf {
         if is_initial {
             if !self.can_inc_num_streams() {
                 unimplemented!();
+            }
+
+            if frame.stream_id() >= self.next_stream_id {
+                self.next_stream_id = frame.stream_id();
+                self.next_stream_id.increment();
+            } else {
+                return Err(ProtocolError.into());
             }
 
             // Increment the number of concurrent streams
@@ -242,6 +259,14 @@ impl<B> Recv<B> where B: Buf {
 
         stream.pending_push_promises = ppp;
         stream.notify_recv();
+
+        Ok(())
+    }
+
+    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {
+        if id >= self.next_stream_id {
+            return Err(ProtocolError.into());
+        }
 
         Ok(())
     }
