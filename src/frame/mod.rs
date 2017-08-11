@@ -144,6 +144,9 @@ pub enum Error {
     /// was not a round multiple of the size of a single setting.
     PartialSettingLength,
 
+    /// An invalid setting value was provided
+    InvalidSettingValue,
+
     /// The payload length specified by the frame header was not the
     /// value necessary for the specific frame type.
     InvalidPayloadLength,

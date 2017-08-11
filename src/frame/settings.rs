@@ -56,6 +56,9 @@ const ALL: u8 = ACK;
 pub const DEFAULT_SETTINGS_HEADER_TABLE_SIZE: usize = 4_096;
 pub const DEFAULT_MAX_FRAME_SIZE: FrameSize = 16_384;
 
+pub const MAX_INITIAL_WINDOW_SIZE: usize = (1 << 31) - 1;
+pub const MAX_MAX_FRAME_SIZE: usize = (1 << 24) - 1;
+
 // ===== impl Settings =====
 
 impl Settings {
@@ -107,16 +110,31 @@ impl Settings {
                     settings.values.header_table_size = Some(val);
                 }
                 Some(EnablePush(val)) => {
-                    settings.values.enable_push = Some(val);
+                    match val {
+                        0 | 1 => {
+                            settings.values.enable_push = Some(val);
+                        }
+                        _ => {
+                            return Err(Error::InvalidSettingValue);
+                        }
+                    }
                 }
                 Some(MaxConcurrentStreams(val)) => {
                     settings.values.max_concurrent_streams = Some(val);
                 }
                 Some(InitialWindowSize(val)) => {
-                    settings.values.initial_window_size = Some(val);
+                    if val as usize > MAX_INITIAL_WINDOW_SIZE {
+                        return Err(Error::InvalidSettingValue);
+                    } else {
+                        settings.values.initial_window_size = Some(val);
+                    }
                 }
                 Some(MaxFrameSize(val)) => {
-                    settings.values.max_frame_size = Some(val);
+                    if val < DEFAULT_MAX_FRAME_SIZE || val as usize > MAX_MAX_FRAME_SIZE {
+                        return Err(Error::InvalidSettingValue);
+                    } else {
+                        settings.values.max_frame_size = Some(val);
+                    }
                 }
                 Some(MaxHeaderListSize(val)) => {
                     settings.values.max_header_list_size = Some(val);
