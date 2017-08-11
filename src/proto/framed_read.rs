@@ -108,8 +108,7 @@ impl<T> FramedRead<T> {
                 frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..])?.into()
             }
             Kind::Priority => {
-                // TODO: implement
-                return Ok(None);
+                frame::Priority::load(head, &bytes[frame::HEADER_LEN..])?.into()
             }
             Kind::Continuation => {
                 // TODO: Un-hack this

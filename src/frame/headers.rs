@@ -1,4 +1,4 @@
-use super::StreamId;
+use super::{StreamId, StreamDependency};
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use HeaderMap;
@@ -66,20 +66,6 @@ pub struct Continuation {
     headers: Iter,
 }
 
-#[derive(Debug)]
-pub struct StreamDependency {
-    /// The ID of the stream dependency target
-    stream_id: StreamId,
-
-    /// The weight for the stream. The value exposed (and set) here is always in
-    /// the range [0, 255], instead of [1, 256] (as defined in section 5.3.2.)
-    /// so that the value fits into a `u8`.
-    weight: u8,
-
-    /// True if the stream dependency is exclusive.
-    is_exclusive: bool,
-}
-
 #[derive(Debug, Default)]
 pub struct Pseudo {
     // Request
@@ -145,20 +131,16 @@ impl Headers {
 
         // Read the stream dependency
         let stream_dep = if flags.is_priority() {
-            // Parse the stream ID and exclusive flag
-            let (stream_id, is_exclusive) = StreamId::parse(&src[..4]);
+            let stream_dep = StreamDependency::load(&src[..5])?;
 
-            // Read the weight
-            let weight = src[4];
+            if stream_dep.dependency_id() == head.stream_id() {
+                return Err(Error::InvalidDependencyId);
+            }
 
             // Drop the next 5 bytes
             let _ = src.split_to(5);
 
-            Some(StreamDependency {
-                stream_id,
-                weight,
-                is_exclusive,
-            })
+            Some(stream_dep)
         } else {
             None
         };

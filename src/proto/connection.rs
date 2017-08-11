@@ -142,6 +142,10 @@ impl<T, P, B> Connection<T, P, B>
                     trace!("recv WINDOW_UPDATE; frame={:?}", frame);
                     self.streams.recv_window_update(frame)?;
                 }
+                Some(Priority(frame)) => {
+                    trace!("recv PRIORITY; frame={:?}", frame);
+                    // TODO: handle
+                }
                 None => {
                     // TODO: Is this correct?
                     trace!("codec closed");

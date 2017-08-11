@@ -32,6 +32,7 @@ mod go_away;
 mod head;
 mod headers;
 mod ping;
+mod priority;
 mod reset;
 mod settings;
 mod stream_id;
@@ -43,6 +44,7 @@ pub use self::go_away::GoAway;
 pub use self::head::{Head, Kind};
 pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
 pub use self::ping::Ping;
+pub use self::priority::{Priority, StreamDependency};
 pub use self::reset::Reset;
 pub use self::settings::{Settings, SettingSet};
 pub use self::stream_id::StreamId;
@@ -59,6 +61,7 @@ pub const HEADER_LEN: usize = 9;
 pub enum Frame<T = Bytes> {
     Data(Data<T>),
     Headers(Headers),
+    Priority(Priority),
     PushPromise(PushPromise),
     Settings(Settings),
     Ping(Ping),
@@ -98,6 +101,7 @@ impl<T> fmt::Debug for Frame<T> {
         match *self {
             Data(..) => write!(fmt, "Frame::Data(..)"),
             Headers(ref frame) => write!(fmt, "Frame::Headers({:?})", frame),
+            Priority(ref frame) => write!(fmt, "Frame::Priority({:?})", frame),
             PushPromise(ref frame) => write!(fmt, "Frame::PushPromise({:?})", frame),
             Settings(ref frame) => write!(fmt, "Frame::Settings({:?})", frame),
             Ping(ref frame) => write!(fmt, "Frame::Ping({:?})", frame),
@@ -152,6 +156,12 @@ pub enum Error {
     /// This is returned if a SETTINGS or PING frame is received with a stream
     /// identifier other than zero.
     InvalidStreamId,
+
+    /// An invalid stream dependency ID was provided
+    ///
+    /// This is returend if a HEADERS or PRIORITY frame is received with an
+    /// invalid stream identifier.
+    InvalidDependencyId,
 
     /// Failed to perform HPACK decoding
     Hpack(hpack::DecoderError),

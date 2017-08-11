@@ -153,6 +153,12 @@ impl<T, B> Sink for FramedWrite<T, B>
                 v.encode(self.buf.get_mut());
                 trace!("encoded window_update; rem={:?}", self.buf.remaining());
             }
+
+            Frame::Priority(v) => {
+                // v.encode(self.buf.get_mut());
+                trace!("encoded priority; rem={:?}", self.buf.remaining());
+                unimplemented!();
+            }
             Frame::Reset(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded reset; rem={:?}", self.buf.remaining());
