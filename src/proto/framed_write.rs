@@ -1,4 +1,5 @@
 use {hpack, ConnectionError, FrameSize};
+use error::User::*;
 use frame::{self, Frame};
 
 use futures::*;
@@ -17,10 +18,15 @@ pub struct FramedWrite<T, B> {
     hpack: hpack::Encoder,
 
     /// Write buffer
+    ///
+    /// TODO: Should this be a ring buffer?
     buf: Cursor<BytesMut>,
 
     /// Next frame to encode
     next: Option<Next<B>>,
+
+    /// Last data frame
+    last_data_frame: Option<frame::Data<B>>,
 
     /// Max frame size, this is specified by the peer
     max_frame_size: FrameSize,
@@ -28,13 +34,7 @@ pub struct FramedWrite<T, B> {
 
 #[derive(Debug)]
 enum Next<B> {
-    Data {
-        /// Length of the current frame being written
-        frame_len: usize,
-
-        /// Data frame to encode
-        data: frame::Data<B>,
-    },
+    Data(frame::Data<B>),
     Continuation(frame::Continuation),
 }
 
@@ -60,6 +60,7 @@ impl<T, B> FramedWrite<T, B>
             hpack: hpack::Encoder::default(),
             buf: Cursor::new(BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY)),
             next: None,
+            last_data_frame: None,
             max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
         }
     }
@@ -82,19 +83,26 @@ impl<T, B> FramedWrite<T, B>
     }
 
     fn is_empty(&self) -> bool {
-        self.next.is_none() && !self.buf.has_remaining()
-    }
-
-    fn frame_len(&self, data: &frame::Data<B>) -> usize {
-        cmp::min(self.max_frame_size as usize, data.payload().remaining())
+        match self.next {
+            Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
+            _ => !self.buf.has_remaining(),
+        }
     }
 }
 
 impl<T, B> FramedWrite<T, B> {
+    pub fn max_frame_size(&self) -> usize {
+        self.max_frame_size as usize
+    }
+
     pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
         if let Some(val) = settings.max_frame_size() {
             self.max_frame_size = val;
         }
+    }
+
+    pub fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
+        self.last_data_frame.take()
     }
 }
 
@@ -116,24 +124,30 @@ impl<T, B> Sink for FramedWrite<T, B>
 
         match item {
             Frame::Data(mut v) => {
-                if v.payload().remaining() >= CHAIN_THRESHOLD {
+                // Ensure that the payload is not greater than the max frame.
+                let len = v.payload().remaining();
+
+                if len > self.max_frame_size() {
+                    return Err(PayloadTooBig.into());
+                }
+
+                if len >= CHAIN_THRESHOLD {
                     let head = v.head();
-                    let len = self.frame_len(&v);
 
                     // Encode the frame head to the buffer
                     head.encode(len, self.buf.get_mut());
 
                     // Save the data frame
-                    self.next = Some(Next::Data {
-                        frame_len: len,
-                        data: v,
-                    });
+                    self.next = Some(Next::Data(v));
                 } else {
                     v.encode_chunk(self.buf.get_mut());
 
                     // The chunk has been fully encoded, so there is no need to
                     // keep it around
                     assert_eq!(v.payload().remaining(), 0, "chunk not fully encoded");
+
+                    // Save off the last frame...
+                    self.last_data_frame = Some(v);
                 }
             }
             Frame::Headers(v) => {
@@ -179,16 +193,27 @@ impl<T, B> Sink for FramedWrite<T, B>
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
         trace!("poll_complete");
 
-        // TODO: implement
-        match self.next {
-            Some(Next::Data { .. }) => unimplemented!(),
-            _ => {}
+        while !self.is_empty() {
+            match self.next {
+                Some(Next::Data(ref mut frame)) => {
+                    let mut buf = self.buf.by_ref().chain(frame.payload_mut());
+                    try_ready!(self.inner.write_buf(&mut buf));
+                }
+                _ => {
+                    try_ready!(self.inner.write_buf(&mut self.buf));
+                }
+            }
         }
 
-        // As long as there is data to write, try to write it!
-        while !self.is_empty() {
-            trace!("writing {}", self.buf.remaining());
-            try_ready!(self.inner.write_buf(&mut self.buf));
+        // The data frame has been written, so unset it
+        match self.next.take() {
+            Some(Next::Data(frame)) => {
+                self.last_data_frame = Some(frame);
+            }
+            Some(Next::Continuation(frame)) => {
+                unimplemented!();
+            }
+            None => {}
         }
 
         trace!("flushing buffer");

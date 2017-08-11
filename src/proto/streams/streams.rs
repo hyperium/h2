@@ -8,19 +8,19 @@ use std::sync::{Arc, Mutex};
 // TODO: All the VecDeques should become linked lists using the State
 // values.
 #[derive(Debug)]
-pub struct Streams<B> {
+pub(crate) struct Streams<B> {
     inner: Arc<Mutex<Inner<B>>>,
 }
 
 /// Reference to the stream state
 #[derive(Debug)]
-pub struct StreamRef<B> {
+pub(crate) struct StreamRef<B> {
     inner: Arc<Mutex<Inner<B>>>,
     key: store::Key,
 }
 
 #[derive(Debug)]
-pub struct Chunk<B>
+pub(crate) struct Chunk<B>
     where B: Buf,
 {
     inner: Arc<Mutex<Inner<B>>>,
@@ -231,7 +231,7 @@ impl<B> Streams<B>
         Ok(())
     }
 
-    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
@@ -240,7 +240,7 @@ impl<B> Streams<B>
         me.actions.recv.send_pending_refusal(dst)
     }
 
-    pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, B>)
+    pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {

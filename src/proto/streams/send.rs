@@ -146,7 +146,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B>,
-                            dst: &mut Codec<T, B>)
+                            dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
@@ -316,6 +316,8 @@ impl<B> Send<B> where B: Buf {
                         } else {
                             stream.unadvertised_send_window -= dec;
                         }
+
+                        unimplemented!();
                     }
                 });
             } else if val > old_val {

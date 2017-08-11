@@ -78,6 +78,9 @@ pub enum User {
     /// transmit a Data frame to the remote.
     FlowControlViolation,
 
+    /// The payload size is too big
+    PayloadTooBig,
+
     /// The connection state is corrupt and the connection should be dropped.
     Corrupt,
 
@@ -128,6 +131,7 @@ macro_rules! user_desc {
             StreamReset(_) => concat!($prefix, "frame sent on reset stream"),
             Corrupt => concat!($prefix, "connection state corrupt"),
             Rejected => concat!($prefix, "stream would exceed remote max concurrency"),
+            PayloadTooBig => concat!($prefix, "payload too big"),
         }
     });
 }

@@ -353,7 +353,7 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Send any pending refusals.
-    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, B>)
+    pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {

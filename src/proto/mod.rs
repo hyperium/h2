@@ -6,14 +6,15 @@ mod ping_pong;
 mod settings;
 mod streams;
 
-pub use self::connection::Connection;
-pub use self::streams::{Streams, StreamRef, Chunk};
+pub(crate) use self::connection::Connection;
+pub(crate) use self::streams::{Streams, StreamRef, Chunk};
 
 use self::codec::Codec;
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 use self::ping_pong::PingPong;
 use self::settings::Settings;
+use self::streams::Prioritized;
 
 use {StreamId, ConnectionError};
 use error::Reason;
@@ -63,7 +64,7 @@ pub const MAX_WINDOW_SIZE: WindowSize = ::std::u32::MAX;
 /// When the server is performing the handshake, it is able to only send
 /// `Settings` frames and is expected to receive the client preface as a byte
 /// stream. To represent this, `Settings<FramedWrite<T>>` is returned.
-pub fn framed_write<T, B>(io: T) -> FramedWrite<T, B>
+pub(crate) fn framed_write<T, B>(io: T) -> FramedWrite<T, B>
     where T: AsyncRead + AsyncWrite,
           B: Buf,
 {
@@ -71,7 +72,7 @@ pub fn framed_write<T, B>(io: T) -> FramedWrite<T, B>
 }
 
 /// Create a full H2 transport from the server handshaker
-pub fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, B::Buf>)
+pub(crate) fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, Prioritized<B::Buf>>)
     -> Connection<T, P, B>
     where T: AsyncRead + AsyncWrite,
           P: Peer,

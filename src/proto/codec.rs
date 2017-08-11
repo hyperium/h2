@@ -12,6 +12,15 @@ impl<T, B> Codec<T, B> {
         self.framed_write().apply_remote_settings(frame);
     }
 
+    /// Takes the data payload value that was fully written to the socket
+    pub(crate) fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
+        self.framed_write().take_last_data_frame()
+    }
+
+    pub fn max_send_frame_size(&self) -> usize {
+        self.inner.get_ref().max_frame_size()
+    }
+
     fn framed_read(&mut self) -> &mut FramedRead<FramedWrite<T, B>> {
         &mut self.inner
     }

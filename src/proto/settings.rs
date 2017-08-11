@@ -2,7 +2,7 @@ use {frame, ConnectionError};
 use proto::*;
 
 #[derive(Debug)]
-pub struct Settings {
+pub(crate) struct Settings {
     /// Received SETTINGS frame pending processing. The ACK must be written to
     /// the socket first then the settings applied **before** receiving any
     /// further frames.
@@ -26,12 +26,13 @@ impl Settings {
         }
     }
 
-    pub fn send_pending_ack<T, B>(&mut self,
-                                  dst: &mut Codec<T, B>,
-                                  streams: &mut Streams<B>)
+    pub fn send_pending_ack<T, B, C>(&mut self,
+                                     dst: &mut Codec<T, B>,
+                                     streams: &mut Streams<C>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
+              C: Buf,
     {
         if let Some(ref settings) = self.pending {
             let frame = frame::Settings::ack();

@@ -52,8 +52,23 @@ impl<T> Data<T> {
         &self.data
     }
 
+    pub fn payload_mut(&mut self) -> &mut T {
+        &mut self.data
+    }
+
     pub fn into_payload(self) -> T {
         self.data
+    }
+
+    pub fn map<F, U>(self, f: F) -> Data<U>
+        where F: FnOnce(T) -> U,
+    {
+        Data {
+            stream_id: self.stream_id,
+            data: f(self.data),
+            flags: self.flags,
+            pad_len: self.pad_len,
+        }
     }
 }
 

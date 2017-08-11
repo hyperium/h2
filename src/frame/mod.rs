@@ -80,6 +80,24 @@ impl<T> Frame<T> {
             _ => false,
         }
     }
+
+    pub fn map<F, U>(self, f: F) -> Frame<U>
+        where F: FnOnce(T) -> U
+    {
+        use self::Frame::*;
+
+        match self {
+            Data(frame) => frame.map(f).into(),
+            Headers(frame) => frame.into(),
+            Priority(frame) => frame.into(),
+            PushPromise(frame) => frame.into(),
+            Settings(frame) => frame.into(),
+            Ping(frame) => frame.into(),
+            GoAway(frame) => frame.into(),
+            WindowUpdate(frame) => frame.into(),
+            Reset(frame) => frame.into(),
+        }
+    }
 }
 
 impl<T: Buf> Frame<T> {

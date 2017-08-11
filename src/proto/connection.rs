@@ -12,15 +12,12 @@ use std::marker::PhantomData;
 
 /// An H2 connection
 #[derive(Debug)]
-pub struct Connection<T, P, B: IntoBuf = Bytes> {
+pub(crate) struct Connection<T, P, B: IntoBuf = Bytes> {
     // Codec
-    codec: Codec<T, B::Buf>,
-
-    // TODO: Remove <B>
-    ping_pong: PingPong<B::Buf>,
+    codec: Codec<T, Prioritized<B::Buf>>,
+    ping_pong: PingPong<Prioritized<B::Buf>>,
     settings: Settings,
     streams: Streams<B::Buf>,
-
     _phantom: PhantomData<P>,
 }
 
@@ -29,7 +26,7 @@ impl<T, P, B> Connection<T, P, B>
           P: Peer,
           B: IntoBuf,
 {
-    pub fn new(codec: Codec<T, B::Buf>) -> Connection<T, P, B> {
+    pub fn new(codec: Codec<T, Prioritized<B::Buf>>) -> Connection<T, P, B> {
         // TODO: Actually configure
         let streams = Streams::new::<P>(streams::Config {
             max_remote_initiated: None,
@@ -49,10 +46,11 @@ impl<T, P, B> Connection<T, P, B>
 
     /// Returns `Ready` when the connection is ready to receive a frame.
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_send_ready());
-
-        // TODO: Once there is write buffering, this shouldn't be needed
-        try_ready!(self.codec.poll_ready());
+        // The order of these calls don't really matter too much as only one
+        // should have pending work.
+        try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
+        try_ready!(self.settings.send_pending_ack(&mut self.codec, &mut self.streams));
+        try_ready!(self.streams.send_pending_refusal(&mut self.codec));
 
         Ok(().into())
     }
@@ -74,7 +72,7 @@ impl<T, P, B> Connection<T, P, B>
 
         loop {
             // First, ensure that the `Connection` is able to receive a frame
-            try_ready!(self.poll_recv_ready());
+            try_ready!(self.poll_ready());
 
             trace!("polling codec");
 
@@ -137,38 +135,11 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    // ===== Private =====
-
-    /// Returns `Ready` when the `Connection` is ready to receive a frame from
-    /// the socket.
-    fn poll_recv_ready(&mut self) -> Poll<(), ConnectionError> {
-        // The order of these calls don't really matter too much as only one
-        // should have pending work.
-        try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
-        try_ready!(self.settings.send_pending_ack(&mut self.codec, &mut self.streams));
-        try_ready!(self.streams.send_pending_refusal(&mut self.codec));
-
-        Ok(().into())
-    }
-
-    /// Returns `Ready` when the `Connection` is ready to accept a frame from
-    /// the user
-    ///
-    /// This function is currently used by poll_complete, but at some point it
-    /// will probably not be required.
-    fn poll_send_ready(&mut self) -> Poll<(), ConnectionError> {
-        // TODO: Is this function needed?
-        try_ready!(self.poll_recv_ready());
-
-        Ok(().into())
-    }
-
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_send_ready());
+        try_ready!(self.poll_ready());
 
         // Ensure all window updates have been sent.
         try_ready!(self.streams.poll_complete(&mut self.codec));
-        try_ready!(self.codec.poll_complete());
 
         Ok(().into())
     }
