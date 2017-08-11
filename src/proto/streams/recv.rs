@@ -146,10 +146,20 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
-    pub fn recv_eos(&mut self, stream: &mut Stream<B>)
+    /// Transition the stream based on receiving trailers
+    pub fn recv_trailers<P: Peer>(&mut self,
+                                  frame: frame::Headers,
+                                  stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        stream.state.recv_close()
+        // Transition the state
+        stream.state.recv_close();
+
+        // Push the frame onto the stream's recv buffer
+        stream.pending_recv.push_back(&mut self.buffer, frame.into());
+        stream.notify_recv();
+
+        Ok(())
     }
 
     pub fn recv_data(&mut self,

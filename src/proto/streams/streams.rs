@@ -91,15 +91,12 @@ impl<B> Streams<B>
 
         me.actions.transition::<P, _, _>(stream, |actions, stream| {
             if frame.is_trailers() {
-                unimplemented!();
-                /*
                 if !frame.is_end_stream() {
-                    // TODO: What error should this return?
-                    unimplemented!();
+                    // TODO: Is this the right error
+                    return Err(ProtocolError.into());
                 }
 
-                try!(me.actions.recv.recv_eos(stream));
-                */
+                actions.recv.recv_trailers::<P>(frame, stream)
             } else {
                 actions.recv.recv_headers::<P>(frame, stream)
             }
