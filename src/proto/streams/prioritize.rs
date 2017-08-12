@@ -1,5 +1,9 @@
 use super::*;
 
+use bytes::buf::Take;
+
+use std::cmp;
+
 #[derive(Debug)]
 pub(super) struct Prioritize<B> {
     /// Streams that have pending frames
@@ -25,7 +29,9 @@ pub(super) struct Prioritize<B> {
 #[derive(Debug)]
 pub(crate) struct Prioritized<B> {
     // The buffer
-    inner: B,
+    inner: Take<B>,
+
+    end_of_stream: bool,
 
     // The stream that this is associated with
     stream: store::Key,
@@ -120,13 +126,21 @@ impl<B> Prioritize<B>
         // Reclaim any frame that has previously been written
         self.reclaim_frame(store, dst);
 
+        // The max frame length
+        let max_frame_len = dst.max_send_frame_size();
+
         trace!("poll_complete");
         loop {
-            match self.pop_frame(store) {
+            match self.pop_frame(store, max_frame_len) {
                 Some(frame) => {
-                    trace!("writing frame={:?}", frame);
+                    // Figure out the byte size this frame applies to flow
+                    // control
+                    let len = cmp::min(frame.flow_len(), max_frame_len);
+
                     // Subtract the data size
-                    self.buffered_data -= frame.flow_len();
+                    self.buffered_data -= len;
+
+                    trace!("writing frame={:?}", frame);
 
                     let res = dst.start_send(frame)?;
 
@@ -157,7 +171,9 @@ impl<B> Prioritize<B>
         }
     }
 
-    fn pop_frame(&mut self, store: &mut Store<B>) -> Option<Frame<Prioritized<B>>> {
+    fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
+        -> Option<Frame<Prioritized<B>>>
+    {
         loop {
             match self.pop_sender(store) {
                 Some(mut stream) => {
@@ -182,13 +198,24 @@ impl<B> Prioritize<B>
                         push_sender(&mut self.pending_send, &mut stream);
                     }
 
-                    // Add prioritization logic
-                    let frame = frame.map(|buf| {
-                        Prioritized {
-                            inner: buf,
-                            stream: stream.key(),
+                    let frame = match frame {
+                        Frame::Data(mut frame) => {
+                            let eos = frame.is_end_stream();
+
+                            if frame.payload().remaining() > max_len {
+                                frame.unset_end_stream();
+                            }
+
+                            Frame::Data(frame.map(|buf| {
+                                Prioritized {
+                                    inner: buf.take(max_len),
+                                    end_of_stream: eos,
+                                    stream: stream.key(),
+                                }
+                            }))
                         }
-                    });
+                        frame => frame.map(|_| unreachable!()),
+                    };
 
                     return Some(frame);
                 }
@@ -231,10 +258,17 @@ impl<B> Prioritize<B>
             if frame.payload().has_remaining() {
                 let mut stream = store.resolve(frame.payload().stream);
 
-                let frame = frame.map(|prioritized| {
+                let mut eos = false;
+
+                let mut frame = frame.map(|prioritized| {
                     // TODO: Ensure fully written
-                    prioritized.inner
+                    eos = prioritized.end_of_stream;
+                    prioritized.inner.into_inner()
                 });
+
+                if eos {
+                    frame.set_end_stream();
+                }
 
                 self.push_back_frame(frame.into(), &mut stream);
 

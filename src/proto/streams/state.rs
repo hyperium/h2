@@ -219,7 +219,7 @@ impl State {
                 self.inner = Closed(match *err {
                     ConnectionError::Proto(reason) => Some(Cause::Proto(reason)),
                     ConnectionError::Io(..) => Some(Cause::Io),
-                    _ => panic!("cannot terminate stream with user error"),
+                    ref e => panic!("cannot terminate stream with user error; err={:?}", e),
                 });
             }
         }

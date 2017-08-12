@@ -44,6 +44,14 @@ impl<T> Data<T> {
         self.flags.is_end_stream()
     }
 
+    pub fn set_end_stream(&mut self) {
+        self.flags.set_end_stream();
+    }
+
+    pub fn unset_end_stream(&mut self) {
+        self.flags.unset_end_stream();
+    }
+
     pub fn head(&self) -> Head {
         Head::new(Kind::Data, self.flags.into(), self.stream_id)
     }
@@ -125,6 +133,10 @@ impl DataFlag {
 
     pub fn set_end_stream(&mut self) {
         self.0 |= END_STREAM
+    }
+
+    pub fn unset_end_stream(&mut self) {
+        self.0 &= !END_STREAM
     }
 
     pub fn is_padded(&self) -> bool {
