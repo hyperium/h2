@@ -228,19 +228,21 @@ impl<B> Prioritize<B>
     {
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
-            let mut stream = store.resolve(frame.payload().stream);
+            if frame.payload().has_remaining() {
+                let mut stream = store.resolve(frame.payload().stream);
 
-            let frame = frame.map(|prioritized| {
-                // TODO: Ensure fully written
-                prioritized.inner
-            });
+                let frame = frame.map(|prioritized| {
+                    // TODO: Ensure fully written
+                    prioritized.inner
+                });
 
-            self.push_back_frame(frame.into(), &mut stream);
+                self.push_back_frame(frame.into(), &mut stream);
 
-            true
-        } else {
-            false
+                return true;
+            }
         }
+
+        false
     }
 }
 
