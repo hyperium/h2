@@ -62,12 +62,12 @@ fn single_stream_send_extra_large_body_multi_frames() {
             0, 64, 0, 0, 0, 0, 0, 0, 1,
         ])
         .write(&payload[0..16_384])
-        .write(frames::SETTINGS_ACK)
         .write(&[
             // DATA
             0, 64, 0, 0, 1, 0, 0, 0, 1,
         ])
         .write(&payload[16_384..])
+        .write(frames::SETTINGS_ACK)
         // Read response
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();

@@ -48,7 +48,7 @@ fn recv_invalid_server_stream_id() {
         .body(()).unwrap();
 
     info!("sending request");
-    let mut stream = h2.request(request, true).unwrap();
+    let stream = h2.request(request, true).unwrap();
 
     // The connection errors
     assert_proto_err!(h2.wait().unwrap_err(), ProtocolError);

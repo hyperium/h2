@@ -2,7 +2,7 @@ use super::*;
 
 use bytes::buf::Take;
 
-use std::cmp;
+use std::{fmt, cmp};
 
 #[derive(Debug)]
 pub(super) struct Prioritize<B> {
@@ -26,7 +26,6 @@ pub(super) struct Prioritize<B> {
     conn_task: Option<task::Task>,
 }
 
-#[derive(Debug)]
 pub(crate) struct Prioritized<B> {
     // The buffer
     inner: Take<B>,
@@ -253,18 +252,23 @@ impl<B> Prioritize<B>
                         store: &mut Store<B>,
                         dst: &mut Codec<T, Prioritized<B>>) -> bool
     {
+        trace!("try reclaim frame");
+
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
+            trace!("  -> reclaimed; frame={:?}", frame);
+
+            let mut eos = false;
+            let key = frame.payload().stream;
+
+            let mut frame = frame.map(|prioritized| {
+                // TODO: Ensure fully written
+                eos = prioritized.end_of_stream;
+                prioritized.inner.into_inner()
+            });
+
             if frame.payload().has_remaining() {
-                let mut stream = store.resolve(frame.payload().stream);
-
-                let mut eos = false;
-
-                let mut frame = frame.map(|prioritized| {
-                    // TODO: Ensure fully written
-                    eos = prioritized.end_of_stream;
-                    prioritized.inner.into_inner()
-                });
+                let mut stream = store.resolve(key);
 
                 if eos {
                     frame.set_end_stream();
@@ -310,5 +314,15 @@ impl<B> Buf for Prioritized<B>
 
     fn advance(&mut self, cnt: usize) {
         self.inner.advance(cnt)
+    }
+}
+
+impl<B: Buf> fmt::Debug for Prioritized<B> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Prioritized")
+            .field("remaining", &self.inner.get_ref().remaining())
+            .field("end_of_stream", &self.end_of_stream)
+            .field("stream", &self.stream)
+            .finish()
     }
 }

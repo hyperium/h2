@@ -196,7 +196,7 @@ impl<T, B> Sink for FramedWrite<T, B>
         while !self.is_empty() {
             match self.next {
                 Some(Next::Data(ref mut frame)) => {
-                    let mut buf = self.buf.by_ref().chain(frame.payload_mut());
+                    let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
                     try_ready!(self.inner.write_buf(&mut buf));
                 }
                 _ => {

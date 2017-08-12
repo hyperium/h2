@@ -1,16 +1,14 @@
 pub mod support;
 use support::*;
 
-use h2::Frame;
-
 #[test]
 #[ignore]
 fn recv_single_ping() {
+    /*
     let _ = ::env_logger::init();
 
     let mock = mock_io::Builder::new()
         .handshake()
-        /*
         .write(&[
             // POST /
             0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
@@ -28,9 +26,9 @@ fn recv_single_ping() {
             // DATA
             0, 0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100
         ])
-        */
         .build();
 
+        */
     /*
     let h2 = client::handshake(mock)
         .wait().unwrap();
