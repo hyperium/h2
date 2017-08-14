@@ -76,7 +76,8 @@ impl<T, B> Client<T, B>
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        unimplemented!();
+        try_ready!(self.connection.poll_send_request_ready());
+        self.connection.poll_ready()
     }
 
     /// Send a request on a new HTTP 2.0 stream

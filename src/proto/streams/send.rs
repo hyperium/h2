@@ -27,19 +27,20 @@ pub(super) struct Send<B> {
     /// List of streams waiting for outbound connection capacity
     pending_capacity: store::List<B>,
 
+    /// Task awaiting notification to open a new stream.
+    blocked_open: Option<task::Task>,
+
     /// Prioritization layer
     prioritize: Prioritize<B>,
 }
 
-impl<B> Send<B> where B: Buf {
-
+impl<B> Send<B>
+where
+    B: Buf,
+{
     /// Create a new `Send`
     pub fn new<P: Peer>(config: &Config) -> Self {
-        let next_stream_id = if P::is_server() {
-            2
-        } else {
-            1
-        };
+        let next_stream_id = if P::is_server() { 2 } else { 1 };
 
         Send {
             max_streams: config.max_local_initiated,
@@ -47,16 +48,28 @@ impl<B> Send<B> where B: Buf {
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
             pending_capacity: store::List::new(),
+            blocked_open: None,
             prioritize: Prioritize::new(config),
         }
+    }
+
+    pub fn poll_open_ready<P: Peer>(&mut self) -> Poll<(), ConnectionError> {
+        try!(self.ensure_can_open::<P>());
+
+        if let Some(max) = self.max_streams {
+            if max <= self.num_streams {
+                self.blocked_open = Some(task::current());
+                return Ok(Async::NotReady);
+            }
+        }
+
+        return Ok(Async::Ready(()));
     }
 
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open<P: Peer>(&mut self)
-        -> Result<Stream<B>, ConnectionError>
-    {
+    pub fn open<P: Peer>(&mut self) -> Result<Stream<B>, ConnectionError> {
         try!(self.ensure_can_open::<P>());
 
         if let Some(max) = self.max_streams {
@@ -74,14 +87,20 @@ impl<B> Send<B> where B: Buf {
         Ok(ret)
     }
 
-    pub fn send_headers(&mut self,
-                        frame: frame::Headers,
-                        stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
-        trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
+    pub fn send_headers(
+        &mut self,
+        frame: frame::Headers,
+        stream: &mut store::Ptr<B>,
+    ) -> Result<(), ConnectionError> {
+        trace!(
+            "send_headers; frame={:?}; init_window={:?}",
+            frame,
+            self.init_window_sz
+        );
         // Update the state
-        stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
+        stream
+            .state
+            .send_open(self.init_window_sz, frame.is_end_stream())?;
 
         // Queue the frame for sending
         self.prioritize.queue_frame(frame.into(), stream);
@@ -89,17 +108,15 @@ impl<B> Send<B> where B: Buf {
         Ok(())
     }
 
-    pub fn send_eos(&mut self, stream: &mut Stream<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn send_eos(&mut self, stream: &mut Stream<B>) -> Result<(), ConnectionError> {
         stream.state.send_close()
     }
 
-    pub fn send_data(&mut self,
-                     frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn send_data(
+        &mut self,
+        frame: frame::Data<B>,
+        stream: &mut store::Ptr<B>,
+    ) -> Result<(), ConnectionError> {
         let sz = frame.payload().remaining();
 
         if sz > MAX_WINDOW_SIZE as usize {
@@ -116,8 +133,7 @@ impl<B> Send<B> where B: Buf {
             match stream.send_flow_control() {
                 Some(flow) => {
                     // Ensure that the size fits within the advertised size
-                    try!(flow.ensure_window(
-                            sz + unadvertised, FlowControlViolation));
+                    try!(flow.ensure_window(sz + unadvertised, FlowControlViolation));
 
                     // Now, claim the window on the stream
                     flow.claim_window(sz, FlowControlViolation)
@@ -129,9 +145,9 @@ impl<B> Send<B> where B: Buf {
             }
 
             if stream.state.is_closed() {
-                return Err(InactiveStreamId.into())
+                return Err(InactiveStreamId.into());
             } else {
-                return Err(UnexpectedFrameType.into())
+                return Err(UnexpectedFrameType.into());
             }
         }
 
@@ -144,20 +160,22 @@ impl<B> Send<B> where B: Buf {
         Ok(())
     }
 
-    pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B>,
-                            dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
-        where T: AsyncWrite,
+    pub fn poll_complete<T>(
+        &mut self,
+        store: &mut Store<B>,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> Poll<(), ConnectionError>
+    where
+        T: AsyncWrite,
     {
         self.prioritize.poll_complete(store, dst)
     }
 
-    pub fn recv_connection_window_update(&mut self,
-                                         frame: frame::WindowUpdate,
-                                         store: &mut Store<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn recv_connection_window_update(
+        &mut self,
+        frame: frame::WindowUpdate,
+        store: &mut Store<B>,
+    ) -> Result<(), ConnectionError> {
         self.prioritize.recv_window_update(frame)?;
 
         // Get the current connection capacity
@@ -207,16 +225,17 @@ impl<B> Send<B> where B: Buf {
 
                 stream.notify_send();
                 true
-            });
+            },
+        );
 
         Ok(())
     }
 
-    pub fn recv_stream_window_update(&mut self,
-                                     frame: frame::WindowUpdate,
-                                     stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn recv_stream_window_update(
+        &mut self,
+        frame: frame::WindowUpdate,
+        stream: &mut store::Ptr<B>,
+    ) -> Result<(), ConnectionError> {
         let connection = self.prioritize.available_window();
         let unadvertised = stream.unadvertised_send_window;
 
@@ -273,9 +292,7 @@ impl<B> Send<B> where B: Buf {
         0
     }
 
-    pub fn apply_remote_settings(&mut self,
-                                 settings: &frame::Settings,
-                                 store: &mut Store<B>) {
+    pub fn apply_remote_settings(&mut self, settings: &frame::Settings, store: &mut Store<B>) {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_streams = Some(val as usize);
         }
@@ -342,6 +359,12 @@ impl<B> Send<B> where B: Buf {
 
     pub fn dec_num_streams(&mut self) {
         self.num_streams -= 1;
+
+        if self.num_streams < self.max_streams.unwrap_or(::std::usize::MAX) {
+            if let Some(task) = self.blocked_open.take() {
+                task.notify();
+            }
+        }
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.

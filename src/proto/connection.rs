@@ -55,6 +55,11 @@ impl<T, P, B> Connection<T, P, B>
         Ok(().into())
     }
 
+    /// Returns `Ready` when new the connection is able to support a new request stream.
+    pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
+        self.streams.poll_send_request_ready()
+    }
+
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), ConnectionError> {
         match self.poll2() {
