@@ -38,8 +38,11 @@ impl Settings {
             let frame = frame::Settings::ack();
 
             if let AsyncSink::NotReady(_) = dst.start_send(frame.into())? {
+                trace!("failed to send ACK");
                 return Ok(Async::NotReady);
             }
+
+            trace!("ACK sent");
 
             dst.apply_remote_settings(settings);
             streams.apply_remote_settings(settings);

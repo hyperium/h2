@@ -16,7 +16,7 @@ slab = "0.4.0"
 string = { git = "https://github.com/carllerche/string" }
 
 [dev-dependencies]
-mock-io = { git = "https://github.com/carllerche/mock-io" }
+mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
 
 # Fuzzing
 quickcheck = "0.4.1"

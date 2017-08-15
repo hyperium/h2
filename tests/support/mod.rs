@@ -35,6 +35,8 @@ pub use self::bytes::{
     IntoBuf,
 };
 
+pub use std::time::Duration;
+
 use tokio_io::{AsyncRead, AsyncWrite};
 
 pub trait MockH2 {
