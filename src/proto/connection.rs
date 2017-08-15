@@ -45,7 +45,7 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.
-    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
         // The order of these calls don't really matter too much as only one
         // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
