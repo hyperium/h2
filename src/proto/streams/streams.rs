@@ -5,8 +5,6 @@ use super::*;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
-// TODO: All the VecDeques should become linked lists using the State
-// values.
 #[derive(Debug)]
 pub(crate) struct Streams<B> {
     inner: Arc<Mutex<Inner<B>>>,
@@ -256,11 +254,14 @@ impl<B> Streams<B>
 
         me.actions.send.apply_remote_settings(frame, &mut me.store);
     }
-}
 
-impl<B> Streams<B>
-    where B: Buf,
-{
+    pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.send.poll_open_ready::<client::Peer>()
+    }
+
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B>, ConnectionError>
     {
