@@ -248,7 +248,7 @@ impl State {
             Idle => Err(ProtocolError.into()),
             Closed(..) => Ok(()),
             _ => {
-                trace!("send_reset: HalfClosedRemote => Closed");
+                trace!("send_reset: => Closed");
                 self.inner = Closed(Some(Cause::Proto(reason)));
                 Ok(())
             }
