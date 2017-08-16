@@ -201,7 +201,7 @@ impl<B: IntoBuf> Stream<B> {
 }
 
 impl<B: Buf> Stream<B> {
-    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+    pub fn send_reset(mut self, reason: Reason) -> Result<(), ConnectionError> {
         self.inner.send_reset::<Peer>(reason)
     }
 }
