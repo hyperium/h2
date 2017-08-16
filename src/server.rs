@@ -6,7 +6,7 @@ use error::Reason::*;
 use http::{self, Request, Response};
 use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, IntoBuf};
+use bytes::{Bytes, IntoBuf, Buf};
 
 use std::fmt;
 
@@ -160,10 +160,6 @@ impl<B: IntoBuf> Stream<B> {
         self.inner.window_size()
     }
 
-    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
-        unimplemented!()
-    }
-
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
@@ -201,6 +197,12 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ConnectionError>
     {
         unimplemented!();
+    }
+}
+
+impl<B: Buf> Stream<B> {
+    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        self.inner.send_reset::<Peer>(reason)
     }
 }
 

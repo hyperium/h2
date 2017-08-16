@@ -262,10 +262,6 @@ impl<B> Streams<B>
         me.actions.send.poll_open_ready::<client::Peer>()
     }
 
-    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
-        unimplemented!()
-    }
-
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B>, ConnectionError>
     {
@@ -338,6 +334,16 @@ impl<B> StreamRef<B>
 
         let mut stream = me.store.resolve(self.key);
         me.actions.recv.take_request(&mut stream)
+    }
+
+    pub fn send_reset<P: Peer>(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+        me.actions.transition::<P, _, _>(stream, move |actions, stream| {
+            actions.send.send_reset(reason, stream)
+        })
     }
 
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)

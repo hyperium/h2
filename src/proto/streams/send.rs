@@ -107,6 +107,17 @@ impl<B> Send<B> where B: Buf {
         stream.state.send_close()
     }
 
+    pub fn send_reset(&mut self, reason: Reason,
+                      stream: &mut store::Ptr<B>)
+        -> Result<(), ConnectionError>
+    {
+        stream.state.send_reset(reason)?;
+
+        let frame = frame::Reset::new(stream.id, reason);
+        self.prioritize.queue_frame(frame.into(), stream);
+        Ok(())
+    }
+
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B>)
