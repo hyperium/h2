@@ -36,6 +36,14 @@ impl<B> Buffer<B> {
             slab: Slab::new(),
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.slab.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
 }
 
 impl<B> Deque<B> {

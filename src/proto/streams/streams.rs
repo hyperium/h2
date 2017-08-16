@@ -362,6 +362,15 @@ impl<B> StreamRef<B>
         })
     }
 
+    pub fn is_recv_empty(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        stream.state.is_recv_closed() && me.actions.recv.is_empty()
+    }
+
     pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;

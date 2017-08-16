@@ -60,6 +60,13 @@ pub struct Chunk<B: IntoBuf> {
 
 // ===== impl Body =====
 
+impl<B: IntoBuf> Body<B> {
+    pub fn is_empty(&self) -> bool {
+        // If the recv side is closed and the receive queue is empty, the body is empty.
+        self.inner.is_recv_empty()
+    }
+}
+
 impl<B: IntoBuf> futures::Stream for Body<B> {
     type Item = Chunk<B>;
     type Error = ConnectionError;
