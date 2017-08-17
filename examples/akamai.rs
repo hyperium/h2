@@ -1,10 +1,11 @@
 extern crate h2;
 extern crate http;
 extern crate futures;
+extern crate rustls;
 extern crate tokio_io;
 extern crate tokio_core;
-extern crate tokio_openssl;
-extern crate openssl;
+extern crate tokio_rustls;
+extern crate webpki_roots;
 extern crate io_dump;
 extern crate env_logger;
 
@@ -16,10 +17,22 @@ use futures::*;
 use tokio_core::reactor;
 use tokio_core::net::TcpStream;
 
+use rustls::Session;
+use tokio_rustls::ClientConfigExt;
+
 use std::net::ToSocketAddrs;
+
+const ALPN_H2: &str = "h2";
 
 pub fn main() {
     let _ = env_logger::init();
+
+    let tls_client_config = std::sync::Arc::new({
+        let mut c = rustls::ClientConfig::new();
+        c.root_store.add_trust_anchors(&webpki_roots::ROOTS);
+        c.alpn_protocols.push(ALPN_H2.to_owned());
+        c
+    });
 
     // Sync DNS resolution.
     let addr = "http2.akamai.com:443".to_socket_addrs()
@@ -33,21 +46,15 @@ pub fn main() {
     let tcp = TcpStream::connect(&addr, &handle);
 
     let tcp = tcp.then(|res| {
-        use openssl::ssl::{SslMethod, SslConnectorBuilder};
-        use tokio_openssl::SslConnectorExt;
-
         let tcp = res.unwrap();
-
-        // Does anyone know how TLS even works?
-
-        let mut b = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        b.builder_mut().set_alpn_protocols(&[b"h2"]).unwrap();
-
-        let connector = b.build();
-        connector.connect_async("http2.akamai.com", tcp)
+        tls_client_config.connect_async("http2.akamai.com", tcp)
             .then(|res| {
                 let tls = res.unwrap();
-                assert_eq!(Some(&b"h2"[..]), tls.get_ref().ssl().selected_alpn_protocol());
+                let negotiated_protcol = {
+                    let (_, session) = tls.get_ref();
+                    session.get_alpn_protocol()
+                };
+                assert_eq!(Some(ALPN_H2), negotiated_protcol.as_ref().map(|x| &**x));
 
                 // Dump output to stdout
                 let tls = io_dump::Dump::to_stdout(tls);
