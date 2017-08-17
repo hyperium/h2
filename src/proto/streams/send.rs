@@ -93,7 +93,11 @@ impl<B> Send<B> where B: Buf {
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
-        stream.state.send_open(self.init_window_sz, frame.is_end_stream())?;
+        stream.state.send_open(frame.is_end_stream())?;
+
+        if stream.state.is_send_streaming() {
+            stream.send_flow.set_window_size(self.init_window_sz);
+        }
 
         // Queue the frame for sending
         self.prioritize.queue_frame(frame.into(), stream);
@@ -121,31 +125,16 @@ impl<B> Send<B> where B: Buf {
 
         let sz = sz as WindowSize;
 
-        // Make borrow checker happy
-        loop {
-            let unadvertised = stream.unadvertised_send_window;
-
-            match stream.send_flow_control() {
-                Some(flow) => {
-                    // Ensure that the size fits within the advertised size
-                    try!(flow.ensure_window(
-                            sz + unadvertised, FlowControlViolation));
-
-                    // Now, claim the window on the stream
-                    flow.claim_window(sz, FlowControlViolation)
-                        .expect("local connection flow control error");
-
-                    break;
-                }
-                None => {}
-            }
-
+        if !stream.state.is_send_streaming() {
             if stream.state.is_closed() {
                 return Err(InactiveStreamId.into());
             } else {
                 return Err(UnexpectedFrameType.into());
             }
         }
+
+        // Update the flow controller
+        stream.send_flow.send(sz, FlowControlViolation)?;
 
         if frame.is_end_stream() {
             try!(stream.state.send_close());
@@ -187,37 +176,21 @@ impl<B> Send<B> where B: Buf {
                 // Make sure that the stream is flagged as queued
                 debug_assert!(stream.is_pending_send_capacity);
 
-                // Get the current unadvertised window
-                let unadvertised = stream.unadvertised_send_window;
-
-                if unadvertised == 0 {
+                if stream.send_flow.is_fully_advertised() || !stream.state.is_send_streaming() {
                     stream.is_pending_send_capacity = false;
                     return false;
                 }
 
-                let effective_window_size = match stream.state.send_flow_control() {
-                    Some(flow) => flow.effective_window_size(),
-                    None => {
-                        // The state transitioned and this stream is no longer
-                        // waiting for updates
-                        stream.is_pending_send_capacity = false;
-                        return false;
-                    }
-                };
-
-                if connection <= effective_window_size - unadvertised {
+                if connection <= stream.send_flow.advertised() {
                     // The window is not increased, but we remain interested in
                     // updates in the future.
                     return true;
                 }
 
-                if connection >= effective_window_size {
-                    stream.unadvertised_send_window = 0;
-                } else {
-                    stream.unadvertised_send_window = effective_window_size - connection;
-                }
 
+                stream.send_flow.advertise(connection);
                 stream.notify_send();
+
                 true
             });
 
@@ -229,60 +202,40 @@ impl<B> Send<B> where B: Buf {
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        let connection = self.prioritize.available_window();
-        let unadvertised = stream.unadvertised_send_window;
-
-        let effective_window_size = {
-            let mut flow = match stream.state.send_flow_control() {
-                Some(flow) => flow,
-                None => return Ok(()),
-            };
-
-            debug_assert!(unadvertised == 0 || connection == 0);
-
-            // Expand the full window
-            flow.expand_window(frame.size_increment())?;
-            flow.effective_window_size()
-        };
-
-        if connection < effective_window_size {
-            stream.unadvertised_send_window = effective_window_size - connection;
-
-            if !stream.is_pending_send_capacity {
-                stream.is_pending_send_capacity = true;
-                self.pending_capacity.push::<stream::NextCapacity>(stream);
-            }
-        }
-
-        if stream.unadvertised_send_window == frame.size_increment() + unadvertised {
-            // The entire window update is unadvertised, no need to do anything
-            // else
+        if !stream.state.is_send_streaming() {
             return Ok(());
         }
 
-        stream.notify_send();
+        let connection = self.prioritize.available_window();
+        let advertised = stream.send_flow.advertised();
+
+        stream.send_flow.expand_window(frame.size_increment())?;
+        stream.send_flow.advertise(connection);
+
+        if !stream.is_pending_send_capacity && !stream.send_flow.is_fully_advertised() {
+            // The stream transitioned to having unadvertised capacity
+            stream.is_pending_send_capacity = true;
+            self.pending_capacity.push::<stream::NextCapacity>(stream);
+        }
+
+        if advertised < stream.send_flow.advertised() {
+            // The amount of available capacity to the sender has increased,
+            // notify the sender
+            stream.notify_send();
+        }
 
         Ok(())
     }
 
     pub fn window_size(&mut self, stream: &mut Stream<B>) -> usize {
-        if let Some(flow) = stream.state.send_flow_control() {
+        if stream.state.is_send_streaming() {
             // Track the current task
             stream.send_task = Some(task::current());
 
-            // We are observing the window, so apply the pending updates
-            flow.apply_window_update();
-
-            let mut window = flow.effective_window_size();
-
-            if stream.unadvertised_send_window > window {
-                return 0;
-            }
-
-            return (window - stream.unadvertised_send_window) as usize;
+            stream.send_flow.observe_window()
+        } else {
+            0
         }
-
-        0
     }
 
     pub fn apply_remote_settings(&mut self,
@@ -320,6 +273,8 @@ impl<B> Send<B> where B: Buf {
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
+                    unimplemented!();
+                    /*
                     if let Some(flow) = stream.state.send_flow_control() {
                         flow.shrink_window(val);
 
@@ -332,14 +287,18 @@ impl<B> Send<B> where B: Buf {
 
                         unimplemented!();
                     }
+                    */
                 });
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
+                    unimplemented!();
+                    /*
                     if let Some(flow) = stream.state.send_flow_control() {
                         unimplemented!();
                     }
+                    */
                 });
             }
         }

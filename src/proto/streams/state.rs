@@ -72,8 +72,7 @@ enum Inner {
 #[derive(Debug, Copy, Clone)]
 enum Peer {
     AwaitingHeaders,
-    /// Contains a FlowControl representing the _receiver_ of this this data stream.
-    Streaming(FlowControl),
+    Streaming,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -84,8 +83,8 @@ enum Cause {
 
 impl State {
     /// Opens the send-half of a stream if it is not already open.
-    pub fn send_open(&mut self, sz: WindowSize, eos: bool) -> Result<(), ConnectionError> {
-        let local = Peer::streaming(sz);
+    pub fn send_open(&mut self, eos: bool) -> Result<(), ConnectionError> {
+        let local = Peer::Streaming;
 
         self.inner = match self.inner {
             Idle => {
@@ -128,8 +127,8 @@ impl State {
     /// frame is received.
     ///
     /// Returns true if this transitions the state to Open
-    pub fn recv_open(&mut self, sz: WindowSize, eos: bool) -> Result<bool, ConnectionError> {
-        let remote = Peer::streaming(sz);
+    pub fn recv_open(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+        let remote = Peer::Streaming;
         let mut initial = false;
 
         self.inner = match self.inner {
@@ -254,6 +253,22 @@ impl State {
         }
     }
 
+    pub fn is_send_streaming(&self) -> bool {
+        match self.inner {
+            Open { local: Peer::Streaming, .. } => true,
+            HalfClosedRemote(Peer::Streaming) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_recv_streaming(&self) -> bool {
+        match self.inner {
+            Open { remote: Peer::Streaming, .. } => true,
+            HalfClosedLocal(Peer::Streaming) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match self.inner {
             Closed(_) => true,
@@ -265,22 +280,6 @@ impl State {
         match self.inner {
             Closed(..) | HalfClosedRemote(..) => true,
             _ => false,
-        }
-    }
-
-    pub fn recv_flow_control(&mut self) -> Option<&mut FlowControl> {
-        match self.inner {
-            Open { ref mut remote, .. } |
-            HalfClosedLocal(ref mut remote) => remote.flow_control(),
-            _ => None,
-        }
-    }
-
-    pub fn send_flow_control(&mut self) -> Option<&mut FlowControl> {
-        match self.inner {
-            Open { ref mut local, .. } |
-            HalfClosedRemote(ref mut local) => local.flow_control(),
-            _ => None,
         }
     }
 
@@ -309,18 +308,5 @@ impl Default for State {
 impl Default for Peer {
     fn default() -> Self {
         Peer::AwaitingHeaders
-    }
-}
-
-impl Peer {
-    fn streaming(sz: WindowSize) -> Peer {
-        Peer::Streaming(FlowControl::new(sz))
-    }
-
-    fn flow_control(&mut self) -> Option<&mut FlowControl> {
-        match *self {
-            Streaming(ref mut flow) => Some(flow),
-            _ => None,
-        }
     }
 }

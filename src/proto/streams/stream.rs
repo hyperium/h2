@@ -8,6 +8,12 @@ pub(super) struct Stream<B> {
     /// Current state of the stream
     pub state: State,
 
+    /// Send data flow control
+    pub send_flow: FlowControl,
+
+    /// Receive data flow control
+    pub recv_flow: FlowControl,
+
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque<Bytes>,
 
@@ -38,11 +44,6 @@ pub(super) struct Stream<B> {
 
     /// True if the stream is currently pending send
     pub is_pending_send: bool,
-
-    /// A stream's capacity is never advertised past the connection's capacity.
-    /// This value represents the amount of the stream window that has been
-    /// temporarily withheld.
-    pub unadvertised_send_window: WindowSize,
 }
 
 #[derive(Debug)]
@@ -52,31 +53,23 @@ pub(super) struct Next;
 pub(super) struct NextCapacity;
 
 impl<B> Stream<B> {
-    pub fn new(id: StreamId) -> Stream<B> {
+    pub fn new(id: StreamId) -> Stream<B>
+    {
         Stream {
             id,
             state: State::default(),
             pending_recv: buffer::Deque::new(),
             recv_task: None,
             send_task: None,
+            recv_flow: FlowControl::new(),
+            send_flow: FlowControl::new(),
             pending_send: buffer::Deque::new(),
             next: None,
             next_capacity: None,
             is_pending_send_capacity: false,
             pending_push_promises: store::List::new(),
             is_pending_send: false,
-            unadvertised_send_window: 0,
         }
-    }
-
-    // TODO: remove?
-    pub fn send_flow_control(&mut self) -> Option<&mut FlowControl> {
-        self.state.send_flow_control()
-    }
-
-    // TODO: remove?
-    pub fn recv_flow_control(&mut self) -> Option<&mut FlowControl> {
-        self.state.recv_flow_control()
     }
 
     pub fn notify_send(&mut self) {

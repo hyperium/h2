@@ -1,27 +1,87 @@
 use ConnectionError;
 use proto::*;
 
+use std::cmp;
+
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
-    /// Amount that may be claimed.
-    window_size: WindowSize,
+    /// Window size as indicated by the peer. This can go negative.
+    window_size: i32,
 
-    /// Amount to be removed by future increments.
-    underflow: WindowSize,
+    /// Amount that has been advertised to the data sender.
+    advertised: WindowSize,
 
-    /// The amount that has been incremented but not yet advertised (to the
-    /// application or the remote).
-    next_window_update: WindowSize,
+    /// Window size seen by the sender
+    seen: WindowSize
 }
 
 impl FlowControl {
-    pub fn new(window_size: WindowSize) -> FlowControl {
+    pub fn new() -> FlowControl {
+        FlowControl::with_window_size(0)
+    }
+
+    pub fn with_window_size(window_size: WindowSize) -> FlowControl {
         FlowControl {
-            window_size,
-            underflow: 0,
-            next_window_update: 0,
+            window_size: window_size as i32,
+            advertised: window_size,
+            seen: 0,
         }
     }
+
+    /// Set the window size.
+    ///
+    /// This should only be called when setting the initial window size
+    pub fn set_window_size(&mut self, val: WindowSize) {
+        self.window_size = val as i32;
+        self.advertised = val;
+    }
+
+    fn window_size(&self) -> WindowSize {
+        if self.window_size < 0 {
+            0
+        } else {
+            self.window_size as WindowSize
+        }
+    }
+
+    pub fn advertise(&mut self, val: WindowSize) {
+        self.advertised = cmp::min(val, self.window_size());
+    }
+
+    /// Return the advertised window size
+    pub fn advertised(&self) -> WindowSize {
+        self.advertised
+    }
+
+    pub fn is_fully_advertised(&self) -> bool {
+        self.advertised() >= self.window_size()
+    }
+
+    /// Decrements the **advertised** window
+    pub fn send<E>(&mut self, sz: WindowSize, err: E) -> Result<(), E>
+    {
+        if self.seen < sz {
+            return Err(err);
+        }
+
+        self.seen -= sz;
+        Ok(())
+    }
+
+    /// Increase the window capacity
+    pub fn expand_window(&mut self, sz: WindowSize)
+        -> Result<(), ConnectionError>
+    {
+        // TODO: Handle invalid increment
+        self.window_size += sz as i32;
+        Ok(())
+    }
+
+    pub fn observe_window(&mut self) -> WindowSize {
+        unimplemented!();
+    }
+
+    /*
 
     pub fn has_capacity(&self) -> bool {
         self.effective_window_size() > 0
@@ -118,4 +178,5 @@ impl FlowControl {
         self.window_size += incr;
         Some(incr)
     }
+    */
 }

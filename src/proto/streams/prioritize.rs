@@ -45,7 +45,7 @@ impl<B> Prioritize<B>
         Prioritize {
             pending_send: store::List::new(),
             pending_capacity: store::List::new(),
-            flow_control: FlowControl::new(config.init_local_window_sz),
+            flow_control: FlowControl::with_window_size(config.init_local_window_sz),
             buffered_data: 0,
             buffer: Buffer::new(),
             conn_task: None,
@@ -53,6 +53,8 @@ impl<B> Prioritize<B>
     }
 
     pub fn available_window(&self) -> WindowSize {
+        unimplemented!();
+        /*
         let win = self.flow_control.effective_window_size();
 
         if self.buffered_data >= win as usize {
@@ -60,11 +62,14 @@ impl<B> Prioritize<B>
         } else {
             win - self.buffered_data as WindowSize
         }
+        */
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
         -> Result<(), ConnectionError>
     {
+        unimplemented!();
+        /*
         // Expand the window
         self.flow_control.expand_window(frame.size_increment())?;
 
@@ -72,6 +77,7 @@ impl<B> Prioritize<B>
         self.flow_control.apply_window_update();
 
         Ok(())
+        */
     }
 
     pub fn queue_frame(&mut self,
@@ -180,6 +186,8 @@ impl<B> Prioritize<B>
                         Frame::Data(frame) => {
                             let len = frame.payload().remaining();
 
+                            unimplemented!();
+                            /*
                             if len > self.flow_control.effective_window_size() as usize {
                                 // TODO: This could be smarter...
                                 self.push_back_frame(frame.into(), &mut stream);
@@ -187,6 +195,7 @@ impl<B> Prioritize<B>
                                 // Try again w/ the next stream
                                 continue;
                             }
+                            */
 
                             frame.into()
                         }
@@ -227,6 +236,8 @@ impl<B> Prioritize<B>
         // If the connection level window has capacity, pop off of the pending
         // capacity list first.
 
+        unimplemented!();
+        /*
         if self.flow_control.has_capacity() && !self.pending_capacity.is_empty() {
             let mut stream = self.pending_capacity
                 .pop::<stream::Next>(store)
@@ -246,6 +257,7 @@ impl<B> Prioritize<B>
                 None => None,
             }
         }
+        */
     }
 
     fn reclaim_frame<T>(&mut self,
