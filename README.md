@@ -50,7 +50,7 @@ Next, add this to your crate:
 ```rust
 extern crate h2;
 
-use http::server::Server;
+use h2::server::Server;
 
 fn main() {
     // ...
