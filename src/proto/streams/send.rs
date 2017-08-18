@@ -92,7 +92,7 @@ impl<B> Send<B> where B: Buf {
         stream.state.send_open(frame.is_end_stream())?;
 
         if stream.state.is_send_streaming() {
-            stream.send_flow.update_window(self.init_window_sz)?;
+            stream.send_flow.inc_window(self.init_window_sz)?;
         }
 
         // Queue the frame for sending
@@ -130,7 +130,7 @@ impl<B> Send<B> where B: Buf {
         }
 
         // Update the flow controller
-        stream.send_flow.send(sz, FlowControlViolation)?;
+        stream.send_flow.buffer_data(sz, FlowControlViolation)?;
 
         if frame.is_end_stream() {
             try!(stream.state.send_close());

@@ -220,28 +220,33 @@ impl<T> Future for Send<T>
 
         loop {
             if self.buf.is_none() {
+                // Get a chunk to send to the H2 stream
                 self.buf = try_ready!(self.src.poll());
             }
 
             match self.buf.take() {
                 Some(mut buf) => {
-                    unimplemented!();
-                    /*
-                    let cap = self.dst.as_mut().unwrap().window_size();
+                    let dst = self.dst.as_mut().unwrap();
+
+                    // Ask for the amount of capacity needed
+                    dst.reserve_capacity(buf.len());
+
+                    let cap = dst.capacity();
 
                     if cap == 0 {
                         self.buf = Some(buf);
-                        return Ok(Async::NotReady);
-                    } if cap >= buf.len() {
-                        self.dst.as_mut().unwrap().send_data(buf, false)?;
-                    } else {
-                        let chunk = buf.split_to(cap);
-                        self.buf = Some(buf);
-                        self.dst.as_mut().unwrap().send_data(chunk, false)?;
-
-                        return Ok(Async::NotReady);
+                        // TODO: This seems kind of lame :(
+                        try_ready!(dst.poll_capacity());
+                        continue;
                     }
-                    */
+
+                    let chunk = buf.split_to(cap);
+
+                    if !buf.is_empty() {
+                        self.buf = Some(buf);
+                    }
+
+                    dst.send_data(chunk, false)?;
                 }
                 None => {
                     // TODO: It would be nice to not have to send an extra

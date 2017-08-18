@@ -39,16 +39,35 @@ impl<B> Prioritize<B>
     where B: Buf,
 {
     pub fn new(config: &Config) -> Prioritize<B> {
-        unimplemented!();
-        /*
+        let mut flow = FlowControl::new();
+
+        flow.inc_window(config.init_local_window_sz);
+        flow.assign_capacity(config.init_local_window_sz);
+
         Prioritize {
-            pending_send: store::List::new(),
-            pending_capacity: store::List::new(),
-            flow_control: FlowControl::with_window_size(config.init_local_window_sz),
+            pending_send: store::Queue::new(),
+            pending_capacity: store::Queue::new(),
+            flow: flow,
             buffer: Buffer::new(),
             conn_task: None,
         }
-        */
+    }
+
+    /// Queue a frame to be sent to the remote
+    pub fn queue_frame(&mut self,
+                       frame: Frame<B>,
+                       stream: &mut store::Ptr<B>)
+    {
+        // Queue the frame in the buffer
+        stream.pending_send.push_back(&mut self.buffer, frame);
+
+        // Queue the stream
+        self.pending_send.push(stream);
+
+        // Notify the connection.
+        if let Some(task) = self.conn_task.take() {
+            task.notify();
+        }
     }
 
     /// Request capacity to send data
@@ -84,7 +103,7 @@ impl<B> Prioritize<B>
         }
 
         // Update the stream level flow control.
-        stream.send_flow.update_window(inc)?;
+        stream.send_flow.inc_window(inc)?;
 
         // If the stream is waiting on additional capacity, then this will
         // assign it (if available on the connection) and notify the producer
@@ -98,14 +117,35 @@ impl<B> Prioritize<B>
                                          store: &mut Store<B>)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        // Update the connection's window
+        self.flow.inc_window(inc)?;
+
+        // Assign newly acquired capacity to streams pending capacity.
+        while self.flow.available() > 0 {
+            let mut stream = match self.pending_capacity.pop(store) {
+                Some(stream) => stream,
+                None => return Ok(()),
+            };
+
+            // Try to assign capacity to the stream. This will also re-queue the
+            // stream if there isn't enough connection level capacity to fulfill
+            // the capacity request.
+            self.try_assign_capacity(&mut stream);
+        }
+
+        Ok(())
     }
 
     /// Request capacity to send data
     fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B>) {
+        // TODO: The stream can have buffered data that could not be sent
+        // because the stream's window *was* too small. So, if there is buffered
+        // data, try to claim some connection window to apply to that.
+
         let total_requested = stream.requested_send_capacity;
 
         // Total requested should never go below actual assigned
+        // (Note: the window size can go lower than assigned)
         debug_assert!(total_requested >= stream.send_flow.available());
 
         // The amount of additional capacity that the stream requests.
@@ -113,6 +153,9 @@ impl<B> Prioritize<B>
         let mut additional = cmp::min(
             total_requested - stream.send_flow.available(),
             stream.send_flow.window_size());
+
+        trace!("try_assign_capacity; requested={}; additional={}; conn={}",
+               total_requested, additional, self.flow.available());
 
         if additional == 0 {
             // Nothing more to do
@@ -157,85 +200,6 @@ impl<B> Prioritize<B>
         }
     }
 
-    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B>)
-        -> Poll<Option<usize>, ConnectionError>
-    {
-        unimplemented!();
-    }
-
-    // =========== OLD JUNK ===========
-
-    pub fn available_window(&self) -> WindowSize {
-        unimplemented!();
-        /*
-        let win = self.flow_control.effective_window_size();
-
-        if self.buffered_data >= win as usize {
-            0
-        } else {
-            win - self.buffered_data as WindowSize
-        }
-        */
-    }
-
-    /*
-    pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
-        -> Result<(), ConnectionError>
-    {
-        unimplemented!();
-        /*
-        // Expand the window
-        self.flow_control.expand_window(frame.size_increment())?;
-
-        // Imediately apply the update
-        self.flow_control.apply_window_update();
-
-        Ok(())
-        */
-    }
-    */
-
-    pub fn queue_frame(&mut self,
-                       frame: Frame<B>,
-                       stream: &mut store::Ptr<B>)
-    {
-        if self.queue_frame2(frame, stream) {
-            // Notification required
-            if let Some(ref task) = self.conn_task {
-                task.notify();
-            }
-        }
-    }
-
-    /// Queue frame without actually notifying. Returns ture if the queue was
-    /// succesfful.
-    fn queue_frame2(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>)
-        -> bool
-    {
-        unimplemented!();
-        /*
-        self.buffered_data += frame.flow_len();
-
-        // queue the frame in the buffer
-        stream.pending_send.push_back(&mut self.buffer, frame);
-
-        // Queue the stream
-        !push_sender(&mut self.pending_send, stream)
-        */
-    }
-
-    /// Push the frame to the front of the stream's deque, scheduling the
-    /// steream if needed.
-    fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>) {
-        unimplemented!();
-        /*
-        // Push the frame to the front of the stream's deque
-        stream.pending_send.push_front(&mut self.buffer, frame);
-
-        // If needed, schedule the sender
-        push_sender(&mut self.pending_capacity, stream);
-        */
-    }
 
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B>,
@@ -243,9 +207,6 @@ impl<B> Prioritize<B>
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
-        // Track the task
-        self.conn_task = Some(task::current());
-
         // Ensure codec is ready
         try_ready!(dst.poll_ready());
 
@@ -256,13 +217,10 @@ impl<B> Prioritize<B>
         let max_frame_len = dst.max_send_frame_size();
 
         trace!("poll_complete");
+
         loop {
             match self.pop_frame(store, max_frame_len) {
                 Some(frame) => {
-                    // Figure out the byte size this frame applies to flow
-                    // control
-                    let len = cmp::min(frame.flow_len(), max_frame_len);
-
                     trace!("writing frame={:?}", frame);
 
                     let res = dst.start_send(frame)?;
@@ -284,6 +242,9 @@ impl<B> Prioritize<B>
 
                     // This might release a data frame...
                     if !self.reclaim_frame(store, dst) {
+                        // Nothing else to do, track the task
+                        self.conn_task = Some(task::current());
+
                         return Ok(().into());
                     }
 
@@ -294,93 +255,13 @@ impl<B> Prioritize<B>
         }
     }
 
-    fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
-        -> Option<Frame<Prioritized<B>>>
-    {
-        loop {
-            match self.pop_sender(store) {
-                Some(mut stream) => {
-                    let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
-                        Frame::Data(frame) => {
-                            let len = frame.payload().remaining();
-
-                            unimplemented!();
-                            /*
-                            if len > self.flow_control.effective_window_size() as usize {
-                                // TODO: This could be smarter...
-                                self.push_back_frame(frame.into(), &mut stream);
-
-                                // Try again w/ the next stream
-                                continue;
-                            }
-                            */
-
-                            frame.into()
-                        }
-                        frame => frame,
-                    };
-
-                    if !stream.pending_send.is_empty() {
-                        unimplemented!();
-                        /*
-                        push_sender(&mut self.pending_send, &mut stream);
-                        */
-                    }
-
-                    let frame = match frame {
-                        Frame::Data(mut frame) => {
-                            let eos = frame.is_end_stream();
-
-                            if frame.payload().remaining() > max_len {
-                                frame.unset_end_stream();
-                            }
-
-                            Frame::Data(frame.map(|buf| {
-                                Prioritized {
-                                    inner: buf.take(max_len),
-                                    end_of_stream: eos,
-                                    stream: stream.key(),
-                                }
-                            }))
-                        }
-                        frame => frame.map(|_| unreachable!()),
-                    };
-
-                    return Some(frame);
-                }
-                None => return None,
-            }
-        }
-    }
-
-    fn pop_sender<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>> {
-        // If the connection level window has capacity, pop off of the pending
-        // capacity list first.
-
-        unimplemented!();
-        /*
-        if self.flow_control.has_capacity() && !self.pending_capacity.is_empty() {
-            let mut stream = self.pending_capacity
-                .pop::<stream::Next>(store)
-                .unwrap();
-
-            stream.is_pending_send = false;
-            Some(stream)
-        } else {
-            let stream = self.pending_send
-                .pop::<stream::Next>(store);
-
-            match stream {
-                Some(mut stream) => {
-                    stream.is_pending_send = false;
-                    Some(stream)
-                }
-                None => None,
-            }
-        }
-        */
-    }
-
+    /// Tries to reclaim a pending data frame from the codec.
+    ///
+    /// Returns true if a frame was reclaimed.
+    ///
+    /// When a data frame is written to the codec, it may not be written in its
+    /// entirety (large chunks are split up into potentially many data frames).
+    /// In this case, the stream needs to be reprioritized.
     fn reclaim_frame<T>(&mut self,
                         store: &mut Store<B>,
                         dst: &mut Codec<T, Prioritized<B>>) -> bool
@@ -415,24 +296,90 @@ impl<B> Prioritize<B>
 
         false
     }
-}
 
-/*
-/// Push the stream onto the `pending_send` list. Returns true if the sender was
-/// not already queued.
-fn push_sender<B>(list: &mut store::List<B>, stream: &mut store::Ptr<B>)
-    -> bool
-{
-    if stream.is_pending_send {
-        return false;
+    // =========== OLD JUNK ===========
+
+    /// Push the frame to the front of the stream's deque, scheduling the
+    /// steream if needed.
+    fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>) {
+        // Push the frame to the front of the stream's deque
+        stream.pending_send.push_front(&mut self.buffer, frame);
+
+        // If needed, schedule the sender
+        self.pending_send.push(stream);
     }
 
-    list.push::<stream::Next>(stream);
-    stream.is_pending_send = true;
+    fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
+        -> Option<Frame<Prioritized<B>>>
+    {
+        loop {
+            match self.pending_send.pop(store) {
+                Some(mut stream) => {
+                    let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
+                        Frame::Data(mut frame) => {
 
-    true
+                            // Get the amount of capacity remaining for stream's
+                            // window.
+                            //
+                            // TODO: Is this the right thing to check?
+                            let stream_capacity = stream.send_flow.window_size();
+
+                            if stream_capacity == 0 {
+                                // The stream has no more capacity, this can
+                                // happen if the remote reduced the stream
+                                // window. In this case, we need to buffer the
+                                // frame and wait for a window update...
+                                self.push_back_frame(frame.into(), &mut stream);
+                                continue;
+                            }
+
+                            // Only send up to the max frame length
+                            let len = cmp::min(
+                                frame.payload().remaining(),
+                                max_len);
+
+                            // Only send up to the stream's window capacity
+                            let len = cmp::min(len, stream_capacity as usize);
+
+                            // There *must* be be enough connection level
+                            // capacity at this point.
+                            debug_assert!(len <= self.flow.window_size() as usize);
+
+                            // Update the flow control
+                            stream.send_flow.send_data(len as WindowSize);
+                            self.flow.send_data(len as WindowSize);
+
+                            // Wrap the frame's data payload to ensure that the
+                            // correct amount of data gets written.
+
+                            let eos = frame.is_end_stream();
+
+                            if frame.payload().remaining() > len {
+                                frame.unset_end_stream();
+                            }
+
+                            Frame::Data(frame.map(|buf| {
+                                Prioritized {
+                                    inner: buf.take(len),
+                                    end_of_stream: eos,
+                                    stream: stream.key(),
+                                }
+                            }))
+                        }
+                        frame => frame.map(|_| unreachable!()),
+                    };
+
+                    if !stream.pending_send.is_empty() {
+                        self.pending_send.push(&mut stream);
+                    }
+
+                    return Some(frame);
+                }
+                None => return None,
+            }
+        }
+    }
 }
-*/
 
 // ===== impl Prioritized =====
 

@@ -60,10 +60,9 @@ impl<B> Recv<B> where B: Buf {
             2
         };
 
-        let flow = FlowControl::new();
+        let mut flow = FlowControl::new();
 
-        // TODO: Set the initial connection window
-        unimplemented!();
+        flow.inc_window(config.init_remote_window_sz);
 
         Recv {
             max_streams: config.max_remote_initiated,
