@@ -1,6 +1,6 @@
 use {frame, ConnectionError, StreamId};
 use {Body, Chunk};
-use proto::{self, Connection};
+use proto::{self, Connection, WindowSize};
 use error::Reason::*;
 
 use http::{self, Request, Response};
@@ -152,18 +152,30 @@ impl<T, B> fmt::Debug for Server<T, B>
 // ===== impl Stream =====
 
 impl<B: IntoBuf> Stream<B> {
-    /// Returns the current window size.
-    ///
-    /// This function also registers interest changes. The current task will be
-    /// notified when the window size is *increased*.
-    pub fn window_size(&mut self) -> usize {
-        self.inner.window_size()
-    }
-
+    /// Send a response
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
         self.inner.send_response(response, end_of_stream)
+    }
+
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: usize)
+        -> Result<(), ConnectionError>
+    {
+        // TODO: Check for overflow
+        self.inner.reserve_capacity(capacity as WindowSize)
+    }
+
+    /// Returns the stream's current send capacity.
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity() as usize
+    }
+
+    /// Request to be notified when the stream's capacity increases
+    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ConnectionError> {
+        let res = try_ready!(self.inner.poll_capacity());
+        Ok(Async::Ready(res.map(|v| v as usize)))
     }
 
     /// Send a single data frame
@@ -213,6 +225,8 @@ impl<T> Future for Send<T>
 
             match self.buf.take() {
                 Some(mut buf) => {
+                    unimplemented!();
+                    /*
                     let cap = self.dst.as_mut().unwrap().window_size();
 
                     if cap == 0 {
@@ -227,6 +241,7 @@ impl<T> Future for Send<T>
 
                         return Ok(Async::NotReady);
                     }
+                    */
                 }
                 None => {
                     // TODO: It would be nice to not have to send an extra

@@ -8,25 +8,85 @@ pub struct FlowControl {
     /// Window size as indicated by the peer. This can go negative.
     window_size: i32,
 
-    /// Amount that has been advertised to the data sender.
-    advertised: WindowSize,
-
-    /// Window size seen by the sender
-    seen: WindowSize
+    /// The amount of the window that is currently available to consume.
+    available: WindowSize,
 }
 
 impl FlowControl {
     pub fn new() -> FlowControl {
-        FlowControl::with_window_size(0)
+        FlowControl {
+            window_size: 0,
+            available: 0,
+        }
     }
 
+    /// Returns the window size as known by the peer
+    pub fn window_size(&self) -> WindowSize {
+        if self.window_size < 0 {
+            0
+        } else {
+            self.window_size as WindowSize
+        }
+    }
+
+    /// Returns the window size available to the consumer
+    pub fn available(&self) -> WindowSize {
+        self.available
+    }
+
+    /// Returns true if there is unavailable window capacity
+    pub fn has_unavailable(&self) -> bool {
+        if self.window_size < 0 {
+            return false;
+        }
+
+        self.window_size as WindowSize > self.available
+    }
+
+    pub fn claim_capacity(&mut self, capacity: WindowSize) {
+        assert!(self.available >= capacity);
+        self.available -= capacity;
+    }
+
+    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+        assert!(self.window_size() >= self.available + capacity);
+        self.available += capacity;
+    }
+
+    /// Update the window size.
+    ///
+    /// This is called after receiving a WINDOW_UPDATE frame
+    pub fn update_window(&mut self, sz: WindowSize) -> Result<(), ConnectionError> {
+        // TODO: Handle invalid increment
+        self.window_size += sz as i32;
+        Ok(())
+    }
+
+    /// Decrements the **available** window.
+    ///
+    /// This does not decrement the actual window as visible to the peer. This
+    /// function should be called before sending data into the prioritization
+    /// layer.
+    pub fn send<E>(&mut self, sz: WindowSize, err: E) -> Result<(), E>
+    {
+        if self.available < sz {
+            return Err(err);
+        }
+
+        self.available -= sz;
+        Ok(())
+    }
+
+    /*
     pub fn with_window_size(window_size: WindowSize) -> FlowControl {
         FlowControl {
             window_size: window_size as i32,
-            advertised: window_size,
-            seen: 0,
+            available:
         }
     }
+    */
+
+    /*
 
     /// Set the window size.
     ///
@@ -57,17 +117,6 @@ impl FlowControl {
         self.advertised() >= self.window_size()
     }
 
-    /// Decrements the **advertised** window
-    pub fn send<E>(&mut self, sz: WindowSize, err: E) -> Result<(), E>
-    {
-        if self.seen < sz {
-            return Err(err);
-        }
-
-        self.seen -= sz;
-        Ok(())
-    }
-
     /// Increase the window capacity
     pub fn expand_window(&mut self, sz: WindowSize)
         -> Result<(), ConnectionError>
@@ -80,6 +129,7 @@ impl FlowControl {
     pub fn observe_window(&mut self) -> WindowSize {
         unimplemented!();
     }
+    */
 
     /*
 

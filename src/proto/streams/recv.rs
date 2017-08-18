@@ -29,7 +29,7 @@ pub(super) struct Recv<B> {
     pending_window_updates: VecDeque<StreamId>,
 
     /// New streams to be accepted
-    pending_accept: store::List<B>,
+    pending_accept: store::Queue<B, stream::Next>,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Bytes>,
@@ -60,14 +60,19 @@ impl<B> Recv<B> where B: Buf {
             2
         };
 
+        let flow = FlowControl::new();
+
+        // TODO: Set the initial connection window
+        unimplemented!();
+
         Recv {
             max_streams: config.max_remote_initiated,
             num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
-            flow_control: FlowControl::with_window_size(config.init_remote_window_sz),
+            flow_control: flow,
             next_stream_id: next_stream_id.into(),
             pending_window_updates: VecDeque::new(),
-            pending_accept: store::List::new(),
+            pending_accept: store::Queue::new(),
             buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
@@ -159,7 +164,7 @@ impl<B> Recv<B> where B: Buf {
         // Only servers can receive a headers frame that initiates the stream.
         // This is verified in `Streams` before calling this function.
         if P::is_server() {
-            self.pending_accept.push::<stream::Next>(stream);
+            self.pending_accept.push(stream);
         }
 
         Ok(())
@@ -260,7 +265,7 @@ impl<B> Recv<B> where B: Buf {
             let mut new_stream = store
                 .insert(frame.promised_id(), new_stream);
 
-            ppp.push::<stream::Next>(&mut new_stream);
+            ppp.push(&mut new_stream);
         }
 
         let stream = &mut store[stream];
@@ -431,7 +436,7 @@ impl<B> Recv<B> where B: Buf {
     */
 
     pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
-        self.pending_accept.pop::<stream::Next>(store)
+        self.pending_accept.pop(store)
             .map(|ptr| ptr.key())
     }
 

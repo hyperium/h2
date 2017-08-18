@@ -24,9 +24,9 @@ pub(super) struct Ptr<'a, B: 'a> {
 pub(super) struct Key(usize);
 
 #[derive(Debug)]
-pub(super) struct List<B> {
+pub(super) struct Queue<B, N> {
     indices: Option<store::Indices>,
-    _p: PhantomData<B>,
+    _p: PhantomData<(B, N)>,
 }
 
 pub(super) trait Next {
@@ -35,6 +35,10 @@ pub(super) trait Next {
     fn set_next<B>(stream: &mut Stream<B>, key: Option<Key>);
 
     fn take_next<B>(stream: &mut Stream<B>) -> Option<Key>;
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool;
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool);
 }
 
 /// A linked list
@@ -142,11 +146,13 @@ impl<B> ops::IndexMut<Key> for Store<B> {
     }
 }
 
-// ===== impl List =====
+// ===== impl Queue =====
 
-impl<B> List<B> {
+impl<B, N> Queue<B, N>
+    where N: Next,
+{
     pub fn new() -> Self {
-        List {
+        Queue {
             indices: None,
             _p: PhantomData,
         }
@@ -157,15 +163,22 @@ impl<B> List<B> {
     }
 
     pub fn take(&mut self) -> Self {
-        List {
+        Queue {
             indices: self.indices.take(),
             _p: PhantomData,
         }
     }
 
-    pub fn push<N>(&mut self, stream: &mut store::Ptr<B>)
-        where N: Next,
-    {
+    /// Queue the stream.
+    ///
+    /// If the stream is already contained by the list, return `false`.
+    pub fn push(&mut self, stream: &mut store::Ptr<B>) -> bool {
+        if N::is_queued(stream) {
+            return false;
+        }
+
+        N::set_queued(stream, true);
+
         // The next pointer shouldn't be set
         debug_assert!(N::next(stream).is_none());
 
@@ -186,10 +199,11 @@ impl<B> List<B> {
                 });
             }
         }
+
+        true
     }
 
-    pub fn pop<'a, N>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
-        where N: Next,
+    pub fn pop<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
     {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
@@ -202,62 +216,13 @@ impl<B> List<B> {
                 self.indices = Some(idxs);
             }
 
+            debug_assert!(N::is_queued(&*stream));
+            N::set_queued(&mut *stream, false);
+
             return Some(stream);
         }
 
         None
-    }
-
-    pub fn retain<N, F>(&mut self, store: &mut Store<B>, mut f: F)
-        where N: Next,
-              F: FnMut(&mut Stream<B>) -> bool,
-    {
-        if let Some(mut idxs) = self.indices {
-            let mut prev = None;
-            let mut curr = idxs.head;
-
-            loop {
-                if f(&mut store[curr]) {
-                    // Element is retained, walk to the next
-                    if let Some(next) = N::next(&mut store[curr]) {
-                        prev = Some(curr);
-                        curr = next;
-                    } else {
-                        // Tail
-                        break;
-                    }
-                } else {
-                    // Element is dropped
-                    if let Some(prev) = prev {
-                        let next = N::take_next(&mut store[curr]);
-                        N::set_next(&mut store[prev], next);
-
-                        match next {
-                            Some(next) => {
-                                curr = next;
-                            }
-                            None => {
-                                // current is last element, but guaranteed to not be the
-                                // only one
-                                idxs.tail = prev;
-                                break;
-                            }
-                        }
-                    } else {
-                        if let Some(next) = N::take_next(&mut store[curr]) {
-                            curr = next;
-                            idxs.head = next;
-                        } else {
-                            // Only element
-                            self.indices = None;
-                            return;
-                        }
-                    }
-                }
-            }
-
-            self.indices = Some(idxs);
-        }
     }
 }
 

@@ -6,17 +6,14 @@ use std::{fmt, cmp};
 
 #[derive(Debug)]
 pub(super) struct Prioritize<B> {
-    /// Streams that have pending frames
-    pending_send: store::List<B>,
+    /// Queue of streams waiting for socket capacity to send a frame
+    pending_send: store::Queue<B, stream::Next>,
 
-    /// Streams that are waiting for connection level flow control capacity
-    pending_capacity: store::List<B>,
+    /// Queue of streams waiting for window capacity to produce data.
+    pending_capacity: store::Queue<B, stream::NextSendCapacity>,
 
     /// Connection level flow control governing sent data
-    flow_control: FlowControl,
-
-    /// Total amount of buffered data in data frames
-    buffered_data: usize,
+    flow: FlowControl,
 
     /// Holds frames that are waiting to be written to the socket
     buffer: Buffer<B>,
@@ -42,15 +39,131 @@ impl<B> Prioritize<B>
     where B: Buf,
 {
     pub fn new(config: &Config) -> Prioritize<B> {
+        unimplemented!();
+        /*
         Prioritize {
             pending_send: store::List::new(),
             pending_capacity: store::List::new(),
             flow_control: FlowControl::with_window_size(config.init_local_window_sz),
-            buffered_data: 0,
             buffer: Buffer::new(),
             conn_task: None,
         }
+        */
     }
+
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, mut capacity: WindowSize, stream: &mut store::Ptr<B>)
+        -> Result<(), ConnectionError>
+    {
+        if capacity == stream.requested_send_capacity {
+            // Nothing to do
+            return Ok(());
+        } else if capacity < stream.requested_send_capacity {
+            // TODO: release capacity
+            unimplemented!();
+        } else {
+            // Update the target requested capacity
+            stream.requested_send_capacity = capacity;
+
+            // Try to assign additional capacity to the stream. If none is
+            // currently available, the stream will be queued to receive some
+            // when more becomes available.
+            self.try_assign_capacity(stream);
+
+            Ok(())
+        }
+    }
+
+    pub fn recv_stream_window_update(&mut self,
+                                     inc: WindowSize,
+                                     stream: &mut store::Ptr<B>)
+        -> Result<(), ConnectionError>
+    {
+        if !stream.state.is_send_streaming() {
+            return Ok(());
+        }
+
+        // Update the stream level flow control.
+        stream.send_flow.update_window(inc)?;
+
+        // If the stream is waiting on additional capacity, then this will
+        // assign it (if available on the connection) and notify the producer
+        self.try_assign_capacity(stream);
+
+        Ok(())
+    }
+
+    pub fn recv_connection_window_update(&mut self,
+                                         inc: WindowSize,
+                                         store: &mut Store<B>)
+        -> Result<(), ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    /// Request capacity to send data
+    fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B>) {
+        let total_requested = stream.requested_send_capacity;
+
+        // Total requested should never go below actual assigned
+        debug_assert!(total_requested >= stream.send_flow.available());
+
+        // The amount of additional capacity that the stream requests.
+        // Don't assign more than the window has available!
+        let mut additional = cmp::min(
+            total_requested - stream.send_flow.available(),
+            stream.send_flow.window_size());
+
+        if additional == 0 {
+            // Nothing more to do
+            return;
+        }
+
+        // The amount of currently available capacity on the connection
+        let conn_available = self.flow.available();
+
+        // First check if capacity is immediately available
+        if conn_available > 0 {
+            // There should be no streams pending capacity
+            debug_assert!(self.pending_capacity.is_empty());
+
+            // The amount of capacity to assign to the stream
+            // TODO: Should prioritization factor into this?
+            let assign = cmp::min(conn_available, additional);
+
+            // Assign the capacity to the stream
+            stream.assign_capacity(assign);
+
+            // Claim the capacity from the connection
+            self.flow.claim_capacity(assign);
+
+            // Subtract the amount assigned from the additional requested
+            additional -= assign;
+
+            if additional == 0 {
+                // All requested capacity has been assigned to the stream.
+                return;
+            }
+        }
+
+        if stream.send_flow.has_unavailable() {
+            // The stream requires additional capacity and the stream's
+            // window has availablel capacity, but the connection window
+            // does not.
+            //
+            // In this case, the stream needs to be queued up for when the
+            // connection has more capacity.
+            self.pending_capacity.push(stream);
+        }
+    }
+
+    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B>)
+        -> Poll<Option<usize>, ConnectionError>
+    {
+        unimplemented!();
+    }
+
+    // =========== OLD JUNK ===========
 
     pub fn available_window(&self) -> WindowSize {
         unimplemented!();
@@ -65,6 +178,7 @@ impl<B> Prioritize<B>
         */
     }
 
+    /*
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
         -> Result<(), ConnectionError>
     {
@@ -79,6 +193,7 @@ impl<B> Prioritize<B>
         Ok(())
         */
     }
+    */
 
     pub fn queue_frame(&mut self,
                        frame: Frame<B>,
@@ -97,6 +212,8 @@ impl<B> Prioritize<B>
     fn queue_frame2(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>)
         -> bool
     {
+        unimplemented!();
+        /*
         self.buffered_data += frame.flow_len();
 
         // queue the frame in the buffer
@@ -104,16 +221,20 @@ impl<B> Prioritize<B>
 
         // Queue the stream
         !push_sender(&mut self.pending_send, stream)
+        */
     }
 
     /// Push the frame to the front of the stream's deque, scheduling the
     /// steream if needed.
     fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>) {
+        unimplemented!();
+        /*
         // Push the frame to the front of the stream's deque
         stream.pending_send.push_front(&mut self.buffer, frame);
 
         // If needed, schedule the sender
         push_sender(&mut self.pending_capacity, stream);
+        */
     }
 
     pub fn poll_complete<T>(&mut self,
@@ -141,9 +262,6 @@ impl<B> Prioritize<B>
                     // Figure out the byte size this frame applies to flow
                     // control
                     let len = cmp::min(frame.flow_len(), max_frame_len);
-
-                    // Subtract the data size
-                    self.buffered_data -= len;
 
                     trace!("writing frame={:?}", frame);
 
@@ -203,7 +321,10 @@ impl<B> Prioritize<B>
                     };
 
                     if !stream.pending_send.is_empty() {
+                        unimplemented!();
+                        /*
                         push_sender(&mut self.pending_send, &mut stream);
+                        */
                     }
 
                     let frame = match frame {
@@ -296,6 +417,7 @@ impl<B> Prioritize<B>
     }
 }
 
+/*
 /// Push the stream onto the `pending_send` list. Returns true if the sender was
 /// not already queued.
 fn push_sender<B>(list: &mut store::List<B>, stream: &mut store::Ptr<B>)
@@ -310,6 +432,7 @@ fn push_sender<B>(list: &mut store::List<B>, stream: &mut store::Ptr<B>)
 
     true
 }
+*/
 
 // ===== impl Prioritized =====
 

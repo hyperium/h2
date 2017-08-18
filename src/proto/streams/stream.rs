@@ -8,8 +8,43 @@ pub(super) struct Stream<B> {
     /// Current state of the stream
     pub state: State,
 
+    /// Next node in the `Stream` linked list.
+    ///
+    /// This field is used in different linked lists depending on the stream
+    /// state. First, it is used as part of the linked list of streams waiting
+    /// to be accepted (either by a server or by a client as a push promise).
+    /// Once the stream is accepted, this is used for the linked list of streams
+    /// waiting to flush prioritized frames to the socket.
+    pub next: Option<store::Key>,
+
+    /// Set to true when the stream is queued
+    pub is_queued: bool,
+
+    // ===== Fields related to sending =====
+
     /// Send data flow control
     pub send_flow: FlowControl,
+
+    /// Amount of send capacity that has been requested, but not yet allocated.
+    pub requested_send_capacity: WindowSize,
+
+    /// Task tracking additional send capacity (i.e. window updates).
+    pub send_task: Option<task::Task>,
+
+    /// Frames pending for this stream being sent to the socket
+    pub pending_send: buffer::Deque<B>,
+
+    /// Next node in the linked list of streams waiting for additional
+    /// connection level capacity.
+    pub next_pending_send_capacity: Option<store::Key>,
+
+    /// True if the stream is waiting for outbound connection capacity
+    pub is_pending_send_capacity: bool,
+
+    /// Set to true when the send capacity has been incremented
+    pub send_capacity_inc: bool,
+
+    // ===== Fields related to receiving =====
 
     /// Receive data flow control
     pub recv_flow: FlowControl,
@@ -20,37 +55,15 @@ pub(super) struct Stream<B> {
     /// Task tracking receiving frames
     pub recv_task: Option<task::Task>,
 
-    /// Task tracking additional send capacity (i.e. window updates).
-    pub send_task: Option<task::Task>,
-
-    /// Frames pending for this stream being sent to the socket
-    pub pending_send: buffer::Deque<B>,
-
-    /// Next node in the `Stream` linked list.
-    ///
-    /// This field is used in different linked lists depending on the stream
-    /// state.
-    pub next: Option<store::Key>,
-
-    /// Next node in the linked list of streams waiting for additional
-    /// connection level capacity.
-    pub next_capacity: Option<store::Key>,
-
-    /// True if the stream is waiting for outbound connection capacity
-    pub is_pending_send_capacity: bool,
-
     /// The stream's pending push promises
-    pub pending_push_promises: store::List<B>,
-
-    /// True if the stream is currently pending send
-    pub is_pending_send: bool,
+    pub pending_push_promises: store::Queue<B, Next>,
 }
 
 #[derive(Debug)]
 pub(super) struct Next;
 
 #[derive(Debug)]
-pub(super) struct NextCapacity;
+pub(super) struct NextSendCapacity;
 
 impl<B> Stream<B> {
     pub fn new(id: StreamId) -> Stream<B>
@@ -58,18 +71,33 @@ impl<B> Stream<B> {
         Stream {
             id,
             state: State::default(),
+            next: None,
+            is_queued: false,
+
+            // ===== Fields related to sending =====
+
+            send_flow: FlowControl::new(),
+            requested_send_capacity: 0,
+            send_task: None,
+            pending_send: buffer::Deque::new(),
+            is_pending_send_capacity: false,
+            next_pending_send_capacity: None,
+            send_capacity_inc: false,
+
+            // ===== Fields related to receiving =====
+
+            recv_flow: FlowControl::new(),
             pending_recv: buffer::Deque::new(),
             recv_task: None,
-            send_task: None,
-            recv_flow: FlowControl::new(),
-            send_flow: FlowControl::new(),
-            pending_send: buffer::Deque::new(),
-            next: None,
-            next_capacity: None,
-            is_pending_send_capacity: false,
-            pending_push_promises: store::List::new(),
-            is_pending_send: false,
+            pending_push_promises: store::Queue::new(),
         }
+    }
+
+    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+        debug_assert!(capacity > 0);
+        self.send_capacity_inc = true;
+        self.send_flow.assign_capacity(capacity);
+        self.notify_send();
     }
 
     pub fn notify_send(&mut self) {
@@ -97,18 +125,34 @@ impl store::Next for Next {
     fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
         stream.next.take()
     }
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool {
+        stream.is_queued
+    }
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
+        stream.is_queued = val;
+    }
 }
 
-impl store::Next for NextCapacity {
+impl store::Next for NextSendCapacity {
     fn next<B>(stream: &Stream<B>) -> Option<store::Key> {
-        stream.next_capacity
+        stream.next_pending_send_capacity
     }
 
     fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
-        stream.next_capacity = key;
+        stream.next_pending_send_capacity = key;
     }
 
     fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
-        stream.next_capacity.take()
+        stream.next_pending_send_capacity.take()
+    }
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool {
+        stream.is_pending_send_capacity
+    }
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
+        stream.is_pending_send_capacity = val;
     }
 }

@@ -24,9 +24,6 @@ pub(super) struct Send<B> {
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
-    /// List of streams waiting for outbound connection capacity
-    pending_capacity: store::List<B>,
-
     /// Task awaiting notification to open a new stream.
     blocked_open: Option<task::Task>,
 
@@ -44,7 +41,6 @@ impl<B> Send<B> where B: Buf {
             num_streams: 0,
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
-            pending_capacity: store::List::new(),
             blocked_open: None,
             prioritize: Prioritize::new(config),
         }
@@ -96,7 +92,7 @@ impl<B> Send<B> where B: Buf {
         stream.state.send_open(frame.is_end_stream())?;
 
         if stream.state.is_send_streaming() {
-            stream.send_flow.set_window_size(self.init_window_sz);
+            stream.send_flow.update_window(self.init_window_sz)?;
         }
 
         // Queue the frame for sending
@@ -154,47 +150,40 @@ impl<B> Send<B> where B: Buf {
         self.prioritize.poll_complete(store, dst)
     }
 
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>)
+        -> Result<(), ConnectionError>
+    {
+        self.prioritize.reserve_capacity(capacity, stream)
+    }
+
+    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B>)
+        -> Poll<Option<WindowSize>, ConnectionError>
+    {
+        if !stream.state.is_send_streaming() {
+            return Ok(Async::Ready(None));
+        }
+
+        if !stream.send_capacity_inc {
+            return Ok(Async::NotReady);
+        }
+
+        stream.send_capacity_inc = false;
+
+        Ok(Async::Ready(Some(self.capacity(stream))))
+    }
+
+    /// Current available stream send capacity
+    pub fn capacity(&self, stream: &mut store::Ptr<B>) -> WindowSize {
+        stream.send_flow.available()
+    }
+
     pub fn recv_connection_window_update(&mut self,
                                          frame: frame::WindowUpdate,
                                          store: &mut Store<B>)
         -> Result<(), ConnectionError>
     {
-        self.prioritize.recv_window_update(frame)?;
-
-        // Get the current connection capacity
-        let connection = self.prioritize.available_window();
-
-        // Walk each stream pending capacity and see if this change to the
-        // connection window can increase the advertised capacity of the stream.
-        //
-        // TODO: This is not a hugely efficient operation. It could be better to
-        // change the pending_capacity structure to a red-black tree.
-        //
-        self.pending_capacity.retain::<stream::NextCapacity, _>(
-            store,
-            |stream| {
-                // Make sure that the stream is flagged as queued
-                debug_assert!(stream.is_pending_send_capacity);
-
-                if stream.send_flow.is_fully_advertised() || !stream.state.is_send_streaming() {
-                    stream.is_pending_send_capacity = false;
-                    return false;
-                }
-
-                if connection <= stream.send_flow.advertised() {
-                    // The window is not increased, but we remain interested in
-                    // updates in the future.
-                    return true;
-                }
-
-
-                stream.send_flow.advertise(connection);
-                stream.notify_send();
-
-                true
-            });
-
-        Ok(())
+        self.prioritize.recv_connection_window_update(frame.size_increment(), store)
     }
 
     pub fn recv_stream_window_update(&mut self,
@@ -202,40 +191,7 @@ impl<B> Send<B> where B: Buf {
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        if !stream.state.is_send_streaming() {
-            return Ok(());
-        }
-
-        let connection = self.prioritize.available_window();
-        let advertised = stream.send_flow.advertised();
-
-        stream.send_flow.expand_window(frame.size_increment())?;
-        stream.send_flow.advertise(connection);
-
-        if !stream.is_pending_send_capacity && !stream.send_flow.is_fully_advertised() {
-            // The stream transitioned to having unadvertised capacity
-            stream.is_pending_send_capacity = true;
-            self.pending_capacity.push::<stream::NextCapacity>(stream);
-        }
-
-        if advertised < stream.send_flow.advertised() {
-            // The amount of available capacity to the sender has increased,
-            // notify the sender
-            stream.notify_send();
-        }
-
-        Ok(())
-    }
-
-    pub fn window_size(&mut self, stream: &mut Stream<B>) -> usize {
-        if stream.state.is_send_streaming() {
-            // Track the current task
-            stream.send_task = Some(task::current());
-
-            stream.send_flow.observe_window()
-        } else {
-            0
-        }
+        self.prioritize.recv_stream_window_update(frame.size_increment(), stream)
     }
 
     pub fn apply_remote_settings(&mut self,
