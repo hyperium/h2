@@ -1,4 +1,4 @@
-use {frame, ConnectionError, StreamId};
+use {frame, ConnectionError, Reason, StreamId};
 use {Body, Chunk};
 use proto::{self, Connection, WindowSize};
 use error::Reason::*;
@@ -152,7 +152,18 @@ impl<T, B> fmt::Debug for Server<T, B>
 // ===== impl Stream =====
 
 impl<B: IntoBuf> Stream<B> {
-    /// Send a response
+    /// Returns the current window size.
+    ///
+    /// This function also registers interest changes. The current task will be
+    /// notified when the window size is *increased*.
+    pub fn window_size(&mut self) -> usize {
+        self.inner.window_size()
+    }
+
+    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        unimplemented!()
+    }
+
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {

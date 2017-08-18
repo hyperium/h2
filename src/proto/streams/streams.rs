@@ -262,6 +262,10 @@ impl<B> Streams<B>
         me.actions.send.poll_open_ready::<client::Peer>()
     }
 
+    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        unimplemented!()
+    }
+
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B>, ConnectionError>
     {
