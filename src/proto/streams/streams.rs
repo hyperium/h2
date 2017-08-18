@@ -368,7 +368,7 @@ impl<B> StreamRef<B>
 
         let stream = me.store.resolve(self.key);
 
-        stream.state.is_recv_closed() && me.actions.recv.is_empty()
+        stream.state.is_recv_closed() && stream.pending_recv.is_empty()
     }
 
     pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
