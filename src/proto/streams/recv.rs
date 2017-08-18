@@ -78,14 +78,6 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.buffer.len()
-    }
-
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
