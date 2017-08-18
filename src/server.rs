@@ -152,14 +152,7 @@ impl<T, B> fmt::Debug for Server<T, B>
 // ===== impl Stream =====
 
 impl<B: IntoBuf> Stream<B> {
-    /// Returns the current window size.
-    ///
-    /// This function also registers interest changes. The current task will be
-    /// notified when the window size is *increased*.
-    pub fn window_size(&mut self) -> usize {
-        self.inner.window_size()
-    }
-
+    /// Send a response
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
