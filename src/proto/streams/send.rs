@@ -1,4 +1,5 @@
 use {frame, ConnectionError};
+use error::User::InactiveStreamId;
 use proto::*;
 use super::*;
 
@@ -111,12 +112,14 @@ impl<B> Send<B> where B: Buf {
                       stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        if !stream.state.is_closed() {
-            stream.state.send_reset(reason)?;
-
-            let frame = frame::Reset::new(stream.id, reason);
-            self.prioritize.queue_frame(frame.into(), stream);
+        if stream.state.is_closed() {
+            return Err(InactiveStreamId.into())
         }
+
+        stream.state.send_reset(reason)?;
+
+        let frame = frame::Reset::new(stream.id, reason);
+        self.prioritize.queue_frame(frame.into(), stream);
 
         Ok(())
     }
