@@ -362,7 +362,7 @@ impl<B> StreamRef<B>
         })
     }
 
-    pub fn is_recv_empty(&self) -> bool {
+    pub fn is_recv_eos(&self) -> bool {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
