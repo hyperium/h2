@@ -70,10 +70,67 @@ impl<B> Prioritize<B>
         }
     }
 
-    /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, mut capacity: WindowSize, stream: &mut store::Ptr<B>)
+    /// Send a data frame
+    pub fn send_data(&mut self,
+                     frame: frame::Data<B>,
+                     stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        let sz = frame.payload().remaining();
+
+        if sz > MAX_WINDOW_SIZE as usize {
+            // TODO: handle overflow
+            unimplemented!();
+        }
+
+        let sz = sz as WindowSize;
+
+        if !stream.state.is_send_streaming() {
+            if stream.state.is_closed() {
+                return Err(InactiveStreamId.into());
+            } else {
+                return Err(UnexpectedFrameType.into());
+            }
+        }
+
+        // Update the buffered data counter
+        stream.buffered_send_data += sz;
+
+        // Implicitly request more send capacity if not enough has been
+        // requested yet.
+        if stream.requested_send_capacity < stream.buffered_send_data {
+            // Update the target requested capacity
+            stream.requested_send_capacity = stream.buffered_send_data;
+
+            self.try_assign_capacity(stream);
+        }
+
+        if frame.is_end_stream() {
+            try!(stream.state.send_close());
+        }
+
+        if stream.send_flow.available() > stream.buffered_send_data {
+            // The stream currently has capacity to send the data frame, so
+            // queue it up and notify the connection task.
+            self.queue_frame(frame.into(), stream);
+        } else {
+            // The stream has no capacity to send the frame now, save it but
+            // don't notify the conneciton task. Once additional capacity
+            // becomes available, the frame will be flushed.
+            stream.pending_send.push_back(&mut self.buffer, frame.into());
+        }
+
+        Ok(())
+    }
+
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>)
+        -> Result<(), ConnectionError>
+    {
+        // Actual capacity is `capacity` + the current amount of buffered data.
+        // It it were less, then we could never send out the buffered data.
+        let capacity = capacity + stream.buffered_send_data;
+
         if capacity == stream.requested_send_capacity {
             // Nothing to do
             return Ok(());
@@ -138,10 +195,6 @@ impl<B> Prioritize<B>
 
     /// Request capacity to send data
     fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B>) {
-        // TODO: The stream can have buffered data that could not be sent
-        // because the stream's window *was* too small. So, if there is buffered
-        // data, try to claim some connection window to apply to that.
-
         let total_requested = stream.requested_send_capacity;
 
         // Total requested should never go below actual assigned
@@ -179,24 +232,23 @@ impl<B> Prioritize<B>
 
             // Claim the capacity from the connection
             self.flow.claim_capacity(assign);
+        }
 
-            // Subtract the amount assigned from the additional requested
-            additional -= assign;
-
-            if additional == 0 {
-                // All requested capacity has been assigned to the stream.
-                return;
+        if stream.send_flow.available() < stream.requested_send_capacity {
+            if stream.send_flow.has_unavailable() {
+                // The stream requires additional capacity and the stream's
+                // window has availablel capacity, but the connection window
+                // does not.
+                //
+                // In this case, the stream needs to be queued up for when the
+                // connection has more capacity.
+                self.pending_capacity.push(stream);
             }
         }
 
-        if stream.send_flow.has_unavailable() {
-            // The stream requires additional capacity and the stream's
-            // window has availablel capacity, but the connection window
-            // does not.
-            //
-            // In this case, the stream needs to be queued up for when the
-            // connection has more capacity.
-            self.pending_capacity.push(stream);
+        // If data is buffered, then schedule the stream for execution
+        if stream.buffered_send_data > 0 {
+            self.pending_send.push(stream);
         }
     }
 
@@ -297,8 +349,6 @@ impl<B> Prioritize<B>
         false
     }
 
-    // =========== OLD JUNK ===========
-
     /// Push the frame to the front of the stream's deque, scheduling the
     /// steream if needed.
     fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>) {
@@ -309,14 +359,18 @@ impl<B> Prioritize<B>
         self.pending_send.push(stream);
     }
 
+    // =========== OLD JUNK ===========
+
     fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
         -> Option<Frame<Prioritized<B>>>
     {
         loop {
+            trace!("pop frame");
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
+                            trace!(" --> data frame");
 
                             // Get the amount of capacity remaining for stream's
                             // window.
@@ -325,11 +379,12 @@ impl<B> Prioritize<B>
                             let stream_capacity = stream.send_flow.window_size();
 
                             if stream_capacity == 0 {
+                                trace!(" --> stream capacity is 0, return");
                                 // The stream has no more capacity, this can
                                 // happen if the remote reduced the stream
                                 // window. In this case, we need to buffer the
                                 // frame and wait for a window update...
-                                self.push_back_frame(frame.into(), &mut stream);
+                                stream.pending_send.push_front(&mut self.buffer, frame.into());
                                 continue;
                             }
 
@@ -346,7 +401,15 @@ impl<B> Prioritize<B>
                             debug_assert!(len <= self.flow.window_size() as usize);
 
                             // Update the flow control
+                            trace!(" -- updating stream flow --");
                             stream.send_flow.send_data(len as WindowSize);
+
+                            // Assign the capacity back to the connection that
+                            // was just consumed from the stream in the previous
+                            // line.
+                            self.flow.assign_capacity(len as WindowSize);
+
+                            trace!(" -- updating connection flow --");
                             self.flow.send_data(len as WindowSize);
 
                             // Wrap the frame's data payload to ensure that the

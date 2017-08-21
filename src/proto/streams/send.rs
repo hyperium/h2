@@ -112,33 +112,7 @@ impl<B> Send<B> where B: Buf {
                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        let sz = frame.payload().remaining();
-
-        if sz > MAX_WINDOW_SIZE as usize {
-            // TODO: handle overflow
-            unimplemented!();
-        }
-
-        let sz = sz as WindowSize;
-
-        if !stream.state.is_send_streaming() {
-            if stream.state.is_closed() {
-                return Err(InactiveStreamId.into());
-            } else {
-                return Err(UnexpectedFrameType.into());
-            }
-        }
-
-        // Update the flow controller
-        stream.send_flow.buffer_data(sz, FlowControlViolation)?;
-
-        if frame.is_end_stream() {
-            try!(stream.state.send_close());
-        }
-
-        self.prioritize.queue_frame(frame.into(), stream);
-
-        Ok(())
+        self.prioritize.send_data(frame, stream)
     }
 
     pub fn poll_complete<T>(&mut self,
@@ -175,7 +149,14 @@ impl<B> Send<B> where B: Buf {
 
     /// Current available stream send capacity
     pub fn capacity(&self, stream: &mut store::Ptr<B>) -> WindowSize {
-        stream.send_flow.available()
+        let available = stream.send_flow.available();
+        let buffered = stream.buffered_send_data;
+
+        if available <= buffered {
+            0
+        } else {
+            available - buffered
+        }
     }
 
     pub fn recv_connection_window_update(&mut self,

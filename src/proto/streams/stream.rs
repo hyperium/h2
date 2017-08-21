@@ -28,6 +28,9 @@ pub(super) struct Stream<B> {
     /// Amount of send capacity that has been requested, but not yet allocated.
     pub requested_send_capacity: WindowSize,
 
+    /// Amount of data buffered at the prioritization layer.
+    pub buffered_send_data: WindowSize,
+
     /// Task tracking additional send capacity (i.e. window updates).
     pub send_task: Option<task::Task>,
 
@@ -78,6 +81,7 @@ impl<B> Stream<B> {
 
             send_flow: FlowControl::new(),
             requested_send_capacity: 0,
+            buffered_send_data: 0,
             send_task: None,
             pending_send: buffer::Deque::new(),
             is_pending_send_capacity: false,
@@ -97,7 +101,11 @@ impl<B> Stream<B> {
         debug_assert!(capacity > 0);
         self.send_capacity_inc = true;
         self.send_flow.assign_capacity(capacity);
-        self.notify_send();
+
+        // Only notify if the capacity exceeds the amount of buffered data
+        if self.send_flow.available() > self.buffered_send_data {
+            self.notify_send();
+        }
     }
 
     pub fn notify_send(&mut self) {

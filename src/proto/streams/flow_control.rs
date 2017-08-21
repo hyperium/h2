@@ -65,22 +65,17 @@ impl FlowControl {
     /// Decrements the window reflecting data has actually been sent. The caller
     /// must ensure that the window has capacity.
     pub fn send_data(&mut self, sz: WindowSize) {
+        trace!("send_data; sz={}; window={}; available={}",
+               sz, self.window_size, self.available);
+
+        // Available cannot be greater than the window
+        debug_assert!(self.available as i32 <= self.window_size || self.available == 0);
+
+        // Ensure that the argument is correct
         assert!(sz <= self.window_size as WindowSize);
+
+        // Update values
         self.window_size -= sz as i32;
-    }
-
-    /// Decrements the **available** window.
-    ///
-    /// This does not decrement the actual window as visible to the peer. This
-    /// function should be called before sending data into the prioritization
-    /// layer.
-    pub fn buffer_data<E>(&mut self, sz: WindowSize, err: E) -> Result<(), E>
-    {
-        if self.available < sz {
-            return Err(err);
-        }
-
         self.available -= sz;
-        Ok(())
     }
 }
