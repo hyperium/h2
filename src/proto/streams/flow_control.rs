@@ -1,121 +1,81 @@
 use ConnectionError;
 use proto::*;
 
+use std::cmp;
+
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
-    /// Amount that may be claimed.
-    window_size: WindowSize,
+    /// Window size as indicated by the peer. This can go negative.
+    window_size: i32,
 
-    /// Amount to be removed by future increments.
-    underflow: WindowSize,
-
-    /// The amount that has been incremented but not yet advertised (to the
-    /// application or the remote).
-    next_window_update: WindowSize,
+    /// The amount of the window that is currently available to consume.
+    available: WindowSize,
 }
 
 impl FlowControl {
-    pub fn new(window_size: WindowSize) -> FlowControl {
+    pub fn new() -> FlowControl {
         FlowControl {
-            window_size,
-            underflow: 0,
-            next_window_update: 0,
+            window_size: 0,
+            available: 0,
         }
     }
 
-    pub fn has_capacity(&self) -> bool {
-        self.effective_window_size() > 0
-    }
-
-    pub fn effective_window_size(&self) -> WindowSize {
-        let plus = self.window_size + self.next_window_update;
-
-        if self.underflow >= plus {
-            return 0;
-        }
-
-        plus - self.underflow
-    }
-
-    /// Returns true iff `claim_window(sz)` would return succeed.
-    pub fn ensure_window<T>(&mut self, sz: WindowSize, err: T) -> Result<(), ConnectionError>
-        where T: Into<ConnectionError>,
-    {
-        if sz <= self.window_size {
-            Ok(())
+    /// Returns the window size as known by the peer
+    pub fn window_size(&self) -> WindowSize {
+        if self.window_size < 0 {
+            0
         } else {
-            Err(err.into())
+            self.window_size as WindowSize
         }
     }
 
-    /// Reduce future capacity of the window.
-    ///
-    /// This accomodates updates to SETTINGS_INITIAL_WINDOW_SIZE.
-    pub fn shrink_window(&mut self, dec: WindowSize) {
-        /*
-        if decr < self.next_window_update {
-            self.next_window_update -= decr
-        } else {
-            self.underflow += decr - self.next_window_update;
-            self.next_window_update = 0;
+    /// Returns the window size available to the consumer
+    pub fn available(&self) -> WindowSize {
+        self.available
+    }
+
+    /// Returns true if there is unavailable window capacity
+    pub fn has_unavailable(&self) -> bool {
+        if self.window_size < 0 {
+            return false;
         }
-        */
+
+        self.window_size as WindowSize > self.available
     }
 
+    pub fn claim_capacity(&mut self, capacity: WindowSize) {
+        assert!(self.available >= capacity);
+        self.available -= capacity;
+    }
 
-    /// Claims the provided amount from the window, if there is enough space.
+    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+        assert!(self.window_size() >= self.available + capacity);
+        self.available += capacity;
+    }
+
+    /// Update the window size.
     ///
-    /// Fails when `apply_window_update()` hasn't returned at least `sz` more bytes than
-    /// have been previously claimed.
-    pub fn claim_window<T>(&mut self, sz: WindowSize, err: T)
-        -> Result<(), ConnectionError>
-        where T: Into<ConnectionError>,
-    {
-        self.ensure_window(sz, err)?;
-
-        self.window_size -= sz;
-        Ok(())
-    }
-
-    /// Increase the _unadvertised_ window capacity.
-    pub fn expand_window(&mut self, sz: WindowSize)
-        -> Result<(), ConnectionError>
-    {
+    /// This is called after receiving a WINDOW_UPDATE frame
+    pub fn inc_window(&mut self, sz: WindowSize) -> Result<(), ConnectionError> {
         // TODO: Handle invalid increment
-        if sz <= self.underflow {
-            self.underflow -= sz;
-            return Ok(());
-        }
-
-        let added = sz - self.underflow;
-        self.next_window_update += added;
-        self.underflow = 0;
-
+        self.window_size += sz as i32;
         Ok(())
     }
 
-    /*
-    /// Obtains the unadvertised window update.
-    ///
-    /// This does not apply the window update to `self`.
-    pub fn peek_window_update(&mut self) -> Option<WindowSize> {
-        if self.next_window_update == 0 {
-            None
-        } else {
-            Some(self.next_window_update)
-        }
-    }
-    */
+    /// Decrements the window reflecting data has actually been sent. The caller
+    /// must ensure that the window has capacity.
+    pub fn send_data(&mut self, sz: WindowSize) {
+        trace!("send_data; sz={}; window={}; available={}",
+               sz, self.window_size, self.available);
 
-    /// Obtains and applies an unadvertised window update.
-    pub fn apply_window_update(&mut self) -> Option<WindowSize> {
-        if self.next_window_update == 0 {
-            return None;
-        }
+        // Available cannot be greater than the window
+        debug_assert!(self.available as i32 <= self.window_size || self.available == 0);
 
-        let incr = self.next_window_update;
-        self.next_window_update = 0;
-        self.window_size += incr;
-        Some(incr)
+        // Ensure that the argument is correct
+        assert!(sz <= self.window_size as WindowSize);
+
+        // Update values
+        self.window_size -= sz as i32;
+        self.available -= sz;
     }
 }

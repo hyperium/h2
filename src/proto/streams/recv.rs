@@ -29,7 +29,7 @@ pub(super) struct Recv<B> {
     pending_window_updates: VecDeque<StreamId>,
 
     /// New streams to be accepted
-    pending_accept: store::List<B>,
+    pending_accept: store::Queue<B, stream::Next>,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Bytes>,
@@ -60,14 +60,18 @@ impl<B> Recv<B> where B: Buf {
             2
         };
 
+        let mut flow = FlowControl::new();
+
+        flow.inc_window(config.init_remote_window_sz);
+
         Recv {
             max_streams: config.max_remote_initiated,
             num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
-            flow_control: FlowControl::new(config.init_remote_window_sz),
+            flow_control: flow,
             next_stream_id: next_stream_id.into(),
             pending_window_updates: VecDeque::new(),
-            pending_accept: store::List::new(),
+            pending_accept: store::Queue::new(),
             buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
@@ -132,7 +136,9 @@ impl<B> Recv<B> where B: Buf {
         -> Result<(), ConnectionError>
     {
         trace!("opening stream; init_window={}", self.init_window_sz);
-        let is_initial = stream.state.recv_open(self.init_window_sz, frame.is_end_stream())?;
+        let is_initial = stream.state.recv_open(frame.is_end_stream())?;
+
+        // TODO: Update flow control
 
         if is_initial {
             if !self.can_inc_num_streams() {
@@ -157,7 +163,7 @@ impl<B> Recv<B> where B: Buf {
         // Only servers can receive a headers frame that initiates the stream.
         // This is verified in `Streams` before calling this function.
         if P::is_server() {
-            self.pending_accept.push::<stream::Next>(stream);
+            self.pending_accept.push(stream);
         }
 
         Ok(())
@@ -192,6 +198,8 @@ impl<B> Recv<B> where B: Buf {
 
         let sz = sz as WindowSize;
 
+        // TODO: implement
+        /*
         match stream.recv_flow_control() {
             Some(flow) => {
                 // Ensure there's enough capacity on the connection before
@@ -207,6 +215,7 @@ impl<B> Recv<B> where B: Buf {
             }
             None => return Err(ProtocolError.into()),
         }
+        */
 
         if frame.is_end_stream() {
             try!(stream.state.recv_close());
@@ -255,7 +264,7 @@ impl<B> Recv<B> where B: Buf {
             let mut new_stream = store
                 .insert(frame.promised_id(), new_stream);
 
-            ppp.push::<stream::Next>(&mut new_stream);
+            ppp.push(&mut new_stream);
         }
 
         let stream = &mut store[stream];
@@ -378,10 +387,13 @@ impl<B> Recv<B> where B: Buf {
     pub fn expand_connection_window(&mut self, sz: WindowSize)
         -> Result<(), ConnectionError>
     {
+        unimplemented!();
+        /*
         // TODO: handle overflow
         self.flow_control.expand_window(sz);
 
         Ok(())
+        */
     }
 
     pub fn expand_stream_window(&mut self,
@@ -390,6 +402,8 @@ impl<B> Recv<B> where B: Buf {
                                 stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        unimplemented!();
+        /*
         // TODO: handle overflow
         if let Some(flow) = stream.recv_flow_control() {
             flow.expand_window(sz);
@@ -397,6 +411,7 @@ impl<B> Recv<B> where B: Buf {
         }
 
         Ok(())
+        */
     }
 
     /*
@@ -420,7 +435,7 @@ impl<B> Recv<B> where B: Buf {
     */
 
     pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
-        self.pending_accept.pop::<stream::Next>(store)
+        self.pending_accept.pop(store)
             .map(|ptr| ptr.key())
     }
 

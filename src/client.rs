@@ -1,10 +1,10 @@
 use {frame, ConnectionError, StreamId};
 use {Body, Chunk};
-use proto::{self, Connection};
+use proto::{self, Connection, WindowSize};
 use error::Reason::*;
 
 use http::{self, Request, Response};
-use futures::{self, Future, Poll, Sink, AsyncSink};
+use futures::{self, Future, Poll, Sink, Async, AsyncSink};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -145,6 +145,25 @@ impl<B: IntoBuf> Stream<B> {
         let body = Body { inner: self.inner.clone() };
 
         Ok(Response::from_parts(parts, body).into())
+    }
+
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: usize)
+        -> Result<(), ConnectionError>
+    {
+        // TODO: Check for overflow
+        self.inner.reserve_capacity(capacity as WindowSize)
+    }
+
+    /// Returns the stream's current send capacity.
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity() as usize
+    }
+
+    /// Request to be notified when the stream's capacity increases
+    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ConnectionError> {
+        let res = try_ready!(self.inner.poll_capacity());
+        Ok(Async::Ready(res.map(|v| v as usize)))
     }
 
     /// Send data

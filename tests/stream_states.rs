@@ -74,6 +74,11 @@ fn send_recv_data() {
     info!("sending request");
     let mut stream = h2.request(request, false).unwrap();
 
+    // Reserve send capacity
+    stream.reserve_capacity(5).unwrap();
+
+    assert_eq!(stream.capacity(), 5);
+
     // Send the data
     stream.send_data("hello", true).unwrap();
 

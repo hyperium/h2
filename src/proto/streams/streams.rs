@@ -382,13 +382,36 @@ impl<B> StreamRef<B>
         Ok(chunk.into())
     }
 
-    /// Returns the current window size
-    pub fn window_size(&mut self) -> usize {
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: WindowSize)
+        -> Result<(), ConnectionError>
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.key);
-        me.actions.send.window_size(&mut stream)
+
+        me.actions.send.reserve_capacity(capacity, &mut stream)
+    }
+
+    /// Returns the stream's current send capacity.
+    pub fn capacity(&self) -> WindowSize {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.send.capacity(&mut stream)
+    }
+
+    /// Request to be notified when the stream's capacity increases
+    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.send.poll_capacity(&mut stream)
     }
 }
 

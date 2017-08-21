@@ -34,6 +34,12 @@ fn single_stream_send_large_body() {
 
     let mut stream = h2.request(request, false).unwrap();
 
+    // Reserve capacity to send the payload
+    stream.reserve_capacity(payload.len()).unwrap();
+
+    // The capacity should be immediately allocated
+    assert_eq!(stream.capacity(), payload.len());
+
     // Send the data
     stream.send_data(payload[..].into(), true).unwrap();
 
@@ -81,6 +87,11 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .body(()).unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
+
+    stream.reserve_capacity(payload.len()).unwrap();
+
+    // The capacity should be immediately allocated
+    assert_eq!(stream.capacity(), payload.len());
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();
@@ -141,6 +152,11 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .body(()).unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
+
+    stream.reserve_capacity(payload.len()).unwrap();
+
+    // The capacity should be immediately allocated
+    assert_eq!(stream.capacity(), payload.len());
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();

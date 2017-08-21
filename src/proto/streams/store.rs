@@ -24,9 +24,9 @@ pub(super) struct Ptr<'a, B: 'a> {
 pub(super) struct Key(usize);
 
 #[derive(Debug)]
-pub(super) struct List<B> {
+pub(super) struct Queue<B, N> {
     indices: Option<store::Indices>,
-    _p: PhantomData<B>,
+    _p: PhantomData<(B, N)>,
 }
 
 pub(super) trait Next {
@@ -35,6 +35,10 @@ pub(super) trait Next {
     fn set_next<B>(stream: &mut Stream<B>, key: Option<Key>);
 
     fn take_next<B>(stream: &mut Stream<B>) -> Option<Key>;
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool;
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool);
 }
 
 /// A linked list
@@ -142,11 +146,13 @@ impl<B> ops::IndexMut<Key> for Store<B> {
     }
 }
 
-// ===== impl List =====
+// ===== impl Queue =====
 
-impl<B> List<B> {
+impl<B, N> Queue<B, N>
+    where N: Next,
+{
     pub fn new() -> Self {
-        List {
+        Queue {
             indices: None,
             _p: PhantomData,
         }
@@ -157,15 +163,22 @@ impl<B> List<B> {
     }
 
     pub fn take(&mut self) -> Self {
-        List {
+        Queue {
             indices: self.indices.take(),
             _p: PhantomData,
         }
     }
 
-    pub fn push<N>(&mut self, stream: &mut store::Ptr<B>)
-        where N: Next,
-    {
+    /// Queue the stream.
+    ///
+    /// If the stream is already contained by the list, return `false`.
+    pub fn push(&mut self, stream: &mut store::Ptr<B>) -> bool {
+        if N::is_queued(stream) {
+            return false;
+        }
+
+        N::set_queued(stream, true);
+
         // The next pointer shouldn't be set
         debug_assert!(N::next(stream).is_none());
 
@@ -186,10 +199,11 @@ impl<B> List<B> {
                 });
             }
         }
+
+        true
     }
 
-    pub fn pop<'a, N>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
-        where N: Next,
+    pub fn pop<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
     {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
@@ -202,62 +216,13 @@ impl<B> List<B> {
                 self.indices = Some(idxs);
             }
 
+            debug_assert!(N::is_queued(&*stream));
+            N::set_queued(&mut *stream, false);
+
             return Some(stream);
         }
 
         None
-    }
-
-    pub fn retain<N, F>(&mut self, store: &mut Store<B>, mut f: F)
-        where N: Next,
-              F: FnMut(&mut Stream<B>) -> bool,
-    {
-        if let Some(mut idxs) = self.indices {
-            let mut prev = None;
-            let mut curr = idxs.head;
-
-            loop {
-                if f(&mut store[curr]) {
-                    // Element is retained, walk to the next
-                    if let Some(next) = N::next(&mut store[curr]) {
-                        prev = Some(curr);
-                        curr = next;
-                    } else {
-                        // Tail
-                        break;
-                    }
-                } else {
-                    // Element is dropped
-                    if let Some(prev) = prev {
-                        let next = N::take_next(&mut store[curr]);
-                        N::set_next(&mut store[prev], next);
-
-                        match next {
-                            Some(next) => {
-                                curr = next;
-                            }
-                            None => {
-                                // current is last element, but guaranteed to not be the
-                                // only one
-                                idxs.tail = prev;
-                                break;
-                            }
-                        }
-                    } else {
-                        if let Some(next) = N::take_next(&mut store[curr]) {
-                            curr = next;
-                            idxs.head = next;
-                        } else {
-                            // Only element
-                            self.indices = None;
-                            return;
-                        }
-                    }
-                }
-            }
-
-            self.indices = Some(idxs);
-        }
     }
 }
 
@@ -325,171 +290,5 @@ impl<'a, B> VacantEntry<'a, B> {
         self.ids.insert(key);
 
         Key(key)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use super::stream::Next;
-
-    #[test]
-    fn test_retain_empty_list_and_store() {
-        let mut store = new_store();
-        let mut list = List::new();
-
-
-        retain(&mut store, &mut list, |_| panic!());
-
-        assert!(store.slab.is_empty());
-        assert!(list.is_empty());
-    }
-
-    #[test]
-    fn test_retain_one_item() {
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &[1]);
-
-        // Keep
-        retain(&mut store, &mut list, |s| true);
-
-        let ids = get(&store, &list);
-        assert_eq!(ids, &[1]);
-
-        // Drop
-        retain(&mut store, &mut list, |s| false);
-
-        assert!(list.is_empty());
-        assert_eq!(1, store.slab.len());
-    }
-
-    #[test]
-    fn test_retain_none_long_list() {
-        let mut expect = vec![1, 2, 3, 4, 5];
-
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &expect);
-
-        retain(&mut store, &mut list, |s| {
-            assert_eq!(s.id, expect.remove(0));
-            false
-        });
-
-        assert!(list.is_empty());
-    }
-
-    #[test]
-    fn test_retain_last_elem_long_list() {
-        let mut expect = vec![1, 2, 3, 4, 5];
-
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &expect);
-
-        retain(&mut store, &mut list, |s| {
-            if expect.len() > 1 {
-                assert_eq!(s.id, expect.remove(0));
-                false
-            } else {
-                assert_eq!(s.id, 5);
-                true
-            }
-        });
-
-        let ids = get(&store, &list);
-        assert_eq!(ids, &[5]);
-    }
-
-    #[test]
-    fn test_retain_first_elem_long_list() {
-        let mut expect = vec![1, 2, 3, 4, 5];
-
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &expect);
-
-        retain(&mut store, &mut list, |s| {
-            let e = expect.remove(0);
-            assert_eq!(s.id, e);
-            e == 1
-        });
-
-        let ids = get(&store, &list);
-        assert_eq!(ids, &[1]);
-    }
-
-    #[test]
-    fn test_drop_middle_elem_long_list() {
-        let mut expect = vec![1, 2, 3, 4, 5];
-
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &expect);
-
-        retain(&mut store, &mut list, |s| {
-            let e = expect.remove(0);
-            assert_eq!(s.id, e);
-            e != 3
-        });
-
-        let ids = get(&store, &list);
-        assert_eq!(ids, &[1, 2, 4, 5]);
-    }
-
-    #[test]
-    fn test_drop_two_middle_elem_long_list() {
-        let mut expect = vec![1, 2, 3, 4, 5];
-
-        let mut store = new_store();
-        let mut list = list_with(&mut store, &expect);
-
-        retain(&mut store, &mut list, |s| {
-            let e = expect.remove(0);
-            assert_eq!(s.id, e);
-            e != 3
-        });
-
-        let ids = get(&store, &list);
-        assert_eq!(ids, &[1, 2, 4, 5]);
-    }
-
-    fn new_store() -> Store<()> {
-        Store::new()
-    }
-
-    fn push(store: &mut Store<()>, list: &mut List<()>, id: u32) {
-        let id = StreamId::from(id);
-        let mut ptr = store.insert(id, Stream::new(id));
-        list.push::<Next>(&mut ptr);
-    }
-
-    fn list_with(store: &mut Store<()>, ids: &[u32]) -> List<()> {
-        let mut list = List::new();
-
-        for &id in ids {
-            push(store, &mut list, id);
-        }
-
-        list
-    }
-
-    fn pop(store: &mut Store<()>, list: &mut List<()>) -> Option<StreamId> {
-        list.pop::<Next>(store).map(|p| p.id)
-    }
-
-    fn retain<F>(store: &mut Store<()>, list: &mut List<()>, f: F)
-        where F: FnMut(&mut Stream<()>) -> bool
-    {
-        list.retain::<Next, F>(store, f);
-    }
-
-    fn get(store: &Store<()>, list: &List<()>) -> Vec<StreamId> {
-        let mut dst = vec![];
-
-        let mut curr = list.indices.map(|i| i.head);
-
-        while let Some(c) = curr {
-            dst.push(store[c].id);
-            curr = store[c].next;
-        }
-
-        dst
     }
 }
