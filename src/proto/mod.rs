@@ -7,7 +7,7 @@ mod settings;
 mod streams;
 
 pub(crate) use self::connection::Connection;
-pub(crate) use self::streams::{Streams, StreamRef, Chunk};
+pub(crate) use self::streams::{Streams, StreamRef};
 
 use self::codec::Codec;
 use self::framed_read::FramedRead;
@@ -21,6 +21,7 @@ use error::Reason;
 use frame::{self, Frame};
 
 use futures::{self, task, Poll, Async, AsyncSink, Sink, Stream as Stream2};
+use futures::task::Task;
 use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;

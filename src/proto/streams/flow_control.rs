@@ -53,6 +53,19 @@ impl FlowControl {
         self.available += capacity;
     }
 
+    /// Returns the number of bytes available but not assigned to the window.
+    ///
+    /// This represents pending outbound WINDOW_UPDATE frames.
+    pub fn unclaimed_capacity(&self) -> WindowSize {
+        let available = self.available as i32;
+
+        if self.window_size >= available {
+            return 0;
+        }
+
+        (available - self.window_size) as WindowSize
+    }
+
     /// Update the window size.
     ///
     /// This is called after receiving a WINDOW_UPDATE frame
@@ -67,9 +80,6 @@ impl FlowControl {
     pub fn send_data(&mut self, sz: WindowSize) {
         trace!("send_data; sz={}; window={}; available={}",
                sz, self.window_size, self.available);
-
-        // Available cannot be greater than the window
-        debug_assert!(self.available as i32 <= self.window_size || self.available == 0);
 
         // Ensure that the argument is correct
         assert!(sz <= self.window_size as WindowSize);

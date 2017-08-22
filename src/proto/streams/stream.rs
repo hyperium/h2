@@ -52,6 +52,14 @@ pub(super) struct Stream<B> {
     /// Receive data flow control
     pub recv_flow: FlowControl,
 
+    pub in_flight_recv_data: WindowSize,
+
+    /// Next node in the linked list of streams waiting to send window updates.
+    pub next_window_update: Option<store::Key>,
+
+    /// True if the stream is waiting to send a window update
+    pub is_pending_window_update: bool,
+
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque<Bytes>,
 
@@ -67,6 +75,9 @@ pub(super) struct Next;
 
 #[derive(Debug)]
 pub(super) struct NextSendCapacity;
+
+#[derive(Debug)]
+pub(super) struct NextWindowUpdate;
 
 impl<B> Stream<B> {
     pub fn new(id: StreamId) -> Stream<B>
@@ -91,6 +102,9 @@ impl<B> Stream<B> {
             // ===== Fields related to receiving =====
 
             recv_flow: FlowControl::new(),
+            in_flight_recv_data: 0,
+            next_window_update: None,
+            is_pending_window_update: false,
             pending_recv: buffer::Deque::new(),
             recv_task: None,
             pending_push_promises: store::Queue::new(),
@@ -162,5 +176,27 @@ impl store::Next for NextSendCapacity {
 
     fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
         stream.is_pending_send_capacity = val;
+    }
+}
+
+impl store::Next for NextWindowUpdate {
+    fn next<B>(stream: &Stream<B>) -> Option<store::Key> {
+        stream.next_window_update
+    }
+
+    fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
+        stream.next_window_update = key;
+    }
+
+    fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
+        stream.next_window_update.take()
+    }
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool {
+        stream.is_pending_window_update
+    }
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
+        stream.is_pending_window_update = val;
     }
 }

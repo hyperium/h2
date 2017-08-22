@@ -8,7 +8,7 @@ mod store;
 mod stream;
 mod streams;
 
-pub(crate) use self::streams::{Streams, StreamRef, Chunk};
+pub(crate) use self::streams::{Streams, StreamRef};
 pub(crate) use self::prioritize::Prioritized;
 
 use self::buffer::Buffer;

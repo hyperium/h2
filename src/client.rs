@@ -1,5 +1,5 @@
 use {frame, ConnectionError, StreamId};
-use {Body, Chunk};
+use Body;
 use proto::{self, Connection, WindowSize};
 use error::Reason::*;
 
