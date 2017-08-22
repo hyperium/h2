@@ -85,7 +85,8 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_headers(&mut self,
                         frame: frame::Headers,
-                        stream: &mut store::Ptr<B>)
+                        stream: &mut store::Ptr<B>,
+                        task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
@@ -97,7 +98,7 @@ impl<B> Send<B> where B: Buf {
         }
 
         // Queue the frame for sending
-        self.prioritize.queue_frame(frame.into(), stream);
+        self.prioritize.queue_frame(frame.into(), stream, task);
 
         Ok(())
     }
@@ -109,7 +110,8 @@ impl<B> Send<B> where B: Buf {
     }
 
     pub fn send_reset(&mut self, reason: Reason,
-                      stream: &mut store::Ptr<B>)
+                      stream: &mut store::Ptr<B>,
+                      task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
         if stream.state.is_closed() {
@@ -119,17 +121,18 @@ impl<B> Send<B> where B: Buf {
         stream.state.send_reset(reason)?;
 
         let frame = frame::Reset::new(stream.id, reason);
-        self.prioritize.queue_frame(frame.into(), stream);
+        self.prioritize.queue_frame(frame.into(), stream, task);
 
         Ok(())
     }
 
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>)
+                     stream: &mut store::Ptr<B>,
+                     task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
-        self.prioritize.send_data(frame, stream)
+        self.prioritize.send_data(frame, stream, task)
     }
 
     pub fn poll_complete<T>(&mut self,
