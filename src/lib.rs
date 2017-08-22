@@ -60,6 +60,10 @@ impl<B: IntoBuf> Body<B> {
         // If the recv side is closed and the receive queue is empty, the body is empty.
         self.inner.is_recv_eos()
     }
+
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ConnectionError> {
+        self.inner.release_capacity(sz as proto::WindowSize)
+    }
 }
 
 impl<B: IntoBuf> futures::Stream for Body<B> {
