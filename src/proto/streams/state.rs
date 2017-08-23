@@ -242,6 +242,19 @@ impl State {
         }
     }
 
+    /// Indicates that the local side will not send more data to the local.
+    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        match self.inner {
+            Idle => Err(ProtocolError.into()),
+            Closed(..) => Ok(()),
+            _ => {
+                trace!("send_reset: => Closed");
+                self.inner = Closed(Some(Cause::Proto(reason)));
+                Ok(())
+            }
+        }
+    }
+
     /// Returns true if a stream with the current state counts against the
     /// concurrency limit.
     pub fn is_counted(&self) -> bool {

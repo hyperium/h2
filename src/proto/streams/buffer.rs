@@ -108,4 +108,13 @@ impl<B> Deque<B> {
             None => None,
         }
     }
+
+    pub fn peek_front<'a>(&self, buf: &'a Buffer<B>) -> Option<&'a Frame<B>> {
+        match self.indices {
+            Some(idxs) => {
+                Some(&buf.slab[idxs.head].frame)
+            }
+            None => None,
+        }
+    }
 }

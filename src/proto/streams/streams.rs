@@ -334,6 +334,16 @@ impl<B> StreamRef<B>
         me.actions.recv.take_request(&mut stream)
     }
 
+    pub fn send_reset<P: Peer>(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+        me.actions.transition::<P, _, _>(stream, move |actions, stream| {
+            actions.send.send_reset(reason, stream, &mut actions.task)
+        })
+    }
+
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
@@ -348,6 +358,15 @@ impl<B> StreamRef<B>
         me.actions.transition::<server::Peer, _, _>(stream, |actions, stream| {
             actions.send.send_headers(frame, stream, &mut actions.task)
         })
+    }
+
+    pub fn body_is_empty(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        me.actions.recv.body_is_empty(&stream)
     }
 
     pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {

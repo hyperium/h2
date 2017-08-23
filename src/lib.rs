@@ -55,6 +55,17 @@ pub struct Body<B: IntoBuf> {
 
 // ===== impl Body =====
 
+impl<B: IntoBuf> Body<B> {
+    pub fn is_empty(&self) -> bool {
+        // If the recv side is closed and the receive queue is empty, the body is empty.
+        self.inner.body_is_empty()
+    }
+
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ConnectionError> {
+        self.inner.release_capacity(sz as proto::WindowSize)
+    }
+}
+
 impl<B: IntoBuf> futures::Stream for Body<B> {
     type Item = Bytes;
     type Error = ConnectionError;

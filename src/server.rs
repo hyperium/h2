@@ -1,12 +1,12 @@
-use {frame, ConnectionError, StreamId};
-use Body;
+use {frame, Body, ConnectionError, StreamId};
 use proto::{self, Connection, WindowSize};
+use error::Reason;
 use error::Reason::*;
 
 use http::{self, Request, Response};
 use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, IntoBuf};
+use bytes::{Bytes, IntoBuf, Buf};
 
 use std::fmt;
 
@@ -190,6 +190,10 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ConnectionError>
     {
         unimplemented!();
+    }
+
+    pub fn send_reset(mut self, reason: Reason) -> Result<(), ConnectionError> {
+        self.inner.send_reset::<Peer>(reason)
     }
 }
 
