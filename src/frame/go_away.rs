@@ -3,13 +3,20 @@ use frame::{self, Head, Error, Kind, StreamId};
 
 use bytes::{BufMut, BigEndian};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GoAway {
     last_stream_id: StreamId,
     error_code: u32,
 }
 
 impl GoAway {
+    pub fn new(last_stream_id: StreamId, reason: Reason) -> Self {
+        GoAway {
+            last_stream_id,
+            error_code: reason.into(),
+        }
+    }
+
     pub fn reason(&self) -> Reason {
         self.error_code.into()
     }

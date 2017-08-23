@@ -37,8 +37,11 @@ impl<B> Prioritize<B>
     pub fn new(config: &Config) -> Prioritize<B> {
         let mut flow = FlowControl::new();
 
-        flow.inc_window(config.init_local_window_sz);
-        flow.assign_capacity(config.init_local_window_sz);
+        flow.inc_window(config.init_local_window_sz)
+            .ok().expect("invalid initial window size");
+
+        flow.assign_capacity(config.init_local_window_sz)
+            .ok().expect("invalid initial window size");
 
         Prioritize {
             pending_send: store::Queue::new(),
@@ -152,10 +155,6 @@ impl<B> Prioritize<B>
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        if !stream.state.is_send_streaming() {
-            return Ok(());
-        }
-
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
 
@@ -211,6 +210,8 @@ impl<B> Prioritize<B>
             // Nothing more to do
             return;
         }
+
+        debug_assert!(stream.state.is_send_streaming());
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available();

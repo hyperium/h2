@@ -165,6 +165,9 @@ pub enum Error {
     /// An invalid setting value was provided
     InvalidSettingValue,
 
+    /// An invalid window update value
+    InvalidWindowUpdateValue,
+
     /// The payload length specified by the frame header was not the
     /// value necessary for the specific frame type.
     InvalidPayloadLength,
