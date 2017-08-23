@@ -365,13 +365,14 @@ impl<B> Prioritize<B>
                 Some(mut stream) => {
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
-                            trace!(" --> data frame");
-
                             // Get the amount of capacity remaining for stream's
                             // window.
                             //
                             // TODO: Is this the right thing to check?
-                            let stream_capacity = stream.send_flow.window_size();
+                            let stream_capacity = stream.send_flow.available();
+
+                            trace!(" --> data frame; window={}; available={}",
+                                   stream_capacity, stream.send_flow.available());
 
                             if stream_capacity == 0 {
                                 trace!(" --> stream capacity is 0, return");
