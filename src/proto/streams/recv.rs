@@ -225,6 +225,16 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
+    pub fn body_is_empty(&self, stream: &store::Ptr<B>) -> bool {
+        if !stream.state.is_recv_closed() {
+            return false;
+        }
+
+        stream.pending_recv.peek_front(&self.buffer)
+            .map(|frame| !frame.is_data())
+            .unwrap_or(true)
+    }
+
     pub fn recv_data(&mut self,
                      frame: frame::Data,
                      stream: &mut store::Ptr<B>)
