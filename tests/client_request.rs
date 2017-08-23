@@ -37,6 +37,8 @@ fn recv_invalid_server_stream_id() {
         .write(SETTINGS_ACK)
         // Read response
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 2, 137])
+        // Write GO_AWAY
+        .write(&[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
         .build();
 
     let mut h2 = Client::handshake(mock)

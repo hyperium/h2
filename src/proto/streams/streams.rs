@@ -143,14 +143,19 @@ impl<B> Streams<B>
         })
     }
 
-    pub fn recv_err(&mut self, err: &ConnectionError) {
+    /// Handle a received error and return the ID of the last processed stream.
+    pub fn recv_err(&mut self, err: &ConnectionError) -> StreamId {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let actions = &mut me.actions;
+        let last_processed_id = actions.recv.last_processed_id();
+
         me.store.for_each(|mut stream| {
             actions.recv.recv_err(err, &mut *stream)
         });
+
+        last_processed_id
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
@@ -167,7 +172,8 @@ impl<B> Streams<B>
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
-                try!(me.actions.send.recv_stream_window_update(frame, &mut stream));
+                me.actions.send.recv_stream_window_update(
+                    frame.size_increment(), &mut stream);
             } else {
                 me.actions.recv.ensure_not_idle(id)?;
             }

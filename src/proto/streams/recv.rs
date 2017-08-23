@@ -24,6 +24,9 @@ pub(super) struct Recv<B> {
     /// The lowest stream ID that is still idle
     next_stream_id: StreamId,
 
+    /// The stream ID of the last processed stream
+    last_processed_id: StreamId,
+
     /// Streams that have pending window updates
     pending_window_updates: store::Queue<B, stream::NextWindowUpdate>,
 
@@ -65,11 +68,17 @@ impl<B> Recv<B> where B: Buf {
             flow: flow,
             next_stream_id: next_stream_id.into(),
             pending_window_updates: store::Queue::new(),
+            last_processed_id: StreamId::zero(),
             pending_accept: store::Queue::new(),
             buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
         }
+    }
+
+    /// Returns the ID of the last processed stream
+    pub fn last_processed_id(&self) -> StreamId {
+        self.last_processed_id
     }
 
     /// Update state reflecting a new, remotely opened stream
@@ -147,6 +156,11 @@ impl<B> Recv<B> where B: Buf {
                 self.next_stream_id.increment();
             } else {
                 return Err(ProtocolError.into());
+            }
+
+            // TODO: be smarter about this logic
+            if frame.stream_id() > self.last_processed_id {
+                self.last_processed_id = frame.stream_id();
             }
 
             // Increment the number of concurrent streams
@@ -325,6 +339,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
+    /// Handle a received error
     pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B>) {
         // Receive an error
         stream.state.recv_err(err);

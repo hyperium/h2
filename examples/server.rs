@@ -1,5 +1,6 @@
 extern crate h2;
 extern crate http;
+extern crate bytes;
 extern crate futures;
 extern crate tokio_io;
 extern crate tokio_core;
@@ -9,6 +10,7 @@ extern crate env_logger;
 use h2::server::Server;
 
 use http::*;
+use bytes::*;
 use futures::*;
 
 use tokio_core::reactor;
@@ -27,7 +29,8 @@ pub fn main() {
     println!("listening on {:?}", listener.local_addr());
 
     let server = listener.incoming().for_each(move |(socket, _)| {
-        let socket = io_dump::Dump::to_stdout(socket);
+        // let socket = io_dump::Dump::to_stdout(socket);
+
 
         let connection = Server::handshake(socket)
             .then(|res| {
@@ -46,34 +49,14 @@ pub fn main() {
                         println!(" error responding; err={:?}", e);
                     }
 
+                    println!(">>>> sending data");
+                    stream.send_data(Bytes::from_static(b"hello world"), true).unwrap();
+
+                    Ok(())
+                }).and_then(|_| {
+                    println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
                     Ok(())
                 })
-
-                /*
-                // Receive a request
-                conn.into_future()
-                    .then(|res| {
-                        let (frame, conn) = res.unwrap();
-                        println!("Zomg frame; {:?}", frame);
-
-                        conn.into_future()
-                    })
-                    .then(|res| {
-                        let (frame, conn) = res.unwrap();
-                        println!("Zomg frame; {:?}", frame);
-
-                        let mut response = response::Head::default();
-                        response.status = status::OK;
-
-                        conn.send_response(1.into(), response, false)
-                    })
-                    .then(|res| {
-                        let conn = res.unwrap();
-                        println!("... sending next frame");
-
-                        conn.send_data(1.into(), "world".into(), true)
-                    })
-                    */
             })
             .then(|res| {
                 let _ = res.unwrap();

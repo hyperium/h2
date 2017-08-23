@@ -1,5 +1,6 @@
-use {frame, Body, ConnectionError, Reason, StreamId};
+use {frame, Body, ConnectionError, StreamId};
 use proto::{self, Connection, WindowSize};
+use error::Reason;
 use error::Reason::*;
 
 use http::{self, Request, Response};

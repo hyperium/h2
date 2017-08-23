@@ -188,11 +188,13 @@ impl<B> Send<B> where B: Buf {
     }
 
     pub fn recv_stream_window_update(&mut self,
-                                     frame: frame::WindowUpdate,
+                                     sz: WindowSize,
                                      stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
     {
-        self.prioritize.recv_stream_window_update(frame.size_increment(), stream)
+        if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
+            // TODO: Send reset
+            unimplemented!();
+        }
     }
 
     pub fn apply_remote_settings(&mut self,
@@ -230,32 +232,20 @@ impl<B> Send<B> where B: Buf {
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
-                    unimplemented!();
-                    /*
-                    if let Some(flow) = stream.state.send_flow_control() {
-                        flow.shrink_window(val);
+                    if stream.state.is_send_streaming() {
+                        stream.send_flow.dec_window(dec);
 
-                        // Update the unadvertised number as well
-                        if stream.unadvertised_send_window < dec {
-                            stream.unadvertised_send_window = 0;
-                        } else {
-                            stream.unadvertised_send_window -= dec;
-                        }
+                        // TODO: Handle reclaiming connection level window
+                        // capacity.
 
-                        unimplemented!();
+                        // TODO: Should this notify the producer?
                     }
-                    */
                 });
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
-                    unimplemented!();
-                    /*
-                    if let Some(flow) = stream.state.send_flow_control() {
-                        unimplemented!();
-                    }
-                    */
+                    self.recv_stream_window_update(inc, &mut stream);
                 });
             }
         }
