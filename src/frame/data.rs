@@ -1,7 +1,8 @@
 use frame::{util, Frame, Head, Error, StreamId, Kind};
 use bytes::{BufMut, Bytes, Buf};
 
-#[derive(Debug)]
+use std::fmt;
+
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
     data: T,
@@ -9,7 +10,7 @@ pub struct Data<T = Bytes> {
     pad_len: Option<u8>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct DataFlag(u8);
 
 const END_STREAM: u8 = 0x1;
@@ -112,6 +113,16 @@ impl<T> From<Data<T>> for Frame<T> {
     }
 }
 
+impl<T> fmt::Debug for Data<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Data")
+            .field("stream_id", &self.stream_id)
+            .field("flags", &self.flags)
+            .field("pad_len", &self.pad_len)
+            .finish()
+    }
+}
+
 // ===== impl DataFlag =====
 
 impl DataFlag {
@@ -154,5 +165,21 @@ impl Default for DataFlag {
 impl From<DataFlag> for u8 {
     fn from(src: DataFlag) -> u8 {
         src.0
+    }
+}
+
+impl fmt::Debug for DataFlag {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = fmt.debug_struct("DataFlag");
+
+        if self.is_end_stream() {
+            f.field("end_stream", &true);
+        }
+
+        if self.is_padded() {
+            f.field("padded", &true);
+        }
+
+        f.finish()
     }
 }

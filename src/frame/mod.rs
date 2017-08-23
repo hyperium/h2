@@ -117,7 +117,7 @@ impl<T> fmt::Debug for Frame<T> {
         use self::Frame::*;
 
         match *self {
-            Data(..) => write!(fmt, "Frame::Data(..)"),
+            Data(ref frame) => write!(fmt, "Frame::Data({:?})", frame),
             Headers(ref frame) => write!(fmt, "Frame::Headers({:?})", frame),
             Priority(ref frame) => write!(fmt, "Frame::Priority({:?})", frame),
             PushPromise(ref frame) => write!(fmt, "Frame::PushPromise({:?})", frame),
