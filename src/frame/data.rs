@@ -1,7 +1,8 @@
 use frame::{util, Frame, Head, Error, StreamId, Kind};
 use bytes::{BufMut, Bytes, Buf};
 
-#[derive(Debug)]
+use std::fmt;
+
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
     data: T,
@@ -109,6 +110,17 @@ impl<T: Buf> Data<T> {
 impl<T> From<Data<T>> for Frame<T> {
     fn from(src: Data<T>) -> Self {
         Frame::Data(src)
+    }
+}
+
+impl<T> fmt::Debug for Data<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Data")
+            .field("stream_id", &self.stream_id)
+            .field("flags", &self.flags)
+            .field("pad_len", &self.pad_len)
+            // `data` purposefully excluded
+            .finish()
     }
 }
 
