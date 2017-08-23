@@ -17,14 +17,6 @@ pub(crate) struct StreamRef<B> {
     key: store::Key,
 }
 
-#[derive(Debug)]
-pub(crate) struct Chunk<B>
-    where B: Buf,
-{
-    inner: Arc<Mutex<Inner<B>>>,
-    recv: recv::Chunk,
-}
-
 /// Fields needed to manage state related to managing the set of streams. This
 /// is mostly split out to make ownership happy.
 ///
@@ -42,6 +34,9 @@ struct Actions<B> {
 
     /// Manages state transitions initiated by sending frames
     send: Send<B>,
+
+    /// Task that calls `poll_complete`.
+    task: Option<task::Task>,
 }
 
 impl<B> Streams<B>
@@ -53,6 +48,7 @@ impl<B> Streams<B>
                 actions: Actions {
                     recv: Recv::new::<P>(&config),
                     send: Send::new::<P>(&config),
+                    task: None,
                 },
                 store: Store::new(),
             })),
@@ -147,14 +143,19 @@ impl<B> Streams<B>
         })
     }
 
-    pub fn recv_err(&mut self, err: &ConnectionError) {
+    /// Handle a received error and return the ID of the last processed stream.
+    pub fn recv_err(&mut self, err: &ConnectionError) -> StreamId {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let actions = &mut me.actions;
+        let last_processed_id = actions.recv.last_processed_id();
+
         me.store.for_each(|mut stream| {
             actions.recv.recv_err(err, &mut *stream)
         });
+
+        last_processed_id
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
@@ -171,7 +172,8 @@ impl<B> Streams<B>
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
-                try!(me.actions.send.recv_stream_window_update(frame, &mut stream));
+                me.actions.send.recv_stream_window_update(
+                    frame.size_increment(), &mut stream);
             } else {
                 me.actions.recv.ensure_not_idle(id)?;
             }
@@ -212,23 +214,6 @@ impl<B> Streams<B>
         })
     }
 
-    pub fn expand_window(&mut self, id: StreamId, sz: WindowSize)
-        -> Result<(), ConnectionError>
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        if id.is_zero() {
-            try!(me.actions.recv.expand_connection_window(sz));
-        } else {
-            if let Some(mut stream) = me.store.find_mut(&id) {
-                try!(me.actions.recv.expand_stream_window(id, sz, &mut stream));
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
@@ -245,7 +230,19 @@ impl<B> Streams<B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.send.poll_complete(&mut me.store, dst)
+        // Send WINDOW_UPDATE frames first
+        //
+        // TODO: It would probably be better to interleave updates w/ data
+        // frames.
+        try_ready!(me.actions.recv.poll_complete(&mut me.store, dst));
+
+        // Send any other pending frames
+        try_ready!(me.actions.send.poll_complete(&mut me.store, dst));
+
+        // Nothing else to do, track the task
+        me.actions.task = Some(task::current());
+
+        Ok(().into())
     }
 
     pub fn apply_remote_settings(&mut self, frame: &frame::Settings) {
@@ -283,7 +280,8 @@ impl<B> Streams<B>
 
             let mut stream = me.store.insert(stream.id, stream);
 
-            me.actions.send.send_headers(headers, &mut stream)?;
+            me.actions.send.send_headers(
+                headers, &mut stream, &mut me.actions.task)?;
 
             // Given that the stream has been initialized, it should not be in the
             // closed state.
@@ -317,7 +315,7 @@ impl<B> StreamRef<B>
 
         me.actions.transition::<P, _, _>(stream, |actions, stream| {
             // Send the data frame
-            actions.send.send_data(frame, stream)
+            actions.send.send_data(frame, stream, &mut actions.task)
         })
     }
 
@@ -348,7 +346,7 @@ impl<B> StreamRef<B>
             stream.id, response, end_of_stream);
 
         me.actions.transition::<server::Peer, _, _>(stream, |actions, stream| {
-            actions.send.send_headers(frame, stream)
+            actions.send.send_headers(frame, stream, &mut actions.task)
         })
     }
 
@@ -361,25 +359,27 @@ impl<B> StreamRef<B>
         me.actions.recv.poll_response(&mut stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Chunk<B>>, ConnectionError> {
-        let recv = {
-            let mut me = self.inner.lock().unwrap();
-            let me = &mut *me;
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
 
-            let mut stream = me.store.resolve(self.key);
+        let mut stream = me.store.resolve(self.key);
 
-            try_ready!(me.actions.recv.poll_chunk(&mut stream))
-        };
+        me.actions.recv.poll_data(&mut stream)
+    }
 
-        // Convert to a chunk
-        let chunk = recv.map(|recv| {
-            Chunk {
-                inner: self.inner.clone(),
-                recv: recv,
-            }
-        });
+    /// Releases recv capacity back to the peer. This will result in sending
+    /// WINDOW_UPDATE frames on both the stream and connection.
+    pub fn release_capacity(&mut self, capacity: WindowSize)
+        -> Result<(), ConnectionError>
+    {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
 
-        Ok(chunk.into())
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.release_capacity(
+            capacity, &mut stream, &mut me.actions.send, &mut me.actions.task)
     }
 
     /// Request capacity to send data
@@ -420,32 +420,6 @@ impl<B> Clone for StreamRef<B> {
         StreamRef {
             inner: self.inner.clone(),
             key: self.key.clone(),
-        }
-    }
-}
-
-// ===== impl Chunk =====
-
-impl<B> Chunk<B>
-    where B: Buf,
-{
-    // TODO: Come up w/ a better API
-    pub fn pop_bytes(&mut self) -> Option<Bytes> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        me.actions.recv.pop_bytes(&mut self.recv)
-    }
-}
-
-impl<B> Drop for Chunk<B>
-    where B: Buf,
-{
-    fn drop(&mut self) {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        while let Some(_) = me.actions.recv.pop_bytes(&mut self.recv) {
         }
     }
 }

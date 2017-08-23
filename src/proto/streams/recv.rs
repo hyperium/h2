@@ -19,14 +19,16 @@ pub(super) struct Recv<B> {
     init_window_sz: WindowSize,
 
     /// Connection level flow control governing received data
-    flow_control: FlowControl,
+    flow: FlowControl,
 
     /// The lowest stream ID that is still idle
     next_stream_id: StreamId,
 
+    /// The stream ID of the last processed stream
+    last_processed_id: StreamId,
+
     /// Streams that have pending window updates
-    /// TODO: don't use a VecDeque
-    pending_window_updates: VecDeque<StreamId>,
+    pending_window_updates: store::Queue<B, stream::NextWindowUpdate>,
 
     /// New streams to be accepted
     pending_accept: store::Queue<B, stream::Next>,
@@ -38,12 +40,6 @@ pub(super) struct Recv<B> {
     refused: Option<StreamId>,
 
     _p: PhantomData<(B)>,
-}
-
-#[derive(Debug)]
-pub(super) struct Chunk {
-    /// Data frames pending receival
-    pub pending_recv: buffer::Deque<Bytes>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,19 +59,26 @@ impl<B> Recv<B> where B: Buf {
         let mut flow = FlowControl::new();
 
         flow.inc_window(config.init_remote_window_sz);
+        flow.assign_capacity(config.init_remote_window_sz);
 
         Recv {
             max_streams: config.max_remote_initiated,
             num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
-            flow_control: flow,
+            flow: flow,
             next_stream_id: next_stream_id.into(),
-            pending_window_updates: VecDeque::new(),
+            pending_window_updates: store::Queue::new(),
+            last_processed_id: StreamId::zero(),
             pending_accept: store::Queue::new(),
             buffer: Buffer::new(),
             refused: None,
             _p: PhantomData,
         }
+    }
+
+    /// Returns the ID of the last processed stream
+    pub fn last_processed_id(&self) -> StreamId {
+        self.last_processed_id
     }
 
     /// Update state reflecting a new, remotely opened stream
@@ -138,7 +141,10 @@ impl<B> Recv<B> where B: Buf {
         trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
-        // TODO: Update flow control
+        if stream.state.is_recv_streaming() {
+            stream.recv_flow.inc_window(self.init_window_sz)?;
+            stream.recv_flow.assign_capacity(self.init_window_sz);
+        }
 
         if is_initial {
             if !self.can_inc_num_streams() {
@@ -150,6 +156,11 @@ impl<B> Recv<B> where B: Buf {
                 self.next_stream_id.increment();
             } else {
                 return Err(ProtocolError.into());
+            }
+
+            // TODO: be smarter about this logic
+            if frame.stream_id() > self.last_processed_id {
+                self.last_processed_id = frame.stream_id();
             }
 
             // Increment the number of concurrent streams
@@ -185,6 +196,35 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
+    pub fn release_capacity(&mut self,
+                            capacity: WindowSize,
+                            stream: &mut store::Ptr<B>,
+                            send: &mut Send<B>,
+                            task: &mut Option<Task>)
+        -> Result<(), ConnectionError>
+    {
+        if capacity > stream.in_flight_recv_data {
+            // TODO: Handle error
+            unimplemented!();
+        }
+
+        // Decrement in-flight data
+        stream.in_flight_recv_data -= capacity;
+
+        // Assign capacity to connection & stream
+        self.flow.assign_capacity(capacity);
+        stream.recv_flow.assign_capacity(capacity);
+
+        // Queue the stream for sending the WINDOW_UPDATE frame.
+        self.pending_window_updates.push(stream);
+
+        if let Some(task) = task.take() {
+            task.notify();
+        }
+
+        Ok(())
+    }
+
     pub fn recv_data(&mut self,
                      frame: frame::Data,
                      stream: &mut store::Ptr<B>)
@@ -198,24 +238,29 @@ impl<B> Recv<B> where B: Buf {
 
         let sz = sz as WindowSize;
 
-        // TODO: implement
-        /*
-        match stream.recv_flow_control() {
-            Some(flow) => {
-                // Ensure there's enough capacity on the connection before
-                // acting on the stream.
-                try!(self.flow_control.ensure_window(sz, FlowControlError));
-
-                // Claim the window on the stream
-                try!(flow.claim_window(sz, FlowControlError));
-
-                // Claim the window on the connection.
-                self.flow_control.claim_window(sz, FlowControlError)
-                    .expect("local connection flow control error");
-            }
-            None => return Err(ProtocolError.into()),
+        if !stream.state.is_recv_streaming() {
+            // Receiving a DATA frame when not expecting one is a protocol
+            // error.
+            return Err(ProtocolError.into());
         }
-        */
+
+        trace!("recv_data; size={}; connection={}; stream={}",
+               sz, self.flow.window_size(), stream.recv_flow.window_size());
+
+        // Ensure that there is enough capacity on the connection before acting
+        // on the stream.
+        if self.flow.window_size() < sz || stream.recv_flow.window_size() < sz {
+            return Err(FlowControlError.into());
+        }
+
+        // Update connection level flow control
+        self.flow.send_data(sz);
+
+        // Update stream level flow control
+        stream.recv_flow.send_data(sz);
+
+        // Track the data as in-flight
+        stream.in_flight_recv_data += sz;
 
         if frame.is_end_stream() {
             try!(stream.state.recv_close());
@@ -294,6 +339,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
+    /// Handle a received error
     pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B>) {
         // Receive an error
         stream.state.recv_err(err);
@@ -384,47 +430,33 @@ impl<B> Recv<B> where B: Buf {
         Ok(Async::Ready(()))
     }
 
-    pub fn expand_connection_window(&mut self, sz: WindowSize)
-        -> Result<(), ConnectionError>
-    {
-        unimplemented!();
-        /*
-        // TODO: handle overflow
-        self.flow_control.expand_window(sz);
-
-        Ok(())
-        */
-    }
-
-    pub fn expand_stream_window(&mut self,
-                                id: StreamId,
-                                sz: WindowSize,
-                                stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
-        unimplemented!();
-        /*
-        // TODO: handle overflow
-        if let Some(flow) = stream.recv_flow_control() {
-            flow.expand_window(sz);
-            self.pending_window_updates.push_back(id);
-        }
-
-        Ok(())
-        */
-    }
-
-    /*
-    /// Send connection level window update
-    pub fn send_connection_window_update<T>(&mut self, dst: &mut Codec<T, B>)
+    pub fn poll_complete<T>(&mut self,
+                            store: &mut Store<B>,
+                            dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
     {
-        if let Some(incr) = self.flow_control.peek_window_update() {
+        // Send any pending connection level window updates
+        try_ready!(self.send_connection_window_update(dst));
+
+        // Send any pending stream level window updates
+        try_ready!(self.send_stream_window_updates(store, dst));
+
+        Ok(().into())
+    }
+
+    /// Send connection level window update
+    fn send_connection_window_update<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+    {
+        let incr = self.flow.unclaimed_capacity();
+
+        if incr > 0 {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             if dst.start_send(frame.into())?.is_ready() {
-                assert_eq!(Some(incr), self.flow_control.apply_window_update());
+                self.flow.inc_window(incr);
             } else {
                 return Ok(Async::NotReady);
             }
@@ -432,73 +464,78 @@ impl<B> Recv<B> where B: Buf {
 
         Ok(().into())
     }
-    */
+
+
+    /// Send stream level window update
+    pub fn send_stream_window_updates<T>(&mut self,
+                                         store: &mut Store<B>,
+                                         dst: &mut Codec<T, Prioritized<B>>)
+        -> Poll<(), ConnectionError>
+        where T: AsyncWrite,
+    {
+        loop {
+            // Ensure the codec has capacity
+            try_ready!(dst.poll_ready());
+
+            // Get the next stream
+            let stream = match self.pending_window_updates.pop(store) {
+                Some(stream) => stream,
+                None => return Ok(().into()),
+            };
+
+            if !stream.state.is_recv_streaming() {
+                // No need to send window updates on the stream if the stream is
+                // no longer receiving data.
+                continue;
+            }
+
+            // TODO: de-dup
+            let incr = stream.recv_flow.unclaimed_capacity();
+
+            if incr > 0 {
+                let frame = frame::WindowUpdate::new(stream.id, incr);
+                let res = dst.start_send(frame.into())?;
+
+                assert!(res.is_ready());
+            }
+        }
+    }
 
     pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
         self.pending_accept.pop(store)
             .map(|ptr| ptr.key())
     }
 
-    pub fn poll_chunk(&mut self, stream: &mut Stream<B>)
-        -> Poll<Option<Chunk>, ConnectionError>
+    pub fn poll_data(&mut self, stream: &mut Stream<B>)
+        -> Poll<Option<Bytes>, ConnectionError>
     {
-        let frames = stream.pending_recv
-            .take_while(&mut self.buffer, |frame| frame.is_data());
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(frame) => {
+                match frame {
+                    Frame::Data(frame) => {
+                        Ok(Some(frame.into_payload()).into())
+                    }
+                    frame => {
+                        // Frame is trailer
+                        stream.pending_recv.push_front(&mut self.buffer, frame);
 
-        if frames.is_empty() {
-            if stream.state.is_recv_closed() {
-                Ok(None.into())
-            } else {
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
-            }
-        } else {
-            Ok(Some(Chunk {
-                pending_recv: frames,
-            }).into())
-        }
-    }
-
-    pub fn pop_bytes(&mut self, chunk: &mut Chunk) -> Option<Bytes> {
-        match chunk.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Data(frame)) => {
-                Some(frame.into_payload())
-            }
-            None => None,
-            _ => panic!("unexpected frame type"),
-        }
-    }
-
-    /*
-    /// Send stream level window update
-    pub fn send_stream_window_update<T>(&mut self,
-                                        streams: &mut Store<B>,
-                                        dst: &mut Codec<T, B>)
-        -> Poll<(), ConnectionError>
-        where T: AsyncWrite,
-    {
-        while let Some(id) = self.pending_window_updates.pop_front() {
-            let flow = streams.find_mut(&id)
-                .and_then(|stream| stream.into_mut().recv_flow_control());
-
-
-            if let Some(flow) = flow {
-                if let Some(incr) = flow.peek_window_update() {
-                    let frame = frame::WindowUpdate::new(id, incr);
-
-                    if dst.start_send(frame.into())?.is_ready() {
-                        assert_eq!(Some(incr), flow.apply_window_update());
-                    } else {
-                        self.pending_window_updates.push_front(id);
-                        return Ok(Async::NotReady);
+                        // No more data frames
+                        Ok(None.into())
                     }
                 }
             }
+            None => {
+                if stream.state.is_recv_closed() {
+                    // No more data frames will be received
+                    Ok(None.into())
+                } else {
+                    // Request to get notified once more data frames arrive
+                    stream.recv_task = Some(task::current());
+                    Ok(Async::NotReady)
+                }
+            }
         }
-
-        Ok(().into())
     }
-    */
 
     fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();

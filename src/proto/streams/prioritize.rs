@@ -17,10 +17,6 @@ pub(super) struct Prioritize<B> {
 
     /// Holds frames that are waiting to be written to the socket
     buffer: Buffer<B>,
-
-    /// Holds the connection task. This signals the connection that there is
-    /// data to flush.
-    conn_task: Option<task::Task>,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -41,22 +37,25 @@ impl<B> Prioritize<B>
     pub fn new(config: &Config) -> Prioritize<B> {
         let mut flow = FlowControl::new();
 
-        flow.inc_window(config.init_local_window_sz);
-        flow.assign_capacity(config.init_local_window_sz);
+        flow.inc_window(config.init_local_window_sz)
+            .ok().expect("invalid initial window size");
+
+        flow.assign_capacity(config.init_local_window_sz)
+            .ok().expect("invalid initial window size");
 
         Prioritize {
             pending_send: store::Queue::new(),
             pending_capacity: store::Queue::new(),
             flow: flow,
             buffer: Buffer::new(),
-            conn_task: None,
         }
     }
 
     /// Queue a frame to be sent to the remote
     pub fn queue_frame(&mut self,
                        frame: Frame<B>,
-                       stream: &mut store::Ptr<B>)
+                       stream: &mut store::Ptr<B>,
+                       task: &mut Option<Task>)
     {
         // Queue the frame in the buffer
         stream.pending_send.push_back(&mut self.buffer, frame);
@@ -65,7 +64,7 @@ impl<B> Prioritize<B>
         self.pending_send.push(stream);
 
         // Notify the connection.
-        if let Some(task) = self.conn_task.take() {
+        if let Some(task) = task.take() {
             task.notify();
         }
     }
@@ -73,7 +72,8 @@ impl<B> Prioritize<B>
     /// Send a data frame
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>)
+                     stream: &mut store::Ptr<B>,
+                     task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().remaining();
@@ -112,7 +112,7 @@ impl<B> Prioritize<B>
         if stream.send_flow.available() > stream.buffered_send_data {
             // The stream currently has capacity to send the data frame, so
             // queue it up and notify the connection task.
-            self.queue_frame(frame.into(), stream);
+            self.queue_frame(frame.into(), stream, task);
         } else {
             // The stream has no capacity to send the frame now, save it but
             // don't notify the conneciton task. Once additional capacity
@@ -155,10 +155,6 @@ impl<B> Prioritize<B>
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        if !stream.state.is_send_streaming() {
-            return Ok(());
-        }
-
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
 
@@ -214,6 +210,8 @@ impl<B> Prioritize<B>
             // Nothing more to do
             return;
         }
+
+        debug_assert!(stream.state.is_send_streaming());
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available();
@@ -294,9 +292,6 @@ impl<B> Prioritize<B>
 
                     // This might release a data frame...
                     if !self.reclaim_frame(store, dst) {
-                        // Nothing else to do, track the task
-                        self.conn_task = Some(task::current());
-
                         return Ok(().into());
                     }
 

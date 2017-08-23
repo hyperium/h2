@@ -1,5 +1,6 @@
 use ConnectionError;
 use proto::*;
+use error::Reason::*;
 
 use std::cmp;
 
@@ -48,18 +49,61 @@ impl FlowControl {
         self.available -= capacity;
     }
 
-    pub fn assign_capacity(&mut self, capacity: WindowSize) {
-        assert!(self.window_size() >= self.available + capacity);
-        self.available += capacity;
+    pub fn assign_capacity(&mut self, capacity: WindowSize)
+        -> Result<(), ConnectionError>
+    {
+        let (val, overflow) = self.available.overflowing_add(capacity);
+
+        if overflow {
+            return Err(FlowControlError.into());
+        }
+
+        if val > MAX_WINDOW_SIZE {
+            return Err(FlowControlError.into());
+        }
+
+        self.available = val;
+        Ok(())
     }
 
-    /// Update the window size.
+    /// Returns the number of bytes available but not assigned to the window.
+    ///
+    /// This represents pending outbound WINDOW_UPDATE frames.
+    pub fn unclaimed_capacity(&self) -> WindowSize {
+        let available = self.available as i32;
+
+        if self.window_size >= available {
+            return 0;
+        }
+
+        (available - self.window_size) as WindowSize
+    }
+
+    /// Increase the window size.
     ///
     /// This is called after receiving a WINDOW_UPDATE frame
     pub fn inc_window(&mut self, sz: WindowSize) -> Result<(), ConnectionError> {
-        // TODO: Handle invalid increment
-        self.window_size += sz as i32;
+        let (val, overflow) = self.window_size.overflowing_add(sz as i32);
+
+        if overflow {
+            return Err(FlowControlError.into());
+        }
+
+        if val > MAX_WINDOW_SIZE as i32 {
+            return Err(FlowControlError.into());
+        }
+
+        self.window_size = val;
         Ok(())
+    }
+
+    /// Decrement the window size.
+    ///
+    /// This is called after receiving a SETTINGS frame with a lower
+    /// INITIAL_WINDOW_SIZE value.
+    pub fn dec_window(&mut self, sz: WindowSize) {
+        // This should not be able to overflow `window_size` from the bottom.
+        self.window_size -= sz as i32;
     }
 
     /// Decrements the window reflecting data has actually been sent. The caller
@@ -67,9 +111,6 @@ impl FlowControl {
     pub fn send_data(&mut self, sz: WindowSize) {
         trace!("send_data; sz={}; window={}; available={}",
                sz, self.window_size, self.available);
-
-        // Available cannot be greater than the window
-        debug_assert!(self.available as i32 <= self.window_size || self.available == 0);
 
         // Ensure that the argument is correct
         assert!(sz <= self.window_size as WindowSize);

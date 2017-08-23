@@ -84,7 +84,8 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_headers(&mut self,
                         frame: frame::Headers,
-                        stream: &mut store::Ptr<B>)
+                        stream: &mut store::Ptr<B>,
+                        task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
@@ -96,7 +97,7 @@ impl<B> Send<B> where B: Buf {
         }
 
         // Queue the frame for sending
-        self.prioritize.queue_frame(frame.into(), stream);
+        self.prioritize.queue_frame(frame.into(), stream, task);
 
         Ok(())
     }
@@ -109,10 +110,11 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>)
+                     stream: &mut store::Ptr<B>,
+                     task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
-        self.prioritize.send_data(frame, stream)
+        self.prioritize.send_data(frame, stream, task)
     }
 
     pub fn poll_complete<T>(&mut self,
@@ -168,11 +170,13 @@ impl<B> Send<B> where B: Buf {
     }
 
     pub fn recv_stream_window_update(&mut self,
-                                     frame: frame::WindowUpdate,
+                                     sz: WindowSize,
                                      stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
     {
-        self.prioritize.recv_stream_window_update(frame.size_increment(), stream)
+        if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
+            // TODO: Send reset
+            unimplemented!();
+        }
     }
 
     pub fn apply_remote_settings(&mut self,
@@ -210,32 +214,20 @@ impl<B> Send<B> where B: Buf {
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
-                    unimplemented!();
-                    /*
-                    if let Some(flow) = stream.state.send_flow_control() {
-                        flow.shrink_window(val);
+                    if stream.state.is_send_streaming() {
+                        stream.send_flow.dec_window(dec);
 
-                        // Update the unadvertised number as well
-                        if stream.unadvertised_send_window < dec {
-                            stream.unadvertised_send_window = 0;
-                        } else {
-                            stream.unadvertised_send_window -= dec;
-                        }
+                        // TODO: Handle reclaiming connection level window
+                        // capacity.
 
-                        unimplemented!();
+                        // TODO: Should this notify the producer?
                     }
-                    */
                 });
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
-                    unimplemented!();
-                    /*
-                    if let Some(flow) = stream.state.send_flow_control() {
-                        unimplemented!();
-                    }
-                    */
+                    self.recv_stream_window_update(inc, &mut stream);
                 });
             }
         }

@@ -13,12 +13,38 @@ use std::marker::PhantomData;
 /// An H2 connection
 #[derive(Debug)]
 pub(crate) struct Connection<T, P, B: IntoBuf = Bytes> {
-    // Codec
+    /// Tracks the connection level state transitions.
+    state: State,
+
+    /// Read / write frame values
     codec: Codec<T, Prioritized<B::Buf>>,
+
+    /// Ping/pong handler
     ping_pong: PingPong<Prioritized<B::Buf>>,
+
+    /// Connection settings
     settings: Settings,
+
+    /// Stream state handler
     streams: Streams<B::Buf>,
+
+    /// Client or server
     _phantom: PhantomData<P>,
+}
+
+#[derive(Debug)]
+enum State {
+    /// Currently open in a sane state
+    Open,
+
+    /// Waiting to send a GO_AWAY frame
+    GoAway(frame::GoAway),
+
+    /// The codec must be flushed
+    Flush(Reason),
+
+    /// In an errored state
+    Error(Reason),
 }
 
 impl<T, P, B> Connection<T, P, B>
@@ -36,6 +62,7 @@ impl<T, P, B> Connection<T, P, B>
         });
 
         Connection {
+            state: State::Open,
             codec: codec,
             ping_pong: PingPong::new(),
             settings: Settings::new(),
@@ -62,13 +89,36 @@ impl<T, P, B> Connection<T, P, B>
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), ConnectionError> {
-        match self.poll2() {
-            Err(e) => {
-                debug!("Connection::poll; err={:?}", e);
-                self.streams.recv_err(&e);
-                Err(e)
+        use error::ConnectionError::*;
+
+        loop {
+            match self.state {
+                // When open, continue to poll a frame
+                State::Open => {},
+                // In an error state
+                _ => {
+                    try_ready!(self.poll_complete());
+
+                    // GO_AWAY frame has been sent, return the error
+                    return Err(self.state.error().unwrap().into());
+                }
             }
-            ret => ret,
+
+            match self.poll2() {
+                Err(Proto(e)) => {
+                    debug!("Connection::poll; err={:?}", e);
+                    let last_processed_id = self.streams.recv_err(&e.into());
+                    let frame = frame::GoAway::new(last_processed_id, e);
+
+                    self.state = State::GoAway(frame);
+                }
+                Err(e) => {
+                    // TODO: Are I/O errors recoverable?
+                    self.streams.recv_err(&e);
+                    return Err(e);
+                }
+                ret => return ret,
+            }
         }
     }
 
@@ -114,7 +164,7 @@ impl<T, P, B> Connection<T, P, B>
                     self.settings.recv_settings(frame);
                 }
                 Some(GoAway(frame)) => {
-                    // TODO: handle the last_stream_id. Also, should this be
+                    // TODO: handle the last_processed_id. Also, should this be
                     // handled as an error?
                     let e = ConnectionError::Proto(frame.reason());
                     return Ok(().into());
@@ -141,12 +191,34 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_ready());
+        loop {
+            match self.state {
+                State::Open => {
+                    try_ready!(self.poll_ready());
 
-        // Ensure all window updates have been sent.
-        try_ready!(self.streams.poll_complete(&mut self.codec));
+                    // Ensure all window updates have been sent.
+                    try_ready!(self.streams.poll_complete(&mut self.codec));
 
-        Ok(().into())
+                    return Ok(().into());
+                }
+                State::GoAway(frame) => {
+                    if !self.codec.start_send(frame.into())?.is_ready() {
+                        // Not ready to send the frame... try again later.
+                        return Ok(Async::NotReady);
+                    }
+
+                    // GO_AWAY sent, transition the connection to an errored state
+                    self.state = State::Flush(frame.reason());
+                }
+                State::Flush(reason) => {
+                    try_ready!(self.codec.poll_complete());
+                    self.state = State::Error(reason);
+                }
+                State::Error(..) => {
+                    return Ok(().into());
+                }
+            }
+        }
     }
 
     fn convert_poll_message(frame: frame::Headers) -> Result<Frame<P::Poll>, ConnectionError> {
@@ -183,5 +255,23 @@ impl<T, B> Connection<T, server::Peer, B>
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
         self.streams.next_incoming()
+    }
+}
+
+// ====== impl State =====
+
+impl State {
+    fn is_open(&self) -> bool {
+        match *self {
+            State::Open => true,
+            _ => false,
+        }
+    }
+
+    fn error(&self) -> Option<Reason> {
+        match *self {
+            State::Error(reason) => Some(reason),
+            _ => None,
+        }
     }
 }

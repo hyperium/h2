@@ -90,15 +90,12 @@ fn send_recv_data() {
     let (_, body) = resp.into_parts();
 
     // Wait for all the data frames to be received
-    let mut chunks = h2.run(body.collect()).unwrap();
+    let bytes = h2.run(body.collect()).unwrap();
 
-    // Only one chunk since two frames are coalesced.
-    assert_eq!(1, chunks.len());
+    // One byte chunk
+    assert_eq!(1, bytes.len());
 
-    let data = chunks[0].pop_bytes().unwrap();
-    assert_eq!(data, &b"world"[..]);
-
-    assert!(chunks[0].pop_bytes().is_none());
+    assert_eq!(bytes[0], &b"world"[..]);
 
     // The H2 connection is closed
     h2.wait().unwrap();
@@ -141,18 +138,13 @@ fn send_headers_recv_data_single_frame() {
     let (_, body) = resp.into_parts();
 
     // Wait for all the data frames to be received
-    let mut chunks = h2.run(body.collect()).unwrap();
+    let bytes = h2.run(body.collect()).unwrap();
 
-    // Only one chunk since two frames are coalesced.
-    assert_eq!(1, chunks.len());
+    // Two data frames
+    assert_eq!(2, bytes.len());
 
-    let data = chunks[0].pop_bytes().unwrap();
-    assert_eq!(data, &b"hello"[..]);
-
-    let data = chunks[0].pop_bytes().unwrap();
-    assert_eq!(data, &b"world"[..]);
-
-    assert!(chunks[0].pop_bytes().is_none());
+    assert_eq!(bytes[0], &b"hello"[..]);
+    assert_eq!(bytes[1], &b"world"[..]);
 
     // The H2 connection is closed
     h2.wait().unwrap();

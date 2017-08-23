@@ -7,7 +7,7 @@ mod settings;
 mod streams;
 
 pub(crate) use self::connection::Connection;
-pub(crate) use self::streams::{Streams, StreamRef, Chunk};
+pub(crate) use self::streams::{Streams, StreamRef};
 
 use self::codec::Codec;
 use self::framed_read::FramedRead;
@@ -21,6 +21,7 @@ use error::Reason;
 use frame::{self, Frame};
 
 use futures::{self, task, Poll, Async, AsyncSink, Sink, Stream as Stream2};
+use futures::task::Task;
 use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
@@ -57,7 +58,7 @@ pub struct WindowUpdate {
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
-pub const MAX_WINDOW_SIZE: WindowSize = ::std::u32::MAX;
+pub const MAX_WINDOW_SIZE: WindowSize = (1 << 31) - 1;
 
 /// Create a transport prepared to handle the server handshake.
 ///

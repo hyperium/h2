@@ -53,30 +53,14 @@ pub struct Body<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-#[derive(Debug)]
-pub struct Chunk<B: IntoBuf> {
-    inner: proto::Chunk<B::Buf>,
-}
-
 // ===== impl Body =====
 
 impl<B: IntoBuf> futures::Stream for Body<B> {
-    type Item = Chunk<B>;
+    type Item = Bytes;
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let chunk = try_ready!(self.inner.poll_data())
-            .map(|inner| Chunk { inner });
-
-        Ok(chunk.into())
-    }
-}
-
-// ===== impl Chunk =====
-
-impl<B: IntoBuf> Chunk<B> {
-    pub fn pop_bytes(&mut self) -> Option<Bytes> {
-        self.inner.pop_bytes()
+        self.inner.poll_data()
     }
 }
 
