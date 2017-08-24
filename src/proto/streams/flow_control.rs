@@ -93,6 +93,8 @@ impl FlowControl {
             return Err(FlowControlError.into());
         }
 
+        trace!("inc_window; sz={}; old={}; new={}", sz, self.window_size, val);
+
         self.window_size = val;
         Ok(())
     }

@@ -96,6 +96,9 @@ impl<B> Prioritize<B>
         // Update the buffered data counter
         stream.buffered_send_data += sz;
 
+        trace!("send_data; sz={}; buffered={}; requested={}",
+               sz, stream.buffered_send_data, stream.requested_send_capacity);
+
         // Implicitly request more send capacity if not enough has been
         // requested yet.
         if stream.requested_send_capacity < stream.buffered_send_data {
@@ -109,7 +112,11 @@ impl<B> Prioritize<B>
             try!(stream.state.send_close());
         }
 
-        if stream.send_flow.available() > stream.buffered_send_data {
+        trace!("send_data (2); available={}; buffered={}",
+               stream.send_flow.available(),
+               stream.buffered_send_data);
+
+        if stream.send_flow.available() >= stream.buffered_send_data {
             // The stream currently has capacity to send the data frame, so
             // queue it up and notify the connection task.
             self.queue_frame(frame.into(), stream, task);
@@ -118,6 +125,8 @@ impl<B> Prioritize<B>
             // don't notify the conneciton task. Once additional capacity
             // becomes available, the frame will be flushed.
             stream.pending_send.push_back(&mut self.buffer, frame.into());
+
+            debug_assert!(stream.is_pending_send_capacity);
         }
 
         Ok(())
@@ -172,6 +181,7 @@ impl<B> Prioritize<B>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;
+        self.flow.assign_capacity(inc)?;
 
         // Assign newly acquired capacity to streams pending capacity.
         while self.flow.available() > 0 {
@@ -232,6 +242,12 @@ impl<B> Prioritize<B>
             self.flow.claim_capacity(assign);
         }
 
+        trace!("try_assign_capacity; available={}; requested={}; buffered={}; has_unavailable={:?}",
+               stream.send_flow.available(),
+               stream.requested_send_capacity,
+               stream.buffered_send_data,
+               stream.send_flow.has_unavailable());
+
         if stream.send_flow.available() < stream.requested_send_capacity {
             if stream.send_flow.has_unavailable() {
                 // The stream requires additional capacity and the stream's
@@ -246,6 +262,7 @@ impl<B> Prioritize<B>
 
         // If data is buffered, then schedule the stream for execution
         if stream.buffered_send_data > 0 {
+            debug_assert!(stream.send_flow.available() > 0);
             self.pending_send.push(stream);
         }
     }
@@ -317,7 +334,7 @@ impl<B> Prioritize<B>
 
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
-            trace!("  -> reclaimed; frame={:?}", frame);
+            trace!("  -> reclaimed; frame={:?}; sz={}", frame, frame.payload().remaining());
 
             let mut eos = false;
             let key = frame.payload().stream;
@@ -351,10 +368,10 @@ impl<B> Prioritize<B>
         stream.pending_send.push_front(&mut self.buffer, frame);
 
         // If needed, schedule the sender
-        self.pending_send.push(stream);
+        if stream.send_flow.available() > 0 {
+            self.pending_send.push(stream);
+        }
     }
-
-    // =========== OLD JUNK ===========
 
     fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
         -> Option<Frame<Prioritized<B>>>
@@ -365,16 +382,33 @@ impl<B> Prioritize<B>
                 Some(mut stream) => {
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
-                            trace!(" --> data frame");
-
                             // Get the amount of capacity remaining for stream's
                             // window.
                             //
                             // TODO: Is this the right thing to check?
-                            let stream_capacity = stream.send_flow.window_size();
+                            let stream_capacity = stream.send_flow.available();
+                            let sz = frame.payload().remaining();
 
-                            if stream_capacity == 0 {
-                                trace!(" --> stream capacity is 0, return");
+                            trace!(" --> data frame; stream={:?}; sz={}; eos={:?}; window={}; available={}; requested={}",
+                                   frame.stream_id(),
+                                   sz,
+                                   frame.is_end_stream(),
+                                   stream_capacity,
+                                   stream.send_flow.available(),
+                                   stream.requested_send_capacity);
+
+                            // Zero length data frames always have capacity to
+                            // be sent.
+                            if sz > 0 && stream_capacity == 0 {
+                                trace!(" --> stream capacity is 0; requested={}",
+                                       stream.requested_send_capacity);
+
+                                // Ensure that the stream is waiting for
+                                // connection level capacity
+                                //
+                                // TODO: uncomment
+                                // debug_assert!(stream.is_pending_send_capacity);
+
                                 // The stream has no more capacity, this can
                                 // happen if the remote reduced the stream
                                 // window. In this case, we need to buffer the
@@ -384,9 +418,7 @@ impl<B> Prioritize<B>
                             }
 
                             // Only send up to the max frame length
-                            let len = cmp::min(
-                                frame.payload().remaining(),
-                                max_len);
+                            let len = cmp::min(sz, max_len);
 
                             // Only send up to the stream's window capacity
                             let len = cmp::min(len, stream_capacity as usize);
@@ -428,6 +460,10 @@ impl<B> Prioritize<B>
                     };
 
                     if !stream.pending_send.is_empty() {
+                        // TODO: Only requeue the sender IF it is ready to send
+                        // the next frame. i.e. don't requeue it if the next
+                        // frame is a data frame and the stream does not have
+                        // any more capacity.
                         self.pending_send.push(&mut stream);
                     }
 
