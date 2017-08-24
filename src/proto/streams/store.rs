@@ -49,13 +49,12 @@ struct Indices {
 }
 
 pub(super) enum Entry<'a, B: 'a> {
-    Occupied(OccupiedEntry<'a, B>),
+    Occupied(OccupiedEntry<'a>),
     Vacant(VacantEntry<'a, B>),
 }
 
-pub(super) struct OccupiedEntry<'a, B: 'a> {
+pub(super) struct OccupiedEntry<'a> {
     ids: hash_map::OccupiedEntry<'a, StreamId, usize>,
-    slab: &'a mut slab::Slab<Stream<B>>,
 }
 
 pub(super) struct VacantEntry<'a, B: 'a> {
@@ -108,7 +107,6 @@ impl<B> Store<B> {
             Occupied(e) => {
                 Entry::Occupied(OccupiedEntry {
                     ids: e,
-                    slab: &mut self.slab,
                 })
             }
             Vacant(e) => {
@@ -120,15 +118,17 @@ impl<B> Store<B> {
         }
     }
 
-    pub fn for_each<F>(&mut self, mut f: F)
-        where F: FnMut(Ptr<B>)
+    pub fn for_each<F>(&mut self, mut f: F) -> Result<(), ConnectionError>
+        where F: FnMut(Ptr<B>) -> Result<(), ConnectionError>,
     {
         for &key in self.ids.values() {
             f(Ptr {
                 key: Key(key),
                 slab: &mut self.slab,
-            });
+            })?;
         }
+
+        Ok(())
     }
 }
 
@@ -245,10 +245,6 @@ impl<'a, B: 'a> Ptr<'a, B> {
             slab: &mut *self.slab,
         }
     }
-
-    pub fn into_mut(self) -> &'a mut Stream<B> {
-        &mut self.slab[self.key.0]
-    }
 }
 
 impl<'a, B: 'a> ops::Deref for Ptr<'a, B> {
@@ -267,21 +263,9 @@ impl<'a, B: 'a> ops::DerefMut for Ptr<'a, B> {
 
 // ===== impl OccupiedEntry =====
 
-impl<'a, B> OccupiedEntry<'a, B> {
+impl<'a> OccupiedEntry<'a> {
     pub fn key(&self) -> Key {
         Key(*self.ids.get())
-    }
-
-    pub fn get(&self) -> &Stream<B> {
-        &self.slab[*self.ids.get()]
-    }
-
-    pub fn get_mut(&mut self) -> &mut Stream<B> {
-        &mut self.slab[*self.ids.get()]
-    }
-
-    pub fn into_mut(self) -> &'a mut Stream<B> {
-        &mut self.slab[*self.ids.get()]
     }
 }
 

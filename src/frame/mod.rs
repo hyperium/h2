@@ -1,7 +1,7 @@
 use hpack;
 use error::{ConnectionError, Reason};
 
-use bytes::{Bytes, Buf};
+use bytes::Bytes;
 
 use std::fmt;
 
@@ -56,6 +56,8 @@ pub use self::settings::{
     DEFAULT_MAX_FRAME_SIZE,
 };
 
+pub type FrameSize = u32;
+
 pub const HEADER_LEN: usize = 9;
 
 pub enum Frame<T = Bytes> {
@@ -96,18 +98,6 @@ impl<T> Frame<T> {
             GoAway(frame) => frame.into(),
             WindowUpdate(frame) => frame.into(),
             Reset(frame) => frame.into(),
-        }
-    }
-}
-
-impl<T: Buf> Frame<T> {
-    /// Returns the length of the frame as it applies to flow control.
-    pub fn flow_len(&self) -> usize {
-        use self::Frame::*;
-
-        match *self {
-            Data(ref frame) => frame.payload().remaining(),
-            _ => 0,
         }
     }
 }

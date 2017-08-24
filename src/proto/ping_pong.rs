@@ -2,6 +2,8 @@ use ConnectionError;
 use frame::Ping;
 use proto::*;
 
+use futures::Sink;
+
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
 pub struct PingPong<B> {

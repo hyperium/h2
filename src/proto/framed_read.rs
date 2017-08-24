@@ -6,12 +6,12 @@ use error::Reason::*;
 
 use futures::*;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
 
-use std::io::{self, Cursor};
+use std::io;
 
 #[derive(Debug)]
 pub struct FramedRead<T> {

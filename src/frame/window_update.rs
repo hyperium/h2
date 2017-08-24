@@ -1,5 +1,4 @@
-use StreamId;
-use frame::{self, Head, Kind, Error};
+use frame::{self, Head, Kind, Error, StreamId};
 
 use bytes::{BufMut, BigEndian};
 

@@ -72,12 +72,4 @@ impl StreamDependency {
     pub fn dependency_id(&self) -> StreamId {
         self.dependency_id
     }
-
-    pub fn weight(&self) -> u8 {
-        self.weight
-    }
-
-    pub fn is_exclusive(&self) -> bool {
-        self.is_exclusive
-    }
 }

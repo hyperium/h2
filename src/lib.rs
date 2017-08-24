@@ -1,5 +1,4 @@
-#![allow(warnings)]
-// #![deny(missing_debug_implementations)]
+#![deny(warnings, missing_debug_implementations)]
 
 #[macro_use]
 extern crate futures;
@@ -35,11 +34,9 @@ mod frame;
 pub mod server;
 
 pub use error::{ConnectionError, Reason};
-pub use frame::StreamId;
 
 use bytes::Bytes;
 
-pub type FrameSize = u32;
 // TODO: remove if carllerche/http#90 lands
 pub type HeaderMap = http::HeaderMap<http::header::HeaderValue>;
 
@@ -73,33 +70,4 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.inner.poll_data()
     }
-}
-
-// TODO: Delete below
-
-/// An H2 connection frame
-#[derive(Debug)]
-pub enum Frame<T, B = Bytes> {
-    Headers {
-        id: StreamId,
-        headers: T,
-        end_of_stream: bool,
-    },
-    Data {
-        id: StreamId,
-        data: B,
-        end_of_stream: bool,
-    },
-    Trailers {
-        id: StreamId,
-        headers: HeaderMap,
-    },
-    PushPromise {
-        id: StreamId,
-        promised_id: StreamId,
-    },
-    Reset {
-        id: StreamId,
-        error: Reason,
-    },
 }

@@ -1,4 +1,4 @@
-use frame::{self, Frame};
+use frame::Frame;
 
 use slab::Slab;
 

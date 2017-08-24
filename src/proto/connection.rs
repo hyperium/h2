@@ -1,10 +1,9 @@
-use {client, server, ConnectionError, Frame};
-use HeaderMap;
-use frame::{self, StreamId};
+use {client, frame, server, ConnectionError};
 
 use proto::*;
 
-use http::{Request, Response};
+use http::Request;
+use futures::{Sink, Stream};
 use bytes::{Bytes, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -163,10 +162,10 @@ impl<T, P, B> Connection<T, P, B>
                     trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
                 }
-                Some(GoAway(frame)) => {
+                Some(GoAway(_)) => {
                     // TODO: handle the last_processed_id. Also, should this be
                     // handled as an error?
-                    let e = ConnectionError::Proto(frame.reason());
+                    // let _ = ConnectionError::Proto(frame.reason());
                     return Ok(().into());
                 }
                 Some(Ping(frame)) => {
@@ -220,21 +219,6 @@ impl<T, P, B> Connection<T, P, B>
             }
         }
     }
-
-    fn convert_poll_message(frame: frame::Headers) -> Result<Frame<P::Poll>, ConnectionError> {
-        if frame.is_trailers() {
-            Ok(Frame::Trailers {
-                id: frame.stream_id(),
-                headers: frame.into_fields()
-            })
-        } else {
-            Ok(Frame::Headers {
-                id: frame.stream_id(),
-                end_of_stream: frame.is_end_stream(),
-                headers: P::convert_poll_message(frame)?,
-            })
-        }
-    }
 }
 
 impl<T, B> Connection<T, client::Peer, B>
@@ -261,13 +245,6 @@ impl<T, B> Connection<T, server::Peer, B>
 // ====== impl State =====
 
 impl State {
-    fn is_open(&self) -> bool {
-        match *self {
-            State::Open => true,
-            _ => false,
-        }
-    }
-
     fn error(&self) -> Option<Reason> {
         match *self {
             State::Error(reason) => Some(reason),

@@ -2,7 +2,6 @@ use {client, server};
 use proto::*;
 use super::*;
 
-use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -134,7 +133,7 @@ impl<B> Streams<B>
             return Err(ProtocolError.into());
         }
 
-        let mut stream = match me.store.find_mut(&id) {
+        let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => {
                 // TODO: Are there other error cases?
@@ -159,8 +158,9 @@ impl<B> Streams<B>
         let last_processed_id = actions.recv.last_processed_id();
 
         me.store.for_each(|mut stream| {
-            actions.recv.recv_err(err, &mut *stream)
-        });
+            actions.recv.recv_err(err, &mut *stream);
+            Ok(())
+        }).ok().expect("unexpected error processing error");
 
         last_processed_id
     }
@@ -180,7 +180,7 @@ impl<B> Streams<B>
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
                 me.actions.send.recv_stream_window_update(
-                    frame.size_increment(), &mut stream, &mut me.actions.task);
+                    frame.size_increment(), &mut stream, &mut me.actions.task)?;
             } else {
                 me.actions.recv.ensure_not_idle(id)?;
             }
@@ -197,7 +197,7 @@ impl<B> Streams<B>
 
         let id = frame.stream_id();
 
-        let mut stream = match me.store.find_mut(&id) {
+        let stream = match me.store.find_mut(&id) {
             Some(stream) => stream.key(),
             None => return Err(ProtocolError.into()),
         };
@@ -253,12 +253,14 @@ impl<B> Streams<B>
         Ok(().into())
     }
 
-    pub fn apply_remote_settings(&mut self, frame: &frame::Settings) {
+    pub fn apply_remote_settings(&mut self, frame: &frame::Settings)
+        -> Result<(), ConnectionError>
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         me.actions.send.apply_remote_settings(
-            frame, &mut me.store, &mut me.actions.task);
+            frame, &mut me.store, &mut me.actions.task)
     }
 
     pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
@@ -412,13 +414,11 @@ impl<B> StreamRef<B>
         let mut stream = me.store.resolve(self.key);
 
         me.actions.recv.release_capacity(
-            capacity, &mut stream, &mut me.actions.send, &mut me.actions.task)
+            capacity, &mut stream, &mut me.actions.task)
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize)
-        -> Result<(), ConnectionError>
-    {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 

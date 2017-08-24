@@ -7,9 +7,6 @@ use error::User::*;
 
 use bytes::Buf;
 
-use std::collections::VecDeque;
-use std::marker::PhantomData;
-
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
 pub(super) struct Send<B> {
@@ -104,12 +101,6 @@ impl<B> Send<B> where B: Buf {
         Ok(())
     }
 
-    pub fn send_eos(&mut self, stream: &mut Stream<B>)
-        -> Result<(), ConnectionError>
-    {
-        stream.state.send_close()
-    }
-
     pub fn send_reset(&mut self, reason: Reason,
                       stream: &mut store::Ptr<B>,
                       task: &mut Option<Task>)
@@ -124,6 +115,7 @@ impl<B> Send<B> where B: Buf {
 
         let frame = frame::Reset::new(stream.id, reason);
 
+        // TODO: This could impact connection level flow control.
         self.prioritize.clear_queue(stream);
 
         trace!("send_reset -- queueing; frame={:?}", frame);
@@ -151,9 +143,7 @@ impl<B> Send<B> where B: Buf {
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
         self.prioritize.reserve_capacity(capacity, stream)
     }
 
@@ -211,6 +201,7 @@ impl<B> Send<B> where B: Buf {
                                  settings: &frame::Settings,
                                  store: &mut Store<B>,
                                  task: &mut Option<Task>)
+        -> Result<(), ConnectionError>
     {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_streams = Some(val as usize);
@@ -251,15 +242,19 @@ impl<B> Send<B> where B: Buf {
 
                         // TODO: Should this notify the producer?
                     }
-                });
+
+                    Ok(())
+                })?;
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
-                    self.recv_stream_window_update(inc, &mut stream, task);
-                });
+                    self.recv_stream_window_update(inc, &mut stream, task)
+                })?;
             }
         }
+
+        Ok(())
     }
 
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {

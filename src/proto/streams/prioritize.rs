@@ -1,6 +1,7 @@
 use super::*;
 
 use bytes::buf::Take;
+use futures::Sink;
 
 use std::{fmt, cmp};
 
@@ -40,8 +41,7 @@ impl<B> Prioritize<B>
         flow.inc_window(config.init_local_window_sz)
             .ok().expect("invalid initial window size");
 
-        flow.assign_capacity(config.init_local_window_sz)
-            .ok().expect("invalid initial window size");
+        flow.assign_capacity(config.init_local_window_sz);
 
         Prioritize {
             pending_send: store::Queue::new(),
@@ -131,16 +131,13 @@ impl<B> Prioritize<B>
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>)
-        -> Result<(), ConnectionError>
-    {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
         // Actual capacity is `capacity` + the current amount of buffered data.
         // It it were less, then we could never send out the buffered data.
         let capacity = capacity + stream.buffered_send_data;
 
         if capacity == stream.requested_send_capacity {
             // Nothing to do
-            return Ok(());
         } else if capacity < stream.requested_send_capacity {
             // TODO: release capacity
             unimplemented!();
@@ -152,8 +149,6 @@ impl<B> Prioritize<B>
             // currently available, the stream will be queued to receive some
             // when more becomes available.
             self.try_assign_capacity(stream);
-
-            Ok(())
         }
     }
 
@@ -184,7 +179,7 @@ impl<B> Prioritize<B>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;
-        self.flow.assign_capacity(inc)?;
+        self.flow.assign_capacity(inc);
 
         // Assign newly acquired capacity to streams pending capacity.
         while self.flow.available() > 0 {
@@ -212,7 +207,7 @@ impl<B> Prioritize<B>
 
         // The amount of additional capacity that the stream requests.
         // Don't assign more than the window has available!
-        let mut additional = cmp::min(
+        let additional = cmp::min(
             total_requested - stream.send_flow.available(),
             stream.send_flow.window_size());
 

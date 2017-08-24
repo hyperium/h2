@@ -3,11 +3,10 @@ use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use HeaderMap;
 
-use http::{self, request, response, version, uri, Method, StatusCode, Uri};
-use http::{Request, Response};
+use http::{self, version, uri, Request, Response, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
-use bytes::{BytesMut, Bytes, Buf};
+use bytes::{BytesMut, Bytes};
 use byteorder::{BigEndian, ByteOrder};
 use string::String;
 
@@ -289,10 +288,6 @@ impl Headers {
         *request.headers_mut() = self.fields;
 
         Ok(request)
-    }
-
-    pub fn into_fields(self) -> HeaderMap {
-        self.fields
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)

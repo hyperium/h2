@@ -1,6 +1,8 @@
 use {frame, ConnectionError};
 use proto::*;
 
+use futures::Sink;
+
 #[derive(Debug)]
 pub(crate) struct Settings {
     /// Received SETTINGS frame pending processing. The ACK must be written to
@@ -45,7 +47,7 @@ impl Settings {
             trace!("ACK sent");
 
             dst.apply_remote_settings(settings);
-            streams.apply_remote_settings(settings);
+            streams.apply_remote_settings(settings)?;
         }
 
         self.pending = None;

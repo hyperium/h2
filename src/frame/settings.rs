@@ -1,5 +1,4 @@
-use FrameSize;
-use frame::{Frame, Error, Head, Kind, StreamId};
+use frame::{Frame, FrameSize, Error, Head, Kind, StreamId};
 use bytes::{BytesMut, BufMut, BigEndian};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -52,10 +51,6 @@ impl Settings {
 
     pub fn is_ack(&self) -> bool {
         self.flags.is_ack()
-    }
-
-    pub fn enable_push(&self) -> Option<bool> {
-        self.enable_push.map(|n| n != 0)
     }
 
     pub fn initial_window_size(&self) -> Option<u32> {

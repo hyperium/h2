@@ -151,6 +151,7 @@ impl Decoder {
     }
 
     /// Queues a potential size update
+    #[allow(dead_code)]
     pub fn queue_size_update(&mut self, size: usize) {
         let size = match self.max_size_update {
             Some(v) => cmp::max(v, size),

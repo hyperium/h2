@@ -2,8 +2,6 @@ use ConnectionError;
 use error::Reason;
 use error::Reason::*;
 use error::User::*;
-use proto::*;
-use super::FlowControl;
 
 use self::Inner::*;
 use self::Peer::*;

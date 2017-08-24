@@ -16,11 +16,11 @@ use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Prioritized;
 
-use {StreamId, ConnectionError};
+use ConnectionError;
 use error::Reason;
-use frame::{self, Frame};
+use frame::{self, Frame, StreamId};
 
-use futures::{self, task, Poll, Async, AsyncSink, Sink, Stream as Stream2};
+use futures::{self, task, Poll, Async, AsyncSink};
 use futures::task::Task;
 use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -49,12 +49,6 @@ pub trait Peer {
 pub type PingPayload = [u8; 8];
 
 pub type WindowSize = u32;
-
-#[derive(Debug, Copy, Clone)]
-pub struct WindowUpdate {
-    stream_id: StreamId,
-    increment: WindowSize,
-}
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
@@ -93,21 +87,4 @@ pub(crate) fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, Prioritize
     let codec = Codec::from_framed(FramedRead::new(framed));
 
     Connection::new(codec)
-}
-
-impl WindowUpdate {
-    pub fn new(stream_id: StreamId, increment: WindowSize) -> WindowUpdate {
-        WindowUpdate {
-            stream_id,
-            increment
-        }
-    }
-
-    pub fn stream_id(&self) -> StreamId {
-        self.stream_id
-    }
-
-    pub fn increment(&self) -> WindowSize {
-        self.increment
-    }
 }

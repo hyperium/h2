@@ -3,8 +3,8 @@ use proto::*;
 use super::*;
 
 use error::Reason::*;
+use futures::Sink;
 
-use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
@@ -58,7 +58,8 @@ impl<B> Recv<B> where B: Buf {
 
         let mut flow = FlowControl::new();
 
-        flow.inc_window(config.init_remote_window_sz);
+        flow.inc_window(config.init_remote_window_sz)
+            .ok().expect("invalid initial remote window size");
         flow.assign_capacity(config.init_remote_window_sz);
 
         Recv {
@@ -127,7 +128,7 @@ impl<B> Recv<B> where B: Buf {
                 // frame vs. now.
                 Ok(client::Peer::convert_poll_message(v)?.into())
             }
-            Some(frame) => unimplemented!(),
+            Some(_) => unimplemented!(),
             None => {
                 stream.state.ensure_recv_open()?;
 
@@ -187,7 +188,7 @@ impl<B> Recv<B> where B: Buf {
         -> Result<(), ConnectionError>
     {
         // Transition the state
-        stream.state.recv_close();
+        stream.state.recv_close()?;
 
         // Push the frame onto the stream's recv buffer
         stream.pending_recv.push_back(&mut self.buffer, frame.into());
@@ -199,7 +200,6 @@ impl<B> Recv<B> where B: Buf {
     pub fn release_capacity(&mut self,
                             capacity: WindowSize,
                             stream: &mut store::Ptr<B>,
-                            send: &mut Send<B>,
                             task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -315,7 +315,7 @@ impl<B> Recv<B> where B: Buf {
             send.init_window_sz(),
             self.init_window_sz);
 
-        new_stream.state.reserve_remote();
+        new_stream.state.reserve_remote()?;
 
         let mut ppp = store[stream].pending_push_promises.take();
 
@@ -471,7 +471,7 @@ impl<B> Recv<B> where B: Buf {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             if dst.start_send(frame.into())?.is_ready() {
-                self.flow.inc_window(incr);
+                self.flow.inc_window(incr).ok().expect("unexpected flow control state");
             } else {
                 return Ok(Async::NotReady);
             }

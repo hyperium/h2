@@ -1,10 +1,11 @@
-use {frame, ConnectionError, StreamId};
+use {frame, ConnectionError};
 use Body;
+use frame::StreamId;
 use proto::{self, Connection, WindowSize};
 use error::Reason::*;
 
-use http::{self, Request, Response};
-use futures::{self, Future, Poll, Sink, Async, AsyncSink};
+use http::{Request, Response};
+use futures::{Future, Poll, Sink, Async, AsyncSink};
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, IntoBuf};
 
@@ -148,9 +149,7 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: usize)
-        -> Result<(), ConnectionError>
-    {
+    pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
         self.inner.reserve_capacity(capacity as WindowSize)
     }
@@ -174,7 +173,7 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Send trailers
-    pub fn send_trailers(&mut self, trailers: ())
+    pub fn send_trailers(&mut self, _trailers: ())
         -> Result<(), ConnectionError>
     {
         unimplemented!();

@@ -56,7 +56,6 @@ impl<T, B> futures::Stream for Codec<T, B>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
-        use futures::Stream;
         self.inner.poll()
     }
 }

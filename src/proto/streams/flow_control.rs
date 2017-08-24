@@ -2,8 +2,6 @@ use ConnectionError;
 use proto::*;
 use error::Reason::*;
 
-use std::cmp;
-
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
     /// Window size as indicated by the peer. This can go negative.
@@ -49,21 +47,8 @@ impl FlowControl {
         self.available -= capacity;
     }
 
-    pub fn assign_capacity(&mut self, capacity: WindowSize)
-        -> Result<(), ConnectionError>
-    {
-        let (val, overflow) = self.available.overflowing_add(capacity);
-
-        if overflow {
-            return Err(FlowControlError.into());
-        }
-
-        if val > MAX_WINDOW_SIZE {
-            return Err(FlowControlError.into());
-        }
-
-        self.available = val;
-        Ok(())
+    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+        self.available + capacity;
     }
 
     /// Returns the number of bytes available but not assigned to the window.

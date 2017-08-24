@@ -1,12 +1,13 @@
-use {frame, Body, ConnectionError, StreamId};
+use {Body, ConnectionError};
+use frame::{self, StreamId};
 use proto::{self, Connection, WindowSize};
 use error::Reason;
 use error::Reason::*;
 
-use http::{self, Request, Response};
+use http::{Request, Response};
 use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, IntoBuf, Buf};
+use bytes::{Bytes, IntoBuf};
 
 use std::fmt;
 
@@ -160,9 +161,7 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: usize)
-        -> Result<(), ConnectionError>
-    {
+    pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
         self.inner.reserve_capacity(capacity as WindowSize)
     }
@@ -186,7 +185,7 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Send trailers
-    pub fn send_trailers(&mut self, trailers: ())
+    pub fn send_trailers(&mut self, _trailers: ())
         -> Result<(), ConnectionError>
     {
         unimplemented!();
@@ -220,8 +219,6 @@ impl<T> Future for Send<T>
     type Error = ConnectionError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        use futures::Stream;
-
         loop {
             if self.buf.is_none() {
                 // Get a chunk to send to the H2 stream

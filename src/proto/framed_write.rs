@@ -1,12 +1,11 @@
-use {hpack, ConnectionError, FrameSize};
+use {hpack, ConnectionError};
 use error::User::*;
-use frame::{self, Frame};
+use frame::{self, Frame, FrameSize};
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{BytesMut, Buf, BufMut};
 
-use std::cmp;
 use std::io::{self, Cursor};
 
 #[derive(Debug)]
@@ -176,9 +175,11 @@ impl<T, B> Sink for FramedWrite<T, B>
                 trace!("encoded window_update; rem={:?}", self.buf.remaining());
             }
 
-            Frame::Priority(v) => {
-                // v.encode(self.buf.get_mut());
+            Frame::Priority(_) => {
+                /*
+                v.encode(self.buf.get_mut());
                 trace!("encoded priority; rem={:?}", self.buf.remaining());
+                */
                 unimplemented!();
             }
             Frame::Reset(v) => {
@@ -210,7 +211,7 @@ impl<T, B> Sink for FramedWrite<T, B>
             Some(Next::Data(frame)) => {
                 self.last_data_frame = Some(frame);
             }
-            Some(Next::Continuation(frame)) => {
+            Some(Next::Continuation(_)) => {
                 unimplemented!();
             }
             None => {}
