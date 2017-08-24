@@ -61,6 +61,13 @@ impl<B: IntoBuf> Body<B> {
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ConnectionError> {
         self.inner.release_capacity(sz as proto::WindowSize)
     }
+
+    /// Poll trailers
+    ///
+    /// This function **must** not be called until `Body::poll` returns `None`.
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+        self.inner.poll_trailers()
+    }
 }
 
 impl<B: IntoBuf> futures::Stream for Body<B> {

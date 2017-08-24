@@ -1,4 +1,4 @@
-use {client, server};
+use {client, server, HeaderMap};
 use proto::*;
 use super::*;
 
@@ -335,6 +335,22 @@ impl<B> StreamRef<B>
         })
     }
 
+    pub fn send_trailers<P: Peer>(&mut self, trailers: HeaderMap) -> Result<(), ConnectionError>
+    {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        // Create the trailers frame
+        let frame = frame::Headers::trailers(stream.id, trailers);
+
+        me.actions.transition::<P, _, _>(stream, |actions, stream| {
+            // Send the trailers frame
+            actions.send.send_trailers(frame, stream, &mut actions.task)
+        })
+    }
+
     /// Called by the server after the stream is accepted. Given that clients
     /// initialize streams by sending HEADERS, the request will always be
     /// available.
@@ -401,6 +417,15 @@ impl<B> StreamRef<B>
         let mut stream = me.store.resolve(self.key);
 
         me.actions.recv.poll_data(&mut stream)
+    }
+
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_trailers(&mut stream)
     }
 
     /// Releases recv capacity back to the peer. This will result in sending

@@ -133,6 +133,25 @@ impl<B> Send<B> where B: Buf {
         self.prioritize.send_data(frame, stream, task)
     }
 
+    pub fn send_trailers(&mut self,
+                         frame: frame::Headers,
+                         stream: &mut store::Ptr<B>,
+                         task: &mut Option<Task>)
+        -> Result<(), ConnectionError>
+    {
+        // TODO: Should this logic be moved into state.rs?
+        if !stream.state.is_send_streaming() {
+            return Err(UnexpectedFrameType.into());
+        }
+
+        stream.state.send_close()?;
+
+        trace!("send_trailers -- queuing; frame={:?}", frame);
+        self.prioritize.queue_frame(frame.into(), stream, task);
+
+        Ok(())
+    }
+
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B>,
                             dst: &mut Codec<T, Prioritized<B>>)

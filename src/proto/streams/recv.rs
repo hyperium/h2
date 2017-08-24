@@ -1,4 +1,4 @@
-use {client, server, frame, ConnectionError};
+use {client, server, frame, HeaderMap, ConnectionError};
 use proto::*;
 use super::*;
 
@@ -525,19 +525,15 @@ impl<B> Recv<B> where B: Buf {
         -> Poll<Option<Bytes>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Data(frame)) => {
+                Ok(Some(frame.into_payload()).into())
+            }
             Some(frame) => {
-                match frame {
-                    Frame::Data(frame) => {
-                        Ok(Some(frame.into_payload()).into())
-                    }
-                    frame => {
-                        // Frame is trailer
-                        stream.pending_recv.push_front(&mut self.buffer, frame);
+                // Frame is trailer
+                stream.pending_recv.push_front(&mut self.buffer, frame);
 
-                        // No more data frames
-                        Ok(None.into())
-                    }
-                }
+                // No more data frames
+                Ok(None.into())
             }
             None => {
                 if stream.state.is_recv_closed() {
@@ -545,6 +541,32 @@ impl<B> Recv<B> where B: Buf {
                     Ok(None.into())
                 } else {
                     // Request to get notified once more data frames arrive
+                    stream.recv_task = Some(task::current());
+                    Ok(Async::NotReady)
+                }
+            }
+        }
+    }
+
+    pub fn poll_trailers(&mut self, stream: &mut Stream<B>)
+        -> Poll<Option<HeaderMap>, ConnectionError>
+    {
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Frame::Headers(frame)) => {
+                Ok(Some(frame.into_fields()).into())
+            }
+            Some(_) => {
+                // TODO: This is a user error. `poll_trailers` was called before
+                // the entire set of data frames have been consumed. What should
+                // we do?
+                unimplemented!();
+            }
+            None => {
+                if stream.state.is_recv_closed() {
+                    // There will be no trailer frame
+                    Ok(None.into())
+                } else {
+                    // Request to get notified once another frame arrives
                     stream.recv_task = Some(task::current());
                     Ok(Async::NotReady)
                 }
