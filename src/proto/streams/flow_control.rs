@@ -48,7 +48,7 @@ impl FlowControl {
     }
 
     pub fn assign_capacity(&mut self, capacity: WindowSize) {
-        self.available + capacity;
+        self.available += capacity;
     }
 
     /// Returns the number of bytes available but not assigned to the window.
