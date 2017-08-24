@@ -31,7 +31,7 @@ pub(super) struct Recv<B> {
     pending_window_updates: store::Queue<B, stream::NextWindowUpdate>,
 
     /// New streams to be accepted
-    pending_accept: store::Queue<B, stream::Next>,
+    pending_accept: store::Queue<B, stream::NextAccept>,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Bytes>,

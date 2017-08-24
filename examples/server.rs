@@ -33,9 +33,7 @@ pub fn main() {
 
 
         let connection = Server::handshake(socket)
-            .then(|res| {
-                let conn = res.unwrap();
-
+            .and_then(|conn| {
                 println!("H2 connection bound");
 
                 conn.for_each(|(request, mut stream)| {
@@ -45,12 +43,14 @@ pub fn main() {
                         .status(status::OK)
                         .body(()).unwrap();
 
-                    if let Err(e) = stream.send_response(response, true) {
+                    if let Err(e) = stream.send_response(response, false) {
                         println!(" error responding; err={:?}", e);
                     }
 
                     println!(">>>> sending data");
-                    stream.send_data(Bytes::from_static(b"hello world"), true).unwrap();
+                    if let Err(e) = stream.send_data(Bytes::from_static(b"hello world"), true) {
+                        println!("  -> err={:?}", e);
+                    }
 
                     Ok(())
                 }).and_then(|_| {
@@ -59,7 +59,10 @@ pub fn main() {
                 })
             })
             .then(|res| {
-                let _ = res.unwrap();
+                if let Err(e) = res {
+                    println!("  -> err={:?}", e);
+                }
+
                 Ok(())
             })
             ;

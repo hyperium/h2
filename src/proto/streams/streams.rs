@@ -173,7 +173,7 @@ impl<B> Streams<B>
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
                 me.actions.send.recv_stream_window_update(
-                    frame.size_increment(), &mut stream);
+                    frame.size_increment(), &mut stream, &mut me.actions.task);
             } else {
                 me.actions.recv.ensure_not_idle(id)?;
             }
@@ -249,7 +249,8 @@ impl<B> Streams<B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.send.apply_remote_settings(frame, &mut me.store);
+        me.actions.send.apply_remote_settings(
+            frame, &mut me.store, &mut me.actions.task);
     }
 
     pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {

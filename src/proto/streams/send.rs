@@ -115,12 +115,17 @@ impl<B> Send<B> where B: Buf {
         -> Result<(), ConnectionError>
     {
         if stream.state.is_closed() {
+            debug!("send_reset; invalid stream ID");
             return Err(InactiveStreamId.into())
         }
 
         stream.state.send_reset(reason)?;
 
         let frame = frame::Reset::new(stream.id, reason);
+
+        self.prioritize.clear_queue(stream);
+
+        trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
 
         Ok(())
@@ -189,17 +194,22 @@ impl<B> Send<B> where B: Buf {
 
     pub fn recv_stream_window_update(&mut self,
                                      sz: WindowSize,
-                                     stream: &mut store::Ptr<B>)
+                                     stream: &mut store::Ptr<B>,
+                                     task: &mut Option<Task>)
+        -> Result<(), ConnectionError>
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
-            // TODO: Send reset
-            unimplemented!();
+            debug!("recv_stream_window_update !!; err={:?}", e);
+            self.send_reset(FlowControlError.into(), stream, task)?;
         }
+
+        Ok(())
     }
 
     pub fn apply_remote_settings(&mut self,
                                  settings: &frame::Settings,
-                                 store: &mut Store<B>)
+                                 store: &mut Store<B>,
+                                 task: &mut Option<Task>)
     {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_streams = Some(val as usize);
@@ -245,7 +255,7 @@ impl<B> Send<B> where B: Buf {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
-                    self.recv_stream_window_update(inc, &mut stream);
+                    self.recv_stream_window_update(inc, &mut stream, task);
                 });
             }
         }

@@ -8,19 +8,13 @@ pub(super) struct Stream<B> {
     /// Current state of the stream
     pub state: State,
 
-    /// Next node in the `Stream` linked list.
-    ///
-    /// This field is used in different linked lists depending on the stream
-    /// state. First, it is used as part of the linked list of streams waiting
-    /// to be accepted (either by a server or by a client as a push promise).
-    /// Once the stream is accepted, this is used for the linked list of streams
-    /// waiting to flush prioritized frames to the socket.
-    pub next: Option<store::Key>,
-
-    /// Set to true when the stream is queued
-    pub is_queued: bool,
-
     // ===== Fields related to sending =====
+
+    /// Next node in the accept linked list
+    pub next_pending_send: Option<store::Key>,
+
+    /// Set to true when the stream is pending accept
+    pub is_pending_send: bool,
 
     /// Send data flow control
     pub send_flow: FlowControl,
@@ -49,6 +43,12 @@ pub(super) struct Stream<B> {
 
     // ===== Fields related to receiving =====
 
+    /// Next node in the accept linked list
+    pub next_pending_accept: Option<store::Key>,
+
+    /// Set to true when the stream is pending accept
+    pub is_pending_accept: bool,
+
     /// Receive data flow control
     pub recv_flow: FlowControl,
 
@@ -67,11 +67,14 @@ pub(super) struct Stream<B> {
     pub recv_task: Option<task::Task>,
 
     /// The stream's pending push promises
-    pub pending_push_promises: store::Queue<B, Next>,
+    pub pending_push_promises: store::Queue<B, NextAccept>,
 }
 
 #[derive(Debug)]
-pub(super) struct Next;
+pub(super) struct NextAccept;
+
+#[derive(Debug)]
+pub(super) struct NextSend;
 
 #[derive(Debug)]
 pub(super) struct NextSendCapacity;
@@ -85,11 +88,11 @@ impl<B> Stream<B> {
         Stream {
             id,
             state: State::default(),
-            next: None,
-            is_queued: false,
 
             // ===== Fields related to sending =====
 
+            next_pending_send: None,
+            is_pending_send: false,
             send_flow: FlowControl::new(),
             requested_send_capacity: 0,
             buffered_send_data: 0,
@@ -101,6 +104,8 @@ impl<B> Stream<B> {
 
             // ===== Fields related to receiving =====
 
+            next_pending_accept: None,
+            is_pending_accept: false,
             recv_flow: FlowControl::new(),
             in_flight_recv_data: 0,
             next_window_update: None,
@@ -135,25 +140,47 @@ impl<B> Stream<B> {
     }
 }
 
-impl store::Next for Next {
+impl store::Next for NextAccept {
     fn next<B>(stream: &Stream<B>) -> Option<store::Key> {
-        stream.next
+        stream.next_pending_accept
     }
 
     fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
-        stream.next = key;
+        stream.next_pending_accept = key;
     }
 
     fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
-        stream.next.take()
+        stream.next_pending_accept.take()
     }
 
     fn is_queued<B>(stream: &Stream<B>) -> bool {
-        stream.is_queued
+        stream.is_pending_accept
     }
 
     fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
-        stream.is_queued = val;
+        stream.is_pending_accept = val;
+    }
+}
+
+impl store::Next for NextSend {
+    fn next<B>(stream: &Stream<B>) -> Option<store::Key> {
+        stream.next_pending_send
+    }
+
+    fn set_next<B>(stream: &mut Stream<B>, key: Option<store::Key>) {
+        stream.next_pending_send = key;
+    }
+
+    fn take_next<B>(stream: &mut Stream<B>) -> Option<store::Key> {
+        stream.next_pending_send.take()
+    }
+
+    fn is_queued<B>(stream: &Stream<B>) -> bool {
+        stream.is_pending_send
+    }
+
+    fn set_queued<B>(stream: &mut Stream<B>, val: bool) {
+        stream.is_pending_send = val;
     }
 }
 

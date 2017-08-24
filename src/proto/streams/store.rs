@@ -173,7 +173,10 @@ impl<B, N> Queue<B, N>
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push(&mut self, stream: &mut store::Ptr<B>) -> bool {
+        trace!("Queue::push");
+
         if N::is_queued(stream) {
+            trace!(" -> already queued");
             return false;
         }
 
@@ -185,6 +188,8 @@ impl<B, N> Queue<B, N>
         // Queue the stream
         match self.indices {
             Some(ref mut idxs) => {
+                trace!(" -> existing entries");
+
                 // Update the current tail node to point to `stream`
                 let key = stream.key();
                 N::set_next(&mut stream.resolve(idxs.tail), Some(key));
@@ -193,6 +198,7 @@ impl<B, N> Queue<B, N>
                 idxs.tail = stream.key();
             }
             None => {
+                trace!(" -> first entry");
                 self.indices = Some(store::Indices {
                     head: stream.key(),
                     tail: stream.key(),

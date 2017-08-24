@@ -7,7 +7,7 @@ use std::{fmt, cmp};
 #[derive(Debug)]
 pub(super) struct Prioritize<B> {
     /// Queue of streams waiting for socket capacity to send a frame
-    pending_send: store::Queue<B, stream::Next>,
+    pending_send: store::Queue<B, stream::NextSend>,
 
     /// Queue of streams waiting for window capacity to produce data.
     pending_capacity: store::Queue<B, stream::NextSendCapacity>,
@@ -125,8 +125,6 @@ impl<B> Prioritize<B>
             // don't notify the conneciton task. Once additional capacity
             // becomes available, the frame will be flushed.
             stream.pending_send.push_back(&mut self.buffer, frame.into());
-
-            debug_assert!(stream.is_pending_send_capacity);
         }
 
         Ok(())
@@ -213,8 +211,8 @@ impl<B> Prioritize<B>
             total_requested - stream.send_flow.available(),
             stream.send_flow.window_size());
 
-        trace!("try_assign_capacity; requested={}; additional={}; conn={}",
-               total_requested, additional, self.flow.available());
+        trace!("try_assign_capacity; requested={}; additional={}; window={}; conn={}",
+               total_requested, additional, stream.send_flow.window_size(), self.flow.available());
 
         if additional == 0 {
             // Nothing more to do
@@ -373,13 +371,25 @@ impl<B> Prioritize<B>
         }
     }
 
+    pub fn clear_queue(&mut self, stream: &mut store::Ptr<B>) {
+        trace!("clear_queue; stream-id={:?}", stream.id);
+
+        // TODO: make this more efficient?
+        while let Some(frame) = stream.pending_send.pop_front(&mut self.buffer) {
+            trace!("dropping; frame={:?}", frame);
+        }
+    }
+
     fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
         -> Option<Frame<Prioritized<B>>>
     {
+        trace!("pop_frame");
+
         loop {
-            trace!("pop frame");
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
+                    trace!("pop_frame; stream={:?}", stream.id);
+
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
                             // Get the amount of capacity remaining for stream's
@@ -458,6 +468,8 @@ impl<B> Prioritize<B>
                         }
                         frame => frame.map(|_| unreachable!()),
                     };
+
+                    trace!("pop_frame; frame={:?}", frame);
 
                     if !stream.pending_send.is_empty() {
                         // TODO: Only requeue the sender IF it is ready to send
