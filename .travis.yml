@@ -5,10 +5,6 @@ sudo: false
 matrix:
   include:
     - rust: stable
-    - os: osx
-    - rust: 1.19.0
-      script: cargo build
-
     - rust: beta
     - rust: nightly
       before_script:
