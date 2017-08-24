@@ -76,6 +76,11 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
+    /// Returns the initial receive window size
+    pub fn init_window_sz(&self) -> WindowSize {
+        self.init_window_sz
+    }
+
     /// Returns the ID of the last processed stream
     pub fn last_processed_id(&self) -> StreamId {
         self.last_processed_id
@@ -85,7 +90,7 @@ impl<B> Recv<B> where B: Buf {
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open<P: Peer>(&mut self, id: StreamId)
-        -> Result<Option<Stream<B>>, ConnectionError>
+        -> Result<Option<StreamId>, ConnectionError>
     {
         assert!(self.refused.is_none());
 
@@ -96,7 +101,7 @@ impl<B> Recv<B> where B: Buf {
             return Ok(None);
         }
 
-        Ok(Some(Stream::new(id)))
+        Ok(Some(id))
     }
 
     pub fn take_request(&mut self, stream: &mut store::Ptr<B>)
@@ -140,11 +145,6 @@ impl<B> Recv<B> where B: Buf {
     {
         trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
-
-        if stream.state.is_recv_streaming() {
-            stream.recv_flow.inc_window(self.init_window_sz)?;
-            stream.recv_flow.assign_capacity(self.init_window_sz);
-        }
 
         if is_initial {
             if !self.can_inc_num_streams() {
@@ -285,6 +285,7 @@ impl<B> Recv<B> where B: Buf {
 
     pub fn recv_push_promise<P: Peer>(&mut self,
                                       frame: frame::PushPromise,
+                                      send: &Send<B>,
                                       stream: store::Key,
                                       store: &mut Store<B>)
         -> Result<(), ConnectionError>
@@ -309,7 +310,11 @@ impl<B> Recv<B> where B: Buf {
         // TODO: All earlier stream IDs should be implicitly closed.
 
         // Now, create a new entry for the stream
-        let mut new_stream = Stream::new(frame.promised_id());
+        let mut new_stream = Stream::new(
+            frame.promised_id(),
+            send.init_window_sz(),
+            self.init_window_sz);
+
         new_stream.state.reserve_remote();
 
         let mut ppp = store[stream].pending_push_promises.take();

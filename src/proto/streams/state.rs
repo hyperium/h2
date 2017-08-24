@@ -266,6 +266,16 @@ impl State {
         }
     }
 
+    /// Returns true if the stream is in a state such that it could send data in
+    /// the future.
+    pub fn could_send_data(&self) -> bool {
+        match self.inner {
+            Open { .. } => true,
+            HalfClosedRemote(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_send_streaming(&self) -> bool {
         match self.inner {
             Open { local: Peer::Streaming, .. } => true,

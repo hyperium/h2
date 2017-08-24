@@ -47,6 +47,11 @@ impl<B> Send<B> where B: Buf {
         }
     }
 
+    /// Returns the initial send window size
+    pub fn init_window_sz(&self) -> WindowSize {
+        self.init_window_sz
+    }
+
     pub fn poll_open_ready<P: Peer>(&mut self) -> Poll<(), ConnectionError> {
         try!(self.ensure_can_open::<P>());
 
@@ -64,7 +69,7 @@ impl<B> Send<B> where B: Buf {
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open<P: Peer>(&mut self)
-        -> Result<Stream<B>, ConnectionError>
+        -> Result<StreamId, ConnectionError>
     {
         try!(self.ensure_can_open::<P>());
 
@@ -74,7 +79,7 @@ impl<B> Send<B> where B: Buf {
             }
         }
 
-        let ret = Stream::new(self.next_stream_id);
+        let ret = self.next_stream_id;
 
         // Increment the number of locally initiated streams
         self.num_streams += 1;
@@ -92,10 +97,6 @@ impl<B> Send<B> where B: Buf {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
         stream.state.send_open(frame.is_end_stream())?;
-
-        if stream.state.is_send_streaming() {
-            stream.send_flow.inc_window(self.init_window_sz)?;
-        }
 
         // Queue the frame for sending
         self.prioritize.queue_frame(frame.into(), stream, task);

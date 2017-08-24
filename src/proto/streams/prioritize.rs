@@ -162,6 +162,11 @@ impl<B> Prioritize<B>
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
+        // Ignore window updates when the stream is not active.
+        if !stream.state.could_send_data() {
+            return Ok(());
+        }
+
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
 
@@ -219,6 +224,8 @@ impl<B> Prioritize<B>
             return;
         }
 
+        // If the stream has requested capacity, then it must be in the
+        // streaming state.
         debug_assert!(stream.state.is_send_streaming());
 
         // The amount of currently available capacity on the connection

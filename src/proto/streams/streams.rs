@@ -75,7 +75,14 @@ impl<B> Streams<B>
                 }
 
                 match try!(me.actions.recv.open::<P>(id)) {
-                    Some(stream) => e.insert(stream),
+                    Some(stream_id) => {
+                        let stream = Stream::new(
+                            stream_id,
+                            me.actions.send.init_window_sz(),
+                            me.actions.recv.init_window_sz());
+
+                        e.insert(stream)
+                    }
                     None => return Ok(()),
                 }
             }
@@ -195,7 +202,8 @@ impl<B> Streams<B>
             None => return Err(ProtocolError.into()),
         };
 
-        me.actions.recv.recv_push_promise::<P>(frame, stream, &mut me.store)
+        me.actions.recv.recv_push_promise::<P>(
+            frame, &me.actions.send, stream, &mut me.store)
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
@@ -273,11 +281,16 @@ impl<B> Streams<B>
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let mut stream = me.actions.send.open::<client::Peer>()?;
+            let stream_id = me.actions.send.open::<client::Peer>()?;
+
+            let stream = Stream::new(
+                stream_id,
+                me.actions.send.init_window_sz(),
+                me.actions.recv.init_window_sz());
 
             // Convert the message
             let headers = client::Peer::convert_send_message(
-                stream.id, request, end_of_stream);
+                stream_id, request, end_of_stream);
 
             let mut stream = me.store.insert(stream.id, stream);
 

@@ -83,8 +83,20 @@ pub(super) struct NextSendCapacity;
 pub(super) struct NextWindowUpdate;
 
 impl<B> Stream<B> {
-    pub fn new(id: StreamId) -> Stream<B>
+    pub fn new(id: StreamId,
+               init_send_window: WindowSize,
+               init_recv_window: WindowSize) -> Stream<B>
     {
+        let mut send_flow = FlowControl::new();
+        let mut recv_flow = FlowControl::new();
+
+        recv_flow.inc_window(init_recv_window)
+            .ok().expect("invalid initial receive window");
+        recv_flow.assign_capacity(init_recv_window);
+
+        send_flow.inc_window(init_send_window)
+            .ok().expect("invalid initial send window size");
+
         Stream {
             id,
             state: State::default(),
@@ -93,7 +105,7 @@ impl<B> Stream<B> {
 
             next_pending_send: None,
             is_pending_send: false,
-            send_flow: FlowControl::new(),
+            send_flow: send_flow,
             requested_send_capacity: 0,
             buffered_send_data: 0,
             send_task: None,
@@ -106,7 +118,7 @@ impl<B> Stream<B> {
 
             next_pending_accept: None,
             is_pending_accept: false,
-            recv_flow: FlowControl::new(),
+            recv_flow: recv_flow,
             in_flight_recv_data: 0,
             next_window_update: None,
             is_pending_window_update: false,
