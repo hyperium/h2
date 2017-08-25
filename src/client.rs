@@ -1,4 +1,4 @@
-use {frame, ConnectionError};
+use {frame, HeaderMap, ConnectionError};
 use Body;
 use frame::StreamId;
 use proto::{self, Connection, WindowSize};
@@ -173,10 +173,10 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Send trailers
-    pub fn send_trailers(&mut self, _trailers: ())
+    pub fn send_trailers(&mut self, trailers: HeaderMap)
         -> Result<(), ConnectionError>
     {
-        unimplemented!();
+        self.inner.send_trailers::<Peer>(trailers)
     }
 }
 

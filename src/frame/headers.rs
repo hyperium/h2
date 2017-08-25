@@ -98,6 +98,7 @@ const ALL: u8 = END_STREAM
 // ===== impl Headers =====
 
 impl Headers {
+    /// Create a new HEADERS frame
     pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap) -> Self {
         Headers {
             stream_id: stream_id,
@@ -105,6 +106,19 @@ impl Headers {
             fields: fields,
             pseudo: pseudo,
             flags: HeadersFlag::default(),
+        }
+    }
+
+    pub fn trailers(stream_id: StreamId, fields: HeaderMap) -> Self {
+        let mut flags = HeadersFlag::default();
+        flags.set_end_stream();
+
+        Headers {
+            stream_id,
+            stream_dep: None,
+            fields: fields,
+            pseudo: Pseudo::default(),
+            flags: flags,
         }
     }
 
@@ -288,6 +302,10 @@ impl Headers {
         *request.headers_mut() = self.fields;
 
         Ok(request)
+    }
+
+    pub fn into_fields(self) -> HeaderMap {
+        self.fields
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)

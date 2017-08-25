@@ -22,6 +22,7 @@ pub use self::http::{
     status,
     Request,
     Response,
+    HeaderMap,
 };
 
 pub use self::h2::client::{self, Client};

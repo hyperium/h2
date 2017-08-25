@@ -43,6 +43,8 @@ impl<B> Prioritize<B>
 
         flow.assign_capacity(config.init_local_window_sz);
 
+        trace!("Prioritize::new; flow={:?}", flow);
+
         Prioritize {
             pending_send: store::Queue::new(),
             pending_capacity: store::Queue::new(),
