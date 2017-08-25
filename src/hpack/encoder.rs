@@ -544,7 +544,7 @@ mod test {
         use http::header::HeaderValue;
 
         let name = "my-password".parse().unwrap();
-        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
         let header = Header::Field { name: Some(name), value: value };
@@ -561,7 +561,7 @@ mod test {
 
         // Now, try to encode a sensitive header w/ a name in the static table
         let name = "authorization".parse().unwrap();
-        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
         let header = Header::Field { name: Some(name), value: value };
@@ -579,7 +579,7 @@ mod test {
         let _ = encode(&mut encoder, vec![self::header("my-password", "not-so-secret")]);
 
         let name = "my-password".parse().unwrap();
-        let mut value = HeaderValue::try_from_bytes(b"12345").unwrap();
+        let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
         let header = Header::Field { name: Some(name), value: value };
@@ -746,11 +746,11 @@ mod test {
         let res = encode(&mut encoder, vec![
             Header::Field {
                 name: Some("hello".parse().unwrap()),
-                value: HeaderValue::try_from_bytes(b"world").unwrap(),
+                value: HeaderValue::from_bytes(b"world").unwrap(),
             },
             Header::Field {
                 name: None,
-                value: HeaderValue::try_from_bytes(b"zomg").unwrap(),
+                value: HeaderValue::from_bytes(b"zomg").unwrap(),
             },
         ]);
 
@@ -772,11 +772,11 @@ mod test {
         let mut input = vec![
             Header::Field {
                 name: Some("hello".parse().unwrap()),
-                value: HeaderValue::try_from_bytes(b"world").unwrap(),
+                value: HeaderValue::from_bytes(b"world").unwrap(),
             },
             Header::Field {
                 name: None,
-                value: HeaderValue::try_from_bytes(b"zomg").unwrap(),
+                value: HeaderValue::from_bytes(b"zomg").unwrap(),
             },
         ].into_iter();
 
@@ -822,7 +822,7 @@ mod test {
         use http::header::{HeaderName, HeaderValue};
 
         let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
-        let value = HeaderValue::try_from_bytes(val.as_bytes()).unwrap();
+        let value = HeaderValue::from_bytes(val.as_bytes()).unwrap();
 
         Header::Field { name: Some(name), value: value }
     }

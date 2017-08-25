@@ -370,7 +370,5 @@ impl proto::Peer for Peer {
         -> Result<Self::Poll, ConnectionError>
     {
         headers.into_request()
-            // TODO: Is this always a protocol error?
-            .map_err(|_| ProtocolError.into())
     }
 }

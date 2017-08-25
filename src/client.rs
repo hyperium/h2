@@ -2,7 +2,6 @@ use {frame, HeaderMap, ConnectionError};
 use Body;
 use frame::StreamId;
 use proto::{self, Connection, WindowSize};
-use error::Reason::*;
 
 use http::{Request, Response};
 use futures::{Future, Poll, Sink, Async, AsyncSink};
@@ -224,7 +223,5 @@ impl proto::Peer for Peer {
 
     fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError> {
         headers.into_response()
-            // TODO: Is this always a protocol error?
-            .map_err(|_| ProtocolError.into())
     }
 }
