@@ -1,6 +1,7 @@
 use {client, server, HeaderMap};
 use proto::*;
 use super::*;
+use super::store::Resolve;
 
 use std::sync::{Arc, Mutex};
 

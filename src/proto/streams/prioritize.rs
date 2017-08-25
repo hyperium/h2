@@ -1,4 +1,5 @@
 use super::*;
+use super::store::Resolve;
 
 use bytes::buf::Take;
 use futures::Sink;
@@ -179,13 +180,23 @@ impl<B> Prioritize<B>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;
+
+        self.assign_connection_capacity(inc, store);
+        Ok(())
+    }
+
+    pub fn assign_connection_capacity<R>(&mut self,
+                                         inc: WindowSize,
+                                         store: &mut R)
+        where R: Resolve<B>
+    {
         self.flow.assign_capacity(inc);
 
         // Assign newly acquired capacity to streams pending capacity.
         while self.flow.available() > 0 {
             let mut stream = match self.pending_capacity.pop(store) {
                 Some(stream) => stream,
-                None => return Ok(()),
+                None => return,
             };
 
             // Try to assign capacity to the stream. This will also re-queue the
@@ -193,8 +204,6 @@ impl<B> Prioritize<B>
             // the capacity request.
             self.try_assign_capacity(&mut stream);
         }
-
-        Ok(())
     }
 
     /// Request capacity to send data

@@ -62,6 +62,10 @@ pub(super) struct VacantEntry<'a, B: 'a> {
     slab: &'a mut slab::Slab<Stream<B>>,
 }
 
+pub(super) trait Resolve<B> {
+    fn resolve(&mut self, key: Key) -> Ptr<B>;
+}
+
 // ===== impl Store =====
 
 impl<B> Store<B> {
@@ -69,13 +73,6 @@ impl<B> Store<B> {
         Store {
             slab: slab::Slab::new(),
             ids: HashMap::new(),
-        }
-    }
-
-    pub fn resolve(&mut self, key: Key) -> Ptr<B> {
-        Ptr {
-            key: key,
-            slab: &mut self.slab,
         }
     }
 
@@ -129,6 +126,15 @@ impl<B> Store<B> {
         }
 
         Ok(())
+    }
+}
+
+impl<B> Resolve<B> for Store<B> {
+    fn resolve(&mut self, key: Key) -> Ptr<B> {
+        Ptr {
+            key: key,
+            slab: &mut self.slab,
+        }
     }
 }
 
@@ -209,7 +215,8 @@ impl<B, N> Queue<B, N>
         true
     }
 
-    pub fn pop<'a>(&mut self, store: &'a mut Store<B>) -> Option<store::Ptr<'a, B>>
+    pub fn pop<'a, R>(&mut self, store: &'a mut R) -> Option<store::Ptr<'a, B>>
+        where R: Resolve<B>
     {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
@@ -238,8 +245,10 @@ impl<'a, B: 'a> Ptr<'a, B> {
     pub fn key(&self) -> Key {
         self.key
     }
+}
 
-    pub fn resolve(&mut self, key: Key) -> Ptr<B> {
+impl<'a, B: 'a> Resolve<B> for Ptr<'a, B> {
+    fn resolve(&mut self, key: Key) -> Ptr<B> {
         Ptr {
             key: key,
             slab: &mut *self.slab,

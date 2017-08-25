@@ -133,6 +133,11 @@ impl<T> FramedRead<T> {
 
                 match partial.frame {
                     Continuable::Headers(mut frame) => {
+                        // The stream identifiers must match
+                        if frame.stream_id() != head.stream_id() {
+                            return Err(ProtocolError.into());
+                        }
+
                         frame.load_hpack(partial.buf, &mut self.hpack)?;
                         frame.into()
                     }
