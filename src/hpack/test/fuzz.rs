@@ -330,7 +330,7 @@ fn gen_header_name(g: &mut StdRng) -> HeaderName {
 
 fn gen_header_value(g: &mut StdRng) -> HeaderValue {
     let value = gen_string(g, 0, 70);
-    HeaderValue::try_from_bytes(value.as_bytes()).unwrap()
+    HeaderValue::from_bytes(value.as_bytes()).unwrap()
 }
 
 fn gen_string(g: &mut StdRng, min: usize, max: usize) -> String {

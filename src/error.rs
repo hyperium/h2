@@ -1,3 +1,4 @@
+use http;
 use std::{error, fmt, io};
 
 /// The error type for HTTP/2 operations
@@ -159,6 +160,13 @@ impl From<User> for ConnectionError {
 impl From<ConnectionError> for io::Error {
     fn from(src: ConnectionError) -> io::Error {
         io::Error::new(io::ErrorKind::Other, src)
+    }
+}
+
+impl From<http::Error> for ConnectionError {
+    fn from(_: http::Error) -> Self {
+        // TODO: Should this always be a protocol error?
+        Reason::ProtocolError.into()
     }
 }
 

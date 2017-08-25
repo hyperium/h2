@@ -1,9 +1,11 @@
 use super::{StreamId, StreamDependency};
+use ConnectionError;
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use HeaderMap;
+use error::Reason::*;
 
-use http::{self, version, uri, Request, Response, Method, StatusCode, Uri};
+use http::{version, uri, Request, Response, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
@@ -183,11 +185,14 @@ impl Headers {
                       decoder: &mut hpack::Decoder)
         -> Result<(), Error>
     {
+        let mut reg = false;
         let mut err = false;
 
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
-                if self.pseudo.$field.is_some() {
+                if reg {
+                    err = true;
+                } else if self.pseudo.$field.is_some() {
                     err = true;
                 } else {
                     self.pseudo.$field = Some($val);
@@ -207,6 +212,7 @@ impl Headers {
 
             match header {
                 Field { name, value } => {
+                    reg = true;
                     self.fields.append(name, value);
                 }
                 Authority(v) => set_pseudo!(authority, v),
@@ -254,7 +260,7 @@ impl Headers {
         self.flags.set_end_stream()
     }
 
-    pub fn into_response(self) -> http::Result<Response<()>> {
+    pub fn into_response(self) -> Result<Response<()>, ConnectionError> {
         let mut b = Response::builder();
 
         if let Some(status) = self.pseudo.status {
@@ -267,15 +273,18 @@ impl Headers {
         Ok(response)
     }
 
-    pub fn into_request(self) -> http::Result<Request<()>> {
+    pub fn into_request(self) -> Result<Request<()>, ConnectionError> {
         let mut b = Request::builder();
 
-        // TODO: should we distinguish between HTTP_2 and HTTP_2C?
-        // carllerche/http#42
         b.version(version::HTTP_2);
 
         if let Some(method) = self.pseudo.method {
             b.method(method);
+        }
+
+        // Specifying :status for a request is a protocol error
+        if self.pseudo.status.is_some() {
+            return Err(ProtocolError.into());
         }
 
         // Convert the URI
@@ -283,17 +292,17 @@ impl Headers {
 
         if let Some(scheme) = self.pseudo.scheme {
             // TODO: Don't unwrap
-            parts.scheme = Some(uri::Scheme::try_from_shared(scheme.into_inner()).unwrap());
+            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner()).unwrap());
         }
 
         if let Some(authority) = self.pseudo.authority {
             // TODO: Don't unwrap
-            parts.authority = Some(uri::Authority::try_from_shared(authority.into_inner()).unwrap());
+            parts.authority = Some(uri::Authority::from_shared(authority.into_inner()).unwrap());
         }
 
         if let Some(path) = self.pseudo.path {
             // TODO: Don't unwrap
-            parts.origin_form = Some(uri::OriginForm::try_from_shared(path.into_inner()).unwrap());
+            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner()).unwrap());
         }
 
         b.uri(parts);
@@ -400,7 +409,7 @@ impl Pseudo {
             unsafe { String::from_utf8_unchecked(src) }
         }
 
-        let path = parts.origin_form
+        let path = parts.path_and_query
             .map(|v| v.into())
             .unwrap_or_else(|| Bytes::from_static(b"/"));
 

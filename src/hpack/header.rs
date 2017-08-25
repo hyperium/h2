@@ -81,8 +81,9 @@ impl Header {
                 }
             }
         } else {
-            let name = try!(HeaderName::from_bytes(&name));
-            let value = try!(HeaderValue::try_from_bytes(&value));
+            // HTTP/2 requires lower case header names
+            let name = try!(HeaderName::from_lowercase(&name));
+            let value = try!(HeaderValue::from_bytes(&value));
 
             Ok(Header::Field { name: name, value: value })
         }
@@ -228,7 +229,7 @@ impl<'a> Name<'a> {
             Name::Field(name) => {
                 Ok(Header::Field {
                     name: name.clone(),
-                    value: try!(HeaderValue::try_from_bytes(&*value)),
+                    value: try!(HeaderValue::from_bytes(&*value)),
                 })
             }
             Name::Authority => {
