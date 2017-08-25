@@ -123,6 +123,7 @@ impl<T, P, B> Connection<T, P, B>
 
     fn poll2(&mut self) -> Poll<(), ConnectionError> {
         use frame::Frame::*;
+        use proto::ProtoError::*;
 
         loop {
             // First, ensure that the `Connection` is able to receive a frame
@@ -130,12 +131,28 @@ impl<T, P, B> Connection<T, P, B>
 
             trace!("polling codec");
 
-            let frame = match try!(self.codec.poll()) {
-                Async::Ready(frame) => frame,
-                Async::NotReady => {
+            let frame = match self.codec.poll() {
+                // Receive a frame
+                Ok(Async::Ready(frame)) => frame,
+                // Socket not ready, try to flush any pending data
+                Ok(Async::NotReady) => {
                     // Flush any pending writes
                     let _ = try!(self.poll_complete());
                     return Ok(Async::NotReady);
+                }
+                // Connection level error, set GO_AWAY and close connection
+                Err(Connection(reason)) => {
+                    return Err(ConnectionError::Proto(reason));
+                }
+                // Stream level error, reset the stream
+                Err(Stream { id, reason }) => {
+                    trace!("stream level error; id={:?}; reason={:?}", id, reason);
+                    self.streams.send_reset::<P>(id, reason);
+                    continue;
+                }
+                // I/O error, nothing more can be done
+                Err(Io(err)) => {
+                    return Err(err.into());
                 }
             };
 

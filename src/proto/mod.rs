@@ -26,6 +26,8 @@ use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
+use std::io;
+
 /// Either a Client or a Server
 pub trait Peer {
     /// Message type sent into the transport
@@ -49,6 +51,17 @@ pub trait Peer {
 pub type PingPayload = [u8; 8];
 
 pub type WindowSize = u32;
+
+/// Errors that are received
+#[derive(Debug)]
+pub enum ProtoError {
+    Connection(Reason),
+    Stream {
+        id: StreamId,
+        reason: Reason,
+    },
+    Io(io::Error),
+}
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
@@ -87,4 +100,12 @@ pub(crate) fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, Prioritize
     let codec = Codec::from_framed(FramedRead::new(framed));
 
     Connection::new(codec)
+}
+
+// ===== impl ProtoError =====
+
+impl From<io::Error> for ProtoError {
+    fn from(src: io::Error) -> Self {
+        ProtoError::Io(src)
+    }
 }

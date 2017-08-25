@@ -191,7 +191,7 @@ impl<B: IntoBuf> Stream<B> {
         self.inner.send_trailers::<Peer>(trailers)
     }
 
-    pub fn send_reset(mut self, reason: Reason) -> Result<(), ConnectionError> {
+    pub fn send_reset(mut self, reason: Reason) {
         self.inner.send_reset::<Peer>(reason)
     }
 }

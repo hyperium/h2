@@ -1,4 +1,4 @@
-use {frame, ConnectionError};
+use frame;
 use proto::*;
 
 use futures::Sink;

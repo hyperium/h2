@@ -312,6 +312,33 @@ impl<B> Streams<B>
             key: key,
         })
     }
+
+    pub fn send_reset<P: Peer>(&mut self, id: StreamId, reason: Reason) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let key = match me.store.find_entry(id) {
+            Entry::Occupied(e) => e.key(),
+            Entry::Vacant(e) => {
+                match me.actions.recv.open::<P>(id) {
+                    Ok(Some(stream_id)) => {
+                        let stream = Stream::new(
+                            stream_id, 0, 0);
+
+                        e.insert(stream)
+                    }
+                    _ => return,
+                }
+            }
+        };
+
+
+        let stream = me.store.resolve(key);
+
+        me.actions.transition::<P, _, _>(stream, move |actions, stream| {
+            actions.send.send_reset(reason, stream, &mut actions.task)
+        })
+    }
 }
 
 // ===== impl StreamRef =====
@@ -367,7 +394,7 @@ impl<B> StreamRef<B>
         me.actions.recv.take_request(&mut stream)
     }
 
-    pub fn send_reset<P: Peer>(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+    pub fn send_reset<P: Peer>(&mut self, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 

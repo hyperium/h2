@@ -53,9 +53,9 @@ impl<T, B> futures::Stream for Codec<T, B>
     where T: AsyncRead,
 {
     type Item = Frame;
-    type Error = ConnectionError;
+    type Error = ProtoError;
 
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
+    fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         self.inner.poll()
     }
 }
