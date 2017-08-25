@@ -71,7 +71,13 @@ pub fn main() {
             .uri("https://http2.akamai.com/")
             .body(()).unwrap();
 
-        let stream = client.request(request, true).unwrap();
+        let mut trailers = h2::HeaderMap::new();
+        trailers.insert("zomg", "hello".parse().unwrap());
+
+        let mut stream = client.request(request, false).unwrap();
+
+        // send trailers
+        stream.send_trailers(trailers).unwrap();
 
         // Spawn a task to run the client...
         handle.spawn(client.map_err(|e| println!("GOT ERR={:?}", e)));
