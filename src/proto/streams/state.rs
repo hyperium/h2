@@ -213,6 +213,7 @@ impl State {
         match self.inner {
             Closed(..) => {}
             _ => {
+                trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
                     ConnectionError::Proto(reason) => Some(Cause::Proto(reason)),
                     ConnectionError::Io(..) => Some(Cause::Io),
@@ -260,16 +261,6 @@ impl State {
             Open { .. } => true,
             HalfClosedLocal(..) => true,
             HalfClosedRemote(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true if the stream is in a state such that it could send data in
-    /// the future.
-    pub fn could_send_data(&self) -> bool {
-        match self.inner {
-            Open { .. } => true,
-            HalfClosedRemote(_) => true,
             _ => false,
         }
     }

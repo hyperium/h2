@@ -250,17 +250,21 @@ impl<B> Send<B> where B: Buf {
             if val < old_val {
                 let dec = old_val - val;
 
+                trace!("decrementing all windows; dec={}", dec);
+
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
-                    if stream.state.is_send_streaming() {
-                        stream.send_flow.dec_window(dec);
+                    stream.send_flow.dec_window(dec);
+                    trace!("decremented stream window; id={:?}; decr={}; flow={:?}",
+                           stream.id, dec, stream.send_flow);
 
-                        // TODO: Handle reclaiming connection level window
-                        // capacity.
+                    // TODO: Probably try to assign capacity?
 
-                        // TODO: Should this notify the producer?
-                    }
+                    // TODO: Handle reclaiming connection level window
+                    // capacity.
+
+                    // TODO: Should this notify the producer?
 
                     Ok(())
                 })?;

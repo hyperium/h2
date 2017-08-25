@@ -36,6 +36,8 @@ impl Settings {
               B: Buf,
               C: Buf,
     {
+        trace!("send_pending_ack; pending={:?}", self.pending);
+
         if let Some(ref settings) = self.pending {
             let frame = frame::Settings::ack();
 
@@ -44,7 +46,7 @@ impl Settings {
                 return Ok(Async::NotReady);
             }
 
-            trace!("ACK sent");
+            trace!("ACK sent; applying settings");
 
             dst.apply_remote_settings(settings);
             streams.apply_remote_settings(settings)?;

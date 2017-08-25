@@ -23,6 +23,7 @@ pub(super) struct Stream<B> {
     pub requested_send_capacity: WindowSize,
 
     /// Amount of data buffered at the prioritization layer.
+    /// TODO: Technically this could be greater than the window size...
     pub buffered_send_data: WindowSize,
 
     /// Task tracking additional send capacity (i.e. window updates).
