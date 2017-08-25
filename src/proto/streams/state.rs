@@ -241,16 +241,17 @@ impl State {
         }
     }
 
-    /// Indicates that the local side will not send more data to the local.
-    pub fn send_reset(&mut self, reason: Reason) -> Result<(), ConnectionError> {
+    /// Set the stream state to reset
+    pub fn set_reset(&mut self, reason: Reason) {
+        debug_assert!(!self.is_reset());
+        self.inner = Closed(Some(Cause::Proto(reason)));
+    }
+
+    /// Returns true if the stream is already reset.
+    pub fn is_reset(&self) -> bool {
         match self.inner {
-            Idle => Err(ProtocolError.into()),
-            Closed(..) => Ok(()),
-            _ => {
-                trace!("send_reset: => Closed");
-                self.inner = Closed(Some(Cause::Proto(reason)));
-                Ok(())
-            }
+            Closed(Some(_)) => true,
+            _ => false,
         }
     }
 

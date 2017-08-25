@@ -101,7 +101,10 @@ impl<B> Send<B> where B: Buf {
         Ok(())
     }
 
-    pub fn send_reset(&mut self, reason: Reason,
+    /// This is called by the user to send a reset and should not be called
+    /// by internal state transitions. Use `reset_stream` for that.
+    pub fn send_reset(&mut self,
+                      reason: Reason,
                       stream: &mut store::Ptr<B>,
                       task: &mut Option<Task>)
         -> Result<(), ConnectionError>
@@ -111,17 +114,44 @@ impl<B> Send<B> where B: Buf {
             return Err(InactiveStreamId.into())
         }
 
-        stream.state.send_reset(reason)?;
+        self.reset_stream(reason, stream, task);
+        Ok(())
+    }
+
+    fn reset_stream(&mut self,
+                    reason: Reason,
+                    stream: &mut store::Ptr<B>,
+                    task: &mut Option<Task>)
+    {
+        if stream.state.is_reset() {
+            // Don't double reset
+            return;
+        }
+
+        // If closed AND the send queue is flushed, then the stream cannot be
+        // reset either
+        if stream.state.is_closed() && stream.pending_send.is_empty() {
+            return;
+        }
+
+        // Transition the state
+        stream.state.set_reset(reason);
+
+        // Clear all pending outbound frames
+        self.prioritize.clear_queue(stream);
+
+        // Reclaim all capacity assigned to the stream and re-assign it to the
+        // connection
+        let available = stream.send_flow.available();
+        stream.send_flow.claim_capacity(available);
 
         let frame = frame::Reset::new(stream.id, reason);
-
-        // TODO: This could impact connection level flow control.
-        self.prioritize.clear_queue(stream);
 
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
 
-        Ok(())
+        // Re-assign all capacity to the connection
+        self.prioritize.assign_connection_capacity(available, stream);
     }
 
     pub fn send_data(&mut self,
@@ -210,7 +240,7 @@ impl<B> Send<B> where B: Buf {
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.send_reset(FlowControlError.into(), stream, task)?;
+            self.reset_stream(FlowControlError.into(), stream, task);
         }
 
         Ok(())
