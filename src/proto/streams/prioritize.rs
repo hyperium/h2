@@ -159,10 +159,8 @@ impl<B> Prioritize<B>
                                      stream: &mut store::Ptr<B>)
         -> Result<(), ConnectionError>
     {
-        // Ignore window updates when the stream is not active.
-        if !stream.state.could_send_data() {
-            return Ok(());
-        }
+        trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
+               stream.id, stream.state, inc, stream.send_flow);
 
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
@@ -222,8 +220,9 @@ impl<B> Prioritize<B>
         }
 
         // If the stream has requested capacity, then it must be in the
-        // streaming state.
-        debug_assert!(stream.state.is_send_streaming());
+        // streaming state (more data could be sent) or there is buffered data
+        // waiting to be sent.
+        debug_assert!(stream.state.is_send_streaming() || stream.buffered_send_data > 0);
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available();
