@@ -186,14 +186,16 @@ impl Headers {
         -> Result<(), Error>
     {
         let mut reg = false;
-        let mut err = false;
+        let mut malformed = false;
 
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
                 if reg {
-                    err = true;
+                    trace!("load_hpack; header malformed -- pseudo not at head of block");
+                    malformed = true;
                 } else if self.pseudo.$field.is_some() {
-                    err = true;
+                    trace!("load_hpack; header malformed -- repeated pseudo");
+                    malformed = true;
                 } else {
                     self.pseudo.$field = Some($val);
                 }
@@ -212,8 +214,19 @@ impl Headers {
 
             match header {
                 Field { name, value } => {
-                    reg = true;
-                    self.fields.append(name, value);
+                    // Connection level header fields are not supported and must
+                    // result in a protocol error.
+
+                    if name == header::CONNECTION {
+                        trace!("load_hpack; connection level header");
+                        malformed = true;
+                    } else if name == header::TE && value != "trailers" {
+                        trace!("load_hpack; TE header not set to trailers; val={:?}", value);
+                        malformed = true;
+                    } else {
+                        reg = true;
+                        self.fields.append(name, value);
+                    }
                 }
                 Authority(v) => set_pseudo!(authority, v),
                 Method(v) => set_pseudo!(method, v),
@@ -228,9 +241,9 @@ impl Headers {
             return Err(e.into());
         }
 
-        if err {
-            trace!("repeated pseudo");
-            return Err(hpack::DecoderError::RepeatedPseudo.into());
+        if malformed {
+            trace!("malformed message");
+            return Err(Error::MalformedMessage.into());
         }
 
         Ok(())

@@ -36,6 +36,8 @@ struct Partial {
 #[derive(Debug)]
 enum Continuable {
     Headers(frame::Headers),
+    // Decode the Continuation frame but ignore it...
+    // Ignore(StreamId),
     // PushPromise(frame::PushPromise),
 }
 
@@ -52,14 +54,16 @@ impl<T> FramedRead<T> {
         // TODO: Is this needed?
     }
 
-    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ConnectionError> {
+    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ProtoError> {
+        use self::ProtoError::*;
+
         trace!("decoding frame from {}B", bytes.len());
 
         // Parse the head
         let head = frame::Head::parse(&bytes);
 
         if self.partial.is_some() && head.kind() != Kind::Continuation {
-            return Err(ProtocolError.into());
+            return Err(Connection(ProtocolError));
         }
 
         let kind = head.kind();
@@ -68,17 +72,26 @@ impl<T> FramedRead<T> {
 
         let frame = match kind {
             Kind::Settings => {
-                frame::Settings::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
+
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Ping => {
-                frame::Ping::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
+
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::WindowUpdate => {
-                frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
+
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
-                frame::Data::load(head, bytes.freeze())?.into()
+                let res = frame::Data::load(head, bytes.freeze());
+
+                // TODO: Should this always be connection level? Probably not...
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Headers => {
                 // Drop the frame header
@@ -86,11 +99,24 @@ impl<T> FramedRead<T> {
                 let _ = bytes.split_to(frame::HEADER_LEN);
 
                 // Parse the header frame w/o parsing the payload
-                let (mut headers, payload) = frame::Headers::load(head, bytes)?;
+                let (mut headers, payload) = match frame::Headers::load(head, bytes) {
+                    Ok(res) => res,
+                    Err(_) => unimplemented!(),
+                };
 
                 if headers.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
-                    headers.load_hpack(payload, &mut self.hpack)?;
+                    match headers.load_hpack(payload, &mut self.hpack) {
+                        Ok(_) => {}
+                        Err(frame::Error::MalformedMessage) => {
+                            return Err(Stream {
+                                id: head.stream_id(),
+                                reason: ProtocolError,
+                            });
+                        }
+                        Err(_) => return Err(Connection(ProtocolError)),
+                    }
+
                     headers.into()
                 } else {
                     // Defer loading the frame
@@ -103,16 +129,20 @@ impl<T> FramedRead<T> {
                 }
             }
             Kind::Reset => {
-                frame::Reset::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::GoAway => {
-                frame::GoAway::load(&bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::PushPromise => {
-                frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..]);
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Priority => {
-                frame::Priority::load(head, &bytes[frame::HEADER_LEN..])?.into()
+                let res = frame::Priority::load(head, &bytes[frame::HEADER_LEN..]);
+                res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Continuation => {
                 // TODO: Un-hack this
@@ -120,7 +150,7 @@ impl<T> FramedRead<T> {
 
                 let mut partial = match self.partial.take() {
                     Some(partial) => partial,
-                    None => return Err(ProtocolError.into()),
+                    None => return Err(Connection(ProtocolError)),
                 };
 
                 // Extend the buf
@@ -135,10 +165,20 @@ impl<T> FramedRead<T> {
                     Continuable::Headers(mut frame) => {
                         // The stream identifiers must match
                         if frame.stream_id() != head.stream_id() {
-                            return Err(ProtocolError.into());
+                            return Err(Connection(ProtocolError));
                         }
 
-                        frame.load_hpack(partial.buf, &mut self.hpack)?;
+                        match frame.load_hpack(partial.buf, &mut self.hpack) {
+                            Ok(_) => {}
+                            Err(frame::Error::MalformedMessage) => {
+                                return Err(Stream {
+                                    id: head.stream_id(),
+                                    reason: ProtocolError,
+                                });
+                            }
+                            Err(_) => return Err(Connection(ProtocolError)),
+                        }
+
                         frame.into()
                     }
                 }
@@ -165,9 +205,9 @@ impl<T> futures::Stream for FramedRead<T>
     where T: AsyncRead,
 {
     type Item = Frame;
-    type Error = ConnectionError;
+    type Error = ProtoError;
 
-    fn poll(&mut self) -> Poll<Option<Frame>, ConnectionError> {
+    fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         loop {
             trace!("poll");
             let bytes = match try_ready!(self.inner.poll()) {

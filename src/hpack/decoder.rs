@@ -35,7 +35,6 @@ pub enum DecoderError {
     IntegerUnderflow,
     IntegerOverflow,
     StringUnderflow,
-    RepeatedPseudo,
     UnexpectedEndOfStream,
 }
 

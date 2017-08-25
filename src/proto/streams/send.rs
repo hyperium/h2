@@ -1,5 +1,4 @@
 use {frame, ConnectionError};
-use error::User::InactiveStreamId;
 use proto::*;
 use super::*;
 
@@ -101,27 +100,10 @@ impl<B> Send<B> where B: Buf {
         Ok(())
     }
 
-    /// This is called by the user to send a reset and should not be called
-    /// by internal state transitions. Use `reset_stream` for that.
     pub fn send_reset(&mut self,
                       reason: Reason,
                       stream: &mut store::Ptr<B>,
                       task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
-    {
-        if stream.state.is_closed() {
-            debug!("send_reset; invalid stream ID");
-            return Err(InactiveStreamId.into())
-        }
-
-        self.reset_stream(reason, stream, task);
-        Ok(())
-    }
-
-    fn reset_stream(&mut self,
-                    reason: Reason,
-                    stream: &mut store::Ptr<B>,
-                    task: &mut Option<Task>)
     {
         if stream.state.is_reset() {
             // Don't double reset
@@ -240,7 +222,7 @@ impl<B> Send<B> where B: Buf {
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.reset_stream(FlowControlError.into(), stream, task);
+            self.send_reset(FlowControlError.into(), stream, task);
         }
 
         Ok(())

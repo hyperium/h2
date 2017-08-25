@@ -1,4 +1,3 @@
-use ConnectionError;
 use frame::Ping;
 use proto::*;
 

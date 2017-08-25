@@ -171,6 +171,9 @@ pub enum Error {
     /// identifier other than zero.
     InvalidStreamId,
 
+    /// A request or response is malformed.
+    MalformedMessage,
+
     /// An invalid stream dependency ID was provided
     ///
     /// This is returend if a HEADERS or PRIORITY frame is received with an
