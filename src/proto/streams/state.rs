@@ -274,6 +274,16 @@ impl State {
         }
     }
 
+    /// Returns true when the stream is in a state to receive headers
+    pub fn is_recv_headers(&self) -> bool {
+        match self.inner {
+            Idle => true,
+            Open { remote: AwaitingHeaders, .. } => true,
+            HalfClosedLocal(AwaitingHeaders) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_recv_streaming(&self) -> bool {
         match self.inner {
             Open { remote: Peer::Streaming, .. } => true,

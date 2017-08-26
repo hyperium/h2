@@ -6,14 +6,18 @@ use super::store::Resolve;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub(crate) struct Streams<B> {
-    inner: Arc<Mutex<Inner<B>>>,
+pub(crate) struct Streams<B, P>
+    where P: Peer,
+{
+    inner: Arc<Mutex<Inner<B, P>>>,
 }
 
 /// Reference to the stream state
 #[derive(Debug)]
-pub(crate) struct StreamRef<B> {
-    inner: Arc<Mutex<Inner<B>>>,
+pub(crate) struct StreamRef<B, P>
+    where P: Peer,
+{
+    inner: Arc<Mutex<Inner<B, P>>>,
     key: store::Key,
 }
 
@@ -22,32 +26,37 @@ pub(crate) struct StreamRef<B> {
 ///
 /// TODO: better name
 #[derive(Debug)]
-struct Inner<B> {
-    actions: Actions<B>,
-    store: Store<B>,
+struct Inner<B, P>
+    where P: Peer,
+{
+    actions: Actions<B, P>,
+    store: Store<B, P>,
 }
 
 #[derive(Debug)]
-struct Actions<B> {
+struct Actions<B, P>
+    where P: Peer,
+{
     /// Manages state transitions initiated by receiving frames
-    recv: Recv<B>,
+    recv: Recv<B, P>,
 
     /// Manages state transitions initiated by sending frames
-    send: Send<B>,
+    send: Send<B, P>,
 
     /// Task that calls `poll_complete`.
     task: Option<task::Task>,
 }
 
-impl<B> Streams<B>
+impl<B, P> Streams<B, P>
     where B: Buf,
+          P: Peer,
 {
-    pub fn new<P: Peer>(config: Config) -> Self {
+    pub fn new(config: Config) -> Self {
         Streams {
             inner: Arc::new(Mutex::new(Inner {
                 actions: Actions {
-                    recv: Recv::new::<P>(&config),
-                    send: Send::new::<P>(&config),
+                    recv: Recv::new(&config),
+                    send: Send::new(&config),
                     task: None,
                 },
                 store: Store::new(),
@@ -56,7 +65,7 @@ impl<B> Streams<B>
     }
 
     /// Process inbound headers
-    pub fn recv_headers<P: Peer>(&mut self, frame: frame::Headers)
+    pub fn recv_headers(&mut self, frame: frame::Headers)
         -> Result<(), ConnectionError>
     {
         let id = frame.stream_id();
@@ -66,15 +75,7 @@ impl<B> Streams<B>
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                // Trailers cannot open a stream. Trailers are header frames
-                // that do not contain pseudo headers. Requests MUST contain a
-                // method and responses MUST contain a status. If they do not,t
-                // hey are considered to be malformed.
-                if frame.is_trailers() {
-                    return Err(ProtocolError.into());
-                }
-
-                match try!(me.actions.recv.open::<P>(id)) {
+                match try!(me.actions.recv.open(id)) {
                     Some(stream_id) => {
                         let stream = Stream::new(
                             stream_id,
@@ -90,21 +91,21 @@ impl<B> Streams<B>
 
         let stream = me.store.resolve(key);
 
-        me.actions.transition::<P, _, _>(stream, |actions, stream| {
-            if frame.is_trailers() {
+        me.actions.transition(stream, |actions, stream| {
+            if stream.state.is_recv_headers() {
+                actions.recv.recv_headers(frame, stream)
+            } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
                     return Err(ProtocolError.into());
                 }
 
-                actions.recv.recv_trailers::<P>(frame, stream)
-            } else {
-                actions.recv.recv_headers::<P>(frame, stream)
+                actions.recv.recv_trailers(frame, stream)
             }
         })
     }
 
-    pub fn recv_data<P: Peer>(&mut self, frame: frame::Data)
+    pub fn recv_data(&mut self, frame: frame::Data)
         -> Result<(), ConnectionError>
     {
         let mut me = self.inner.lock().unwrap();
@@ -117,12 +118,12 @@ impl<B> Streams<B>
             None => return Err(ProtocolError.into()),
         };
 
-        me.actions.transition::<P, _, _>(stream, |actions, stream| {
+        me.actions.transition(stream, |actions, stream| {
             actions.recv.recv_data(frame, stream)
         })
     }
 
-    pub fn recv_reset<P: Peer>(&mut self, frame: frame::Reset)
+    pub fn recv_reset(&mut self, frame: frame::Reset)
         -> Result<(), ConnectionError>
     {
         let mut me = self.inner.lock().unwrap();
@@ -138,12 +139,12 @@ impl<B> Streams<B>
             Some(stream) => stream,
             None => {
                 // TODO: Are there other error cases?
-                me.actions.ensure_not_idle::<P>(id)?;
+                me.actions.ensure_not_idle(id)?;
                 return Ok(());
             }
         };
 
-        me.actions.transition::<P, _, _>(stream, |actions, stream| {
+        me.actions.transition(stream, |actions, stream| {
             actions.recv.recv_reset(frame, stream)?;
             assert!(stream.state.is_closed());
             Ok(())
@@ -190,7 +191,7 @@ impl<B> Streams<B>
         Ok(())
     }
 
-    pub fn recv_push_promise<P: Peer>(&mut self, frame: frame::PushPromise)
+    pub fn recv_push_promise(&mut self, frame: frame::PushPromise)
         -> Result<(), ConnectionError>
     {
         let mut me = self.inner.lock().unwrap();
@@ -203,11 +204,11 @@ impl<B> Streams<B>
             None => return Err(ProtocolError.into()),
         };
 
-        me.actions.recv.recv_push_promise::<P>(
+        me.actions.recv.recv_push_promise(
             frame, &me.actions.send, stream, &mut me.store)
     }
 
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B, P>> {
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
@@ -268,11 +269,11 @@ impl<B> Streams<B>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.send.poll_open_ready::<client::Peer>()
+        me.actions.send.poll_open_ready()
     }
 
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B>, ConnectionError>
+        -> Result<StreamRef<B, P>, ConnectionError>
     {
         // TODO: There is a hazard with assigning a stream ID before the
         // prioritize layer. If prioritization reorders new streams, this
@@ -284,7 +285,7 @@ impl<B> Streams<B>
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let stream_id = me.actions.send.open::<client::Peer>()?;
+            let stream_id = me.actions.send.open()?;
 
             let stream = Stream::new(
                 stream_id,
@@ -313,14 +314,14 @@ impl<B> Streams<B>
         })
     }
 
-    pub fn send_reset<P: Peer>(&mut self, id: StreamId, reason: Reason) {
+    pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                match me.actions.recv.open::<P>(id) {
+                match me.actions.recv.open(id) {
                     Ok(Some(stream_id)) => {
                         let stream = Stream::new(
                             stream_id, 0, 0);
@@ -335,7 +336,7 @@ impl<B> Streams<B>
 
         let stream = me.store.resolve(key);
 
-        me.actions.transition::<P, _, _>(stream, move |actions, stream| {
+        me.actions.transition(stream, move |actions, stream| {
             actions.send.send_reset(reason, stream, &mut actions.task)
         })
     }
@@ -343,10 +344,11 @@ impl<B> Streams<B>
 
 // ===== impl StreamRef =====
 
-impl<B> StreamRef<B>
+impl<B, P> StreamRef<B, P>
     where B: Buf,
+          P: Peer,
 {
-    pub fn send_data<P: Peer>(&mut self, data: B, end_of_stream: bool)
+    pub fn send_data(&mut self, data: B, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
         let mut me = self.inner.lock().unwrap();
@@ -357,13 +359,13 @@ impl<B> StreamRef<B>
         // Create the data frame
         let frame = frame::Data::from_buf(stream.id, data, end_of_stream);
 
-        me.actions.transition::<P, _, _>(stream, |actions, stream| {
+        me.actions.transition(stream, |actions, stream| {
             // Send the data frame
             actions.send.send_data(frame, stream, &mut actions.task)
         })
     }
 
-    pub fn send_trailers<P: Peer>(&mut self, trailers: HeaderMap) -> Result<(), ConnectionError>
+    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ConnectionError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -373,7 +375,7 @@ impl<B> StreamRef<B>
         // Create the trailers frame
         let frame = frame::Headers::trailers(stream.id, trailers);
 
-        me.actions.transition::<P, _, _>(stream, |actions, stream| {
+        me.actions.transition(stream, |actions, stream| {
             // Send the trailers frame
             actions.send.send_trailers(frame, stream, &mut actions.task)
         })
@@ -394,12 +396,12 @@ impl<B> StreamRef<B>
         me.actions.recv.take_request(&mut stream)
     }
 
-    pub fn send_reset<P: Peer>(&mut self, reason: Reason) {
+    pub fn send_reset(&mut self, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let stream = me.store.resolve(self.key);
-        me.actions.transition::<P, _, _>(stream, move |actions, stream| {
+        me.actions.transition(stream, move |actions, stream| {
             actions.send.send_reset(reason, stream, &mut actions.task)
         })
     }
@@ -415,7 +417,7 @@ impl<B> StreamRef<B>
         let frame = server::Peer::convert_send_message(
             stream.id, response, end_of_stream);
 
-        me.actions.transition::<server::Peer, _, _>(stream, |actions, stream| {
+        me.actions.transition(stream, |actions, stream| {
             actions.send.send_headers(frame, stream, &mut actions.task)
         })
     }
@@ -501,7 +503,9 @@ impl<B> StreamRef<B>
     }
 }
 
-impl<B> Clone for StreamRef<B> {
+impl<B, P> Clone for StreamRef<B, P>
+    where P: Peer,
+{
     fn clone(&self) -> Self {
         StreamRef {
             inner: self.inner.clone(),
@@ -512,42 +516,42 @@ impl<B> Clone for StreamRef<B> {
 
 // ===== impl Actions =====
 
-impl<B> Actions<B>
+impl<B, P> Actions<B, P>
     where B: Buf,
+          P: Peer,
 {
-    fn ensure_not_idle<P: Peer>(&mut self, id: StreamId)
+    fn ensure_not_idle(&mut self, id: StreamId)
         -> Result<(), ConnectionError>
     {
-        if self.is_local_init::<P>(id) {
+        if self.is_local_init(id) {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
         }
     }
 
-    fn dec_num_streams<P: Peer>(&mut self, id: StreamId) {
-        if self.is_local_init::<P>(id) {
+    fn dec_num_streams(&mut self, id: StreamId) {
+        if self.is_local_init(id) {
             self.send.dec_num_streams();
         } else {
             self.recv.dec_num_streams();
         }
     }
 
-    fn is_local_init<P: Peer>(&self, id: StreamId) -> bool {
+    fn is_local_init(&self, id: StreamId) -> bool {
         assert!(!id.is_zero());
         P::is_server() == id.is_server_initiated()
     }
 
-    fn transition<P, F, U>(&mut self, mut stream: store::Ptr<B>, f: F) -> U
-        where F: FnOnce(&mut Self, &mut store::Ptr<B>) -> U,
-              P: Peer,
+    fn transition<F, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> U
+        where F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
     {
         let is_counted = stream.state.is_counted();
 
         let ret = f(self, &mut stream);
 
         if is_counted && stream.state.is_closed() {
-            self.dec_num_streams::<P>(stream.id);
+            self.dec_num_streams(stream.id);
         }
 
         ret

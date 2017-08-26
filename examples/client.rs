@@ -8,7 +8,7 @@ extern crate io_dump;
 extern crate env_logger;
 
 use h2::*;
-use h2::client::Client;
+use h2::client::{Client, Body};
 
 use http::*;
 use futures::*;

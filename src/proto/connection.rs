@@ -11,7 +11,9 @@ use std::marker::PhantomData;
 
 /// An H2 connection
 #[derive(Debug)]
-pub(crate) struct Connection<T, P, B: IntoBuf = Bytes> {
+pub(crate) struct Connection<T, P, B: IntoBuf = Bytes>
+    where P: Peer,
+{
     /// Tracks the connection level state transitions.
     state: State,
 
@@ -25,7 +27,7 @@ pub(crate) struct Connection<T, P, B: IntoBuf = Bytes> {
     settings: Settings,
 
     /// Stream state handler
-    streams: Streams<B::Buf>,
+    streams: Streams<B::Buf, P>,
 
     /// Client or server
     _phantom: PhantomData<P>,
@@ -53,7 +55,7 @@ impl<T, P, B> Connection<T, P, B>
 {
     pub fn new(codec: Codec<T, Prioritized<B::Buf>>) -> Connection<T, P, B> {
         // TODO: Actually configure
-        let streams = Streams::new::<P>(streams::Config {
+        let streams = Streams::new(streams::Config {
             max_remote_initiated: None,
             init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             max_local_initiated: None,
@@ -147,7 +149,7 @@ impl<T, P, B> Connection<T, P, B>
                 // Stream level error, reset the stream
                 Err(Stream { id, reason }) => {
                     trace!("stream level error; id={:?}; reason={:?}", id, reason);
-                    self.streams.send_reset::<P>(id, reason);
+                    self.streams.send_reset(id, reason);
                     continue;
                 }
                 // I/O error, nothing more can be done
@@ -161,19 +163,19 @@ impl<T, P, B> Connection<T, P, B>
             match frame {
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
-                    try!(self.streams.recv_headers::<P>(frame));
+                    try!(self.streams.recv_headers(frame));
                 }
                 Some(Data(frame)) => {
                     trace!("recv DATA; frame={:?}", frame);
-                    try!(self.streams.recv_data::<P>(frame));
+                    try!(self.streams.recv_data(frame));
                 }
                 Some(Reset(frame)) => {
                     trace!("recv RST_STREAM; frame={:?}", frame);
-                    try!(self.streams.recv_reset::<P>(frame));
+                    try!(self.streams.recv_reset(frame));
                 }
                 Some(PushPromise(frame)) => {
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);
-                    self.streams.recv_push_promise::<P>(frame)?;
+                    self.streams.recv_push_promise(frame)?;
                 }
                 Some(Settings(frame)) => {
                     trace!("recv SETTINGS; frame={:?}", frame);
@@ -244,7 +246,7 @@ impl<T, B> Connection<T, client::Peer, B>
 {
     /// Initialize a new HTTP/2.0 stream and send the message.
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B::Buf>, ConnectionError>
+        -> Result<StreamRef<B::Buf, client::Peer>, ConnectionError>
     {
         self.streams.send_request(request, end_of_stream)
     }
@@ -254,7 +256,7 @@ impl<T, B> Connection<T, server::Peer, B>
     where T: AsyncRead + AsyncWrite,
           B: IntoBuf,
 {
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf, server::Peer>> {
         self.streams.next_incoming()
     }
 }

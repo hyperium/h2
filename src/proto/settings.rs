@@ -28,13 +28,14 @@ impl Settings {
         }
     }
 
-    pub fn send_pending_ack<T, B, C>(&mut self,
-                                     dst: &mut Codec<T, B>,
-                                     streams: &mut Streams<C>)
+    pub fn send_pending_ack<T, B, C, P>(&mut self,
+                                        dst: &mut Codec<T, B>,
+                                        streams: &mut Streams<C, P>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
               B: Buf,
               C: Buf,
+              P: Peer,
     {
         trace!("send_pending_ack; pending={:?}", self.pending);
 

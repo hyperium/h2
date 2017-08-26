@@ -8,7 +8,9 @@ use bytes::Buf;
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
-pub(super) struct Send<B> {
+pub(super) struct Send<B, P>
+    where P: Peer,
+{
     /// Maximum number of locally initiated streams
     max_streams: Option<usize>,
 
@@ -25,12 +27,15 @@ pub(super) struct Send<B> {
     blocked_open: Option<task::Task>,
 
     /// Prioritization layer
-    prioritize: Prioritize<B>,
+    prioritize: Prioritize<B, P>,
 }
 
-impl<B> Send<B> where B: Buf {
+impl<B, P> Send<B, P>
+where B: Buf,
+      P: Peer,
+{
     /// Create a new `Send`
-    pub fn new<P: Peer>(config: &Config) -> Self {
+    pub fn new(config: &Config) -> Self {
         let next_stream_id = if P::is_server() { 2 } else { 1 };
 
         Send {
@@ -48,8 +53,8 @@ impl<B> Send<B> where B: Buf {
         self.init_window_sz
     }
 
-    pub fn poll_open_ready<P: Peer>(&mut self) -> Poll<(), ConnectionError> {
-        try!(self.ensure_can_open::<P>());
+    pub fn poll_open_ready(&mut self) -> Poll<(), ConnectionError> {
+        try!(self.ensure_can_open());
 
         if let Some(max) = self.max_streams {
             if max <= self.num_streams {
@@ -64,10 +69,10 @@ impl<B> Send<B> where B: Buf {
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open<P: Peer>(&mut self)
+    pub fn open(&mut self)
         -> Result<StreamId, ConnectionError>
     {
-        try!(self.ensure_can_open::<P>());
+        try!(self.ensure_can_open());
 
         if let Some(max) = self.max_streams {
             if max <= self.num_streams {
@@ -86,7 +91,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_headers(&mut self,
                         frame: frame::Headers,
-                        stream: &mut store::Ptr<B>,
+                        stream: &mut store::Ptr<B, P>,
                         task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -102,7 +107,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_reset(&mut self,
                       reason: Reason,
-                      stream: &mut store::Ptr<B>,
+                      stream: &mut store::Ptr<B, P>,
                       task: &mut Option<Task>)
     {
         if stream.state.is_reset() {
@@ -138,7 +143,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>,
+                     stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -147,7 +152,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn send_trailers(&mut self,
                          frame: frame::Headers,
-                         stream: &mut store::Ptr<B>,
+                         stream: &mut store::Ptr<B, P>,
                          task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -165,7 +170,7 @@ impl<B> Send<B> where B: Buf {
     }
 
     pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B>,
+                            store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
@@ -174,11 +179,11 @@ impl<B> Send<B> where B: Buf {
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
         self.prioritize.reserve_capacity(capacity, stream)
     }
 
-    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B>)
+    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B, P>)
         -> Poll<Option<WindowSize>, ConnectionError>
     {
         if !stream.state.is_send_streaming() {
@@ -195,7 +200,7 @@ impl<B> Send<B> where B: Buf {
     }
 
     /// Current available stream send capacity
-    pub fn capacity(&self, stream: &mut store::Ptr<B>) -> WindowSize {
+    pub fn capacity(&self, stream: &mut store::Ptr<B, P>) -> WindowSize {
         let available = stream.send_flow.available();
         let buffered = stream.buffered_send_data;
 
@@ -208,7 +213,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn recv_connection_window_update(&mut self,
                                          frame: frame::WindowUpdate,
-                                         store: &mut Store<B>)
+                                         store: &mut Store<B, P>)
         -> Result<(), ConnectionError>
     {
         self.prioritize.recv_connection_window_update(frame.size_increment(), store)
@@ -216,7 +221,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn recv_stream_window_update(&mut self,
                                      sz: WindowSize,
-                                     stream: &mut store::Ptr<B>,
+                                     stream: &mut store::Ptr<B, P>,
                                      task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -230,7 +235,7 @@ impl<B> Send<B> where B: Buf {
 
     pub fn apply_remote_settings(&mut self,
                                  settings: &frame::Settings,
-                                 store: &mut Store<B>,
+                                 store: &mut Store<B, P>,
                                  task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -311,7 +316,7 @@ impl<B> Send<B> where B: Buf {
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open<P: Peer>(&self) -> Result<(), ConnectionError> {
+    fn ensure_can_open(&self) -> Result<(), ConnectionError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
             return Err(UnexpectedFrameType.into());
