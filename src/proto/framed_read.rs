@@ -101,7 +101,16 @@ impl<T> FramedRead<T> {
                 // Parse the header frame w/o parsing the payload
                 let (mut headers, payload) = match frame::Headers::load(head, bytes) {
                     Ok(res) => res,
-                    Err(_) => unimplemented!(),
+                    Err(frame::Error::InvalidDependencyId) => {
+                        // A stream cannot depend on itself. An endpoint MUST
+                        // treat this as a stream error (Section 5.4.2) of type
+                        // `PROTOCOL_ERROR`.
+                        return Err(Stream {
+                            id: head.stream_id(),
+                            reason: ProtocolError,
+                        });
+                    }
+                    _ => return Err(Connection(ProtocolError)),
                 };
 
                 if headers.is_end_headers() {
@@ -141,8 +150,19 @@ impl<T> FramedRead<T> {
                 res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Priority => {
-                let res = frame::Priority::load(head, &bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                match frame::Priority::load(head, &bytes[frame::HEADER_LEN..]) {
+                    Ok(frame) => frame.into(),
+                    Err(frame::Error::InvalidDependencyId) => {
+                        // A stream cannot depend on itself. An endpoint MUST
+                        // treat this as a stream error (Section 5.4.2) of type
+                        // `PROTOCOL_ERROR`.
+                        return Err(Stream {
+                            id: head.stream_id(),
+                            reason: ProtocolError,
+                        });
+                    }
+                    Err(_) => return Err(Connection(ProtocolError)),
+                }
             }
             Kind::Continuation => {
                 // TODO: Un-hack this
