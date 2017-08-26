@@ -7,18 +7,20 @@ use futures::Sink;
 use std::{fmt, cmp};
 
 #[derive(Debug)]
-pub(super) struct Prioritize<B> {
+pub(super) struct Prioritize<B, P>
+    where P: Peer,
+{
     /// Queue of streams waiting for socket capacity to send a frame
-    pending_send: store::Queue<B, stream::NextSend>,
+    pending_send: store::Queue<B, stream::NextSend, P>,
 
     /// Queue of streams waiting for window capacity to produce data.
-    pending_capacity: store::Queue<B, stream::NextSendCapacity>,
+    pending_capacity: store::Queue<B, stream::NextSendCapacity, P>,
 
     /// Connection level flow control governing sent data
     flow: FlowControl,
 
     /// Holds frames that are waiting to be written to the socket
-    buffer: Buffer<B>,
+    buffer: Buffer<Frame<B>>,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -33,10 +35,11 @@ pub(crate) struct Prioritized<B> {
 
 // ===== impl Prioritize =====
 
-impl<B> Prioritize<B>
+impl<B, P> Prioritize<B, P>
     where B: Buf,
+          P: Peer,
 {
-    pub fn new(config: &Config) -> Prioritize<B> {
+    pub fn new(config: &Config) -> Prioritize<B, P> {
         let mut flow = FlowControl::new();
 
         flow.inc_window(config.init_local_window_sz)
@@ -57,7 +60,7 @@ impl<B> Prioritize<B>
     /// Queue a frame to be sent to the remote
     pub fn queue_frame(&mut self,
                        frame: Frame<B>,
-                       stream: &mut store::Ptr<B>,
+                       stream: &mut store::Ptr<B, P>,
                        task: &mut Option<Task>)
     {
         // Queue the frame in the buffer
@@ -75,7 +78,7 @@ impl<B> Prioritize<B>
     /// Send a data frame
     pub fn send_data(&mut self,
                      frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B>,
+                     stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -134,7 +137,7 @@ impl<B> Prioritize<B>
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
         // Actual capacity is `capacity` + the current amount of buffered data.
         // It it were less, then we could never send out the buffered data.
         let capacity = capacity + stream.buffered_send_data;
@@ -157,7 +160,7 @@ impl<B> Prioritize<B>
 
     pub fn recv_stream_window_update(&mut self,
                                      inc: WindowSize,
-                                     stream: &mut store::Ptr<B>)
+                                     stream: &mut store::Ptr<B, P>)
         -> Result<(), ConnectionError>
     {
         trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
@@ -175,7 +178,7 @@ impl<B> Prioritize<B>
 
     pub fn recv_connection_window_update(&mut self,
                                          inc: WindowSize,
-                                         store: &mut Store<B>)
+                                         store: &mut Store<B, P>)
         -> Result<(), ConnectionError>
     {
         // Update the connection's window
@@ -188,7 +191,7 @@ impl<B> Prioritize<B>
     pub fn assign_connection_capacity<R>(&mut self,
                                          inc: WindowSize,
                                          store: &mut R)
-        where R: Resolve<B>
+        where R: Resolve<B, P>
     {
         self.flow.assign_capacity(inc);
 
@@ -207,7 +210,7 @@ impl<B> Prioritize<B>
     }
 
     /// Request capacity to send data
-    fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B>) {
+    fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B, P>) {
         let total_requested = stream.requested_send_capacity;
 
         // Total requested should never go below actual assigned
@@ -279,7 +282,7 @@ impl<B> Prioritize<B>
 
 
     pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B>,
+                            store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
@@ -337,7 +340,7 @@ impl<B> Prioritize<B>
     /// entirety (large chunks are split up into potentially many data frames).
     /// In this case, the stream needs to be reprioritized.
     fn reclaim_frame<T>(&mut self,
-                        store: &mut Store<B>,
+                        store: &mut Store<B, P>,
                         dst: &mut Codec<T, Prioritized<B>>) -> bool
     {
         trace!("try reclaim frame");
@@ -373,7 +376,7 @@ impl<B> Prioritize<B>
 
     /// Push the frame to the front of the stream's deque, scheduling the
     /// steream if needed.
-    fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B>) {
+    fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B, P>) {
         // Push the frame to the front of the stream's deque
         stream.pending_send.push_front(&mut self.buffer, frame);
 
@@ -383,7 +386,7 @@ impl<B> Prioritize<B>
         }
     }
 
-    pub fn clear_queue(&mut self, stream: &mut store::Ptr<B>) {
+    pub fn clear_queue(&mut self, stream: &mut store::Ptr<B, P>) {
         trace!("clear_queue; stream-id={:?}", stream.id);
 
         // TODO: make this more efficient?
@@ -392,7 +395,7 @@ impl<B> Prioritize<B>
         }
     }
 
-    fn pop_frame(&mut self, store: &mut Store<B>, max_len: usize)
+    fn pop_frame(&mut self, store: &mut Store<B, P>, max_len: usize)
         -> Option<Frame<Prioritized<B>>>
     {
         trace!("pop_frame");

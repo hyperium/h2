@@ -1,13 +1,11 @@
-use frame::Frame;
-
 use slab::Slab;
 
 use std::marker::PhantomData;
 
 /// Buffers frames for multiple streams.
 #[derive(Debug)]
-pub struct Buffer<B> {
-    slab: Slab<Slot<B>>,
+pub struct Buffer<T> {
+    slab: Slab<Slot<T>>,
 }
 
 /// A sequence of frames in a `Buffer`
@@ -25,12 +23,12 @@ struct Indices {
 }
 
 #[derive(Debug)]
-struct Slot<B> {
-    frame: Frame<B>,
+struct Slot<T> {
+    value: T,
     next: Option<usize>,
 }
 
-impl<B> Buffer<B> {
+impl<T> Buffer<T> {
     pub fn new() -> Self {
         Buffer {
             slab: Slab::new(),
@@ -38,7 +36,7 @@ impl<B> Buffer<B> {
     }
 }
 
-impl<B> Deque<B> {
+impl<T> Deque<T> {
     pub fn new() -> Self {
         Deque {
             indices: None,
@@ -50,9 +48,9 @@ impl<B> Deque<B> {
         self.indices.is_none()
     }
 
-    pub fn push_back(&mut self, buf: &mut Buffer<B>, frame: Frame<B>) {
+    pub fn push_back(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
-            frame,
+            value,
             next: None,
         });
 
@@ -70,9 +68,9 @@ impl<B> Deque<B> {
         }
     }
 
-    pub fn push_front(&mut self, buf: &mut Buffer<B>, frame: Frame<B>) {
+    pub fn push_front(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
-            frame,
+            value,
             next: None,
         });
 
@@ -90,7 +88,7 @@ impl<B> Deque<B> {
         }
     }
 
-    pub fn pop_front(&mut self, buf: &mut Buffer<B>) -> Option<Frame<B>> {
+    pub fn pop_front(&mut self, buf: &mut Buffer<T>) -> Option<T> {
         match self.indices {
             Some(mut idxs) => {
                 let mut slot = buf.slab.remove(idxs.head);
@@ -103,16 +101,16 @@ impl<B> Deque<B> {
                     self.indices = Some(idxs);
                 }
 
-                return Some(slot.frame);
+                return Some(slot.value);
             }
             None => None,
         }
     }
 
-    pub fn peek_front<'a>(&self, buf: &'a Buffer<B>) -> Option<&'a Frame<B>> {
+    pub fn peek_front<'a>(&self, buf: &'a Buffer<T>) -> Option<&'a T> {
         match self.indices {
             Some(idxs) => {
-                Some(&buf.slab[idxs.head].frame)
+                Some(&buf.slab[idxs.head].value)
             }
             None => None,
         }

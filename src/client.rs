@@ -1,5 +1,4 @@
 use {frame, HeaderMap, ConnectionError};
-use Body;
 use frame::StreamId;
 use proto::{self, Connection, WindowSize};
 
@@ -23,7 +22,12 @@ pub struct Client<T, B: IntoBuf> {
 
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
+    inner: proto::StreamRef<B::Buf, Peer>,
+}
+
+#[derive(Debug)]
+pub struct Body<B: IntoBuf> {
+    inner: proto::StreamRef<B::Buf, Peer>,
 }
 
 #[derive(Debug)]
@@ -168,14 +172,14 @@ impl<B: IntoBuf> Stream<B> {
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
         -> Result<(), ConnectionError>
     {
-        self.inner.send_data::<Peer>(data.into_buf(), end_of_stream)
+        self.inner.send_data(data.into_buf(), end_of_stream)
     }
 
     /// Send trailers
     pub fn send_trailers(&mut self, trailers: HeaderMap)
         -> Result<(), ConnectionError>
     {
-        self.inner.send_trailers::<Peer>(trailers)
+        self.inner.send_trailers(trailers)
     }
 }
 
@@ -185,6 +189,35 @@ impl<B: IntoBuf> Future for Stream<B> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.poll_response()
+    }
+}
+
+// ===== impl Body =====
+
+impl<B: IntoBuf> Body<B> {
+    pub fn is_empty(&self) -> bool {
+        // If the recv side is closed and the receive queue is empty, the body is empty.
+        self.inner.body_is_empty()
+    }
+
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ConnectionError> {
+        self.inner.release_capacity(sz as proto::WindowSize)
+    }
+
+    /// Poll trailers
+    ///
+    /// This function **must** not be called until `Body::poll` returns `None`.
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+        self.inner.poll_trailers()
+    }
+}
+
+impl<B: IntoBuf> ::futures::Stream for Body<B> {
+    type Item = Bytes;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.inner.poll_data()
     }
 }
 

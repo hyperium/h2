@@ -38,13 +38,11 @@ pub trait Peer {
 
     fn is_server() -> bool;
 
-    #[doc(hidden)]
     fn convert_send_message(
         id: StreamId,
         headers: Self::Send,
         end_of_stream: bool) -> frame::Headers;
 
-    #[doc(hidden)]
     fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError>;
 }
 

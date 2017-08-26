@@ -8,7 +8,9 @@ use futures::Sink;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub(super) struct Recv<B> {
+pub(super) struct Recv<B, P>
+    where P: Peer,
+{
     /// Maximum number of remote initiated streams
     max_streams: Option<usize>,
 
@@ -28,13 +30,13 @@ pub(super) struct Recv<B> {
     last_processed_id: StreamId,
 
     /// Streams that have pending window updates
-    pending_window_updates: store::Queue<B, stream::NextWindowUpdate>,
+    pending_window_updates: store::Queue<B, stream::NextWindowUpdate, P>,
 
     /// New streams to be accepted
-    pending_accept: store::Queue<B, stream::NextAccept>,
+    pending_accept: store::Queue<B, stream::NextAccept, P>,
 
     /// Holds frames that are waiting to be read
-    buffer: Buffer<Bytes>,
+    buffer: Buffer<Frame<Bytes>>,
 
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
@@ -48,8 +50,11 @@ struct Indices {
     tail: store::Key,
 }
 
-impl<B> Recv<B> where B: Buf {
-    pub fn new<P: Peer>(config: &Config) -> Self {
+impl<B, P> Recv<B, P>
+    where B: Buf,
+          P: Peer,
+{
+    pub fn new(config: &Config) -> Self {
         let next_stream_id = if P::is_server() {
             1
         } else {
@@ -90,12 +95,12 @@ impl<B> Recv<B> where B: Buf {
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open<P: Peer>(&mut self, id: StreamId)
+    pub fn open(&mut self, id: StreamId)
         -> Result<Option<StreamId>, ConnectionError>
     {
         assert!(self.refused.is_none());
 
-        try!(self.ensure_can_open::<P>(id));
+        try!(self.ensure_can_open(id));
 
         if !self.can_inc_num_streams() {
             self.refused = Some(id);
@@ -105,7 +110,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(Some(id))
     }
 
-    pub fn take_request(&mut self, stream: &mut store::Ptr<B>)
+    pub fn take_request(&mut self, stream: &mut store::Ptr<B, P>)
         -> Result<Request<()>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
@@ -118,7 +123,7 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
-    pub fn poll_response(&mut self, stream: &mut store::Ptr<B>)
+    pub fn poll_response(&mut self, stream: &mut store::Ptr<B, P>)
         -> Poll<Response<()>, ConnectionError> {
         // If the buffer is not empty, then the first frame must be a HEADERS
         // frame or the user violated the contract.
@@ -139,9 +144,9 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Transition the stream state based on receiving headers
-    pub fn recv_headers<P: Peer>(&mut self,
-                                 frame: frame::Headers,
-                                 stream: &mut store::Ptr<B>)
+    pub fn recv_headers(&mut self,
+                        frame: frame::Headers,
+                        stream: &mut store::Ptr<B, P>)
         -> Result<(), ConnectionError>
     {
         trace!("opening stream; init_window={}", self.init_window_sz);
@@ -182,9 +187,9 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Transition the stream based on receiving trailers
-    pub fn recv_trailers<P: Peer>(&mut self,
-                                  frame: frame::Headers,
-                                  stream: &mut store::Ptr<B>)
+    pub fn recv_trailers(&mut self,
+                         frame: frame::Headers,
+                         stream: &mut store::Ptr<B, P>)
         -> Result<(), ConnectionError>
     {
         // Transition the state
@@ -199,7 +204,7 @@ impl<B> Recv<B> where B: Buf {
 
     pub fn release_capacity(&mut self,
                             capacity: WindowSize,
-                            stream: &mut store::Ptr<B>,
+                            stream: &mut store::Ptr<B, P>,
                             task: &mut Option<Task>)
         -> Result<(), ConnectionError>
     {
@@ -225,7 +230,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
-    pub fn body_is_empty(&self, stream: &store::Ptr<B>) -> bool {
+    pub fn body_is_empty(&self, stream: &store::Ptr<B, P>) -> bool {
         if !stream.state.is_recv_closed() {
             return false;
         }
@@ -237,7 +242,7 @@ impl<B> Recv<B> where B: Buf {
 
     pub fn recv_data(&mut self,
                      frame: frame::Data,
-                     stream: &mut store::Ptr<B>)
+                     stream: &mut store::Ptr<B, P>)
         -> Result<(), ConnectionError>
     {
         let sz = frame.payload().len();
@@ -283,15 +288,15 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
-    pub fn recv_push_promise<P: Peer>(&mut self,
-                                      frame: frame::PushPromise,
-                                      send: &Send<B>,
-                                      stream: store::Key,
-                                      store: &mut Store<B>)
+    pub fn recv_push_promise(&mut self,
+                             frame: frame::PushPromise,
+                             send: &Send<B, P>,
+                             stream: store::Key,
+                             store: &mut Store<B, P>)
         -> Result<(), ConnectionError>
     {
         // First, make sure that the values are legit
-        self.ensure_can_reserve::<P>(frame.promised_id())?;
+        self.ensure_can_reserve(frame.promised_id())?;
 
         // Make sure that the stream state is valid
         store[stream].state.ensure_recv_open()?;
@@ -343,7 +348,7 @@ impl<B> Recv<B> where B: Buf {
         Ok(())
     }
 
-    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream<B>)
+    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream<B, P>)
         -> Result<(), ConnectionError>
     {
         let err = ConnectionError::Proto(frame.reason());
@@ -355,7 +360,7 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Handle a received error
-    pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B>) {
+    pub fn recv_err(&mut self, err: &ConnectionError, stream: &mut Stream<B, P>) {
         // Receive an error
         stream.state.recv_err(err);
 
@@ -388,7 +393,7 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Returns true if the remote peer can initiate a stream with the given ID.
-    fn ensure_can_open<P: Peer>(&self, id: StreamId)
+    fn ensure_can_open(&self, id: StreamId)
         -> Result<(), ConnectionError>
     {
         if !P::is_server() {
@@ -406,7 +411,7 @@ impl<B> Recv<B> where B: Buf {
     }
 
     /// Returns true if the remote peer can reserve a stream with the given ID.
-    fn ensure_can_reserve<P: Peer>(&self, promised_id: StreamId)
+    fn ensure_can_reserve(&self, promised_id: StreamId)
         -> Result<(), ConnectionError>
     {
         // TODO: Are there other rules?
@@ -446,7 +451,7 @@ impl<B> Recv<B> where B: Buf {
     }
 
     pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B>,
+                            store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
@@ -483,7 +488,7 @@ impl<B> Recv<B> where B: Buf {
 
     /// Send stream level window update
     pub fn send_stream_window_updates<T>(&mut self,
-                                         store: &mut Store<B>,
+                                         store: &mut Store<B, P>,
                                          dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), ConnectionError>
         where T: AsyncWrite,
@@ -516,12 +521,12 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
-    pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
+    pub fn next_incoming(&mut self, store: &mut Store<B, P>) -> Option<store::Key> {
         self.pending_accept.pop(store)
             .map(|ptr| ptr.key())
     }
 
-    pub fn poll_data(&mut self, stream: &mut Stream<B>)
+    pub fn poll_data(&mut self, stream: &mut Stream<B, P>)
         -> Poll<Option<Bytes>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
@@ -548,7 +553,7 @@ impl<B> Recv<B> where B: Buf {
         }
     }
 
-    pub fn poll_trailers(&mut self, stream: &mut Stream<B>)
+    pub fn poll_trailers(&mut self, stream: &mut Stream<B, P>)
         -> Poll<Option<HeaderMap>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
