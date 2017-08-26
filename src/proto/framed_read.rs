@@ -150,6 +150,11 @@ impl<T> FramedRead<T> {
                 res.map_err(|_| Connection(ProtocolError))?.into()
             }
             Kind::Priority => {
+                if head.stream_id() == 0 {
+                    // Invalid stream identifier
+                    return Err(Connection(ProtocolError));
+                }
+
                 match frame::Priority::load(head, &bytes[frame::HEADER_LEN..]) {
                     Ok(frame) => frame.into(),
                     Err(frame::Error::InvalidDependencyId) => {
