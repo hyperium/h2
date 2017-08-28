@@ -32,6 +32,6 @@ serde_json = "1.0.0"
 tokio-core = "0.1"
 env_logger = "0.4.3"
 io-dump = { git = "https://github.com/carllerche/io-dump" }
-rustls = "0.10.0"
-tokio-rustls = "0.3.1"
-webpki-roots = "0.12.0"
+rustls = "0.11"
+tokio-rustls = { git = "https://github.com/briansmith/tokio-rustls", tag = "b/p1" }
+webpki-roots = "0.13"
