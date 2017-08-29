@@ -1,5 +1,7 @@
 //! Utilities to support tests.
 
+#![allow(unused_extern_crates)]
+
 pub extern crate bytes;
 pub extern crate h2;
 pub extern crate http;

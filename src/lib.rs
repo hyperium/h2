@@ -6,8 +6,6 @@ extern crate futures;
 #[macro_use]
 extern crate tokio_io;
 
-extern crate tokio_timer;
-
 // HTTP types
 extern crate http;
 
