@@ -29,7 +29,7 @@ pub fn main() {
 
     let tls_client_config = std::sync::Arc::new({
         let mut c = rustls::ClientConfig::new();
-        c.root_store.add_trust_anchors(&webpki_roots::ROOTS);
+        c.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         c.alpn_protocols.push(ALPN_H2.to_owned());
         c
     });
