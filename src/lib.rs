@@ -1,4 +1,4 @@
-#![deny(warnings, missing_debug_implementations)]
+// #![deny(warnings, missing_debug_implementations)]
 
 #[macro_use]
 extern crate futures;

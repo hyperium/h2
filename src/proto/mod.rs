@@ -26,7 +26,7 @@ use bytes::{Buf, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
-use std::io;
+use std::{fmt, io};
 
 /// Either a Client or a Server
 pub trait Peer {
@@ -34,7 +34,7 @@ pub trait Peer {
     type Send;
 
     /// Message type polled from the transport
-    type Poll;
+    type Poll: fmt::Debug;
 
     fn is_server() -> bool;
 
@@ -43,7 +43,7 @@ pub trait Peer {
         headers: Self::Send,
         end_of_stream: bool) -> frame::Headers;
 
-    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError>;
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ProtoError>;
 }
 
 pub type PingPayload = [u8; 8];

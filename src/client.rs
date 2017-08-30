@@ -1,6 +1,7 @@
 use {frame, HeaderMap, ConnectionError};
 use frame::StreamId;
-use proto::{self, Connection, WindowSize};
+use proto::{self, Connection, WindowSize, ProtoError};
+use error::Reason::*;
 
 use http::{Request, Response};
 use futures::{Future, Poll, Sink, Async, AsyncSink};
@@ -254,7 +255,30 @@ impl proto::Peer for Peer {
         frame
     }
 
-    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ConnectionError> {
-        headers.into_response()
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ProtoError> {
+        let mut b = Response::builder();
+
+        let stream_id = headers.stream_id();
+        let (pseudo, fields) = headers.into_parts();
+
+        if let Some(status) = pseudo.status {
+            b.status(status);
+        }
+
+        let mut response = match b.body(()) {
+            Ok(response) => response,
+            Err(_) => {
+                // TODO: Should there be more specialized handling for different
+                // kinds of errors
+                return Err(ProtoError::Stream {
+                    id: stream_id,
+                    reason: ProtocolError,
+                });
+            }
+        };
+
+        *response.headers_mut() = fields;
+
+        Ok(response)
     }
 }

@@ -1,6 +1,6 @@
 use {HeaderMap, ConnectionError};
 use frame::{self, StreamId};
-use proto::{self, Connection, WindowSize};
+use proto::{self, Connection, WindowSize, ProtoError};
 use error::Reason;
 use error::Reason::*;
 
@@ -401,8 +401,78 @@ impl proto::Peer for Peer {
     }
 
     fn convert_poll_message(headers: frame::Headers)
-        -> Result<Self::Poll, ConnectionError>
+        -> Result<Self::Poll, ProtoError>
     {
-        headers.into_request()
+        use http::{version, uri};
+
+        let mut b = Request::builder();
+
+        let stream_id = headers.stream_id();
+        let (pseudo, fields) = headers.into_parts();
+
+        macro_rules! malformed {
+            () => {
+                return Err(ProtoError::Stream {
+                    id: stream_id,
+                    reason: ProtocolError,
+                });
+            }
+        };
+
+        b.version(version::HTTP_2);
+
+        if let Some(method) = pseudo.method {
+            b.method(method);
+        } else {
+            malformed!();
+        }
+
+        // Specifying :status for a request is a protocol error
+        if pseudo.status.is_some() {
+            return Err(ProtoError::Connection(ProtocolError));
+        }
+
+        // Convert the URI
+        let mut parts = uri::Parts::default();
+
+        if let Some(scheme) = pseudo.scheme {
+            // TODO: Don't unwrap
+            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner()).unwrap());
+        } else {
+            malformed!();
+        }
+
+        if let Some(authority) = pseudo.authority {
+            // TODO: Don't unwrap
+            parts.authority = Some(uri::Authority::from_shared(authority.into_inner()).unwrap());
+        }
+
+        if let Some(path) = pseudo.path {
+            // This cannot be empty
+            if path.is_empty() {
+                malformed!();
+            }
+
+            // TODO: Don't unwrap
+            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner()).unwrap());
+        }
+
+        b.uri(parts);
+
+        let mut request = match b.body(()) {
+            Ok(request) => request,
+            Err(_) => {
+                // TODO: Should there be more specialized handling for different
+                // kinds of errors
+                return Err(ProtoError::Stream {
+                    id: stream_id,
+                    reason: ProtocolError,
+                });
+            }
+        };
+
+        *request.headers_mut() = fields;
+
+        Ok(request)
     }
 }

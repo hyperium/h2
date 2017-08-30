@@ -64,7 +64,7 @@ pub(super) struct Stream<B, P>
     pub is_pending_window_update: bool,
 
     /// Frames pending for this stream to read
-    pub pending_recv: buffer::Deque<Frame<Bytes>>,
+    pub pending_recv: buffer::Deque<recv::Event<P::Poll>>,
 
     /// Task tracking receiving frames
     pub recv_task: Option<task::Task>,

@@ -92,7 +92,7 @@ impl<B, P> Streams<B, P>
         let stream = me.store.resolve(key);
 
         me.actions.transition(stream, |actions, stream| {
-            if stream.state.is_recv_headers() {
+            let res = if stream.state.is_recv_headers() {
                 actions.recv.recv_headers(frame, stream)
             } else {
                 if !frame.is_end_stream() {
@@ -101,6 +101,17 @@ impl<B, P> Streams<B, P>
                 }
 
                 actions.recv.recv_trailers(frame, stream)
+            };
+
+            match res {
+                Ok(()) => Ok(()),
+                Err(ProtoError::Connection(reason)) => Err(reason.into()),
+                Err(ProtoError::Stream { reason, .. }) => {
+                    // Reset the stream.
+                    actions.send.send_reset(reason, stream, &mut actions.task);
+                    Ok(())
+                }
+                Err(ProtoError::Io(_)) => unreachable!(),
             }
         })
     }
@@ -381,21 +392,6 @@ impl<B, P> StreamRef<B, P>
         })
     }
 
-    /// Called by the server after the stream is accepted. Given that clients
-    /// initialize streams by sending HEADERS, the request will always be
-    /// available.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Result<Request<()>, ConnectionError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-        me.actions.recv.take_request(&mut stream)
-    }
-
     pub fn send_reset(&mut self, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -429,15 +425,6 @@ impl<B, P> StreamRef<B, P>
         let stream = me.store.resolve(self.key);
 
         me.actions.recv.body_is_empty(&stream)
-    }
-
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_response(&mut stream)
     }
 
     pub fn poll_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
@@ -500,6 +487,38 @@ impl<B, P> StreamRef<B, P>
         let mut stream = me.store.resolve(self.key);
 
         me.actions.send.poll_capacity(&mut stream)
+    }
+}
+
+impl<B> StreamRef<B, server::Peer>
+    where B: Buf,
+{
+    /// Called by the server after the stream is accepted. Given that clients
+    /// initialize streams by sending HEADERS, the request will always be
+    /// available.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the request isn't present.
+    pub fn take_request(&self) -> Result<Request<()>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+        me.actions.recv.take_request(&mut stream)
+    }
+}
+
+impl<B> StreamRef<B, client::Peer>
+    where B: Buf,
+{
+    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_response(&mut stream)
     }
 }
 

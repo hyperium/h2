@@ -1,4 +1,5 @@
 use ConnectionError;
+use proto::ProtoError;
 use error::Reason;
 use error::Reason::*;
 use error::User::*;
@@ -125,7 +126,7 @@ impl State {
     /// frame is received.
     ///
     /// Returns true if this transitions the state to Open
-    pub fn recv_open(&mut self, eos: bool) -> Result<bool, ConnectionError> {
+    pub fn recv_open(&mut self, eos: bool) -> Result<bool, ProtoError> {
         let remote = Peer::Streaming;
         let mut initial = false;
 
@@ -173,7 +174,7 @@ impl State {
             }
             _ => {
                 // All other transitions result in a protocol error
-                return Err(ProtocolError.into());
+                return Err(ProtoError::Connection(ProtocolError));
             }
         };
 
@@ -192,7 +193,7 @@ impl State {
     }
 
     /// Indicates that the remote side will not send more data to the local.
-    pub fn recv_close(&mut self) -> Result<(), ConnectionError> {
+    pub fn recv_close(&mut self) -> Result<(), ProtoError> {
         match self.inner {
             Open { local, .. } => {
                 // The remote side will continue to receive data.
@@ -205,7 +206,7 @@ impl State {
                 self.inner = Closed(None);
                 Ok(())
             }
-            _ => Err(ProtocolError.into()),
+            _ => Err(ProtoError::Connection(ProtocolError)),
         }
     }
 
