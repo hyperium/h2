@@ -16,7 +16,6 @@ use std::io::Cursor;
 /// Header frame
 ///
 /// This could be either a request or a response.
-#[derive(Debug)]
 pub struct Headers {
     /// The ID of the stream with which this frame is associated.
     stream_id: StreamId,
@@ -316,6 +315,17 @@ impl Headers {
 impl<T> From<Headers> for Frame<T> {
     fn from(src: Headers) -> Self {
         Frame::Headers(src)
+    }
+}
+
+impl fmt::Debug for Headers {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Headers")
+            .field("stream_id", &self.stream_id)
+            .field("stream_dep", &self.stream_dep)
+            .field("flags", &self.flags)
+            // `fields` and `pseudo` purposefully not included
+            .finish()
     }
 }
 

@@ -119,6 +119,7 @@ impl<T> fmt::Debug for Data<T> {
             .field("stream_id", &self.stream_id)
             .field("flags", &self.flags)
             .field("pad_len", &self.pad_len)
+            // `data` purposefully excluded
             .finish()
     }
 }
