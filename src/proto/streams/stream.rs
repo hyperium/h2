@@ -71,6 +71,18 @@ pub(super) struct Stream<B, P>
 
     /// The stream's pending push promises
     pub pending_push_promises: store::Queue<B, NextAccept, P>,
+
+    /// Validate content-length headers
+    pub content_length: ContentLength,
+
+}
+
+/// State related to validating a stream's content-length
+#[derive(Debug)]
+pub enum ContentLength {
+    Omitted,
+    Head,
+    Remaining(u64),
 }
 
 #[derive(Debug)]
@@ -130,6 +142,7 @@ impl<B, P> Stream<B, P>
             pending_recv: buffer::Deque::new(),
             recv_task: None,
             pending_push_promises: store::Queue::new(),
+            content_length: ContentLength::Omitted,
         }
     }
 
@@ -141,6 +154,30 @@ impl<B, P> Stream<B, P>
         // Only notify if the capacity exceeds the amount of buffered data
         if self.send_flow.available() > self.buffered_send_data {
             self.notify_send();
+        }
+    }
+
+    /// Returns `Err` when the decrement cannot be completed due to overflow.
+    pub fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
+        match self.content_length {
+            ContentLength::Remaining(ref mut rem) => {
+                match rem.checked_sub(len as u64) {
+                    Some(val) => *rem = val,
+                    None => return Err(()),
+                }
+            }
+            ContentLength::Head => return Err(()),
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    pub fn ensure_content_length_zero(&self) -> Result<(), ()> {
+        match self.content_length {
+            ContentLength::Remaining(0) => Ok(()),
+            ContentLength::Remaining(_) => Err(()),
+            _ => Ok(()),
         }
     }
 
@@ -242,5 +279,16 @@ impl store::Next for NextWindowUpdate {
 
     fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
         stream.is_pending_window_update = val;
+    }
+}
+
+// ===== impl ContentLength =====
+
+impl ContentLength {
+    pub fn is_head(&self) -> bool {
+        match *self {
+            ContentLength::Head => true,
+            _ => false,
+        }
     }
 }

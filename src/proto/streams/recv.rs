@@ -149,6 +149,22 @@ impl<B, P> Recv<B, P>
             self.inc_num_streams();
         }
 
+        if !stream.content_length.is_head() {
+            use http::header;
+            use super::stream::ContentLength;
+
+            if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
+                let content_length = match parse_u64(content_length.as_bytes()) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        unimplemented!();
+                    }
+                };
+
+                stream.content_length = ContentLength::Remaining(content_length);
+            }
+        }
+
         let message = P::convert_poll_message(frame)?;
 
         // Push the frame onto the stream's recv buffer
@@ -172,6 +188,13 @@ impl<B, P> Recv<B, P>
     {
         // Transition the state
         stream.state.recv_close()?;
+
+        if stream.ensure_content_length_zero().is_err() {
+            return Err(ProtoError::Stream {
+                id: stream.id,
+                reason: ProtocolError,
+            });
+        }
 
         let trailers = frame.into_fields();
 
@@ -223,7 +246,7 @@ impl<B, P> Recv<B, P>
     pub fn recv_data(&mut self,
                      frame: frame::Data,
                      stream: &mut store::Ptr<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), ProtoError>
     {
         let sz = frame.payload().len();
 
@@ -236,7 +259,7 @@ impl<B, P> Recv<B, P>
         if !stream.state.is_recv_streaming() {
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
-            return Err(ProtocolError.into());
+            return Err(ProtoError::Connection(ProtocolError));
         }
 
         trace!("recv_data; size={}; connection={}; stream={}",
@@ -245,7 +268,7 @@ impl<B, P> Recv<B, P>
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
         if self.flow.window_size() < sz || stream.recv_flow.window_size() < sz {
-            return Err(FlowControlError.into());
+            return Err(ProtoError::Connection(FlowControlError));
         }
 
         // Update connection level flow control
@@ -257,9 +280,23 @@ impl<B, P> Recv<B, P>
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
 
+        if stream.dec_content_length(frame.payload().len()).is_err() {
+            return Err(ProtoError::Stream {
+                id: stream.id,
+                reason: ProtocolError,
+            });
+        }
+
         if frame.is_end_stream() {
+            if stream.ensure_content_length_zero().is_err() {
+                return Err(ProtoError::Stream {
+                    id: stream.id,
+                    reason: ProtocolError,
+                });
+            }
+
             if stream.state.recv_close().is_err() {
-                return Err(ProtocolError.into());
+                return Err(ProtoError::Connection(ProtocolError));
             }
         }
 
@@ -618,4 +655,26 @@ impl<T> Event<T> {
             _ => false,
         }
     }
+}
+
+// ===== util =====
+
+fn parse_u64(src: &[u8]) -> Result<u64, ()> {
+    if src.len() > 19 {
+        // At danger for overflow...
+        return Err(());
+    }
+
+    let mut ret = 0;
+
+    for &d in src {
+        if d < b'0' || d > b'9' {
+            return Err(());
+        }
+
+        ret *= 10;
+        ret += (d - b'0') as u64;
+    }
+
+    Ok(ret)
 }

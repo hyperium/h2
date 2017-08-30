@@ -266,6 +266,10 @@ impl Headers {
         (self.pseudo, self.fields)
     }
 
+    pub fn fields(&self) -> &HeaderMap {
+        &self.fields
+    }
+
     pub fn into_fields(self) -> HeaderMap {
         self.fields
     }
