@@ -58,38 +58,31 @@ impl<T, B> Client<T, B>
 
         debug!("binding client connection");
 
-        // this is a function so that we can pass a function pointer (rather
-        // than a closure) to `and_then` in order to refer to the concrete
-        // type of the unboxed handshake future.
-        // see https://tokio.rs/docs/going-deeper-futures/returning/#named-types
-        fn bind<I, U>((io, _): (I, &'static [u8]))
-                     -> Result<Client<I, U>, ConnectionError>
-            where I: AsyncRead + AsyncWrite,
-                  U:  IntoBuf
-        {
-            debug!("client connection bound");
+        let bind: fn((T, &'static [u8]))
+                    -> Result<Client<T, B>, ConnectionError> =
+            |(io, _)| {
+                debug!("client connection bound");
 
-            let mut framed_write = proto::framed_write(io);
-            let settings = frame::Settings::default();
+                let mut framed_write = proto::framed_write(io);
+                let settings = frame::Settings::default();
 
-            // Send initial settings frame
-            match framed_write.start_send(settings.into()) {
-                Ok(AsyncSink::Ready) => {
-                    let connection = proto::from_framed_write(framed_write);
-                    Ok(Client { connection })
+                // Send initial settings frame
+                match framed_write.start_send(settings.into()) {
+                    Ok(AsyncSink::Ready) => {
+                        let connection = proto::from_framed_write(framed_write);
+                        Ok(Client { connection })
+                    }
+                    Ok(_) => unreachable!(),
+                    Err(e) => Err(ConnectionError::from(e)),
                 }
-                Ok(_) => unreachable!(),
-                Err(e) => Err(ConnectionError::from(e)),
-            }
-        }
+            };
+
         let msg: &'static [u8] =  b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         let handshake = io::write_all(io, msg)
             .map_err(ConnectionError::from as
                 fn(IoError) -> ConnectionError
             )
-            .and_then(bind as
-                fn((T, &'static [u8])) -> Result<Client<T, B>, ConnectionError>
-            );
+            .and_then(bind);
 
         Handshake { inner: handshake }
     }
