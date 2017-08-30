@@ -5,20 +5,27 @@ use proto::{self, Connection, WindowSize};
 use error::Reason::*;
 
 use http::{Request, Response};
-use futures::{Future, Poll, Sink, Async, AsyncSink};
+use futures::{Future, Poll, Sink, Async, AsyncSink, AndThen, MapErr};
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::io::WriteAll;
 use bytes::{Bytes, IntoBuf};
 
 use std::fmt;
+use std::io::Error as IoError;
 
 /// In progress H2 connection binding
-pub struct Handshake<T, B: IntoBuf = Bytes> {
-    // TODO: unbox
-    inner: Box<Future<Item = Client<T, B>, Error = ConnectionError>>,
+pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+    inner:
+        AndThen<
+            MapErr<WriteAll<T, &'static [u8]>, fn(IoError) -> ConnectionError>,
+            Result<Client<T, B>, ConnectionError>,
+            fn((T, &'static [u8])) -> Result<Client<T, B>, ConnectionError>
+        >
+
 }
 
 /// Marker type indicating a client peer
-pub struct Client<T, B: IntoBuf> {
+pub struct Client<T: AsyncRead + AsyncWrite, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
 
@@ -31,7 +38,7 @@ pub struct Stream<B: IntoBuf> {
 pub(crate) struct Peer;
 
 impl<T> Client<T, Bytes>
-    where T: AsyncRead + AsyncWrite + 'static,
+    where T: AsyncRead + AsyncWrite,
 {
     pub fn handshake(io: T) -> Handshake<T, Bytes> {
         Client::handshake2(io)
@@ -39,9 +46,8 @@ impl<T> Client<T, Bytes>
 }
 
 impl<T, B> Client<T, B>
-    // TODO: Get rid of 'static
-    where T: AsyncRead + AsyncWrite + 'static,
-          B: IntoBuf + 'static,
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf
 {
     /// Bind an H2 client connection.
     ///
@@ -52,26 +58,40 @@ impl<T, B> Client<T, B>
 
         debug!("binding client connection");
 
-        let handshake = io::write_all(io, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-            .map_err(ConnectionError::from)
-            .and_then(|(io, _)| {
-                debug!("client connection bound");
+        // this is a function so that we can pass a function pointer (rather
+        // than a closure) to `and_then` in order to refer to the concrete
+        // type of the unboxed handshake future.
+        // see https://tokio.rs/docs/going-deeper-futures/returning/#named-types
+        fn bind<I, U>((io, _): (I, &'static [u8]))
+                     -> Result<Client<I, U>, ConnectionError>
+            where I: AsyncRead + AsyncWrite,
+                  U:  IntoBuf
+        {
+            debug!("client connection bound");
 
-                let mut framed_write = proto::framed_write(io);
-                let settings = frame::Settings::default();
+            let mut framed_write = proto::framed_write(io);
+            let settings = frame::Settings::default();
 
-                // Send initial settings frame
-                match framed_write.start_send(settings.into()) {
-                    Ok(AsyncSink::Ready) => {
-                        let connection = proto::from_framed_write(framed_write);
-                        Ok(Client { connection })
-                    }
-                    Ok(_) => unreachable!(),
-                    Err(e) => Err(ConnectionError::from(e)),
+            // Send initial settings frame
+            match framed_write.start_send(settings.into()) {
+                Ok(AsyncSink::Ready) => {
+                    let connection = proto::from_framed_write(framed_write);
+                    Ok(Client { connection })
                 }
-            });
+                Ok(_) => unreachable!(),
+                Err(e) => Err(ConnectionError::from(e)),
+            }
+        }
+        let msg: &'static [u8] =  b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        let handshake = io::write_all(io, msg)
+            .map_err(ConnectionError::from as
+                fn(IoError) -> ConnectionError
+            )
+            .and_then(bind as
+                fn((T, &'static [u8])) -> Result<Client<T, B>, ConnectionError>
+            );
 
-        Handshake { inner: Box::new(handshake) }
+        Handshake { inner: handshake }
     }
 
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
@@ -93,8 +113,8 @@ impl<T, B> Client<T, B>
 
 impl<T, B> Future for Client<T, B>
     // TODO: Get rid of 'static
-    where T: AsyncRead + AsyncWrite + 'static,
-          B: IntoBuf + 'static,
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf,
 {
     type Item = ();
     type Error = ConnectionError;
@@ -105,7 +125,8 @@ impl<T, B> Future for Client<T, B>
 }
 
 impl<T, B> fmt::Debug for Client<T, B>
-    where T: fmt::Debug,
+    where T: AsyncRead + AsyncWrite,
+          T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
           B::Buf: fmt::Debug,
 {
@@ -118,7 +139,8 @@ impl<T, B> fmt::Debug for Client<T, B>
 
 // ===== impl Handshake =====
 
-impl<T, B: IntoBuf> Future for Handshake<T, B> {
+impl<T, B: IntoBuf> Future for Handshake<T, B>
+where T: AsyncRead + AsyncWrite {
     type Item = Client<T, B>;
     type Error = ConnectionError;
 
@@ -128,7 +150,8 @@ impl<T, B: IntoBuf> Future for Handshake<T, B> {
 }
 
 impl<T, B> fmt::Debug for Handshake<T, B>
-    where T: fmt::Debug,
+    where T: AsyncRead + AsyncWrite,
+          T: fmt::Debug,
           B: fmt::Debug + IntoBuf,
           B::Buf: fmt::Debug + IntoBuf,
 {
