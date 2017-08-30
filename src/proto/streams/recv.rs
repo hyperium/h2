@@ -36,12 +36,19 @@ pub(super) struct Recv<B, P>
     pending_accept: store::Queue<B, stream::NextAccept, P>,
 
     /// Holds frames that are waiting to be read
-    buffer: Buffer<Frame<Bytes>>,
+    buffer: Buffer<Event<P::Poll>>,
 
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
     _p: PhantomData<(B)>,
+}
+
+#[derive(Debug)]
+pub(super) enum Event<T> {
+    Headers(T),
+    Data(Bytes),
+    Trailers(::HeaderMap),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -110,44 +117,13 @@ impl<B, P> Recv<B, P>
         Ok(Some(id))
     }
 
-    pub fn take_request(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Result<Request<()>, ConnectionError>
-    {
-        match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Headers(frame)) => {
-                // TODO: This error should probably be caught on receipt of the
-                // frame vs. now.
-                Ok(server::Peer::convert_poll_message(frame)?)
-            }
-            _ => panic!(),
-        }
-    }
-
-    pub fn poll_response(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Poll<Response<()>, ConnectionError> {
-        // If the buffer is not empty, then the first frame must be a HEADERS
-        // frame or the user violated the contract.
-        match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Headers(v)) => {
-                // TODO: This error should probably be caught on receipt of the
-                // frame vs. now.
-                Ok(client::Peer::convert_poll_message(v)?.into())
-            }
-            Some(_) => unimplemented!(),
-            None => {
-                stream.state.ensure_recv_open()?;
-
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
-            }
-        }
-    }
-
     /// Transition the stream state based on receiving headers
+    ///
+    /// The caller ensures that the frame represents headers and not trailers.
     pub fn recv_headers(&mut self,
                         frame: frame::Headers,
                         stream: &mut store::Ptr<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), ProtoError>
     {
         trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
@@ -161,7 +137,7 @@ impl<B, P> Recv<B, P>
                 self.next_stream_id = frame.stream_id();
                 self.next_stream_id.increment();
             } else {
-                return Err(ProtocolError.into());
+                return Err(ProtoError::Connection(ProtocolError));
             }
 
             // TODO: be smarter about this logic
@@ -173,8 +149,10 @@ impl<B, P> Recv<B, P>
             self.inc_num_streams();
         }
 
+        let message = P::convert_poll_message(frame)?;
+
         // Push the frame onto the stream's recv buffer
-        stream.pending_recv.push_back(&mut self.buffer, frame.into());
+        stream.pending_recv.push_back(&mut self.buffer, Event::Headers(message));
         stream.notify_recv();
 
         // Only servers can receive a headers frame that initiates the stream.
@@ -190,13 +168,15 @@ impl<B, P> Recv<B, P>
     pub fn recv_trailers(&mut self,
                          frame: frame::Headers,
                          stream: &mut store::Ptr<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), ProtoError>
     {
         // Transition the state
         stream.state.recv_close()?;
 
+        let trailers = frame.into_fields();
+
         // Push the frame onto the stream's recv buffer
-        stream.pending_recv.push_back(&mut self.buffer, frame.into());
+        stream.pending_recv.push_back(&mut self.buffer, Event::Trailers(trailers));
         stream.notify_recv();
 
         Ok(())
@@ -236,7 +216,7 @@ impl<B, P> Recv<B, P>
         }
 
         stream.pending_recv.peek_front(&self.buffer)
-            .map(|frame| !frame.is_data())
+            .map(|event| !event.is_data())
             .unwrap_or(true)
     }
 
@@ -278,11 +258,15 @@ impl<B, P> Recv<B, P>
         stream.in_flight_recv_data += sz;
 
         if frame.is_end_stream() {
-            try!(stream.state.recv_close());
+            if stream.state.recv_close().is_err() {
+                return Err(ProtocolError.into());
+            }
         }
 
+        let event = Event::Data(frame.into_payload());
+
         // Push the frame onto the recv buffer
-        stream.pending_recv.push_back(&mut self.buffer, frame.into());
+        stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
         Ok(())
@@ -530,12 +514,12 @@ impl<B, P> Recv<B, P>
         -> Poll<Option<Bytes>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Data(frame)) => {
-                Ok(Some(frame.into_payload()).into())
+            Some(Event::Data(payload)) => {
+                Ok(Some(payload).into())
             }
-            Some(frame) => {
+            Some(event) => {
                 // Frame is trailer
-                stream.pending_recv.push_front(&mut self.buffer, frame);
+                stream.pending_recv.push_front(&mut self.buffer, event);
 
                 // No more data frames
                 Ok(None.into())
@@ -557,8 +541,8 @@ impl<B, P> Recv<B, P>
         -> Poll<Option<HeaderMap>, ConnectionError>
     {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Frame::Headers(frame)) => {
-                Ok(Some(frame.into_fields()).into())
+            Some(Event::Trailers(trailers)) => {
+                Ok(Some(trailers).into())
             }
             Some(_) => {
                 // TODO: This is a user error. `poll_trailers` was called before
@@ -581,5 +565,57 @@ impl<B, P> Recv<B, P>
 
     fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
         unimplemented!();
+    }
+}
+
+impl<B> Recv<B, server::Peer>
+    where B: Buf,
+{
+    /// TODO: Should this fn return `Result`?
+    pub fn take_request(&mut self, stream: &mut store::Ptr<B, server::Peer>)
+        -> Result<Request<()>, ConnectionError>
+    {
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Event::Headers(request)) => Ok(request),
+                /*
+                // TODO: This error should probably be caught on receipt of the
+                // frame vs. now.
+                Ok(server::Peer::convert_poll_message(frame)?)
+                */
+            _ => panic!(),
+        }
+    }
+}
+
+impl<B> Recv<B, client::Peer>
+    where B: Buf,
+{
+    pub fn poll_response(&mut self, stream: &mut store::Ptr<B, client::Peer>)
+        -> Poll<Response<()>, ConnectionError> {
+        // If the buffer is not empty, then the first frame must be a HEADERS
+        // frame or the user violated the contract.
+        match stream.pending_recv.pop_front(&mut self.buffer) {
+            Some(Event::Headers(response)) => {
+                Ok(response.into())
+            }
+            Some(_) => unimplemented!(),
+            None => {
+                stream.state.ensure_recv_open()?;
+
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            }
+        }
+    }
+}
+
+// ===== impl Event =====
+
+impl<T> Event<T> {
+    fn is_data(&self) -> bool {
+        match *self {
+            Event::Data(..) => true,
+            _ => false,
+        }
     }
 }

@@ -1,11 +1,9 @@
 use super::{StreamId, StreamDependency};
-use ConnectionError;
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
 use HeaderMap;
-use error::Reason::*;
 
-use http::{version, uri, Request, Response, Method, StatusCode, Uri};
+use http::{uri, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
@@ -70,13 +68,13 @@ pub struct Continuation {
 #[derive(Debug, Default)]
 pub struct Pseudo {
     // Request
-    method: Option<Method>,
-    scheme: Option<String<Bytes>>,
-    authority: Option<String<Bytes>>,
-    path: Option<String<Bytes>>,
+    pub method: Option<Method>,
+    pub scheme: Option<String<Bytes>>,
+    pub authority: Option<String<Bytes>>,
+    pub path: Option<String<Bytes>>,
 
     // Response
-    status: Option<StatusCode>,
+    pub status: Option<StatusCode>,
 }
 
 #[derive(Debug)]
@@ -265,57 +263,8 @@ impl Headers {
         self.flags.set_end_stream()
     }
 
-    pub fn into_response(self) -> Result<Response<()>, ConnectionError> {
-        let mut b = Response::builder();
-
-        if let Some(status) = self.pseudo.status {
-            b.status(status);
-        }
-
-        let mut response = try!(b.body(()));
-        *response.headers_mut() = self.fields;
-
-        Ok(response)
-    }
-
-    pub fn into_request(self) -> Result<Request<()>, ConnectionError> {
-        let mut b = Request::builder();
-
-        b.version(version::HTTP_2);
-
-        if let Some(method) = self.pseudo.method {
-            b.method(method);
-        }
-
-        // Specifying :status for a request is a protocol error
-        if self.pseudo.status.is_some() {
-            return Err(ProtocolError.into());
-        }
-
-        // Convert the URI
-        let mut parts = uri::Parts::default();
-
-        if let Some(scheme) = self.pseudo.scheme {
-            // TODO: Don't unwrap
-            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner()).unwrap());
-        }
-
-        if let Some(authority) = self.pseudo.authority {
-            // TODO: Don't unwrap
-            parts.authority = Some(uri::Authority::from_shared(authority.into_inner()).unwrap());
-        }
-
-        if let Some(path) = self.pseudo.path {
-            // TODO: Don't unwrap
-            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner()).unwrap());
-        }
-
-        b.uri(parts);
-
-        let mut request = try!(b.body(()));
-        *request.headers_mut() = self.fields;
-
-        Ok(request)
+    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
+        (self.pseudo, self.fields)
     }
 
     pub fn into_fields(self) -> HeaderMap {
