@@ -103,6 +103,7 @@ impl<B, P> Streams<B, P>
                 actions.recv.recv_trailers(frame, stream)
             };
 
+            // TODO: extract this
             match res {
                 Ok(()) => Ok(()),
                 Err(ProtoError::Connection(reason)) => Err(reason.into()),
@@ -130,7 +131,16 @@ impl<B, P> Streams<B, P>
         };
 
         me.actions.transition(stream, |actions, stream| {
-            actions.recv.recv_data(frame, stream)
+            match actions.recv.recv_data(frame, stream) {
+                Ok(()) => Ok(()),
+                Err(ProtoError::Connection(reason)) => Err(reason.into()),
+                Err(ProtoError::Stream { reason, .. }) => {
+                    // Reset the stream.
+                    actions.send.send_reset(reason, stream, &mut actions.task);
+                    Ok(())
+                }
+                Err(ProtoError::Io(_)) => unreachable!(),
+            }
         })
     }
 
@@ -286,6 +296,9 @@ impl<B, P> Streams<B, P>
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B, P>, ConnectionError>
     {
+        use http::method;
+        use super::stream::ContentLength;
+
         // TODO: There is a hazard with assigning a stream ID before the
         // prioritize layer. If prioritization reorders new streams, this
         // implicitly closes the earlier stream IDs.
@@ -298,10 +311,14 @@ impl<B, P> Streams<B, P>
             // Initialize a new stream. This fails if the connection is at capacity.
             let stream_id = me.actions.send.open()?;
 
-            let stream = Stream::new(
+            let mut stream = Stream::new(
                 stream_id,
                 me.actions.send.init_window_sz(),
                 me.actions.recv.init_window_sz());
+
+            if *request.method() == method::HEAD {
+                stream.content_length = ContentLength::Head;
+            }
 
             // Convert the message
             let headers = client::Peer::convert_send_message(
