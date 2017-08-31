@@ -1,5 +1,4 @@
 use hpack;
-use error::{ConnectionError, Reason};
 
 use bytes::Bytes;
 
@@ -33,6 +32,7 @@ mod head;
 mod headers;
 mod ping;
 mod priority;
+mod reason;
 mod reset;
 mod settings;
 mod stream_id;
@@ -45,6 +45,7 @@ pub use self::head::{Head, Kind};
 pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
 pub use self::ping::Ping;
 pub use self::priority::{Priority, StreamDependency};
+pub use self::reason::Reason;
 pub use self::reset::Reset;
 pub use self::settings::Settings;
 pub use self::stream_id::StreamId;
@@ -172,15 +173,4 @@ pub enum Error {
 
     /// Failed to perform HPACK decoding
     Hpack(hpack::DecoderError),
-}
-
-// ===== impl Error =====
-
-impl From<Error> for ConnectionError {
-    fn from(src: Error) -> ConnectionError {
-        match src {
-            // TODO: implement
-            _ => ConnectionError::Proto(Reason::ProtocolError),
-        }
-    }
 }

@@ -1,9 +1,10 @@
-use {client, server, frame, HeaderMap, ConnectionError};
+use {client, server, frame, ConnectionError};
 use proto::*;
 use super::*;
 
 use error::Reason::*;
 use futures::Sink;
+use http::HeaderMap;
 
 use std::marker::PhantomData;
 
@@ -48,7 +49,7 @@ pub(super) struct Recv<B, P>
 pub(super) enum Event<T> {
     Headers(T),
     Data(Bytes),
-    Trailers(::HeaderMap),
+    Trailers(HeaderMap),
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,9 +1,9 @@
-use {frame, HeaderMap, ConnectionError};
+use {frame, ConnectionError};
 use frame::StreamId;
 use proto::{self, Connection, WindowSize, ProtoError};
 use error::Reason::*;
 
-use http::{Request, Response};
+use http::{Request, Response, HeaderMap};
 use futures::{Future, Poll, Sink, Async, AsyncSink, AndThen, MapErr};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;

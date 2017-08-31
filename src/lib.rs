@@ -32,6 +32,3 @@ mod frame;
 pub mod server;
 
 pub use error::{ConnectionError, Reason};
-
-// TODO: remove if carllerche/http#90 lands
-pub type HeaderMap = http::HeaderMap<http::header::HeaderValue>;
