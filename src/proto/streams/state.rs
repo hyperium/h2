@@ -2,7 +2,6 @@ use ConnectionError;
 use proto::ProtoError;
 use error::Reason;
 use error::Reason::*;
-use error::User::*;
 
 use self::Inner::*;
 use self::Peer::*;

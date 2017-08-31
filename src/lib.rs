@@ -26,6 +26,7 @@ extern crate string;
 
 pub mod client;
 pub mod error;
+mod codec;
 mod hpack;
 mod proto;
 mod frame;

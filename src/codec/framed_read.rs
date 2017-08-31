@@ -1,14 +1,17 @@
-use {hpack, ConnectionError};
+use super::framed_write::FramedWrite;
+
+use codec::{RecvError, SendError};
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
-use proto::*;
-use error::Reason::*;
+use frame::Reason::*;
+
+use hpack;
 
 use futures::*;
 
-use bytes::BytesMut;
+use bytes::{BytesMut, Buf};
 
-use tokio_io::AsyncRead;
+use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 
 use std::io;
@@ -54,8 +57,8 @@ impl<T> FramedRead<T> {
         // TODO: Is this needed?
     }
 
-    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ProtoError> {
-        use self::ProtoError::*;
+    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
+        use self::RecvError::*;
 
         trace!("decoding frame from {}B", bytes.len());
 
@@ -226,11 +229,11 @@ impl<T> FramedRead<T> {
     }
 }
 
-impl<T> futures::Stream for FramedRead<T>
+impl<T> Stream for FramedRead<T>
     where T: AsyncRead,
 {
     type Item = Frame;
-    type Error = ProtoError;
+    type Error = RecvError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         loop {
@@ -262,7 +265,7 @@ impl<T: Sink> Sink for FramedRead<T> {
 }
 
 impl<T: AsyncWrite, B: Buf> FramedRead<FramedWrite<T, B>> {
-    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+    pub fn poll_ready(&mut self) -> Poll<(), SendError> {
         self.inner.get_mut().poll_ready()
     }
 }

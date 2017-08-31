@@ -1,7 +1,4 @@
-mod codec;
 mod connection;
-mod framed_read;
-mod framed_write;
 mod ping_pong;
 mod settings;
 mod streams;
@@ -9,20 +6,19 @@ mod streams;
 pub(crate) use self::connection::Connection;
 pub(crate) use self::streams::{Streams, StreamRef};
 
-use self::codec::Codec;
-use self::framed_read::FramedRead;
-use self::framed_write::FramedWrite;
+use codec::{Codec, FramedRead, FramedWrite};
+
 use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Prioritized;
 
-use ConnectionError;
-use error::Reason;
 use frame::{self, Frame, StreamId};
 
 use futures::{self, task, Poll, Async, AsyncSink};
 use futures::task::Task;
+
 use bytes::{Buf, IntoBuf};
+
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
 

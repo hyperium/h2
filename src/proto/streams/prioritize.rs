@@ -80,7 +80,7 @@ impl<B, P> Prioritize<B, P>
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         let sz = frame.payload().remaining();
 

@@ -2,8 +2,6 @@ use {frame, ConnectionError};
 use proto::*;
 use super::*;
 
-use error::User::*;
-
 use bytes::Buf;
 
 /// Manages state transitions related to outbound frames.
@@ -51,19 +49,6 @@ where B: Buf,
     /// Returns the initial send window size
     pub fn init_window_sz(&self) -> WindowSize {
         self.init_window_sz
-    }
-
-    pub fn poll_open_ready(&mut self) -> Poll<(), ConnectionError> {
-        try!(self.ensure_can_open());
-
-        if let Some(max) = self.max_streams {
-            if max <= self.num_streams {
-                self.blocked_open = Some(task::current());
-                return Ok(Async::NotReady);
-            }
-        }
-
-        return Ok(Async::Ready(()));
     }
 
     /// Update state reflecting a new, locally opened stream
@@ -325,5 +310,20 @@ where B: Buf,
         // TODO: Handle StreamId overflow
 
         Ok(())
+    }
+}
+
+impl<B> Send<B, client::Peer>
+where B: Buf,
+{
+    pub fn poll_open_ready(&mut self) -> Async<()> {
+        if let Some(max) = self.max_streams {
+            if max <= self.num_streams {
+                self.blocked_open = Some(task::current());
+                return Async::NotReady;
+            }
+        }
+
+        return Async::Ready(());
     }
 }

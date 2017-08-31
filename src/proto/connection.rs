@@ -1,4 +1,5 @@
-use {client, frame, server, ConnectionError};
+use {client, frame, server};
+use frame::Reason;
 
 use proto::*;
 
@@ -73,7 +74,7 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.
-    fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+    fn poll_ready(&mut self) -> Poll<(), SendError> {
         // The order of these calls don't really matter too much as only one
         // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
@@ -83,15 +84,8 @@ impl<T, P, B> Connection<T, P, B>
         Ok(().into())
     }
 
-    /// Returns `Ready` when new the connection is able to support a new request stream.
-    pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.streams.poll_send_request_ready()
-    }
-
     /// Advances the internal state of the connection.
-    pub fn poll(&mut self) -> Poll<(), ConnectionError> {
-        use error::ConnectionError::*;
-
+    pub fn poll(&mut self) -> Poll<(), RecvError> {
         loop {
             match self.state {
                 // When open, continue to poll a frame
@@ -123,7 +117,7 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    fn poll2(&mut self) -> Poll<(), ConnectionError> {
+    fn poll2(&mut self) -> Poll<(), ::Error> {
         use frame::Frame::*;
         use proto::ProtoError::*;
 
@@ -244,6 +238,11 @@ impl<T, B> Connection<T, client::Peer, B>
     where T: AsyncRead + AsyncWrite,
           B: IntoBuf,
 {
+    /// Returns `Ready` when new the connection is able to support a new request stream.
+    pub fn poll_send_request_ready(&mut self) -> Async<()> {
+        self.streams.poll_send_request_ready()
+    }
+
     /// Initialize a new HTTP/2.0 stream and send the message.
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B::Buf, client::Peer>, ConnectionError>

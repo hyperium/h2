@@ -10,9 +10,9 @@ fnv = "1.0.5"
 bytes = "0.4"
 string = { git = "https://github.com/carllerche/string" }
 byteorder = "1.0"
+futures = "0.1"
+tokio-io = "0.1.3"
 
-# futures = "0.1"
-# tokio-io = "0.1.3"
 # tokio-timer = "0.1"
 # http = { git = "https://github.com/carllerche/http", branch = "lower-case-header-name-parsing" }
 # slab = "0.4.0"

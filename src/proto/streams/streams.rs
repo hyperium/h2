@@ -288,13 +288,6 @@ impl<B, P> Streams<B, P>
             frame, &mut me.store, &mut me.actions.task)
     }
 
-    pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        me.actions.send.poll_open_ready()
-    }
-
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B, P>, ConnectionError>
     {
@@ -369,6 +362,17 @@ impl<B, P> Streams<B, P>
         me.actions.transition(stream, move |actions, stream| {
             actions.send.send_reset(reason, stream, &mut actions.task)
         })
+    }
+}
+
+impl<B> Streams<B, client::Peer>
+    where B: Buf,
+{
+    pub fn poll_send_request_ready(&mut self) -> Async<()> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.send.poll_open_ready()
     }
 }
 

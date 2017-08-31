@@ -24,7 +24,6 @@ use {frame, ConnectionError};
 use frame::StreamId;
 use proto::*;
 use error::Reason::*;
-use error::User::*;
 
 use http::{Request, Response};
 use bytes::Bytes;
