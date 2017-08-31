@@ -192,6 +192,19 @@ impl<B, P> Stream<B, P>
             task.notify();
         }
     }
+
+    pub fn should_release(&self) -> bool {
+        // The state is closed
+        self.state.is_closed() &&
+            // There is no more data in the send buffer
+            self.pending_send.is_empty() &&
+            self.pending_recv.is_empty() &&
+            // Ensure that the stream is not in any buffer
+            !self.is_pending_send &&
+            !self.is_pending_send_capacity &&
+            !self.is_pending_accept &&
+            !self.is_pending_window_update
+    }
 }
 
 impl store::Next for NextAccept {
