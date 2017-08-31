@@ -139,6 +139,10 @@ impl<B, P> Store<B, P>
 
         Ok(())
     }
+
+    pub fn unlink(&mut self, id: StreamId) {
+        self.ids.remove(&id);
+    }
 }
 
 impl<B, P> Resolve<B, P> for Store<B, P>
@@ -205,6 +209,9 @@ impl<B, N, P> Queue<B, N, P>
             return false;
         }
 
+        // The stream should not be in a state of being released
+        debug_assert!(!stream.should_release());
+
         N::set_queued(stream, true);
 
         // The next pointer shouldn't be set
@@ -237,24 +244,40 @@ impl<B, N, P> Queue<B, N, P>
     pub fn pop<'a, R>(&mut self, store: &'a mut R) -> Option<store::Ptr<'a, B, P>>
         where R: Resolve<B, P>
     {
-        if let Some(mut idxs) = self.indices {
-            let mut stream = store.resolve(idxs.head);
+        let key;
 
-            if idxs.head == idxs.tail {
-                assert!(N::next(&*stream).is_none());
-                self.indices = None;
-            } else {
-                idxs.head = N::take_next(&mut *stream).unwrap();
-                self.indices = Some(idxs);
+        loop {
+            match self.indices {
+                Some(mut idxs) => {
+                    let mut stream = store.resolve(idxs.head);
+
+                    if idxs.head == idxs.tail {
+                        assert!(N::next(&*stream).is_none());
+                        self.indices = None;
+                    } else {
+                        idxs.head = N::take_next(&mut *stream).unwrap();
+                        self.indices = Some(idxs);
+                    }
+
+                    debug_assert!(N::is_queued(&*stream));
+                    N::set_queued(&mut *stream, false);
+
+                    if stream.should_release() {
+                        // The stream is pending release and it is safe to
+                        // remove now.
+                        stream.remove();
+                        continue;
+                    }
+
+                    // Indirection to make the borrow checker happy
+                    key = stream.key();
+                    break;
+                }
+                None => return None,
             }
-
-            debug_assert!(N::is_queued(&*stream));
-            N::set_queued(&mut *stream, false);
-
-            return Some(stream);
         }
 
-        None
+        Some(store.resolve(key))
     }
 }
 
@@ -263,8 +286,14 @@ impl<B, N, P> Queue<B, N, P>
 impl<'a, B: 'a, P> Ptr<'a, B, P>
     where P: Peer,
 {
+    /// Return the key associated with this stream
     pub fn key(&self) -> Key {
         self.key
+    }
+
+    /// Remove the stream from the store
+    pub fn remove(self) {
+        self.slab.remove(self.key.0);
     }
 }
 
