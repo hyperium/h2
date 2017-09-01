@@ -1,6 +1,6 @@
 use frame::Reason;
 use frame::Reason::*;
-use codec::{SendError, RecvError};
+use codec::{RecvError, UserError};
 use codec::UserError::*;
 use proto;
 
@@ -82,7 +82,7 @@ enum Cause {
 
 impl State {
     /// Opens the send-half of a stream if it is not already open.
-    pub fn send_open(&mut self, eos: bool) -> Result<(), SendError> {
+    pub fn send_open(&mut self, eos: bool) -> Result<(), UserError> {
         let local = Peer::Streaming;
 
         self.inner = match self.inner {
@@ -115,7 +115,7 @@ impl State {
             }
             _ => {
                 // All other transitions result in a protocol error
-                return Err(UnexpectedFrameType.into());
+                return Err(UnexpectedFrameType);
             }
         };
 

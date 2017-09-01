@@ -1,6 +1,6 @@
 use {client, server, frame, proto};
 use frame::Reason;
-use codec::{SendError, RecvError};
+use codec::{RecvError, UserError};
 use proto::*;
 use super::*;
 
@@ -214,7 +214,7 @@ impl<B, P> Recv<B, P>
                             capacity: WindowSize,
                             stream: &mut store::Ptr<B, P>,
                             task: &mut Option<Task>)
-        -> Result<(), SendError>
+        -> Result<(), UserError>
     {
         if capacity > stream.in_flight_recv_data {
             // TODO: Handle error

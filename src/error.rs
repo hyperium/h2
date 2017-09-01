@@ -1,4 +1,6 @@
-use codec::UserError;
+use codec::{SendError, UserError};
+use proto;
+
 use std::{error, fmt, io};
 
 pub use frame::Reason;
@@ -27,6 +29,19 @@ enum Kind {
 
 // ===== impl Error =====
 
+impl From<proto::Error> for Error {
+    fn from(src: proto::Error) -> Error {
+        use proto::Error::*;
+
+        Error {
+            kind: match src {
+                Proto(reason) => Kind::Proto(reason),
+                Io(e) => Kind::Io(e),
+            },
+        }
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(src: io::Error) -> Error {
         Error { kind: Kind::Io(src) }
@@ -40,6 +55,15 @@ impl From<Reason> for Error {
     }
 }
 */
+
+impl From<SendError> for Error {
+    fn from(src: SendError) -> Error {
+        match src {
+            SendError::User(e) => e.into(),
+            SendError::Io(e) => e.into(),
+        }
+    }
+}
 
 impl From<UserError> for Error {
     fn from(src: UserError) -> Error {

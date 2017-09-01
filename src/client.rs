@@ -97,7 +97,7 @@ impl<T, B> Client<T, B>
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
-        self.connection.poll_send_request_ready()
+        Ok(self.connection.poll_send_request_ready())
     }
 
     /// Send a request on a new HTTP 2.0 stream
@@ -105,6 +105,7 @@ impl<T, B> Client<T, B>
         -> Result<Stream<B>, ::Error>
     {
         self.connection.send_request(request, end_of_stream)
+            .map_err(Into::into)
             .map(|stream| Stream {
                 inner: stream,
             })
@@ -121,6 +122,7 @@ impl<T, B> Future for Client<T, B>
 
     fn poll(&mut self) -> Poll<(), ::Error> {
         self.connection.poll()
+            .map_err(Into::into)
     }
 }
 
@@ -193,6 +195,7 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ::Error>
     {
         self.inner.send_data(data.into_buf(), end_of_stream)
+            .map_err(Into::into)
     }
 
     /// Send trailers
@@ -200,6 +203,7 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ::Error>
     {
         self.inner.send_trailers(trailers)
+            .map_err(Into::into)
     }
 }
 
@@ -222,6 +226,7 @@ impl<B: IntoBuf> Body<B> {
 
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
         self.inner.release_capacity(sz as proto::WindowSize)
+            .map_err(Into::into)
     }
 
     /// Poll trailers
@@ -229,6 +234,7 @@ impl<B: IntoBuf> Body<B> {
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.poll_trailers()
+            .map_err(Into::into)
     }
 }
 
@@ -238,6 +244,7 @@ impl<B: IntoBuf> ::futures::Stream for Body<B> {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.inner.poll_data()
+            .map_err(Into::into)
     }
 }
 
