@@ -1,8 +1,7 @@
-use {ConnectionError};
-use frame::{self, StreamId};
-use proto::{self, Connection, WindowSize, ProtoError};
-use error::Reason;
-use error::Reason::*;
+use frame::{self, StreamId, Reason};
+use frame::Reason::*;
+use codec::RecvError;
+use proto::{self, Connection, WindowSize};
 
 use http::{Request, Response, HeaderMap};
 use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
@@ -14,7 +13,7 @@ use std::fmt;
 /// In progress H2 connection binding
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     // TODO: unbox
-    inner: Box<Future<Item = Server<T, B>, Error = ConnectionError>>,
+    inner: Box<Future<Item = Server<T, B>, Error = ::Error>>,
 }
 
 /// Marker type indicating a client peer
@@ -86,7 +85,7 @@ impl<T, B> Server<T, B>
             Ok(_) => unreachable!(),
             Err(e) => {
                 return Handshake {
-                    inner: Box::new(Err(ConnectionError::from(e)).into_future()),
+                    inner: Box::new(Err(::Error::from(e)).into_future()),
                 }
             }
         }
@@ -104,7 +103,7 @@ impl<T, B> Server<T, B>
     }
 
     /// Returns `Ready` when the underlying connection has closed.
-    pub fn poll_close(&mut self) -> Poll<(), ConnectionError> {
+    pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll()
     }
 }
@@ -114,9 +113,9 @@ impl<T, B> futures::Stream for Server<T, B>
           B: IntoBuf + 'static,
 {
     type Item = (Request<Body<B>>, Stream<B>);
-    type Error = ConnectionError;
+    type Error = ::Error;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, ConnectionError> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
         // Always try to advance the internal state. Getting NotReady also is
         // needed to allow this function to return NotReady.
         match self.poll_close()? {
@@ -160,7 +159,7 @@ impl<T, B> fmt::Debug for Server<T, B>
 impl<B: IntoBuf> Stream<B> {
     /// Send a response
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), ::Error>
     {
         self.inner.send_response(response, end_of_stream)
     }
@@ -177,21 +176,21 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ConnectionError> {
+    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ::Error> {
         let res = try_ready!(self.inner.poll_capacity());
         Ok(Async::Ready(res.map(|v| v as usize)))
     }
 
     /// Send a single data frame
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), ::Error>
     {
         self.inner.send_data(data.into_buf(), end_of_stream)
     }
 
     /// Send trailers
     pub fn send_trailers(&mut self, trailers: HeaderMap)
-        -> Result<(), ConnectionError>
+        -> Result<(), ::Error>
     {
         self.inner.send_trailers(trailers)
     }
@@ -204,7 +203,7 @@ impl<B: IntoBuf> Stream<B> {
 impl Stream<Bytes> {
     /// Send the body
     pub fn send<T>(self, src: T, end_of_stream: bool,) -> Send<T>
-        where T: futures::Stream<Item = Bytes, Error = ConnectionError>,
+        where T: futures::Stream<Item = Bytes, Error = ::Error>,
     {
         Send {
             src: src,
@@ -223,21 +222,21 @@ impl<B: IntoBuf> Body<B> {
         self.inner.body_is_empty()
     }
 
-    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ConnectionError> {
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
         self.inner.release_capacity(sz as proto::WindowSize)
     }
 
     /// Poll trailers
     ///
     /// This function **must** not be called until `Body::poll` returns `None`.
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.poll_trailers()
     }
 }
 
 impl<B: IntoBuf> futures::Stream for Body<B> {
     type Item = Bytes;
-    type Error = ConnectionError;
+    type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.inner.poll_data()
@@ -247,10 +246,10 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
 // ===== impl Send =====
 
 impl<T> Future for Send<T>
-    where T: futures::Stream<Item = Bytes, Error = ConnectionError>,
+    where T: futures::Stream<Item = Bytes, Error = ::Error>,
 {
     type Item = Stream<Bytes>;
-    type Error = ConnectionError;
+    type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
@@ -326,7 +325,7 @@ impl<T> ReadPreface<T> {
 
 impl<T: AsyncRead> Future for ReadPreface<T> {
     type Item = T;
-    type Error = ConnectionError;
+    type Error = ::Error;
 
     fn poll(&mut self) -> Poll<T, Self::Error> {
         let mut buf = [0; 24];
@@ -352,7 +351,7 @@ impl<T: AsyncRead> Future for ReadPreface<T> {
 
 impl<T, B: IntoBuf> Future for Handshake<T, B> {
     type Item = Server<T, B>;
-    type Error = ConnectionError;
+    type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.inner.poll()
@@ -401,7 +400,7 @@ impl proto::Peer for Peer {
     }
 
     fn convert_poll_message(headers: frame::Headers)
-        -> Result<Self::Poll, ProtoError>
+        -> Result<Self::Poll, RecvError>
     {
         use http::{version, uri};
 
@@ -412,7 +411,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             () => {
-                return Err(ProtoError::Stream {
+                return Err(RecvError::Stream {
                     id: stream_id,
                     reason: ProtocolError,
                 });
@@ -429,7 +428,7 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
-            return Err(ProtoError::Connection(ProtocolError));
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         // Convert the URI
@@ -464,7 +463,7 @@ impl proto::Peer for Peer {
             Err(_) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
-                return Err(ProtoError::Stream {
+                return Err(RecvError::Stream {
                     id: stream_id,
                     reason: ProtocolError,
                 });

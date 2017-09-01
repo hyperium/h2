@@ -1,6 +1,9 @@
 use super::*;
 use super::store::Resolve;
 
+use codec::{SendError, RecvError};
+use codec::UserError::*;
+
 use bytes::buf::Take;
 use futures::Sink;
 
@@ -161,7 +164,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_stream_window_update(&mut self,
                                      inc: WindowSize,
                                      stream: &mut store::Ptr<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
                stream.id, stream.state, inc, stream.send_flow);
@@ -179,7 +182,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_connection_window_update(&mut self,
                                          inc: WindowSize,
                                          store: &mut Store<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;
@@ -284,7 +287,7 @@ impl<B, P> Prioritize<B, P>
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), SendError>
         where T: AsyncWrite,
     {
         // Ensure codec is ready

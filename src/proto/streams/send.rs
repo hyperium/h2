@@ -1,4 +1,5 @@
-use {frame, ConnectionError};
+use {frame, client};
+use codec::SendError;
 use proto::*;
 use super::*;
 
@@ -55,7 +56,7 @@ where B: Buf,
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open(&mut self)
-        -> Result<StreamId, ConnectionError>
+        -> Result<StreamId, SendError>
     {
         try!(self.ensure_can_open());
 
@@ -78,7 +79,7 @@ where B: Buf,
                         frame: frame::Headers,
                         stream: &mut store::Ptr<B, P>,
                         task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
@@ -130,7 +131,7 @@ where B: Buf,
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         self.prioritize.send_data(frame, stream, task)
     }
@@ -139,7 +140,7 @@ where B: Buf,
                          frame: frame::Headers,
                          stream: &mut store::Ptr<B, P>,
                          task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
@@ -157,7 +158,7 @@ where B: Buf,
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), SendError>
         where T: AsyncWrite,
     {
         self.prioritize.poll_complete(store, dst)
@@ -169,7 +170,7 @@ where B: Buf,
     }
 
     pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Poll<Option<WindowSize>, ConnectionError>
+        -> Poll<Option<WindowSize>, SendError>
     {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
@@ -199,7 +200,7 @@ where B: Buf,
     pub fn recv_connection_window_update(&mut self,
                                          frame: frame::WindowUpdate,
                                          store: &mut Store<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         self.prioritize.recv_connection_window_update(frame.size_increment(), store)
     }
@@ -208,7 +209,7 @@ where B: Buf,
                                      sz: WindowSize,
                                      stream: &mut store::Ptr<B, P>,
                                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
@@ -222,7 +223,7 @@ where B: Buf,
                                  settings: &frame::Settings,
                                  store: &mut Store<B, P>,
                                  task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_streams = Some(val as usize);
@@ -282,9 +283,9 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {
+    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if id >= self.next_stream_id {
-            return Err(ProtocolError.into());
+            return Err(ProtocolError);
         }
 
         Ok(())

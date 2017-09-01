@@ -20,7 +20,6 @@ use self::state::State;
 use self::store::{Store, Entry};
 use self::stream::Stream;
 
-use {frame, ConnectionError};
 use frame::StreamId;
 use proto::*;
 use error::Reason::*;

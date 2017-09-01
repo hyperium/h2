@@ -24,6 +24,12 @@ pub enum SendError {
 
 /// Errors caused by users of the library
 pub enum UserError {
+    /// The stream ID is no longer accepting frames.
+    InactiveStreamId,
+
+    /// The stream is not currently expecting a frame of this type.
+    UnexpectedFrameType,
+
     /// The payload size is too big
     PayloadTooBig,
 }

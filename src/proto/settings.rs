@@ -1,4 +1,5 @@
 use frame;
+use codec::SendError;
 use proto::*;
 
 use futures::Sink;
@@ -31,7 +32,7 @@ impl Settings {
     pub fn send_pending_ack<T, B, C, P>(&mut self,
                                         dst: &mut Codec<T, B>,
                                         streams: &mut Streams<C, P>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), SendError>
         where T: AsyncWrite,
               B: Buf,
               C: Buf,

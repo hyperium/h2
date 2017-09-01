@@ -1,5 +1,6 @@
-use {client, frame, server};
+use {client, frame, server, proto};
 use frame::Reason;
+use codec::{SendError, RecvError};
 
 use proto::*;
 
@@ -85,7 +86,9 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Advances the internal state of the connection.
-    pub fn poll(&mut self) -> Poll<(), RecvError> {
+    pub fn poll(&mut self) -> Poll<(), proto::Error> {
+        use proto::Error::*;
+
         loop {
             match self.state {
                 // When open, continue to poll a frame
@@ -117,9 +120,9 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    fn poll2(&mut self) -> Poll<(), ::Error> {
+    fn poll2(&mut self) -> Poll<(), proto::Error> {
         use frame::Frame::*;
-        use proto::ProtoError::*;
+        use codec::RecvError::*;
 
         loop {
             // First, ensure that the `Connection` is able to receive a frame
@@ -127,20 +130,23 @@ impl<T, P, B> Connection<T, P, B>
 
             trace!("polling codec");
 
+            // Poll a frame from the codec.
             let frame = match self.codec.poll() {
-                // Receive a frame
+                // Received a frame
                 Ok(Async::Ready(frame)) => frame,
                 // Socket not ready, try to flush any pending data
                 Ok(Async::NotReady) => {
                     // Flush any pending writes
-                    let _ = try!(self.poll_complete());
+                    let _ = self.poll_complete()?;
+
+                    // The codec is not read
                     return Ok(Async::NotReady);
                 }
                 // Connection level error, set GO_AWAY and close connection
                 Err(Connection(reason)) => {
-                    return Err(ConnectionError::Proto(reason));
+                    return Err(reason.into());
                 }
-                // Stream level error, reset the stream
+                // Stream level error, reset the stream and try to poll again
                 Err(Stream { id, reason }) => {
                     trace!("stream level error; id={:?}; reason={:?}", id, reason);
                     self.streams.send_reset(id, reason);
@@ -178,7 +184,7 @@ impl<T, P, B> Connection<T, P, B>
                 Some(GoAway(_)) => {
                     // TODO: handle the last_processed_id. Also, should this be
                     // handled as an error?
-                    // let _ = ConnectionError::Proto(frame.reason());
+                    // let _ = RecvError::Proto(frame.reason());
                     return Ok(().into());
                 }
                 Some(Ping(frame)) => {
@@ -202,7 +208,7 @@ impl<T, P, B> Connection<T, P, B>
         }
     }
 
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
+    fn poll_complete(&mut self) -> Poll<(), SendError> {
         loop {
             match self.state {
                 State::Open => {
@@ -245,7 +251,7 @@ impl<T, B> Connection<T, client::Peer, B>
 
     /// Initialize a new HTTP/2.0 stream and send the message.
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B::Buf, client::Peer>, ConnectionError>
+        -> Result<StreamRef<B::Buf, client::Peer>, SendError>
     {
         self.streams.send_request(request, end_of_stream)
     }

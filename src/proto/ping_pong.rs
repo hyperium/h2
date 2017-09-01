@@ -1,4 +1,5 @@
 use frame::Ping;
+use codec::SendError;
 use proto::*;
 
 use futures::Sink;
@@ -45,7 +46,7 @@ impl<B> PingPong<B>
     }
 
     /// Send any pending pongs.
-    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), SendError>
         where T: AsyncWrite,
     {
         if let Some(pong) = self.sending_pong.take() {

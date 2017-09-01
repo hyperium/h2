@@ -25,69 +25,69 @@ enum Kind {
     Io(io::Error),
 }
 
-// ===== impl ConnectionError =====
+// ===== impl Error =====
 
-impl From<io::Error> for ConnectionError {
-    fn from(src: io::Error) -> ConnectionError {
-        ConnectionError::Io(src)
+impl From<io::Error> for Error {
+    fn from(src: io::Error) -> Error {
+        Error::Io(src)
     }
 }
 
 /*
-impl From<Reason> for ConnectionError {
-    fn from(src: Reason) -> ConnectionError {
-        ConnectionError::Proto(src)
+impl From<Reason> for Error {
+    fn from(src: Reason) -> Error {
+        Error::Proto(src)
     }
 }
 */
 
-impl From<UserError> for ConnectionError {
-    fn from(src: UserError) -> ConnectionError {
-        ConnectionError::UserError(src)
+impl From<UserError> for Error {
+    fn from(src: UserError) -> Error {
+        Error::UserError(src)
     }
 }
 
 /*
-impl From<ConnectionError> for io::Error {
-    fn from(src: ConnectionError) -> io::Error {
+impl From<Error> for io::Error {
+    fn from(src: Error) -> io::Error {
         io::Error::new(io::ErrorKind::Other, src)
     }
 }
 
-impl From<http::Error> for ConnectionError {
+impl From<http::Error> for Error {
     fn from(_: http::Error) -> Self {
         // TODO: Should this always be a protocol error?
         Reason::ProtocolError.into()
     }
 }
 
-impl From<frame::Error> for ConnectionError {
-    fn from(src: frame::Error) -> ConnectionError {
+impl From<frame::Error> for Error {
+    fn from(src: frame::Error) -> Error {
         match src {
             // TODO: implement
-            _ => ConnectionError::Proto(Reason::ProtocolError),
+            _ => Error::Proto(Reason::ProtocolError),
         }
     }
 }
 */
 
-impl fmt::Display for ConnectionError {
+impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use self::ConnectionError::*;
+        use self::Kind::*;
 
-        match *self {
+        match self.kind {
             Proto(reason) => write!(fmt, "protocol error: {}", reason),
-            Io(ref e) => fmt::Display::fmt(e, fmt),
             User(e) => write!(fmt, "user error: {}", e),
+            Io(ref e) => fmt::Display::fmt(e, fmt),
         }
     }
 }
 
-impl error::Error for ConnectionError {
+impl error::Error for Error {
     fn description(&self) -> &str {
-        use self::ConnectionError::*;
+        use self::Kind::*;
 
-        match *self {
+        match self.kind {
             Io(ref e) => error::Error::description(e),
             Proto(ref reason) => reason.description(),
             User(user) => user.description(),

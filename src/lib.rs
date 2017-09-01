@@ -24,12 +24,13 @@ extern crate log;
 
 extern crate string;
 
-pub mod client;
-pub mod error;
+mod error;
 mod codec;
 mod hpack;
 mod proto;
 mod frame;
+
+pub mod client;
 pub mod server;
 
-pub use error::{ConnectionError, Reason};
+pub use error::{Error, Reason};

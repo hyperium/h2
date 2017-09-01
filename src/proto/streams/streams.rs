@@ -1,4 +1,5 @@
-use {client, server};
+use {client, server, proto};
+use codec::{SendError, RecvError};
 use proto::*;
 use super::*;
 use super::store::Resolve;
@@ -68,7 +69,7 @@ impl<B, P> Streams<B, P>
 
     /// Process inbound headers
     pub fn recv_headers(&mut self, frame: frame::Headers)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
@@ -108,19 +109,19 @@ impl<B, P> Streams<B, P>
             // TODO: extract this
             match res {
                 Ok(()) => Ok(()),
-                Err(ProtoError::Connection(reason)) => Err(reason.into()),
-                Err(ProtoError::Stream { reason, .. }) => {
+                Err(RecvError::Connection(reason)) => Err(reason.into()),
+                Err(RecvError::Stream { reason, .. }) => {
                     // Reset the stream.
                     actions.send.send_reset(reason, stream, &mut actions.task);
                     Ok(())
                 }
-                Err(ProtoError::Io(_)) => unreachable!(),
+                Err(RecvError::Io(_)) => unreachable!(),
             }
         })
     }
 
     pub fn recv_data(&mut self, frame: frame::Data)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -135,19 +136,19 @@ impl<B, P> Streams<B, P>
         me.actions.transition(stream, |actions, stream| {
             match actions.recv.recv_data(frame, stream) {
                 Ok(()) => Ok(()),
-                Err(ProtoError::Connection(reason)) => Err(reason.into()),
-                Err(ProtoError::Stream { reason, .. }) => {
+                Err(RecvError::Connection(reason)) => Err(reason.into()),
+                Err(RecvError::Stream { reason, .. }) => {
                     // Reset the stream.
                     actions.send.send_reset(reason, stream, &mut actions.task);
                     Ok(())
                 }
-                Err(ProtoError::Io(_)) => unreachable!(),
+                Err(RecvError::Io(_)) => unreachable!(),
             }
         })
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -175,7 +176,7 @@ impl<B, P> Streams<B, P>
     }
 
     /// Handle a received error and return the ID of the last processed stream.
-    pub fn recv_err(&mut self, err: &ConnectionError) -> StreamId {
+    pub fn recv_err(&mut self, err: &proto::Error) -> StreamId {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -191,7 +192,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
@@ -215,7 +216,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -248,7 +249,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), SendError>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
@@ -257,7 +258,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), SendError>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
@@ -279,7 +280,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn apply_remote_settings(&mut self, frame: &frame::Settings)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -289,7 +290,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B, P>, ConnectionError>
+        -> Result<StreamRef<B, P>, SendError>
     {
         use http::method;
         use super::stream::ContentLength;
@@ -383,7 +384,7 @@ impl<B, P> StreamRef<B, P>
           P: Peer,
 {
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -399,7 +400,7 @@ impl<B, P> StreamRef<B, P>
         })
     }
 
-    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ConnectionError>
+    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), SendError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -426,7 +427,7 @@ impl<B, P> StreamRef<B, P>
     }
 
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -563,7 +564,7 @@ impl<B, P> Actions<B, P>
           P: Peer,
 {
     fn ensure_not_idle(&mut self, id: StreamId)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         if self.is_local_init(id) {
             self.send.ensure_not_idle(id)

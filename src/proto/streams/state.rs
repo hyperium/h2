@@ -1,7 +1,5 @@
-use ConnectionError;
-use proto::ProtoError;
-use error::Reason;
-use error::Reason::*;
+use codec::{SendError, RecvError};
+use proto;
 
 use self::Inner::*;
 use self::Peer::*;
@@ -81,7 +79,7 @@ enum Cause {
 
 impl State {
     /// Opens the send-half of a stream if it is not already open.
-    pub fn send_open(&mut self, eos: bool) -> Result<(), ConnectionError> {
+    pub fn send_open(&mut self, eos: bool) -> Result<(), SendError> {
         let local = Peer::Streaming;
 
         self.inner = match self.inner {
@@ -125,7 +123,7 @@ impl State {
     /// frame is received.
     ///
     /// Returns true if this transitions the state to Open
-    pub fn recv_open(&mut self, eos: bool) -> Result<bool, ProtoError> {
+    pub fn recv_open(&mut self, eos: bool) -> Result<bool, RecvError> {
         let remote = Peer::Streaming;
         let mut initial = false;
 
@@ -173,7 +171,7 @@ impl State {
             }
             _ => {
                 // All other transitions result in a protocol error
-                return Err(ProtoError::Connection(ProtocolError));
+                return Err(RecvError::Connection(ProtocolError));
             }
         };
 
@@ -181,7 +179,7 @@ impl State {
     }
 
     /// Transition from Idle -> ReservedRemote
-    pub fn reserve_remote(&mut self) -> Result<(), ConnectionError> {
+    pub fn reserve_remote(&mut self) -> Result<(), RecvError> {
         match self.inner {
             Idle => {
                 self.inner = ReservedRemote;
@@ -192,7 +190,7 @@ impl State {
     }
 
     /// Indicates that the remote side will not send more data to the local.
-    pub fn recv_close(&mut self) -> Result<(), ProtoError> {
+    pub fn recv_close(&mut self) -> Result<(), RecvError> {
         match self.inner {
             Open { local, .. } => {
                 // The remote side will continue to receive data.
@@ -205,26 +203,27 @@ impl State {
                 self.inner = Closed(None);
                 Ok(())
             }
-            _ => Err(ProtoError::Connection(ProtocolError)),
+            _ => Err(RecvError::Connection(ProtocolError)),
         }
     }
 
-    pub fn recv_err(&mut self, err: &ConnectionError) {
+    pub fn recv_err(&mut self, err: &proto::Error) {
+        use proto::Error::*;
+
         match self.inner {
             Closed(..) => {}
             _ => {
                 trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
-                    ConnectionError::Proto(reason) => Some(Cause::Proto(reason)),
-                    ConnectionError::Io(..) => Some(Cause::Io),
-                    ref e => panic!("cannot terminate stream with user error; err={:?}", e),
+                    Proto(reason) => Some(Cause::Proto(reason)),
+                    Io(..) => Some(Cause::Io),
                 });
             }
         }
     }
 
     /// Indicates that the local side will not send more data to the local.
-    pub fn send_close(&mut self) -> Result<(), ConnectionError> {
+    pub fn send_close(&mut self) -> Result<(), SendError> {
         match self.inner {
             Open { remote, .. } => {
                 // The remote side will continue to receive data.
@@ -306,16 +305,16 @@ impl State {
         }
     }
 
-    pub fn ensure_recv_open(&self) -> Result<(), ConnectionError> {
+    pub fn ensure_recv_open(&self) -> Result<(), proto::Error> {
         use std::io;
 
         // TODO: Is this correct?
         match self.inner {
             Closed(Some(Cause::Proto(reason))) => {
-                Err(ConnectionError::Proto(reason))
+                Err(proto::Error::Proto(reason))
             }
             Closed(Some(Cause::Io)) => {
-                Err(ConnectionError::Io(io::ErrorKind::BrokenPipe.into()))
+                Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into()))
             }
             _ => Ok(()),
         }

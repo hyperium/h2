@@ -1,9 +1,13 @@
 mod connection;
+mod error;
+mod peer;
 mod ping_pong;
 mod settings;
 mod streams;
 
 pub(crate) use self::connection::Connection;
+pub(crate) use self::error::Error;
+pub(crate) use self::peer::Peer;
 pub(crate) use self::streams::{Streams, StreamRef};
 
 use codec::{Codec, FramedRead, FramedWrite};
@@ -24,38 +28,9 @@ use tokio_io::codec::length_delimited;
 
 use std::{fmt, io};
 
-/// Either a Client or a Server
-pub trait Peer {
-    /// Message type sent into the transport
-    type Send;
-
-    /// Message type polled from the transport
-    type Poll: fmt::Debug;
-
-    fn is_server() -> bool;
-
-    fn convert_send_message(
-        id: StreamId,
-        headers: Self::Send,
-        end_of_stream: bool) -> frame::Headers;
-
-    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, ProtoError>;
-}
-
 pub type PingPayload = [u8; 8];
 
 pub type WindowSize = u32;
-
-/// Errors that are received
-#[derive(Debug)]
-pub enum ProtoError {
-    Connection(Reason),
-    Stream {
-        id: StreamId,
-        reason: Reason,
-    },
-    Io(io::Error),
-}
 
 // Constants
 pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
@@ -94,12 +69,4 @@ pub(crate) fn from_framed_write<T, P, B>(framed_write: FramedWrite<T, Prioritize
     let codec = Codec::from_framed(FramedRead::new(framed));
 
     Connection::new(codec)
-}
-
-// ===== impl ProtoError =====
-
-impl From<io::Error> for ProtoError {
-    fn from(src: io::Error) -> Self {
-        ProtoError::Io(src)
-    }
 }
