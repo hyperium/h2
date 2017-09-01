@@ -1,7 +1,9 @@
 use super::*;
 use super::store::Resolve;
 
-use codec::{SendError, RecvError};
+use frame::Reason;
+
+use codec::UserError;
 use codec::UserError::*;
 
 use bytes::buf::Take;
@@ -84,7 +86,7 @@ impl<B, P> Prioritize<B, P>
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), SendError>
+        -> Result<(), UserError>
     {
         let sz = frame.payload().remaining();
 
@@ -97,9 +99,9 @@ impl<B, P> Prioritize<B, P>
 
         if !stream.state.is_send_streaming() {
             if stream.state.is_closed() {
-                return Err(InactiveStreamId.into());
+                return Err(InactiveStreamId);
             } else {
-                return Err(UnexpectedFrameType.into());
+                return Err(UnexpectedFrameType);
             }
         }
 
@@ -119,7 +121,7 @@ impl<B, P> Prioritize<B, P>
         }
 
         if frame.is_end_stream() {
-            try!(stream.state.send_close());
+            stream.state.send_close();
         }
 
         trace!("send_data (2); available={}; buffered={}",
@@ -165,7 +167,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_stream_window_update(&mut self,
                                      inc: WindowSize,
                                      stream: &mut store::Ptr<B, P>)
-        -> Result<(), RecvError>
+        -> Result<(), Reason>
     {
         trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
                stream.id, stream.state, inc, stream.send_flow);
@@ -183,7 +185,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_connection_window_update(&mut self,
                                          inc: WindowSize,
                                          store: &mut Store<B, P>)
-        -> Result<(), RecvError>
+        -> Result<(), Reason>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;

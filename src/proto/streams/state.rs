@@ -188,7 +188,7 @@ impl State {
                 self.inner = ReservedRemote;
                 Ok(())
             }
-            _ => Err(ProtocolError.into()),
+            _ => Err(RecvError::Connection(ProtocolError)),
         }
     }
 
@@ -226,20 +226,18 @@ impl State {
     }
 
     /// Indicates that the local side will not send more data to the local.
-    pub fn send_close(&mut self) -> Result<(), SendError> {
+    pub fn send_close(&mut self) {
         match self.inner {
             Open { remote, .. } => {
                 // The remote side will continue to receive data.
                 trace!("send_close: Open => HalfClosedLocal({:?})", remote);
                 self.inner = HalfClosedLocal(remote);
-                Ok(())
             }
             HalfClosedRemote(..) => {
                 trace!("send_close: HalfClosedRemote => Closed");
                 self.inner = Closed(None);
-                Ok(())
             }
-            _ => Err(ProtocolError.into()),
+            _ => panic!("transition send_close on unexpected state"),
         }
     }
 

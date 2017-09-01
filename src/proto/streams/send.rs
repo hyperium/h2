@@ -1,6 +1,6 @@
 use client;
 use frame::{self, Reason};
-use codec::{SendError, RecvError};
+use codec::{RecvError, UserError};
 use codec::UserError::*;
 use proto::*;
 use super::*;
@@ -60,7 +60,7 @@ where B: Buf,
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open(&mut self)
-        -> Result<StreamId, SendError>
+        -> Result<StreamId, UserError>
     {
         try!(self.ensure_can_open());
 
@@ -83,7 +83,7 @@ where B: Buf,
                         frame: frame::Headers,
                         stream: &mut store::Ptr<B, P>,
                         task: &mut Option<Task>)
-        -> Result<(), SendError>
+        -> Result<(), UserError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
@@ -135,7 +135,7 @@ where B: Buf,
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), SendError>
+        -> Result<(), UserError>
     {
         self.prioritize.send_data(frame, stream, task)
     }
@@ -144,14 +144,14 @@ where B: Buf,
                          frame: frame::Headers,
                          stream: &mut store::Ptr<B, P>,
                          task: &mut Option<Task>)
-        -> Result<(), SendError>
+        -> Result<(), UserError>
     {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
             return Err(UnexpectedFrameType.into());
         }
 
-        stream.state.send_close()?;
+        stream.state.send_close();
 
         trace!("send_trailers -- queuing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
@@ -174,7 +174,7 @@ where B: Buf,
     }
 
     pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Poll<Option<WindowSize>, SendError>
+        -> Poll<Option<WindowSize>, UserError>
     {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
@@ -204,7 +204,7 @@ where B: Buf,
     pub fn recv_connection_window_update(&mut self,
                                          frame: frame::WindowUpdate,
                                          store: &mut Store<B, P>)
-        -> Result<(), RecvError>
+        -> Result<(), Reason>
     {
         self.prioritize.recv_connection_window_update(frame.size_increment(), store)
     }
@@ -213,11 +213,13 @@ where B: Buf,
                                      sz: WindowSize,
                                      stream: &mut store::Ptr<B, P>,
                                      task: &mut Option<Task>)
-        -> Result<(), RecvError>
+        -> Result<(), Reason>
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
             self.send_reset(FlowControlError.into(), stream, task);
+
+            return Err(e);
         }
 
         Ok(())
@@ -273,13 +275,14 @@ where B: Buf,
 
                     // TODO: Should this notify the producer?
 
-                    Ok(())
+                    Ok::<_, RecvError>(())
                 })?;
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
                     self.recv_stream_window_update(inc, &mut stream, task)
+                        .map_err(RecvError::Connection)
                 })?;
             }
         }
@@ -306,10 +309,10 @@ where B: Buf,
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self) -> Result<(), SendError> {
+    fn ensure_can_open(&self) -> Result<(), UserError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
-            return Err(UnexpectedFrameType.into());
+            return Err(UnexpectedFrameType);
         }
 
         // TODO: Handle StreamId overflow

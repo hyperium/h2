@@ -325,7 +325,8 @@ impl<B, P> Recv<B, P>
         self.ensure_can_reserve(frame.promised_id())?;
 
         // Make sure that the stream state is valid
-        store[stream].state.ensure_recv_open()?;
+        store[stream].state.ensure_recv_open()
+            .map_err(|e| e.into_connection_recv_error())?;
 
         // TODO: Streams in the reserved states do not count towards the concurrency
         // limit. However, it seems like there should be a cap otherwise this
@@ -426,12 +427,12 @@ impl<B, P> Recv<B, P>
         if !P::is_server() {
             // Remote is a server and cannot open streams. PushPromise is
             // registered by reserving, so does not go through this path.
-            return Err(ProtocolError.into());
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         // Ensure that the ID is a valid server initiated ID
         if !id.is_client_initiated() {
-            return Err(ProtocolError.into());
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         Ok(())
@@ -444,11 +445,11 @@ impl<B, P> Recv<B, P>
         // TODO: Are there other rules?
         if P::is_server() {
             // The remote is a client and cannot reserve
-            return Err(ProtocolError.into());
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         if !promised_id.is_server_initiated() {
-            return Err(ProtocolError.into());
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         Ok(())
