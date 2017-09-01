@@ -16,17 +16,15 @@ use self::ping_pong::PingPong;
 use self::settings::Settings;
 use self::streams::Prioritized;
 
-use frame::{self, Frame, StreamId};
+use frame::{self, Frame};
 
-use futures::{self, task, Poll, Async, AsyncSink};
+use futures::{task, Poll, Async, AsyncSink};
 use futures::task::Task;
 
 use bytes::{Buf, IntoBuf};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::length_delimited;
-
-use std::{fmt, io};
 
 pub type PingPayload = [u8; 8];
 

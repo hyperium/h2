@@ -1,4 +1,5 @@
 use {client, server, proto};
+use frame::Reason;
 use codec::{SendError, RecvError};
 use proto::*;
 use super::*;
@@ -451,7 +452,7 @@ impl<B, P> StreamRef<B, P>
         me.actions.recv.body_is_empty(&stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -460,7 +461,7 @@ impl<B, P> StreamRef<B, P>
         me.actions.recv.poll_data(&mut stream)
     }
 
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -472,7 +473,7 @@ impl<B, P> StreamRef<B, P>
     /// Releases recv capacity back to the peer. This will result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
     pub fn release_capacity(&mut self, capacity: WindowSize)
-        -> Result<(), ConnectionError>
+        -> Result<(), SendError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -504,7 +505,7 @@ impl<B, P> StreamRef<B, P>
     }
 
     /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, ConnectionError> {
+    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, SendError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -524,7 +525,7 @@ impl<B> StreamRef<B, server::Peer>
     /// # Panics
     ///
     /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Result<Request<()>, ConnectionError> {
+    pub fn take_request(&self) -> Result<Request<()>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -536,7 +537,7 @@ impl<B> StreamRef<B, server::Peer>
 impl<B> StreamRef<B, client::Peer>
     where B: Buf,
 {
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 

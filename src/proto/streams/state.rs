@@ -1,4 +1,7 @@
+use frame::Reason;
+use frame::Reason::*;
 use codec::{SendError, RecvError};
+use codec::UserError::*;
 use proto;
 
 use self::Inner::*;

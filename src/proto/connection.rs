@@ -1,6 +1,6 @@
 use {client, frame, server, proto};
 use frame::Reason;
-use codec::{SendError, RecvError};
+use codec::SendError;
 
 use proto::*;
 

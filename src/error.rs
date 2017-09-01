@@ -1,5 +1,4 @@
-use {frame, http};
-use codec::{SendError, RecvError, UserError};
+use codec::UserError;
 use std::{error, fmt, io};
 
 pub use frame::Reason;
@@ -10,6 +9,7 @@ pub struct Error {
     kind: Kind,
 }
 
+#[derive(Debug)]
 enum Kind {
     /// An error caused by an action taken by the remote peer.
     ///
@@ -29,7 +29,7 @@ enum Kind {
 
 impl From<io::Error> for Error {
     fn from(src: io::Error) -> Error {
-        Error::Io(src)
+        Error { kind: Kind::Io(src) }
     }
 }
 
@@ -43,7 +43,7 @@ impl From<Reason> for Error {
 
 impl From<UserError> for Error {
     fn from(src: UserError) -> Error {
-        Error::UserError(src)
+        Error { kind: Kind::User(src) }
     }
 }
 

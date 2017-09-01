@@ -1,5 +1,7 @@
-use {frame, client};
-use codec::SendError;
+use client;
+use frame::{self, Reason};
+use codec::{SendError, RecvError};
+use codec::UserError::*;
 use proto::*;
 use super::*;
 
@@ -302,7 +304,7 @@ where B: Buf,
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self) -> Result<(), ConnectionError> {
+    fn ensure_can_open(&self) -> Result<(), SendError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
             return Err(UnexpectedFrameType.into());
