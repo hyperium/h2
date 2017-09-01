@@ -7,6 +7,7 @@ use super::store::Resolve;
 
 use http::HeaderMap;
 
+use std::io;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -250,7 +251,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
@@ -259,7 +260,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();

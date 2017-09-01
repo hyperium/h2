@@ -7,6 +7,8 @@ use super::*;
 
 use bytes::Buf;
 
+use std::io;
+
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
 pub(super) struct Send<B, P>
@@ -160,7 +162,7 @@ where B: Buf,
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         self.prioritize.poll_complete(store, dst)

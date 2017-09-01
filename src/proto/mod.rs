@@ -18,7 +18,7 @@ use self::streams::Prioritized;
 
 use frame::{self, Frame};
 
-use futures::{task, Poll, Async, AsyncSink};
+use futures::{task, Poll, Async};
 use futures::task::Task;
 
 use bytes::Buf;

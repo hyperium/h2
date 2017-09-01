@@ -32,7 +32,7 @@ impl<T, B> Codec<T, B>
         let framed_write = FramedWrite::new(io);
 
         // Delimit the frames
-        let inner = length_delimited::Builder::new()
+        let delimited = length_delimited::Builder::new()
             .big_endian()
             .length_field_length(3)
             .length_adjustment(9)
@@ -41,6 +41,8 @@ impl<T, B> Codec<T, B>
             // runtime.
             .max_frame_length(frame::DEFAULT_MAX_FRAME_SIZE as usize)
             .new_read(framed_write);
+
+        let inner = FramedRead::new(delimited);
 
         Codec { inner }
     }
@@ -78,15 +80,16 @@ impl<T, B> Codec<T, B>
 {
     /// Returns `Ready` when the codec can buffer a frame
     pub fn poll_ready(&mut self) -> Poll<(), io::Error> {
-        self.inner.poll_ready()
+        self.framed_write().poll_ready()
     }
 
     /// Buffer a frame.
     ///
     /// `poll_ready` must be called first to ensure that a frame may be
     /// accepted.
-    pub fn buffer(&mut self, item: Frame<B>)
-        -> Result<Frame<B>, UserError>
+    ///
+    /// TODO: Rename this to avoid conflicts with Sink::buffer
+    pub fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError>
     {
         self.framed_write().buffer(item)
     }

@@ -4,7 +4,7 @@ use frame::{self, Frame, FrameSize};
 use hpack;
 
 use futures::*;
-use tokio_io::AsyncWrite;
+use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{BytesMut, Buf, BufMut};
 
 use std::io::{self, Cursor};
@@ -86,9 +86,7 @@ impl<T, B> FramedWrite<T, B>
     ///
     /// `poll_ready` must be called first to ensure that a frame may be
     /// accepted.
-    pub fn buffer(&mut self, item: Frame<B>)
-        -> Result<Frame<B>, UserError>
-    {
+    pub fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
 
@@ -239,16 +237,6 @@ impl<T, B> FramedWrite<T, B> {
     }
 }
 
-/*
-impl<T: Stream, B> Stream for FramedWrite<T, B> {
-    type Item = T::Item;
-    type Error = T::Error;
-
-    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
-        self.inner.poll()
-    }
-}
-
 impl<T: io::Read, B> io::Read for FramedWrite<T, B> {
     fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
         self.inner.read(dst)
@@ -266,4 +254,3 @@ impl<T: AsyncRead, B> AsyncRead for FramedWrite<T, B> {
         self.inner.prepare_uninitialized_buffer(buf)
     }
 }
-*/

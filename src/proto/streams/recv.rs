@@ -8,6 +8,7 @@ use futures::Sink;
 
 use http::HeaderMap;
 
+use std::io;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
@@ -44,7 +45,7 @@ pub(super) struct Recv<B, P>
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
-    _p: PhantomData<(B)>,
+    _p: PhantomData<B>,
 }
 
 #[derive(Debug)]
@@ -455,23 +456,20 @@ impl<B, P> Recv<B, P>
 
     /// Send any pending refusals.
     pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
-        if let Some(stream_id) = self.refused.take() {
+        if let Some(stream_id) = self.refused {
+            try_ready!(dst.poll_ready());
+
+            // Create the RST_STREAM frame
             let frame = frame::Reset::new(stream_id, RefusedStream);
 
-            match dst.start_send(frame.into())? {
-                AsyncSink::Ready => {
-                    self.reset(stream_id, RefusedStream);
-                    return Ok(Async::Ready(()));
-                }
-                AsyncSink::NotReady(_) => {
-                    self.refused = Some(stream_id);
-                    return Ok(Async::NotReady);
-                }
-            }
+            // Buffer the frame
+            dst.buffer(frame.into()).ok().expect("invalid RST_STREAM frame");
         }
+
+        self.refused = None;
 
         Ok(Async::Ready(()))
     }
@@ -479,7 +477,7 @@ impl<B, P> Recv<B, P>
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         // Send any pending connection level window updates
@@ -493,7 +491,7 @@ impl<B, P> Recv<B, P>
 
     /// Send connection level window update
     fn send_connection_window_update<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         let incr = self.flow.unclaimed_capacity();
@@ -501,11 +499,14 @@ impl<B, P> Recv<B, P>
         if incr > 0 {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
-            if dst.start_send(frame.into())?.is_ready() {
-                self.flow.inc_window(incr).ok().expect("unexpected flow control state");
-            } else {
-                return Ok(Async::NotReady);
-            }
+            // Ensure the codec has capacity
+            try_ready!(dst.poll_ready());
+
+            // Buffer the WINDOW_UPDATE frame
+            dst.buffer(frame.into()).ok().expect("invalid WINDOW_UPDATE frame");
+
+            // Update flow control
+            self.flow.inc_window(incr).ok().expect("unexpected flow control state");
         }
 
         Ok(().into())
@@ -516,7 +517,7 @@ impl<B, P> Recv<B, P>
     pub fn send_stream_window_updates<T>(&mut self,
                                          store: &mut Store<B, P>,
                                          dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         loop {
@@ -539,10 +540,11 @@ impl<B, P> Recv<B, P>
             let incr = stream.recv_flow.unclaimed_capacity();
 
             if incr > 0 {
+                // Create the WINDOW_UPDATE frame
                 let frame = frame::WindowUpdate::new(stream.id, incr);
-                let res = dst.start_send(frame.into())?;
 
-                assert!(res.is_ready());
+                // Buffer it
+                dst.buffer(frame.into()).ok().expect("invalid WINDOW_UPDATE frame");
             }
         }
     }

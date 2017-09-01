@@ -1,11 +1,11 @@
 use {client, frame, server, proto};
 use frame::Reason;
-use codec::SendError;
+use codec::{SendError, RecvError};
 
 use proto::*;
 
 use http::Request;
-use futures::{Sink, Stream};
+use futures::{Stream};
 use bytes::{Bytes, IntoBuf};
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -75,7 +75,10 @@ impl<T, P, B> Connection<T, P, B>
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.
-    fn poll_ready(&mut self) -> Poll<(), SendError> {
+    ///
+    /// Returns `RecvError` as this may raise errors that are caused by delayed
+    /// processing of received frames.
+    fn poll_ready(&mut self) -> Poll<(), RecvError> {
         // The order of these calls don't really matter too much as only one
         // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
@@ -87,80 +90,95 @@ impl<T, P, B> Connection<T, P, B>
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
-        use proto::Error::*;
+        use codec::RecvError::*;
 
         loop {
+            // TODO: probably clean up this glob of code
             match self.state {
                 // When open, continue to poll a frame
-                State::Open => {},
-                // In an error state
-                _ => {
-                    try_ready!(self.poll_complete());
+                State::Open => {
+                    match self.poll2() {
+                        // The connection has shutdown normally
+                        Ok(Async::Ready(())) => return Ok(().into()),
+                        // The connection is not ready to make progress
+                        Ok(Async::NotReady) => {
+                            // Ensure all window updates have been sent.
+                            //
+                            // This will also handle flushing `self.codec`
+                            try_ready!(self.streams.poll_complete(&mut self.codec));
 
-                    // GO_AWAY frame has been sent, return the error
-                    return Err(self.state.error().unwrap().into());
-                }
-            }
+                            return Ok(Async::NotReady);
+                        }
+                        // Attempting to read a frame resulted in a connection level
+                        // error. This is handled by setting a GO_AWAY frame followed by
+                        // terminating the connection.
+                        Err(Connection(e)) => {
+                            debug!("Connection::poll; err={:?}", e);
 
-            match self.poll2() {
-                Err(Proto(e)) => {
-                    debug!("Connection::poll; err={:?}", e);
-                    let last_processed_id = self.streams.recv_err(&e.into());
-                    let frame = frame::GoAway::new(last_processed_id, e);
+                            // Reset all active streams
+                            let last_processed_id = self.streams.recv_err(&e.into());
 
-                    self.state = State::GoAway(frame);
+                            // Create the GO_AWAY frame with the last_processed_id
+                            let frame = frame::GoAway::new(last_processed_id, e);
+
+                            // Transition to the going away state.
+                            self.state = State::GoAway(frame);
+                        }
+                        // Attempting to read a frame resulted in a stream level error.
+                        // This is handled by resetting the frame then trying to read
+                        // another frame.
+                        Err(Stream { id, reason }) => {
+                            trace!("stream level error; id={:?}; reason={:?}", id, reason);
+                            self.streams.send_reset(id, reason);
+                        }
+                        // Attempting to read a frame resulted in an I/O error. All
+                        // active streams must be reset.
+                        //
+                        // TODO: Are I/O errors recoverable?
+                        Err(Io(e)) => {
+                            let e = e.into();
+
+                            // Reset all active streams
+                            self.streams.recv_err(&e);
+
+                            // Return the error
+                            return Err(e);
+                        }
+                    }
+                },
+                State::GoAway(frame) => {
+                    // Ensure the codec is ready to accept the frame
+                    try_ready!(self.codec.poll_ready());
+
+                    // Buffer the GO_AWAY frame
+                    self.codec.buffer(frame.into())
+                        .ok().expect("invalid GO_AWAY frame");
+
+                    // GO_AWAY sent, transition the connection to an errored state
+                    self.state = State::Flush(frame.reason());
                 }
-                Err(e) => {
-                    // TODO: Are I/O errors recoverable?
-                    self.streams.recv_err(&e);
-                    return Err(e);
+                State::Flush(reason) => {
+                    // Flush the codec
+                    try_ready!(self.codec.flush());
+
+                    // Transition the state to error
+                    self.state = State::Error(reason);
                 }
-                ret => return ret,
+                State::Error(reason) => {
+                    return Err(reason.into());
+                }
             }
         }
     }
 
-    fn poll2(&mut self) -> Poll<(), proto::Error> {
+    fn poll2(&mut self) -> Poll<(), RecvError> {
         use frame::Frame::*;
-        use codec::RecvError::*;
 
         loop {
             // First, ensure that the `Connection` is able to receive a frame
             try_ready!(self.poll_ready());
 
-            trace!("polling codec");
-
-            // Poll a frame from the codec.
-            let frame = match self.codec.poll() {
-                // Received a frame
-                Ok(Async::Ready(frame)) => frame,
-                // Socket not ready, try to flush any pending data
-                Ok(Async::NotReady) => {
-                    // Flush any pending writes
-                    let _ = self.poll_complete()?;
-
-                    // The codec is not read
-                    return Ok(Async::NotReady);
-                }
-                // Connection level error, set GO_AWAY and close connection
-                Err(Connection(reason)) => {
-                    return Err(reason.into());
-                }
-                // Stream level error, reset the stream and try to poll again
-                Err(Stream { id, reason }) => {
-                    trace!("stream level error; id={:?}; reason={:?}", id, reason);
-                    self.streams.send_reset(id, reason);
-                    continue;
-                }
-                // I/O error, nothing more can be done
-                Err(Io(err)) => {
-                    return Err(err.into());
-                }
-            };
-
-            debug!("recv; frame={:?}", frame);
-
-            match frame {
+            match try_ready!(self.codec.poll()) {
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
                     try!(self.streams.recv_headers(frame));
@@ -203,37 +221,6 @@ impl<T, P, B> Connection<T, P, B>
                     // TODO: Is this correct?
                     trace!("codec closed");
                     return Ok(Async::Ready(()));
-                }
-            }
-        }
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), SendError> {
-        loop {
-            match self.state {
-                State::Open => {
-                    try_ready!(self.poll_ready());
-
-                    // Ensure all window updates have been sent.
-                    try_ready!(self.streams.poll_complete(&mut self.codec));
-
-                    return Ok(().into());
-                }
-                State::GoAway(frame) => {
-                    if !self.codec.start_send(frame.into())?.is_ready() {
-                        // Not ready to send the frame... try again later.
-                        return Ok(Async::NotReady);
-                    }
-
-                    // GO_AWAY sent, transition the connection to an errored state
-                    self.state = State::Flush(frame.reason());
-                }
-                State::Flush(reason) => {
-                    try_ready!(self.codec.poll_complete());
-                    self.state = State::Error(reason);
-                }
-                State::Error(..) => {
-                    return Ok(().into());
                 }
             }
         }

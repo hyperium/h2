@@ -7,6 +7,7 @@ use codec::UserError::*;
 use bytes::buf::Take;
 use futures::Sink;
 
+use std::io;
 use std::{fmt, cmp};
 
 #[derive(Debug)]
@@ -287,7 +288,7 @@ impl<B, P> Prioritize<B, P>
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), SendError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         // Ensure codec is ready
@@ -306,22 +307,17 @@ impl<B, P> Prioritize<B, P>
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
 
-                    let res = dst.start_send(frame)?;
-
-                    // We already verified that `dst` is ready to accept the
-                    // write
-                    assert!(res.is_ready());
+                    dst.buffer(frame).ok().expect("invalid frame");
 
                     // Ensure the codec is ready to try the loop again.
                     try_ready!(dst.poll_ready());
 
                     // Because, always try to reclaim...
                     self.reclaim_frame(store, dst);
-
                 }
                 None => {
                     // Try to flush the codec.
-                    try_ready!(dst.poll_complete());
+                    try_ready!(dst.flush());
 
                     // This might release a data frame...
                     if !self.reclaim_frame(store, dst) {
