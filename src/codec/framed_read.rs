@@ -1,6 +1,4 @@
-use super::framed_write::FramedWrite;
-
-use codec::{RecvError, SendError};
+use codec::RecvError;
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
 use frame::Reason::*;
@@ -11,10 +9,8 @@ use futures::*;
 
 use bytes::{BytesMut, Buf};
 
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
-
-use std::io;
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
@@ -248,34 +244,5 @@ impl<T> Stream for FramedRead<T>
                 return Ok(Async::Ready(Some(frame)));
             }
         }
-    }
-}
-
-impl<T: Sink> Sink for FramedRead<T> {
-    type SinkItem = T::SinkItem;
-    type SinkError = T::SinkError;
-
-    fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
-        self.inner.get_mut().start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
-        self.inner.get_mut().poll_complete()
-    }
-}
-
-impl<T: AsyncWrite, B: Buf> FramedRead<FramedWrite<T, B>> {
-    pub fn poll_ready(&mut self) -> Poll<(), SendError> {
-        self.inner.get_mut().poll_ready()
-    }
-}
-
-impl<T: io::Write> io::Write for FramedRead<T> {
-    fn write(&mut self, src: &[u8]) -> io::Result<usize> {
-        self.inner.get_mut().write(src)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.get_mut().flush()
     }
 }

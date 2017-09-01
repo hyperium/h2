@@ -1,6 +1,6 @@
 use frame::{StreamId, Headers, Pseudo, Settings};
 use frame::Reason::*;
-use codec::RecvError;
+use codec::{Codec, RecvError};
 use proto::{self, Connection, WindowSize};
 
 use http::{Request, Response, HeaderMap};
@@ -67,13 +67,16 @@ impl<T, B> Client<T, B>
             |(io, _)| {
                 debug!("client connection bound");
 
-                let mut framed_write = proto::framed_write(io);
+                // Create the codec
+                let mut codec = Codec::new(io);
+
+                // Create the initial SETTINGS frame
                 let settings = Settings::default();
 
                 // Send initial settings frame
-                match framed_write.start_send(settings.into()) {
+                match codec.start_send(settings.into()) {
                     Ok(AsyncSink::Ready) => {
-                        let connection = proto::from_framed_write(framed_write);
+                        let connection = Connection::new(codec);
                         Ok(Client { connection })
                     }
                     Ok(_) => unreachable!(),

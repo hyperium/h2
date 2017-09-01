@@ -1,6 +1,6 @@
 use frame::{self, StreamId, Reason};
 use frame::Reason::*;
-use codec::RecvError;
+use codec::{Codec, RecvError};
 use proto::{self, Connection, WindowSize};
 
 use http::{Request, Response, HeaderMap};
@@ -76,11 +76,14 @@ impl<T, B> Server<T, B>
     /// Returns a future which resolves to the connection value once the H2
     /// handshake has been completed.
     pub fn handshake2(io: T) -> Handshake<T, B> {
-        let mut framed_write = proto::framed_write(io);
+        // Create the codec
+        let mut codec = Codec::new(io);
+
+        // Create the initial SETTINGS frame
         let settings = frame::Settings::default();
 
        // Send initial settings frame
-        match framed_write.start_send(settings.into()) {
+        match codec.start_send(settings.into()) {
             Ok(AsyncSink::Ready) => {}
             Ok(_) => unreachable!(),
             Err(e) => {
@@ -91,10 +94,10 @@ impl<T, B> Server<T, B>
         }
 
         // Flush pending settings frame and then wait for the client preface
-        let handshake = Flush::new(framed_write)
+        let handshake = Flush::new(codec)
             .and_then(ReadPreface::new)
-            .map(move |framed_write| {
-                let connection = proto::from_framed_write(framed_write);
+            .map(move |codec| {
+                let connection = Connection::new(codec);
                 Server { connection }
             })
             ;
