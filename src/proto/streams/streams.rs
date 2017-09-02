@@ -215,7 +215,7 @@ impl<B, P> Streams<B, P>
                     &mut me.actions.task);
             } else {
                 me.actions.recv.ensure_not_idle(id)
-                    .map_err(RecvError::Connection);
+                    .map_err(RecvError::Connection)?;
             }
         }
 

@@ -252,21 +252,3 @@ impl<T, B> Connection<T, server::Peer, B>
         self.streams.next_incoming()
     }
 }
-
-// ====== impl State =====
-
-impl State {
-    fn is_open(&self) -> bool {
-        match *self {
-            State::Open => true,
-            _ => false,
-        }
-    }
-
-    fn error(&self) -> Option<Reason> {
-        match *self {
-            State::Error(reason) => Some(reason),
-            _ => None,
-        }
-    }
-}

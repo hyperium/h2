@@ -4,8 +4,6 @@ use codec::{RecvError, UserError};
 use proto::*;
 use super::*;
 
-use futures::Sink;
-
 use http::HeaderMap;
 
 use std::io;
@@ -607,10 +605,6 @@ impl<B, P> Recv<B, P>
                 }
             }
         }
-    }
-
-    fn reset(&mut self, _stream_id: StreamId, _reason: Reason) {
-        unimplemented!();
     }
 }
 

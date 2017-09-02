@@ -4,9 +4,9 @@ use codec::{Codec, RecvError};
 use proto::{self, Connection, WindowSize};
 
 use http::{Request, Response, HeaderMap};
-use futures::{self, Future, Sink, Poll, Async, AsyncSink, IntoFuture};
+use futures::{self, Future, Poll, Async};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, IntoBuf};
+use bytes::{Bytes, Buf, IntoBuf};
 
 use std::fmt;
 
@@ -42,13 +42,13 @@ pub struct Send<T> {
 }
 
 /// Flush a Sink
-struct Flush<T> {
-    inner: Option<T>,
+struct Flush<T, B> {
+    codec: Option<Codec<T, B>>,
 }
 
 /// Read the client connection preface
-struct ReadPreface<T> {
-    inner: Option<T>,
+struct ReadPreface<T, B> {
+    codec: Option<Codec<T, B>>,
     pos: usize,
 }
 
@@ -83,15 +83,8 @@ impl<T, B> Server<T, B>
         let settings = frame::Settings::default();
 
        // Send initial settings frame
-        match codec.start_send(settings.into()) {
-            Ok(AsyncSink::Ready) => {}
-            Ok(_) => unreachable!(),
-            Err(e) => {
-                return Handshake {
-                    inner: Box::new(Err(::Error::from(e)).into_future()),
-                }
-            }
-        }
+       codec.buffer(settings.into())
+           .ok().expect("invalid SETTINGS frame");
 
         // Flush pending settings frame and then wait for the client preface
         let handshake = Flush::new(codec)
@@ -108,6 +101,7 @@ impl<T, B> Server<T, B>
     /// Returns `Ready` when the underlying connection has closed.
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll()
+            .map_err(Into::into)
     }
 }
 
@@ -132,7 +126,7 @@ impl<T, B> futures::Stream for Server<T, B>
 
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
-            let (head, _) = inner.take_request()?.into_parts();
+            let (head, _) = inner.take_request().into_parts();
             let body = Body { inner: inner.clone() };
 
             let request = Request::from_parts(head, body);
@@ -165,6 +159,7 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ::Error>
     {
         self.inner.send_response(response, end_of_stream)
+            .map_err(Into::into)
     }
 
     /// Request capacity to send data
@@ -189,6 +184,7 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ::Error>
     {
         self.inner.send_data(data.into_buf(), end_of_stream)
+            .map_err(Into::into)
     }
 
     /// Send trailers
@@ -196,6 +192,7 @@ impl<B: IntoBuf> Stream<B> {
         -> Result<(), ::Error>
     {
         self.inner.send_trailers(trailers)
+            .map_err(Into::into)
     }
 
     pub fn send_reset(mut self, reason: Reason) {
@@ -227,6 +224,7 @@ impl<B: IntoBuf> Body<B> {
 
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
         self.inner.release_capacity(sz as proto::WindowSize)
+            .map_err(Into::into)
     }
 
     /// Poll trailers
@@ -234,6 +232,7 @@ impl<B: IntoBuf> Body<B> {
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.poll_trailers()
+            .map_err(Into::into)
     }
 }
 
@@ -243,6 +242,7 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.inner.poll_data()
+            .map_err(Into::into)
     }
 }
 
@@ -301,41 +301,54 @@ impl<T> Future for Send<T>
 
 // ===== impl Flush =====
 
-impl<T> Flush<T> {
-    fn new(inner: T) -> Self {
-        Flush { inner: Some(inner) }
+impl<T, B: Buf> Flush<T, B> {
+    fn new(codec: Codec<T, B>) -> Self {
+        Flush { codec: Some(codec) }
     }
 }
 
-impl<T: Sink> Future for Flush<T> {
-    type Item = T;
-    type Error = T::SinkError;
+impl<T, B> Future for Flush<T, B>
+    where T: AsyncWrite,
+          B: Buf,
+{
+    type Item = Codec<T, B>;
+    type Error = ::Error;
 
-    fn poll(&mut self) -> Poll<T, Self::Error> {
-        try_ready!(self.inner.as_mut().unwrap().poll_complete());
-        Ok(Async::Ready(self.inner.take().unwrap()))
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Flush the codec
+        try_ready!(self.codec.as_mut().unwrap().flush());
+
+        // Return the codec
+        Ok(Async::Ready(self.codec.take().unwrap()))
     }
 }
 
-impl<T> ReadPreface<T> {
-    fn new(inner: T) -> Self {
+impl<T, B: Buf> ReadPreface<T, B> {
+    fn new(codec: Codec<T, B>) -> Self {
         ReadPreface {
-            inner: Some(inner),
+            codec: Some(codec),
             pos: 0,
         }
     }
+
+    fn inner_mut(&mut self) -> &mut T {
+        self.codec.as_mut().unwrap().get_mut()
+    }
 }
 
-impl<T: AsyncRead> Future for ReadPreface<T> {
-    type Item = T;
+impl<T, B> Future for ReadPreface<T, B>
+    where T: AsyncRead,
+          B: Buf,
+{
+    type Item = Codec<T, B>;
     type Error = ::Error;
 
-    fn poll(&mut self) -> Poll<T, Self::Error> {
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut buf = [0; 24];
         let mut rem = PREFACE.len() - self.pos;
 
         while rem > 0 {
-            let n = try_nb!(self.inner.as_mut().unwrap().read(&mut buf[..rem]));
+            let n = try_nb!(self.inner_mut().read(&mut buf[..rem]));
 
             if PREFACE[self.pos..self.pos+n] != buf[..n] {
                 // TODO: Should this just write the GO_AWAY frame directly?
@@ -346,7 +359,7 @@ impl<T: AsyncRead> Future for ReadPreface<T> {
             rem -= n; // TODO test
         }
 
-        Ok(Async::Ready(self.inner.take().unwrap()))
+        Ok(Async::Ready(self.codec.take().unwrap()))
     }
 }
 

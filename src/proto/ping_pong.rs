@@ -1,8 +1,6 @@
 use frame::Ping;
 use proto::*;
 
-use futures::Sink;
-
 use std::io;
 
 /// Acknowledges ping requests from the remote.

@@ -48,13 +48,11 @@ impl From<io::Error> for Error {
     }
 }
 
-/*
 impl From<Reason> for Error {
     fn from(src: Reason) -> Error {
-        Error::Proto(src)
+        Error { kind: Kind::Proto(src) }
     }
 }
-*/
 
 impl From<SendError> for Error {
     fn from(src: SendError) -> Error {
@@ -71,37 +69,13 @@ impl From<UserError> for Error {
     }
 }
 
-/*
-impl From<Error> for io::Error {
-    fn from(src: Error) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, src)
-    }
-}
-
-impl From<http::Error> for Error {
-    fn from(_: http::Error) -> Self {
-        // TODO: Should this always be a protocol error?
-        Reason::ProtocolError.into()
-    }
-}
-
-impl From<frame::Error> for Error {
-    fn from(src: frame::Error) -> Error {
-        match src {
-            // TODO: implement
-            _ => Error::Proto(Reason::ProtocolError),
-        }
-    }
-}
-*/
-
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         use self::Kind::*;
 
         match self.kind {
-            Proto(reason) => write!(fmt, "protocol error: {}", reason),
-            User(e) => write!(fmt, "user error: {}", e),
+            Proto(ref reason) => write!(fmt, "protocol error: {}", reason),
+            User(ref e) => write!(fmt, "user error: {}", e),
             Io(ref e) => fmt::Display::fmt(e, fmt),
         }
     }
@@ -114,7 +88,7 @@ impl error::Error for Error {
         match self.kind {
             Io(ref e) => error::Error::description(e),
             Proto(ref reason) => reason.description(),
-            User(user) => user.description(),
+            User(ref user) => user.description(),
         }
     }
 }

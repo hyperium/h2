@@ -7,7 +7,7 @@ use hpack;
 
 use futures::*;
 
-use bytes::{BytesMut, Buf};
+use bytes::BytesMut;
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;

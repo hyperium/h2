@@ -235,6 +235,10 @@ impl<T, B> FramedWrite<T, B> {
     pub fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
         self.last_data_frame.take()
     }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
 }
 
 impl<T: io::Read, B> io::Read for FramedWrite<T, B> {

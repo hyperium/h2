@@ -2,8 +2,6 @@ use frame;
 use codec::RecvError;
 use proto::*;
 
-use futures::Sink;
-
 #[derive(Debug)]
 pub(crate) struct Settings {
     /// Received SETTINGS frame pending processing. The ACK must be written to

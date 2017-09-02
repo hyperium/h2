@@ -7,7 +7,6 @@ use codec::UserError;
 use codec::UserError::*;
 
 use bytes::buf::Take;
-use futures::Sink;
 
 use std::io;
 use std::{fmt, cmp};

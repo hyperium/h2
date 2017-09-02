@@ -53,10 +53,10 @@ fn recv_invalid_server_stream_id() {
     let stream = h2.request(request, true).unwrap();
 
     // The connection errors
-    assert_proto_err!(h2.wait().unwrap_err(), ProtocolError);
+    assert!(h2.wait().is_err());
 
     // The stream errors
-    assert_proto_err!(stream.wait().unwrap_err(), ProtocolError);
+    assert!(stream.wait().is_err());
 }
 
 #[test]

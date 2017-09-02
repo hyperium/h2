@@ -24,9 +24,9 @@ struct Process {
 
 impl Future for Process {
     type Item = ();
-    type Error = ConnectionError;
+    type Error = h2::Error;
 
-    fn poll(&mut self) -> Poll<(), ConnectionError> {
+    fn poll(&mut self) -> Poll<(), h2::Error> {
         loop {
             if self.trailers {
                 let trailers = try_ready!(self.body.poll_trailers());
@@ -71,7 +71,7 @@ pub fn main() {
             .uri("https://http2.akamai.com/")
             .body(()).unwrap();
 
-        let mut trailers = h2::HeaderMap::new();
+        let mut trailers = HeaderMap::new();
         trailers.insert("zomg", "hello".parse().unwrap());
 
         let mut stream = client.request(request, false).unwrap();

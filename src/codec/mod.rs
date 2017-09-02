@@ -65,6 +65,10 @@ impl<T, B> Codec<T, B> {
         self.inner.get_ref().max_frame_size()
     }
 
+    pub fn get_mut(&mut self) -> &mut T {
+        self.inner.get_mut().get_mut()
+    }
+
     fn framed_read(&mut self) -> &mut FramedRead<FramedWrite<T, B>> {
         &mut self.inner
     }
