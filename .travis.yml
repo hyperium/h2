@@ -15,8 +15,8 @@ matrix:
 script:
   # Run tests
   - cargo test
-  # Run h2-codec tests
-  - cd util/h2-codec && cargo test
+  # Run tests with unstable feature
+  - cargo test --features unstable
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
   # Generate docs

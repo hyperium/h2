@@ -3,6 +3,14 @@ name = "h2"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 
+[features]
+
+# Enables **unstable** APIs. Any API exposed by this feature has no backwards
+# compatibility guarantees. In other words, you should not use this feature for
+# anything besides experimentation. Definitely **do not** publish a crate that
+# depends on this feature.
+unstable = []
+
 [dependencies]
 futures = "0.1"
 tokio-io = "0.1.3"

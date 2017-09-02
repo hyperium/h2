@@ -65,7 +65,7 @@ impl<T, B> Codec<T, B> {
         self.inner.get_ref().max_frame_size()
     }
 
-    #[cfg(codec)]
+    #[cfg(feature = "unstable")]
     pub fn get_ref(&self) -> &T {
         self.inner.get_ref().get_ref()
     }

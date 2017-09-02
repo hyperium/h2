@@ -236,11 +236,6 @@ impl<T, B> FramedWrite<T, B> {
         self.last_data_frame.take()
     }
 
-    #[cfg(codec)]
-    pub fn get_ref(&self) -> &T {
-        &self.inner
-    }
-
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.inner
     }
@@ -261,5 +256,16 @@ impl<T: AsyncRead, B> AsyncRead for FramedWrite<T, B> {
 
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
         self.inner.prepare_uninitialized_buffer(buf)
+    }
+}
+
+#[cfg(feature = "unstable")]
+mod unstable {
+    use super::*;
+
+    impl<T, B> FramedWrite<T, B> {
+        pub fn get_ref(&self) -> &T {
+            &self.inner
+        }
     }
 }

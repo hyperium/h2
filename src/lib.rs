@@ -28,9 +28,17 @@ mod error;
 mod codec;
 mod hpack;
 mod proto;
+
+#[cfg(not(feature = "unstable"))]
 mod frame;
+
+#[cfg(feature = "unstable")]
+pub mod frame;
 
 pub mod client;
 pub mod server;
 
 pub use error::{Error, Reason};
+
+#[cfg(feature = "unstable")]
+pub use codec::{Codec, SendError, RecvError, UserError};
