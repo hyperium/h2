@@ -1,3 +1,5 @@
+#![deny(warnings, missing_debug_implementations)]
+
 extern crate http;
 extern crate fnv;
 extern crate bytes;
@@ -16,7 +18,9 @@ extern crate log;
 mod hpack;
 
 #[path = "../../../src/frame/mod.rs"]
-mod frame;
+pub mod frame;
 
 #[path = "../../../src/codec/mod.rs"]
 mod codec;
+
+pub use codec::{Codec, RecvError, SendError, UserError};
