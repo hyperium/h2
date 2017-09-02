@@ -1,6 +1,7 @@
-use {hpack, ConnectionError};
-use error::User::*;
+use codec::UserError;
+use codec::UserError::*;
 use frame::{self, Frame, FrameSize};
+use hpack;
 
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -64,10 +65,14 @@ impl<T, B> FramedWrite<T, B>
         }
     }
 
-    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
+    /// Returns `Ready` when `send` is able to accept a frame
+    ///
+    /// Calling this function may result in the current contents of the buffer
+    /// to be flushed to `T`.
+    pub fn poll_ready(&mut self) -> Poll<(), io::Error> {
         if !self.has_capacity() {
             // Try flushing
-            try!(self.poll_complete());
+            try!(self.flush());
 
             if !self.has_capacity() {
                 return Ok(Async::NotReady);
@@ -77,47 +82,13 @@ impl<T, B> FramedWrite<T, B>
         Ok(Async::Ready(()))
     }
 
-    fn has_capacity(&self) -> bool {
-        self.next.is_none() && self.buf.get_ref().remaining_mut() >= MIN_BUFFER_CAPACITY
-    }
-
-    fn is_empty(&self) -> bool {
-        match self.next {
-            Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
-            _ => !self.buf.has_remaining(),
-        }
-    }
-}
-
-impl<T, B> FramedWrite<T, B> {
-    pub fn max_frame_size(&self) -> usize {
-        self.max_frame_size as usize
-    }
-
-    pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
-        if let Some(val) = settings.max_frame_size() {
-            self.max_frame_size = val;
-        }
-    }
-
-    pub fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
-        self.last_data_frame.take()
-    }
-}
-
-impl<T, B> Sink for FramedWrite<T, B>
-    where T: AsyncWrite,
-          B: Buf,
-{
-    type SinkItem = Frame<B>;
-    type SinkError = ConnectionError;
-
-    fn start_send(&mut self, item: Self::SinkItem)
-        -> StartSend<Self::SinkItem, ConnectionError>
-    {
-        if !try!(self.poll_ready()).is_ready() {
-            return Ok(AsyncSink::NotReady(item));
-        }
+    /// Buffer a frame.
+    ///
+    /// `poll_ready` must be called first to ensure that a frame may be
+    /// accepted.
+    pub fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
+        // Ensure that we have enough capacity to accept the write.
+        assert!(self.has_capacity());
 
         debug!("send; frame={:?}", item);
 
@@ -127,7 +98,7 @@ impl<T, B> Sink for FramedWrite<T, B>
                 let len = v.payload().remaining();
 
                 if len > self.max_frame_size() {
-                    return Err(PayloadTooBig.into());
+                    return Err(PayloadTooBig);
                 }
 
                 if len >= CHAIN_THRESHOLD {
@@ -188,11 +159,12 @@ impl<T, B> Sink for FramedWrite<T, B>
             }
         }
 
-        Ok(AsyncSink::Ready)
+        Ok(())
     }
 
-    fn poll_complete(&mut self) -> Poll<(), ConnectionError> {
-        trace!("poll_complete");
+    /// Flush buffered data to the wire
+    pub fn flush(&mut self) -> Poll<(), io::Error> {
+        trace!("flush");
 
         while !self.is_empty() {
             match self.next {
@@ -228,18 +200,44 @@ impl<T, B> Sink for FramedWrite<T, B>
         Ok(Async::Ready(()))
     }
 
-    fn close(&mut self) -> Poll<(), ConnectionError> {
-        try_ready!(self.poll_complete());
+    /// Close the codec
+    pub fn shutdown(&mut self) -> Poll<(), io::Error> {
+        try_ready!(self.flush());
         self.inner.shutdown().map_err(Into::into)
+    }
+
+    fn has_capacity(&self) -> bool {
+        self.next.is_none() && self.buf.get_ref().remaining_mut() >= MIN_BUFFER_CAPACITY
+    }
+
+    fn is_empty(&self) -> bool {
+        match self.next {
+            Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
+            _ => !self.buf.has_remaining(),
+        }
     }
 }
 
-impl<T: Stream, B> Stream for FramedWrite<T, B> {
-    type Item = T::Item;
-    type Error = T::Error;
+impl<T, B> FramedWrite<T, B> {
+    /// Returns the max frame size that can be sent
+    pub fn max_frame_size(&self) -> usize {
+        self.max_frame_size as usize
+    }
 
-    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
-        self.inner.poll()
+    /// Apply settings received by the peer
+    pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
+        if let Some(val) = settings.max_frame_size() {
+            self.max_frame_size = val;
+        }
+    }
+
+    /// Retrieve the last data frame that has been sent
+    pub fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
+        self.last_data_frame.take()
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.inner
     }
 }
 

@@ -1,8 +1,9 @@
-use {hpack, ConnectionError};
+use codec::RecvError;
 use frame::{self, Frame, Kind};
 use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
-use proto::*;
-use error::Reason::*;
+use frame::Reason::*;
+
+use hpack;
 
 use futures::*;
 
@@ -10,8 +11,6 @@ use bytes::BytesMut;
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
-
-use std::io;
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
@@ -54,8 +53,8 @@ impl<T> FramedRead<T> {
         // TODO: Is this needed?
     }
 
-    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, ProtoError> {
-        use self::ProtoError::*;
+    fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
+        use self::RecvError::*;
 
         trace!("decoding frame from {}B", bytes.len());
 
@@ -226,11 +225,11 @@ impl<T> FramedRead<T> {
     }
 }
 
-impl<T> futures::Stream for FramedRead<T>
+impl<T> Stream for FramedRead<T>
     where T: AsyncRead,
 {
     type Item = Frame;
-    type Error = ProtoError;
+    type Error = RecvError;
 
     fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         loop {
@@ -245,34 +244,5 @@ impl<T> futures::Stream for FramedRead<T>
                 return Ok(Async::Ready(Some(frame)));
             }
         }
-    }
-}
-
-impl<T: Sink> Sink for FramedRead<T> {
-    type SinkItem = T::SinkItem;
-    type SinkError = T::SinkError;
-
-    fn start_send(&mut self, item: T::SinkItem) -> StartSend<T::SinkItem, T::SinkError> {
-        self.inner.get_mut().start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), T::SinkError> {
-        self.inner.get_mut().poll_complete()
-    }
-}
-
-impl<T: AsyncWrite, B: Buf> FramedRead<FramedWrite<T, B>> {
-    pub fn poll_ready(&mut self) -> Poll<(), ConnectionError> {
-        self.inner.get_mut().poll_ready()
-    }
-}
-
-impl<T: io::Write> io::Write for FramedRead<T> {
-    fn write(&mut self, src: &[u8]) -> io::Result<usize> {
-        self.inner.get_mut().write(src)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.get_mut().flush()
     }
 }

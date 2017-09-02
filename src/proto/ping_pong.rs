@@ -1,7 +1,7 @@
 use frame::Ping;
 use proto::*;
 
-use futures::Sink;
+use std::io;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
@@ -45,15 +45,16 @@ impl<B> PingPong<B>
     }
 
     /// Send any pending pongs.
-    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), ConnectionError>
+    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         if let Some(pong) = self.sending_pong.take() {
-            if let AsyncSink::NotReady(pong) = dst.start_send(pong)? {
-                // If the pong can't be sent, save it.
+            if !dst.poll_ready()?.is_ready() {
                 self.sending_pong = Some(pong);
                 return Ok(Async::NotReady);
             }
+
+            dst.buffer(pong).ok().expect("invalid pong frame");
         }
 
         Ok(Async::Ready(()))

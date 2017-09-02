@@ -20,11 +20,9 @@ use self::state::State;
 use self::store::{Store, Entry};
 use self::stream::Stream;
 
-use {frame, ConnectionError};
 use frame::StreamId;
 use proto::*;
 use error::Reason::*;
-use error::User::*;
 
 use http::{Request, Response};
 use bytes::Bytes;

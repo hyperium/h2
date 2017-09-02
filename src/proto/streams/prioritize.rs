@@ -1,9 +1,14 @@
 use super::*;
 use super::store::Resolve;
 
-use bytes::buf::Take;
-use futures::Sink;
+use frame::Reason;
 
+use codec::UserError;
+use codec::UserError::*;
+
+use bytes::buf::Take;
+
+use std::io;
 use std::{fmt, cmp};
 
 #[derive(Debug)]
@@ -80,7 +85,7 @@ impl<B, P> Prioritize<B, P>
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         let sz = frame.payload().remaining();
 
@@ -93,9 +98,9 @@ impl<B, P> Prioritize<B, P>
 
         if !stream.state.is_send_streaming() {
             if stream.state.is_closed() {
-                return Err(InactiveStreamId.into());
+                return Err(InactiveStreamId);
             } else {
-                return Err(UnexpectedFrameType.into());
+                return Err(UnexpectedFrameType);
             }
         }
 
@@ -115,7 +120,7 @@ impl<B, P> Prioritize<B, P>
         }
 
         if frame.is_end_stream() {
-            try!(stream.state.send_close());
+            stream.state.send_close();
         }
 
         trace!("send_data (2); available={}; buffered={}",
@@ -161,7 +166,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_stream_window_update(&mut self,
                                      inc: WindowSize,
                                      stream: &mut store::Ptr<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
                stream.id, stream.state, inc, stream.send_flow);
@@ -179,7 +184,7 @@ impl<B, P> Prioritize<B, P>
     pub fn recv_connection_window_update(&mut self,
                                          inc: WindowSize,
                                          store: &mut Store<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         // Update the connection's window
         self.flow.inc_window(inc)?;
@@ -284,7 +289,7 @@ impl<B, P> Prioritize<B, P>
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         // Ensure codec is ready
@@ -303,22 +308,17 @@ impl<B, P> Prioritize<B, P>
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
 
-                    let res = dst.start_send(frame)?;
-
-                    // We already verified that `dst` is ready to accept the
-                    // write
-                    assert!(res.is_ready());
+                    dst.buffer(frame).ok().expect("invalid frame");
 
                     // Ensure the codec is ready to try the loop again.
                     try_ready!(dst.poll_ready());
 
                     // Because, always try to reclaim...
                     self.reclaim_frame(store, dst);
-
                 }
                 None => {
                     // Try to flush the codec.
-                    try_ready!(dst.poll_complete());
+                    try_ready!(dst.flush());
 
                     // This might release a data frame...
                     if !self.reclaim_frame(store, dst) {

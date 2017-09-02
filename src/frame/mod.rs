@@ -1,5 +1,4 @@
 use hpack;
-use error::{ConnectionError, Reason};
 
 use bytes::Bytes;
 
@@ -33,6 +32,7 @@ mod head;
 mod headers;
 mod ping;
 mod priority;
+mod reason;
 mod reset;
 mod settings;
 mod stream_id;
@@ -45,6 +45,7 @@ pub use self::head::{Head, Kind};
 pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
 pub use self::ping::Ping;
 pub use self::priority::{Priority, StreamDependency};
+pub use self::reason::Reason;
 pub use self::reset::Reset;
 pub use self::settings::Settings;
 pub use self::stream_id::StreamId;
@@ -113,34 +114,12 @@ impl<T> fmt::Debug for Frame<T> {
 /// Errors that can occur during parsing an HTTP/2 frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// A full frame header was not passed.
-    Short,
-
-    /// An unsupported value was set for the flag value.
-    BadFlag,
-
-    /// An unsupported value was set for the frame kind.
-    BadKind,
-
     /// A length value other than 8 was set on a PING message.
     BadFrameSize,
 
     /// The padding length was larger than the frame-header-specified
     /// length of the payload.
     TooMuchPadding,
-
-    /// The payload length specified by the frame header was shorter than
-    /// necessary for the parser settings specified and the frame type.
-    ///
-    /// This happens if, for instance, the priority flag is set and the
-    /// header length is shorter than a stream dependency.
-    ///
-    /// `PayloadLengthTooShort` should be treated as a protocol error.
-    PayloadLengthTooShort,
-
-    /// The payload length specified by the frame header of a settings frame
-    /// was not a round multiple of the size of a single setting.
-    PartialSettingLength,
 
     /// An invalid setting value was provided
     InvalidSettingValue,
@@ -172,15 +151,4 @@ pub enum Error {
 
     /// Failed to perform HPACK decoding
     Hpack(hpack::DecoderError),
-}
-
-// ===== impl Error =====
-
-impl From<Error> for ConnectionError {
-    fn from(src: Error) -> ConnectionError {
-        match src {
-            // TODO: implement
-            _ => ConnectionError::Proto(Reason::ProtocolError),
-        }
-    }
 }

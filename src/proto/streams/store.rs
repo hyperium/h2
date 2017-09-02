@@ -127,8 +127,8 @@ impl<B, P> Store<B, P>
         }
     }
 
-    pub fn for_each<F>(&mut self, mut f: F) -> Result<(), ConnectionError>
-        where F: FnMut(Ptr<B, P>) -> Result<(), ConnectionError>,
+    pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
+        where F: FnMut(Ptr<B, P>) -> Result<(), E>,
     {
         for &key in self.ids.values() {
             f(Ptr {

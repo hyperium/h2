@@ -1,6 +1,6 @@
-use ConnectionError;
+use frame::Reason;
+use frame::Reason::*;
 use proto::*;
-use error::Reason::*;
 
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
@@ -67,15 +67,15 @@ impl FlowControl {
     /// Increase the window size.
     ///
     /// This is called after receiving a WINDOW_UPDATE frame
-    pub fn inc_window(&mut self, sz: WindowSize) -> Result<(), ConnectionError> {
+    pub fn inc_window(&mut self, sz: WindowSize) -> Result<(), Reason> {
         let (val, overflow) = self.window_size.overflowing_add(sz as i32);
 
         if overflow {
-            return Err(FlowControlError.into());
+            return Err(FlowControlError);
         }
 
         if val > MAX_WINDOW_SIZE as i32 {
-            return Err(FlowControlError.into());
+            return Err(FlowControlError);
         }
 
         trace!("inc_window; sz={}; old={}; new={}", sz, self.window_size, val);

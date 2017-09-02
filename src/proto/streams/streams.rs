@@ -1,8 +1,13 @@
-use {client, server, HeaderMap};
+use {client, server, proto};
+use frame::Reason;
+use codec::{SendError, RecvError, UserError};
 use proto::*;
 use super::*;
 use super::store::Resolve;
 
+use http::HeaderMap;
+
+use std::io;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -66,7 +71,7 @@ impl<B, P> Streams<B, P>
 
     /// Process inbound headers
     pub fn recv_headers(&mut self, frame: frame::Headers)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
@@ -97,7 +102,7 @@ impl<B, P> Streams<B, P>
             } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
-                    return Err(ProtocolError.into());
+                    return Err(RecvError::Connection(ProtocolError));
                 }
 
                 actions.recv.recv_trailers(frame, stream)
@@ -105,20 +110,18 @@ impl<B, P> Streams<B, P>
 
             // TODO: extract this
             match res {
-                Ok(()) => Ok(()),
-                Err(ProtoError::Connection(reason)) => Err(reason.into()),
-                Err(ProtoError::Stream { reason, .. }) => {
+                Err(RecvError::Stream { reason, .. }) => {
                     // Reset the stream.
                     actions.send.send_reset(reason, stream, &mut actions.task);
                     Ok(())
                 }
-                Err(ProtoError::Io(_)) => unreachable!(),
+                res => res,
             }
         })
     }
 
     pub fn recv_data(&mut self, frame: frame::Data)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -127,25 +130,23 @@ impl<B, P> Streams<B, P>
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
-            None => return Err(ProtocolError.into()),
+            None => return Err(RecvError::Connection(ProtocolError)),
         };
 
         me.actions.transition(stream, |actions, stream| {
             match actions.recv.recv_data(frame, stream) {
-                Ok(()) => Ok(()),
-                Err(ProtoError::Connection(reason)) => Err(reason.into()),
-                Err(ProtoError::Stream { reason, .. }) => {
+                Err(RecvError::Stream { reason, .. }) => {
                     // Reset the stream.
                     actions.send.send_reset(reason, stream, &mut actions.task);
                     Ok(())
                 }
-                Err(ProtoError::Io(_)) => unreachable!(),
+                res => res,
             }
         })
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -153,14 +154,16 @@ impl<B, P> Streams<B, P>
         let id = frame.stream_id();
 
         if id.is_zero() {
-            return Err(ProtocolError.into());
+            return Err(RecvError::Connection(ProtocolError));
         }
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => {
                 // TODO: Are there other error cases?
-                me.actions.ensure_not_idle(id)?;
+                me.actions.ensure_not_idle(id)
+                    .map_err(RecvError::Connection)?;
+
                 return Ok(());
             }
         };
@@ -173,7 +176,7 @@ impl<B, P> Streams<B, P>
     }
 
     /// Handle a received error and return the ID of the last processed stream.
-    pub fn recv_err(&mut self, err: &ConnectionError) -> StreamId {
+    pub fn recv_err(&mut self, err: &proto::Error) -> StreamId {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -182,14 +185,14 @@ impl<B, P> Streams<B, P>
 
         me.store.for_each(|mut stream| {
             actions.recv.recv_err(err, &mut *stream);
-            Ok(())
+            Ok::<_, ()>(())
         }).ok().expect("unexpected error processing error");
 
         last_processed_id
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let id = frame.stream_id();
         let mut me = self.inner.lock().unwrap();
@@ -197,15 +200,22 @@ impl<B, P> Streams<B, P>
 
         if id.is_zero() {
             me.actions.send.recv_connection_window_update(
-                frame, &mut me.store)?;
+                frame, &mut me.store)
+                .map_err(RecvError::Connection)?;
         } else {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
             if let Some(mut stream) = me.store.find_mut(&id) {
-                me.actions.send.recv_stream_window_update(
-                    frame.size_increment(), &mut stream, &mut me.actions.task)?;
+                // This result is ignored as there is nothing to do when there
+                // is an error. The stream is reset by the function on error and
+                // the error is informational.
+                let _ = me.actions.send.recv_stream_window_update(
+                    frame.size_increment(),
+                    &mut stream,
+                    &mut me.actions.task);
             } else {
-                me.actions.recv.ensure_not_idle(id)?;
+                me.actions.recv.ensure_not_idle(id)
+                    .map_err(RecvError::Connection)?;
             }
         }
 
@@ -213,7 +223,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -222,7 +232,7 @@ impl<B, P> Streams<B, P>
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream.key(),
-            None => return Err(ProtocolError.into()),
+            None => return Err(RecvError::Connection(ProtocolError)),
         };
 
         me.actions.recv.recv_push_promise(
@@ -246,7 +256,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn send_pending_refusal<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
@@ -255,7 +265,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         let mut me = self.inner.lock().unwrap();
@@ -277,7 +287,7 @@ impl<B, P> Streams<B, P>
     }
 
     pub fn apply_remote_settings(&mut self, frame: &frame::Settings)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -286,15 +296,8 @@ impl<B, P> Streams<B, P>
             frame, &mut me.store, &mut me.actions.task)
     }
 
-    pub fn poll_send_request_ready(&mut self) -> Poll<(), ConnectionError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        me.actions.send.poll_open_ready()
-    }
-
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B, P>, ConnectionError>
+        -> Result<StreamRef<B, P>, SendError>
     {
         use http::method;
         use super::stream::ContentLength;
@@ -370,6 +373,17 @@ impl<B, P> Streams<B, P>
     }
 }
 
+impl<B> Streams<B, client::Peer>
+    where B: Buf,
+{
+    pub fn poll_send_request_ready(&mut self) -> Async<()> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.send.poll_open_ready()
+    }
+}
+
 // ===== impl StreamRef =====
 
 impl<B, P> StreamRef<B, P>
@@ -377,7 +391,7 @@ impl<B, P> StreamRef<B, P>
           P: Peer,
 {
     pub fn send_data(&mut self, data: B, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -393,7 +407,8 @@ impl<B, P> StreamRef<B, P>
         })
     }
 
-    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ConnectionError>
+    pub fn send_trailers(&mut self, trailers: HeaderMap)
+        -> Result<(), UserError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -420,7 +435,7 @@ impl<B, P> StreamRef<B, P>
     }
 
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -444,7 +459,7 @@ impl<B, P> StreamRef<B, P>
         me.actions.recv.body_is_empty(&stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, ConnectionError> {
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -453,7 +468,7 @@ impl<B, P> StreamRef<B, P>
         me.actions.recv.poll_data(&mut stream)
     }
 
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ConnectionError> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -465,7 +480,7 @@ impl<B, P> StreamRef<B, P>
     /// Releases recv capacity back to the peer. This will result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
     pub fn release_capacity(&mut self, capacity: WindowSize)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -497,7 +512,7 @@ impl<B, P> StreamRef<B, P>
     }
 
     /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, ConnectionError> {
+    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, UserError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -517,7 +532,7 @@ impl<B> StreamRef<B, server::Peer>
     /// # Panics
     ///
     /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Result<Request<()>, ConnectionError> {
+    pub fn take_request(&self) -> Request<()> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -529,7 +544,7 @@ impl<B> StreamRef<B, server::Peer>
 impl<B> StreamRef<B, client::Peer>
     where B: Buf,
 {
-    pub fn poll_response(&mut self) -> Poll<Response<()>, ConnectionError> {
+    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -557,7 +572,7 @@ impl<B, P> Actions<B, P>
           P: Peer,
 {
     fn ensure_not_idle(&mut self, id: StreamId)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         if self.is_local_init(id) {
             self.send.ensure_not_idle(id)

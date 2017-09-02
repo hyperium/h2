@@ -24,14 +24,13 @@ extern crate log;
 
 extern crate string;
 
-pub mod client;
-pub mod error;
+mod error;
+mod codec;
 mod hpack;
 mod proto;
 mod frame;
+
+pub mod client;
 pub mod server;
 
-pub use error::{ConnectionError, Reason};
-
-// TODO: remove if carllerche/http#90 lands
-pub type HeaderMap = http::HeaderMap<http::header::HeaderValue>;
+pub use error::{Error, Reason};

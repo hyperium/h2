@@ -1,10 +1,13 @@
-use {frame, ConnectionError};
+use client;
+use frame::{self, Reason};
+use codec::{RecvError, UserError};
+use codec::UserError::*;
 use proto::*;
 use super::*;
 
-use error::User::*;
-
 use bytes::Buf;
+
+use std::io;
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
@@ -53,24 +56,11 @@ where B: Buf,
         self.init_window_sz
     }
 
-    pub fn poll_open_ready(&mut self) -> Poll<(), ConnectionError> {
-        try!(self.ensure_can_open());
-
-        if let Some(max) = self.max_streams {
-            if max <= self.num_streams {
-                self.blocked_open = Some(task::current());
-                return Ok(Async::NotReady);
-            }
-        }
-
-        return Ok(Async::Ready(()));
-    }
-
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open(&mut self)
-        -> Result<StreamId, ConnectionError>
+        -> Result<StreamId, UserError>
     {
         try!(self.ensure_can_open());
 
@@ -93,7 +83,7 @@ where B: Buf,
                         frame: frame::Headers,
                         stream: &mut store::Ptr<B, P>,
                         task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
         // Update the state
@@ -145,7 +135,7 @@ where B: Buf,
                      frame: frame::Data<B>,
                      stream: &mut store::Ptr<B, P>,
                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         self.prioritize.send_data(frame, stream, task)
     }
@@ -154,14 +144,14 @@ where B: Buf,
                          frame: frame::Headers,
                          stream: &mut store::Ptr<B, P>,
                          task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), UserError>
     {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
             return Err(UnexpectedFrameType.into());
         }
 
-        stream.state.send_close()?;
+        stream.state.send_close();
 
         trace!("send_trailers -- queuing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
@@ -172,7 +162,7 @@ where B: Buf,
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
                             dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
         self.prioritize.poll_complete(store, dst)
@@ -184,7 +174,7 @@ where B: Buf,
     }
 
     pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Poll<Option<WindowSize>, ConnectionError>
+        -> Poll<Option<WindowSize>, UserError>
     {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
@@ -214,7 +204,7 @@ where B: Buf,
     pub fn recv_connection_window_update(&mut self,
                                          frame: frame::WindowUpdate,
                                          store: &mut Store<B, P>)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         self.prioritize.recv_connection_window_update(frame.size_increment(), store)
     }
@@ -223,11 +213,13 @@ where B: Buf,
                                      sz: WindowSize,
                                      stream: &mut store::Ptr<B, P>,
                                      task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), Reason>
     {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
             self.send_reset(FlowControlError.into(), stream, task);
+
+            return Err(e);
         }
 
         Ok(())
@@ -237,7 +229,7 @@ where B: Buf,
                                  settings: &frame::Settings,
                                  store: &mut Store<B, P>,
                                  task: &mut Option<Task>)
-        -> Result<(), ConnectionError>
+        -> Result<(), RecvError>
     {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_streams = Some(val as usize);
@@ -283,13 +275,14 @@ where B: Buf,
 
                     // TODO: Should this notify the producer?
 
-                    Ok(())
+                    Ok::<_, RecvError>(())
                 })?;
             } else if val > old_val {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
                     self.recv_stream_window_update(inc, &mut stream, task)
+                        .map_err(RecvError::Connection)
                 })?;
             }
         }
@@ -297,9 +290,9 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), ConnectionError> {
+    pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if id >= self.next_stream_id {
-            return Err(ProtocolError.into());
+            return Err(ProtocolError);
         }
 
         Ok(())
@@ -316,14 +309,29 @@ where B: Buf,
     }
 
     /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self) -> Result<(), ConnectionError> {
+    fn ensure_can_open(&self) -> Result<(), UserError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
-            return Err(UnexpectedFrameType.into());
+            return Err(UnexpectedFrameType);
         }
 
         // TODO: Handle StreamId overflow
 
         Ok(())
+    }
+}
+
+impl<B> Send<B, client::Peer>
+where B: Buf,
+{
+    pub fn poll_open_ready(&mut self) -> Async<()> {
+        if let Some(max) = self.max_streams {
+            if max <= self.num_streams {
+                self.blocked_open = Some(task::current());
+                return Async::NotReady;
+            }
+        }
+
+        return Async::Ready(());
     }
 }

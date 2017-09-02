@@ -1,7 +1,6 @@
 use frame;
+use codec::RecvError;
 use proto::*;
-
-use futures::Sink;
 
 #[derive(Debug)]
 pub(crate) struct Settings {
@@ -31,7 +30,7 @@ impl Settings {
     pub fn send_pending_ack<T, B, C, P>(&mut self,
                                         dst: &mut Codec<T, B>,
                                         streams: &mut Streams<C, P>)
-        -> Poll<(), ConnectionError>
+        -> Poll<(), RecvError>
         where T: AsyncWrite,
               B: Buf,
               C: Buf,
@@ -40,12 +39,16 @@ impl Settings {
         trace!("send_pending_ack; pending={:?}", self.pending);
 
         if let Some(ref settings) = self.pending {
-            let frame = frame::Settings::ack();
-
-            if let AsyncSink::NotReady(_) = dst.start_send(frame.into())? {
+            if !dst.poll_ready()?.is_ready() {
                 trace!("failed to send ACK");
                 return Ok(Async::NotReady);
             }
+
+            // Create an ACK settings frame
+            let frame = frame::Settings::ack();
+
+            // Buffer the settings frame
+            dst.buffer(frame.into()).ok().expect("invalid settings frame");
 
             trace!("ACK sent; applying settings");
 

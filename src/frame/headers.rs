@@ -1,9 +1,8 @@
 use super::{StreamId, StreamDependency};
 use hpack;
 use frame::{self, Frame, Head, Kind, Error};
-use HeaderMap;
 
-use http::{uri, Method, StatusCode, Uri};
+use http::{uri, Method, StatusCode, Uri, HeaderMap};
 use http::header::{self, HeaderName, HeaderValue};
 
 use bytes::{BytesMut, Bytes};
