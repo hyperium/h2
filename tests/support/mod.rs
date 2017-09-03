@@ -11,6 +11,9 @@ pub extern crate mock_io;
 pub extern crate mock_h2;
 pub extern crate env_logger;
 
+#[macro_use]
+pub mod codec;
+
 pub use self::futures::{
     Future,
     Sink,

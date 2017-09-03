@@ -12,22 +12,37 @@ fn read_none() {
 }
 
 #[test]
-fn read_data_no_pad() {
-    let mut codec = codec(&[
-        0, 0, 5, 0, 0, 0, 0, 0, 1,
-        b'h', b'e', b'l', b'l', b'o',
-    ]);
+fn read_data_no_padding() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+        ];
+    };
 
     let data = poll_data!(codec);
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
+    assert!(!data.is_end_stream());
 
     assert_closed!(codec);
 }
 
-fn codec(src: &[u8]) -> Codec<mock_io::Mock> {
-    Codec::new(
-        mock_io::Builder::new()
-        .read(src)
-        .build())
+#[test]
+fn read_data_padding() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 11, 0, 0x8, 0, 0, 0, 1,
+            5,       // Pad length
+            "hello", // Data
+            "world", // Padding
+        ];
+    };
+
+    let data = poll_data!(codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+    assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
 }
