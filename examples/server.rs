@@ -2,9 +2,7 @@ extern crate h2;
 extern crate http;
 extern crate bytes;
 extern crate futures;
-extern crate tokio_io;
 extern crate tokio_core;
-extern crate io_dump;
 extern crate env_logger;
 
 use h2::server::Server;

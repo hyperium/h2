@@ -1,14 +1,11 @@
 //! Utilities to support tests.
 
-#![allow(unused_extern_crates)]
-
 pub extern crate bytes;
 pub extern crate h2;
 pub extern crate http;
 pub extern crate tokio_io;
 pub extern crate futures;
 pub extern crate mock_io;
-pub extern crate mock_h2;
 pub extern crate env_logger;
 
 #[macro_use]
@@ -33,8 +30,7 @@ pub use self::http::{
 
 pub use self::h2::*;
 pub use self::h2::client::{self, Client};
-// pub use self::h2::server;
-//
+pub use self::h2::server::{self, Server};
 
 pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
 
@@ -99,12 +95,14 @@ pub mod frames {
 }
 
 // Assertions
+#[macro_export]
 macro_rules! assert_closed {
     ($transport:expr) => {{
         assert_eq!($transport.poll().unwrap(), None.into());
     }}
 }
 
+#[macro_export]
 macro_rules! poll_data {
     ($transport:expr) => {{
         use h2::frame::Frame;

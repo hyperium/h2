@@ -2,7 +2,6 @@ extern crate h2;
 extern crate http;
 extern crate futures;
 extern crate rustls;
-extern crate tokio_io;
 extern crate tokio_core;
 extern crate tokio_rustls;
 extern crate webpki_roots;

@@ -1,6 +1,6 @@
 #[macro_use]
-pub mod support;
-use support::*;
+extern crate h2_test_support;
+use h2_test_support::*;
 
 #[test]
 fn read_none() {

@@ -1,12 +1,5 @@
-extern crate h2;
-extern crate http;
-extern crate futures;
-extern crate mock_io;
-extern crate env_logger;
-
-use h2::server::Server;
-
-use futures::*;
+extern crate h2_test_support;
+use h2_test_support::*;
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];

@@ -1,22 +1,23 @@
+#[macro_export]
 macro_rules! raw_codec {
     (
         $(
             $fn:ident => [$($chunk:expr,)+];
         )*
     ) => {{
-        let mut b = ::support::mock_io::Builder::new();
+        let mut b = $crate::mock_io::Builder::new();
 
         $({
             let mut chunk = vec![];
 
             $(
-                ::support::codec::Chunk::push(&$chunk, &mut chunk);
+                $crate::codec::Chunk::push(&$chunk, &mut chunk);
             )+
 
             b.$fn(&chunk[..]);
         })*
 
-        ::support::Codec::new(b.build())
+        $crate::Codec::new(b.build())
     }}
 }
 
