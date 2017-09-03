@@ -8,6 +8,7 @@ pub extern crate http;
 pub extern crate tokio_io;
 pub extern crate futures;
 pub extern crate mock_io;
+pub extern crate mock_h2;
 pub extern crate env_logger;
 
 pub use self::futures::{
@@ -27,8 +28,12 @@ pub use self::http::{
     HeaderMap,
 };
 
+pub use self::h2::*;
 pub use self::h2::client::{self, Client};
 // pub use self::h2::server;
+//
+
+pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
 
 pub use self::bytes::{
     Buf,
@@ -88,4 +93,23 @@ pub mod frames {
 
     pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
     pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
+}
+
+// Assertions
+macro_rules! assert_closed {
+    ($transport:expr) => {{
+        assert_eq!($transport.poll().unwrap(), None.into());
+    }}
+}
+
+macro_rules! poll_data {
+    ($transport:expr) => {{
+        use h2::frame::Frame;
+        use futures::Async;
+
+        match $transport.poll() {
+            Ok(Async::Ready(Some(Frame::Data(frame)))) => frame,
+            frame => panic!("expected data frame; actual={:?}", frame),
+        }
+    }}
 }

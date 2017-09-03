@@ -2,7 +2,7 @@ use frame::{self, Head, Error, Kind, StreamId, Reason};
 
 use bytes::{BufMut, BigEndian};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct GoAway {
     last_stream_id: StreamId,
     error_code: u32,

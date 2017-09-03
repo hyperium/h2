@@ -15,6 +15,7 @@ use std::io::Cursor;
 /// Header frame
 ///
 /// This could be either a request or a response.
+#[derive(Eq, PartialEq)]
 pub struct Headers {
     /// The ID of the stream with which this frame is associated.
     stream_id: StreamId,
@@ -36,7 +37,7 @@ pub struct Headers {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct HeadersFlag(u8);
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PushPromise {
     /// The ID of the stream with which this frame is associated.
     stream_id: StreamId,
@@ -63,7 +64,7 @@ pub struct Continuation {
     headers: Iter,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct Pseudo {
     // Request
     pub method: Option<Method>,

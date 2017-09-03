@@ -3,6 +3,7 @@ use bytes::{BufMut, Bytes, Buf};
 
 use std::fmt;
 
+#[derive(Eq, PartialEq)]
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
     data: T,

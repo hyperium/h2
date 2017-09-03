@@ -151,3 +151,12 @@ impl<T, B> Sink for Codec<T, B>
         Ok(Async::Ready(()))
     }
 }
+
+// TODO: remove (or improve) this
+impl<T> From<T> for Codec<T, ::std::io::Cursor<::bytes::Bytes>>
+    where T: AsyncRead + AsyncWrite,
+{
+    fn from(src: T) -> Self {
+        Self::new(src)
+    }
+}

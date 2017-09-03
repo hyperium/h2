@@ -5,7 +5,7 @@ const ACK_FLAG: u8 = 0x1;
 
 pub type Payload = [u8; 8];
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Ping {
     ack: bool,
     payload: Payload,

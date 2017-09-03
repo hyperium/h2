@@ -11,6 +11,8 @@ authors = ["Carl Lerche <me@carllerche.com>"]
 # depends on this feature.
 unstable = []
 
+[workspace]
+
 [dependencies]
 futures = "0.1"
 tokio-io = "0.1.3"
@@ -25,6 +27,7 @@ string = { git = "https://github.com/carllerche/string" }
 
 [dev-dependencies]
 mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
+mock-h2 = { path = "util/mock-h2" }
 
 # Fuzzing
 quickcheck = "0.4.1"

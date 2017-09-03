@@ -4,7 +4,7 @@ use bytes::{BufMut, BigEndian};
 
 const SIZE_INCREMENT_MASK: u32 = 1 << 31;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct WindowUpdate {
     stream_id: StreamId,
     size_increment: u32,
