@@ -1,0 +1,17 @@
+[package]
+name = "h2-test-support"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[dependencies]
+futures = "0.1"
+tokio-io = "0.1"
+bytes = "0.4"
+http = { git = "https://github.com/carllerche/http", rev = "2dd15d9" }
+env_logger = "0.4"
+
+mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
+
+[dependencies.h2]
+path = "../.."
+features = ["unstable"]

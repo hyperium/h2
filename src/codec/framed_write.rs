@@ -258,3 +258,14 @@ impl<T: AsyncRead, B> AsyncRead for FramedWrite<T, B> {
         self.inner.prepare_uninitialized_buffer(buf)
     }
 }
+
+#[cfg(feature = "unstable")]
+mod unstable {
+    use super::*;
+
+    impl<T, B> FramedWrite<T, B> {
+        pub fn get_ref(&self) -> &T {
+            &self.inner
+        }
+    }
+}

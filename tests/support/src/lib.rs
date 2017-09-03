@@ -1,7 +1,5 @@
 //! Utilities to support tests.
 
-#![allow(unused_extern_crates)]
-
 pub extern crate bytes;
 pub extern crate h2;
 pub extern crate http;
@@ -9,6 +7,9 @@ pub extern crate tokio_io;
 pub extern crate futures;
 pub extern crate mock_io;
 pub extern crate env_logger;
+
+#[macro_use]
+pub mod codec;
 
 pub use self::futures::{
     Future,
@@ -27,8 +28,11 @@ pub use self::http::{
     HeaderMap,
 };
 
+pub use self::h2::*;
 pub use self::h2::client::{self, Client};
-// pub use self::h2::server;
+pub use self::h2::server::{self, Server};
+
+pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
 
 pub use self::bytes::{
     Buf,

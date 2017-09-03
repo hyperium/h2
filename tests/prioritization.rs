@@ -1,5 +1,5 @@
-pub mod support;
-use support::*;
+extern crate h2_test_support;
+use h2_test_support::*;
 
 #[test]
 fn single_stream_send_large_body() {

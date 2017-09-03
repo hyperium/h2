@@ -65,6 +65,11 @@ impl<T, B> Codec<T, B> {
         self.inner.get_ref().max_frame_size()
     }
 
+    #[cfg(feature = "unstable")]
+    pub fn get_ref(&self) -> &T {
+        self.inner.get_ref().get_ref()
+    }
+
     pub fn get_mut(&mut self) -> &mut T {
         self.inner.get_mut().get_mut()
     }
@@ -144,5 +149,14 @@ impl<T, B> Sink for Codec<T, B>
     fn close(&mut self) -> Poll<(), Self::SinkError> {
         self.shutdown()?;
         Ok(Async::Ready(()))
+    }
+}
+
+// TODO: remove (or improve) this
+impl<T> From<T> for Codec<T, ::std::io::Cursor<::bytes::Bytes>>
+    where T: AsyncRead + AsyncWrite,
+{
+    fn from(src: T) -> Self {
+        Self::new(src)
     }
 }

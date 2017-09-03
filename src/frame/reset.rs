@@ -2,7 +2,7 @@ use frame::{self, Head, Error, Kind, StreamId, Reason};
 
 use bytes::{BufMut, BigEndian};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Reset {
     stream_id: StreamId,
     error_code: u32,

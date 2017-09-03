@@ -61,6 +61,7 @@ pub type FrameSize = u32;
 
 pub const HEADER_LEN: usize = 9;
 
+#[derive(Eq, PartialEq)]
 pub enum Frame<T = Bytes> {
     Data(Data<T>),
     Headers(Headers),

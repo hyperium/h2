@@ -1,12 +1,12 @@
 use frame::*;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Priority {
     stream_id: StreamId,
     dependency: StreamDependency,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct StreamDependency {
     /// The ID of the stream dependency target
     dependency_id: StreamId,

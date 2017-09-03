@@ -13,8 +13,11 @@ matrix:
         - travis-cargo doc-upload
 
 script:
+  # Run tests
   - cargo test
+  # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
+  # Generate docs
   - cargo doc --no-deps
 
 env:

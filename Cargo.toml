@@ -3,6 +3,16 @@ name = "h2"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 
+[features]
+
+# Enables **unstable** APIs. Any API exposed by this feature has no backwards
+# compatibility guarantees. In other words, you should not use this feature for
+# anything besides experimentation. Definitely **do not** publish a crate that
+# depends on this feature.
+unstable = []
+
+[workspace]
+
 [dependencies]
 futures = "0.1"
 tokio-io = "0.1.3"
@@ -16,7 +26,14 @@ slab = "0.4.0"
 string = { git = "https://github.com/carllerche/string" }
 
 [dev-dependencies]
-mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
+
+# Support code for tests. Ideally this wouldn't be released to crates.io, but
+# until rust-lang/cargo#4466 is resolved, we just have to publish this junk crate.
+#
+# The dependency is set on a fixed version as the `h2-test-support` offers no
+# guarantees of backwards compatibility across minor versions. The version of
+# `h2-test-support` should always match the current version of `h2`.
+h2-test-support = { version = "= 0.1.0", path = "tests/support" }
 
 # Fuzzing
 quickcheck = "0.4.1"
