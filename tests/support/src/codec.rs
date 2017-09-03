@@ -1,4 +1,24 @@
 #[macro_export]
+macro_rules! assert_closed {
+    ($transport:expr) => {{
+        assert_eq!($transport.poll().unwrap(), None.into());
+    }}
+}
+
+#[macro_export]
+macro_rules! poll_data {
+    ($transport:expr) => {{
+        use h2::frame::Frame;
+        use futures::Async;
+
+        match $transport.poll() {
+            Ok(Async::Ready(Some(Frame::Data(frame)))) => frame,
+            frame => panic!("expected data frame; actual={:?}", frame),
+        }
+    }}
+}
+
+#[macro_export]
 macro_rules! raw_codec {
     (
         $(

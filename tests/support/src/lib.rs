@@ -93,24 +93,3 @@ pub mod frames {
     pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
     pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 }
-
-// Assertions
-#[macro_export]
-macro_rules! assert_closed {
-    ($transport:expr) => {{
-        assert_eq!($transport.poll().unwrap(), None.into());
-    }}
-}
-
-#[macro_export]
-macro_rules! poll_data {
-    ($transport:expr) => {{
-        use h2::frame::Frame;
-        use futures::Async;
-
-        match $transport.poll() {
-            Ok(Async::Ready(Some(Frame::Data(frame)))) => frame,
-            frame => panic!("expected data frame; actual={:?}", frame),
-        }
-    }}
-}
