@@ -7,12 +7,12 @@ use std::fmt;
 pub struct Data<T = Bytes> {
     stream_id: StreamId,
     data: T,
-    flags: DataFlag,
+    flags: DataFlags,
     pad_len: Option<u8>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct DataFlag(u8);
+pub struct DataFlags(u8);
 
 const END_STREAM: u8 = 0x1;
 const PADDED: u8 = 0x8;
@@ -20,7 +20,7 @@ const ALL: u8 = END_STREAM | PADDED;
 
 impl Data<Bytes> {
     pub fn load(head: Head, mut payload: Bytes) -> Result<Self, Error> {
-        let flags = DataFlag::load(head.flag());
+        let flags = DataFlags::load(head.flag());
 
         let pad_len = if flags.is_padded() {
             let len = try!(util::strip_padding(&mut payload));
@@ -85,7 +85,7 @@ impl<T> Data<T> {
 impl<T: Buf> Data<T> {
     pub fn from_buf(stream_id: StreamId, data: T, eos: bool) -> Self {
         // TODO ensure that data.remaining() < MAX_FRAME_SIZE
-        let mut flags = DataFlag::default();
+        let mut flags = DataFlags::default();
         if eos {
             flags.set_end_stream();
         }
@@ -125,19 +125,19 @@ impl<T> fmt::Debug for Data<T> {
     }
 }
 
-// ===== impl DataFlag =====
+// ===== impl DataFlags =====
 
-impl DataFlag {
-    pub fn load(bits: u8) -> DataFlag {
-        DataFlag(bits & ALL)
+impl DataFlags {
+    pub fn load(bits: u8) -> DataFlags {
+        DataFlags(bits & ALL)
     }
 
-    pub fn end_stream() -> DataFlag {
-        DataFlag(END_STREAM)
+    pub fn end_stream() -> DataFlags {
+        DataFlags(END_STREAM)
     }
 
-    pub fn padded() -> DataFlag {
-        DataFlag(PADDED)
+    pub fn padded() -> DataFlags {
+        DataFlags(PADDED)
     }
 
     pub fn is_end_stream(&self) -> bool {
@@ -157,22 +157,22 @@ impl DataFlag {
     }
 }
 
-impl Default for DataFlag {
+impl Default for DataFlags {
     /// Returns a `HeadersFlag` value with `END_HEADERS` set.
     fn default() -> Self {
-        DataFlag(0)
+        DataFlags(0)
     }
 }
 
-impl From<DataFlag> for u8 {
-    fn from(src: DataFlag) -> u8 {
+impl From<DataFlags> for u8 {
+    fn from(src: DataFlags) -> u8 {
         src.0
     }
 }
 
-impl fmt::Debug for DataFlag {
+impl fmt::Debug for DataFlags {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let mut f = fmt.debug_struct("DataFlag");
+        let mut f = fmt.debug_struct("DataFlags");
 
         if self.is_end_stream() {
             f.field("end_stream", &true);
