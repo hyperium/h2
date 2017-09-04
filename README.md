@@ -34,7 +34,7 @@ specification. It does not handle:
 * Any feature not described by the HTTP/2.0 specification.
 
 The intent is that this crate will eventually be used by
-[hyper](github.com/hyperium/hyper), which will provide all of these features.
+[hyper](https://github.com/hyperium/hyper), which will provide all of these features.
 
 ## Usage
 
