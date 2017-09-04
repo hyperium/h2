@@ -390,7 +390,7 @@ impl<B, P> StreamRef<B, P>
     where B: Buf,
           P: Peer,
 {
-    pub fn send_data(&mut self, data: B, end_of_stream: bool)
+    pub fn send_data(&mut self, data: B, end_stream: bool)
         -> Result<(), UserError>
     {
         let mut me = self.inner.lock().unwrap();
@@ -399,7 +399,8 @@ impl<B, P> StreamRef<B, P>
         let stream = me.store.resolve(self.key);
 
         // Create the data frame
-        let frame = frame::Data::from_buf(stream.id, data, end_of_stream);
+        let mut frame = frame::Data::new(stream.id, data);
+        frame.set_end_stream(end_stream);
 
         me.actions.transition(stream, |actions, stream| {
             // Send the data frame

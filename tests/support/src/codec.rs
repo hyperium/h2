@@ -6,6 +6,16 @@ macro_rules! assert_closed {
 }
 
 #[macro_export]
+macro_rules! poll_err {
+    ($transport:expr) => {{
+        match $transport.poll() {
+            Err(e) => e,
+            frame => panic!("expected error; actual={:?}", frame),
+        }
+    }}
+}
+
+#[macro_export]
 macro_rules! poll_data {
     ($transport:expr) => {{
         use h2::frame::Frame;
