@@ -1,18 +1,26 @@
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Connection, WindowSize};
+use proto::{self, Connection, WindowSize, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
-
+use bytes::{Bytes, Buf, IntoBuf};
 use std::fmt;
 
 /// In progress H2 connection binding
-pub struct Handshake<T, B: IntoBuf = Bytes> {
-    // TODO: unbox
-    inner: Box<Future<Item = Server<T, B>, Error = ::Error>>,
+pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+    inner:
+        futures::Map<
+            futures::AndThen<
+                Flush<T, Prioritized<B::Buf>>,
+                ReadPreface<T, Prioritized<B::Buf>>,
+                fn(Codec<T, Prioritized<B::Buf>>)
+                   -> ReadPreface<T, Prioritized<B::Buf>>
+            >,
+            fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B>
+        >
 }
 
 /// Marker type indicating a client peer
@@ -106,27 +114,23 @@ where
             .buffer(settings.clone().into())
             .expect("invalid SETTINGS frame");
 
+        let to_server: fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B> =
+        |codec| {
+            let connection = Connection::new(codec);
+            Server { connection }
+        };
+
         // Flush pending settings frame and then wait for the client preface
         let handshake = Flush::new(codec)
-            .and_then(ReadPreface::new)
-            .map(move |codec| {
-                let connection = Connection::new(codec, &settings, 2.into());
-                Server {
-                    connection,
-                }
-            });
+            .and_then(ReadPreface::new
+                as fn (Codec<T, Prioritized<B::Buf>>)
+                    -> ReadPreface<T, Prioritized<B::Buf>>
+            )
+            .map(to_server
+                as fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B>
+            );
 
-        Handshake {
-            inner: Box::new(handshake),
-        }
-    }
-
-    /// Sets the target window size for the whole connection.
-    ///
-    /// Default in HTTP2 is 65_535.
-    pub fn set_target_window_size(&mut self, size: u32) {
-        assert!(size <= proto::MAX_WINDOW_SIZE);
-        self.connection.set_target_window_size(size);
+        Handshake { inner: handshake }
     }
 
     /// Returns `Ready` when the underlying connection has closed.
@@ -472,7 +476,10 @@ where
 
 // ===== impl Handshake =====
 
-impl<T, B: IntoBuf> Future for Handshake<T, B> {
+impl<T, B: IntoBuf> Future for Handshake<T, B>
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf,
+{
     type Item = Server<T, B>;
     type Error = ::Error;
 
@@ -482,9 +489,8 @@ impl<T, B: IntoBuf> Future for Handshake<T, B> {
 }
 
 impl<T, B> fmt::Debug for Handshake<T, B>
-where
-    T: fmt::Debug,
-    B: fmt::Debug + IntoBuf,
+    where T: AsyncRead + AsyncWrite + fmt::Debug,
+          B: fmt::Debug + IntoBuf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "server::Handshake")

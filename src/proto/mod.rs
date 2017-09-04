@@ -9,12 +9,11 @@ pub(crate) use self::connection::Connection;
 pub(crate) use self::error::Error;
 pub(crate) use self::peer::Peer;
 pub(crate) use self::streams::{Key as StreamKey, StreamRef, Streams};
-
+pub(crate) use self::streams::Prioritized;
 use codec::Codec;
 
 use self::ping_pong::PingPong;
 use self::settings::Settings;
-use self::streams::Prioritized;
 
 use frame::{self, Frame};
 
