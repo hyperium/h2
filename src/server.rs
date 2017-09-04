@@ -115,10 +115,10 @@ where
             .expect("invalid SETTINGS frame");
 
         let to_server: fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B> =
-        |codec| {
-            let connection = Connection::new(codec);
-            Server { connection }
-        };
+            |codec| {
+                let connection = Connection::new(codec);
+                Server { connection }
+            };
 
         // Flush pending settings frame and then wait for the client preface
         let handshake = Flush::new(codec)
