@@ -32,7 +32,7 @@ fn send_recv_headers_only() {
     let mut stream = h2.request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
 }
@@ -66,7 +66,7 @@ fn send_recv_data() {
         .wait().unwrap();
 
     let request = Request::builder()
-        .method(method::POST)
+        .method(Method::POST)
         .uri("https://http2.akamai.com/")
         .body(()).unwrap();
 
@@ -83,7 +83,7 @@ fn send_recv_data() {
 
     // Get the response
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::OK);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     // Take the body
     let (_, body) = resp.into_parts();
@@ -131,7 +131,7 @@ fn send_headers_recv_data_single_frame() {
     let mut stream = h2.request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::OK);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     // Take the body
     let (_, body) = resp.into_parts();
@@ -169,7 +169,7 @@ fn send_data_after_headers_eos() {
 
     // Send the request
     let mut request = request::Head::default();
-    request.method = method::POST;
+    request.method = Method::POST;
     request.uri = "https://http2.akamai.com/".parse().unwrap();
 
     let id = 1.into();

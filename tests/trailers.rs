@@ -35,7 +35,7 @@ fn recv_trailers_only() {
     let mut stream = h2.request(request, true).unwrap();
 
     let response = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(response.status(), status::OK);
+    assert_eq!(response.status(), StatusCode::OK);
 
     let (_, mut body) = response.into_parts();
 
@@ -88,7 +88,7 @@ fn send_trailers_immediately() {
     stream.send_trailers(trailers).unwrap();
 
     let response = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(response.status(), status::OK);
+    assert_eq!(response.status(), StatusCode::OK);
 
     let (_, mut body) = response.into_parts();
 

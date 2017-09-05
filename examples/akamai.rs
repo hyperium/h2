@@ -10,7 +10,7 @@ extern crate env_logger;
 
 use h2::client::Client;
 
-use http::{method, Request};
+use http::{Request, Method};
 use futures::*;
 
 use tokio_core::reactor;
@@ -65,7 +65,7 @@ pub fn main() {
                 let mut h2 = res.unwrap();
 
                 let request = Request::builder()
-                    .method(method::GET)
+                    .method(Method::GET)
                     .uri("https://http2.akamai.com/")
                     .body(()).unwrap();
 

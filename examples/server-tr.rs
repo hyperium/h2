@@ -38,7 +38,7 @@ pub fn main() {
                     println!("GOT request: {:?}", request);
 
                     let response = Response::builder()
-                        .status(status::OK)
+                        .status(StatusCode::OK)
                         .body(()).unwrap();
 
                     if let Err(e) = stream.send_response(response, false) {

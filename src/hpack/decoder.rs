@@ -1,7 +1,9 @@
 use super::{huffman, Header};
 use frame;
 
-use http::{method, header, status};
+use http::{header};
+use http::method::{self, Method};
+use http::status::{self, StatusCode};
 use bytes::{Buf, Bytes, BytesMut};
 use string::String;
 
@@ -544,24 +546,24 @@ impl From<DecoderError> for frame::Error {
 
 /// Get an entry from the static table
 pub fn get_static(idx: usize) -> Header {
-    use http::{status, method, header};
+    use http::header;
     use http::header::HeaderValue;
 
     match idx {
         1 => Header::Authority(from_static("")),
-        2 => Header::Method(method::GET),
-        3 => Header::Method(method::POST),
+        2 => Header::Method(Method::GET),
+        3 => Header::Method(Method::POST),
         4 => Header::Path(from_static("/")),
         5 => Header::Path(from_static("/index.html")),
         6 => Header::Scheme(from_static("http")),
         7 => Header::Scheme(from_static("https")),
-        8 => Header::Status(status::OK),
-        9 => Header::Status(status::NO_CONTENT),
-        10 => Header::Status(status::PARTIAL_CONTENT),
-        11 => Header::Status(status::NOT_MODIFIED),
-        12 => Header::Status(status::BAD_REQUEST),
-        13 => Header::Status(status::NOT_FOUND),
-        14 => Header::Status(status::INTERNAL_SERVER_ERROR),
+        8 => Header::Status(StatusCode::OK),
+        9 => Header::Status(StatusCode::NO_CONTENT),
+        10 => Header::Status(StatusCode::PARTIAL_CONTENT),
+        11 => Header::Status(StatusCode::NOT_MODIFIED),
+        12 => Header::Status(StatusCode::BAD_REQUEST),
+        13 => Header::Status(StatusCode::NOT_FOUND),
+        14 => Header::Status(StatusCode::INTERNAL_SERVER_ERROR),
         15 => Header::Field {
             name: header::ACCEPT_CHARSET,
             value: HeaderValue::from_static(""),

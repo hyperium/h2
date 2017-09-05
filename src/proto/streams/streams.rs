@@ -299,7 +299,7 @@ impl<B, P> Streams<B, P>
     pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
         -> Result<StreamRef<B, P>, SendError>
     {
-        use http::method;
+        use http::Method;
         use super::stream::ContentLength;
 
         // TODO: There is a hazard with assigning a stream ID before the
@@ -319,7 +319,7 @@ impl<B, P> Streams<B, P>
                 me.actions.send.init_window_sz(),
                 me.actions.recv.init_window_sz());
 
-            if *request.method() == method::HEAD {
+            if *request.method() == Method::HEAD {
                 stream.content_length = ContentLength::Head;
             }
 

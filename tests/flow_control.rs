@@ -30,7 +30,7 @@ fn send_data_without_requesting_capacity() {
         .wait().unwrap();
 
     let request = Request::builder()
-        .method(method::POST)
+        .method(Method::POST)
         .uri("https://http2.akamai.com/")
         .body(()).unwrap();
 
@@ -44,7 +44,7 @@ fn send_data_without_requesting_capacity() {
 
     // Get the response
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
 }

@@ -28,7 +28,7 @@ fn single_stream_send_large_body() {
         .wait().unwrap();
 
     let request = Request::builder()
-        .method(method::POST)
+        .method(Method::POST)
         .uri("https://http2.akamai.com/")
         .body(()).unwrap();
 
@@ -45,7 +45,7 @@ fn single_stream_send_large_body() {
 
     // Get the response
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
 }
@@ -82,7 +82,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .wait().unwrap();
 
     let request = Request::builder()
-        .method(method::POST)
+        .method(Method::POST)
         .uri("https://http2.akamai.com/")
         .body(()).unwrap();
 
@@ -98,7 +98,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
     // Get the response
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), status::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
 }
@@ -147,7 +147,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .wait().unwrap();
 
     let request = Request::builder()
-        .method(method::POST)
+        .method(Method::POST)
         .uri("https://http2.akamai.com/")
         .body(()).unwrap();
 
@@ -164,7 +164,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
     // Get the response
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
 
-    assert_eq!(resp.status(), status::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
 }

@@ -176,8 +176,7 @@ impl Arbitrary for FuzzHpack {
 }
 
 fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
-    use http::StatusCode;
-    use http::method::{self, Method};
+    use http::{Method, StatusCode};
 
     if g.gen_weighted_bool(10) {
         match g.next_u32() % 5 {
@@ -187,11 +186,11 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             }
             1 => {
                 let method = match g.next_u32() % 6 {
-                    0 => method::GET,
-                    1 => method::POST,
-                    2 => method::PUT,
-                    3 => method::PATCH,
-                    4 => method::DELETE,
+                    0 => Method::GET,
+                    1 => Method::POST,
+                    2 => Method::PUT,
+                    3 => Method::PATCH,
+                    4 => Method::DELETE,
                     5 => {
                         let n: usize = g.gen_range(3, 7);
                         let bytes: Vec<u8> = (0..n).map(|_| {

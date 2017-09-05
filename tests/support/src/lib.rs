@@ -21,11 +21,11 @@ pub use self::futures::future::poll_fn;
 pub use self::http::{
     request,
     response,
-    method,
-    status,
     Request,
     Response,
+    Method,
     HeaderMap,
+    StatusCode,
 };
 
 pub use self::h2::*;

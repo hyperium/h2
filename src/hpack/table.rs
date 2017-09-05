@@ -1,7 +1,8 @@
 use super::Header;
 
 use fnv::FnvHasher;
-use http::{method, header};
+use http::header;
+use http::method::Method;
 
 use std::{cmp, mem, usize};
 use std::collections::VecDeque;
@@ -721,8 +722,8 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
         Header::Authority(_) => Some((1, false)),
         Header::Method(ref v) => {
             match *v {
-                method::GET => Some((2, true)),
-                method::POST => Some((3, true)),
+                Method::GET => Some((2, true)),
+                Method::POST => Some((3, true)),
                 _ => Some((2, false)),
             }
         }

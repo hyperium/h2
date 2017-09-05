@@ -418,7 +418,7 @@ impl proto::Peer for Peer {
     fn convert_poll_message(headers: frame::Headers)
         -> Result<Self::Poll, RecvError>
     {
-        use http::{version, uri};
+        use http::{Version, uri};
 
         let mut b = Request::builder();
 
@@ -434,7 +434,7 @@ impl proto::Peer for Peer {
             }
         };
 
-        b.version(version::HTTP_2);
+        b.version(Version::HTTP_2);
 
         if let Some(method) = pseudo.method {
             b.method(method);
