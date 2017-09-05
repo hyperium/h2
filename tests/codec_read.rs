@@ -46,3 +46,15 @@ fn read_data_padding() {
 
     assert_closed!(codec);
 }
+
+#[test]
+fn read_data_stream_id_zero() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 0,
+            "hello", // Data
+        ];
+    };
+
+    poll_err!(codec);
+}

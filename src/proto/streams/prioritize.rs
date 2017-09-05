@@ -362,7 +362,7 @@ impl<B, P> Prioritize<B, P>
                 let mut stream = store.resolve(key);
 
                 if eos {
-                    frame.set_end_stream();
+                    frame.set_end_stream(true);
                 }
 
                 self.push_back_frame(frame.into(), &mut stream);
@@ -470,7 +470,7 @@ impl<B, P> Prioritize<B, P>
                             let eos = frame.is_end_stream();
 
                             if frame.payload().remaining() > len {
-                                frame.unset_end_stream();
+                                frame.set_end_stream(false);
                             }
 
                             Frame::Data(frame.map(|buf| {
