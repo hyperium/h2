@@ -12,6 +12,12 @@ fn read_none() {
 }
 
 #[test]
+fn read_frame_too_big() {
+}
+
+// ===== DATA =====
+
+#[test]
 fn read_data_no_padding() {
     let mut codec = raw_codec! {
         read => [
@@ -24,6 +30,39 @@ fn read_data_no_padding() {
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
     assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+
+#[test]
+fn read_data_empty_payload() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 0, 0, 0, 0, 0, 0, 1,
+        ];
+    };
+
+    let data = poll_data!(codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b""[..]);
+    assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+
+#[test]
+fn read_data_end_stream() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 1, 0, 0, 0, 1,
+            "hello",
+        ];
+    };
+
+    let data = poll_data!(codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+    assert!(data.is_end_stream());
 
     assert_closed!(codec);
 }
@@ -57,4 +96,18 @@ fn read_data_stream_id_zero() {
     };
 
     poll_err!(codec);
+}
+
+// ===== HEADERS =====
+
+#[test]
+fn read_headers_without_pseudo() {
+}
+
+#[test]
+fn read_headers_with_pseudo() {
+}
+
+#[test]
+fn read_headers_empty_payload() {
 }

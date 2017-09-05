@@ -224,11 +224,10 @@ impl<T, B> FramedWrite<T, B> {
         self.max_frame_size as usize
     }
 
-    /// Apply settings received by the peer
-    pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
-        if let Some(val) = settings.max_frame_size() {
-            self.max_frame_size = val;
-        }
+    /// Set the peer's max frame size.
+    pub fn set_max_frame_size(&mut self, val: usize) {
+        assert!(val <= frame::MAX_MAX_FRAME_SIZE);
+        self.max_frame_size = val as FrameSize;
     }
 
     /// Retrieve the last data frame that has been sent

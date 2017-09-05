@@ -7,7 +7,7 @@ pub use self::error::{SendError, RecvError, UserError};
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 
-use frame::{self, Frame, Data, Settings};
+use frame::{self, Frame, Data};
 
 use futures::*;
 
@@ -49,33 +49,30 @@ impl<T, B> Codec<T, B>
 }
 
 impl<T, B> Codec<T, B> {
-    /// Apply a settings received from the peer
-    pub fn apply_remote_settings(&mut self, frame: &Settings) {
-        self.framed_read().apply_remote_settings(frame);
-        self.framed_write().apply_remote_settings(frame);
-    }
-
-    /// Takes the data payload value that was fully written to the socket
-    pub fn take_last_data_frame(&mut self) -> Option<Data<B>> {
-        self.framed_write().take_last_data_frame()
-    }
-
-    /// Returns the max frame size that can be sent to the peer
+    /// Returns the max frame size that can be sent to the peer.
     pub fn max_send_frame_size(&self) -> usize {
         self.inner.get_ref().max_frame_size()
     }
 
+    /// Set the peer's max frame size.
+    pub fn set_max_send_frame_size(&mut self, val: usize) {
+        self.framed_write().set_max_frame_size(val)
+    }
+
+    /// Get a reference to the inner stream.
     #[cfg(feature = "unstable")]
     pub fn get_ref(&self) -> &T {
         self.inner.get_ref().get_ref()
     }
 
+    /// Get a mutable reference to the inner stream.
     pub fn get_mut(&mut self) -> &mut T {
         self.inner.get_mut().get_mut()
     }
 
-    fn framed_read(&mut self) -> &mut FramedRead<FramedWrite<T, B>> {
-        &mut self.inner
+    /// Takes the data payload value that was fully written to the socket
+    pub(crate) fn take_last_data_frame(&mut self) -> Option<Data<B>> {
+        self.framed_write().take_last_data_frame()
     }
 
     fn framed_write(&mut self) -> &mut FramedWrite<T, B> {

@@ -52,7 +52,10 @@ impl Settings {
 
             trace!("ACK sent; applying settings");
 
-            dst.apply_remote_settings(settings);
+            if let Some(val) = settings.max_frame_size() {
+                dst.set_max_send_frame_size(val as usize);
+            }
+
             streams.apply_remote_settings(settings)?;
         }
 

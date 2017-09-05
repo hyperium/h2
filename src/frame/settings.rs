@@ -33,10 +33,16 @@ pub struct SettingsFlags(u8);
 const ACK: u8 = 0x1;
 const ALL: u8 = ACK;
 
+/// The default value of SETTINGS_HEADER_TABLE_SIZE
 pub const DEFAULT_SETTINGS_HEADER_TABLE_SIZE: usize = 4_096;
+
+/// The default value of MAX_FRAME_SIZE
 pub const DEFAULT_MAX_FRAME_SIZE: FrameSize = 16_384;
 
+/// INITIAL_WINDOW_SIZE upper bound
 pub const MAX_INITIAL_WINDOW_SIZE: usize = (1 << 31) - 1;
+
+/// MAX_FRAME_SIZE upper bound
 pub const MAX_MAX_FRAME_SIZE: usize = (1 << 24) - 1;
 
 // ===== impl Settings =====

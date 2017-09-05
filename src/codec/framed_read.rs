@@ -49,10 +49,6 @@ impl<T> FramedRead<T> {
         }
     }
 
-    pub fn apply_remote_settings(&mut self, _settings: &frame::Settings) {
-        // TODO: Is this needed?
-    }
-
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
         use self::RecvError::*;
 
