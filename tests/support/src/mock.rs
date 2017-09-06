@@ -1,3 +1,5 @@
+use FutureExt;
+
 use h2::{self, SendError, RecvError};
 use h2::frame::{self, Frame};
 
@@ -33,6 +35,7 @@ struct Inner {
     rx_task: Option<Task>,
     tx: Vec<u8>,
     tx_task: Option<Task>,
+    closed: bool,
 }
 
 const PREFACE: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -44,6 +47,7 @@ pub fn new() -> (Mock, Handle) {
         rx_task: None,
         tx: vec![],
         tx_task: None,
+        closed: false,
     }));
 
     let mock = Mock {
@@ -96,23 +100,15 @@ impl Handle {
     }
 
     /// Perform the H2 handshake
-    pub fn expect_client_handshake(mut self)
+    pub fn assert_client_handshake(mut self)
         -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
-        // -> frame::Settings
     {
         // Send a settings frame
         let frame = frame::Settings::default();
         self.send(frame.into()).unwrap();
 
-        let ret = self.read_preface()
-            .map_err(|err| {
-                unimplemented!()
-            })
-            .and_then(|me| me.into_future())
-            // TODO: actually map the error
-            .map_err(|(err, _)| {
-                unimplemented!()
-            })
+        let ret = self.read_preface().unwrap()
+            .and_then(|me| me.into_future().unwrap())
             .map(|(frame, mut me)| {
                 match frame {
                     Some(Frame::Settings(settings)) => {
@@ -121,8 +117,6 @@ impl Handle {
 
                         // TODO: Don't unwrap?
                         me.send(ack.into()).unwrap();
-
-                        // TODO: Recv ack?
 
                         (settings, me)
                     }
@@ -140,12 +134,10 @@ impl Handle {
                 me.into_future()
                     .map_err(|_| unimplemented!())
                     .map(|(frame, me)| {
-                        match frame {
-                            Some(Frame::Settings(ack)) => {
-                                assert!(ack.is_ack());
-                            }
-                            _ => panic!(),
-                        }
+                        let f = assert_settings!(frame.unwrap());
+
+                        // Is ACK
+                        assert!(f.is_ack());
 
                         (settings, me)
                     })
@@ -192,6 +184,19 @@ impl AsyncWrite for Handle {
     }
 }
 
+impl Drop for Handle {
+    fn drop(&mut self) {
+        assert!(self.codec.shutdown().unwrap().is_ready());
+
+        let mut me = self.codec.get_mut().inner.lock().unwrap();
+        me.closed = true;
+
+        if let Some(task) = me.rx_task.take() {
+            task.notify();
+        }
+    }
+}
+
 // ===== impl Mock =====
 
 impl io::Read for Mock {
@@ -201,6 +206,10 @@ impl io::Read for Mock {
         let mut me = self.pipe.inner.lock().unwrap();
 
         if me.rx.is_empty() {
+            if me.closed {
+                return Ok(0);
+            }
+
             me.rx_task = Some(task::current());
             return Err(WouldBlock.into());
         }
@@ -219,6 +228,10 @@ impl AsyncRead for Mock {
 impl io::Write for Mock {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut me = self.pipe.inner.lock().unwrap();
+
+        if me.closed {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
 
         me.tx.extend(buf);
 

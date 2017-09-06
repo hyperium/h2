@@ -15,11 +15,15 @@ pub mod codec;
 
 pub mod mock;
 
+mod future_ext;
+
 pub use self::futures::{
     Future,
     Sink,
     Stream,
 };
+pub use future_ext::{FutureExt, Unwrap};
+
 pub use self::futures::future::poll_fn;
 
 pub use self::http::{

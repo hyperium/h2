@@ -27,6 +27,11 @@ impl Ping {
         self.ack
     }
 
+    #[cfg(feature = "unstable")]
+    pub fn payload(&self) -> &Payload {
+        &self.payload
+    }
+
     pub fn into_payload(self) -> Payload {
         self.payload
     }
