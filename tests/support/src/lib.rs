@@ -3,6 +3,8 @@
 pub extern crate bytes;
 pub extern crate h2;
 pub extern crate http;
+
+#[macro_use]
 pub extern crate tokio_io;
 pub extern crate futures;
 pub extern crate mock_io;
@@ -10,6 +12,8 @@ pub extern crate env_logger;
 
 #[macro_use]
 pub mod codec;
+
+pub mod mock;
 
 pub use self::futures::{
     Future,
@@ -33,6 +37,7 @@ pub use self::h2::client::{self, Client};
 pub use self::h2::server::{self, Server};
 
 pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
+pub type Frame = h2::frame::Frame<::std::io::Cursor<::bytes::Bytes>>;
 
 pub use self::bytes::{
     Buf,

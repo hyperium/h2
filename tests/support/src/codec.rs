@@ -1,3 +1,5 @@
+// ===== Assertions =====
+
 #[macro_export]
 macro_rules! assert_closed {
     ($transport:expr) => {{
@@ -27,6 +29,8 @@ macro_rules! poll_data {
         }
     }}
 }
+
+// ===== Build a codec from raw bytes =====
 
 #[macro_export]
 macro_rules! raw_codec {

@@ -1,11 +1,12 @@
-/*
 extern crate h2_test_support;
 use h2_test_support::*;
-*/
 
 #[test]
 #[ignore]
 fn recv_single_ping() {
+    let (mock, handle) = mock::new();
+
+    let h2 = Client::handshake(mock).wait().unwrap();
     /*
     let _ = ::env_logger::init();
 
