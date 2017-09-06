@@ -24,7 +24,7 @@ matrix:
         # generate kcov coverage data
         - travis-cargo coverage --no-sudo
         # upload to codecov.io
-        - bash <(curl -s https://codecov.io/bash) -f target/kcov/kcov-merged/cobertura.xml
+        - codecov --file target/kcov/kcov-merged/cobertura.xml
 
 script:
   # Run tests
