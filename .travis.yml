@@ -4,13 +4,20 @@ sudo: false
 
 cache: cargo
 
+addons:
+  apt:
+    packages:
+    - libcurl4-openssl-dev
+    - libelf-dev
+    - libdw-dev
+
 matrix:
   include:
     - rust: stable
     - rust: beta
     - rust: nightly
       before_script:
-        - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
+        - pip install --user travis-cargo codecov && export PATH=$HOME/.local/bin:$PATH
       after_success:
         - travis-cargo doc-upload
 
@@ -22,9 +29,16 @@ script:
   # Generate docs
   - cargo doc --no-deps
 
+after_success:
+  # generate kcov coverage data
+  - travis-cargo coverage --no-sudo
+  # upload to codecov.io
+  - codecov --file target/kcov/kcov-merged/cobertura.xml
+
 env:
   global:
-    secure: "LkjG3IYPu7GY7zuMdYyLtdvjR4a6elX6or1Du7LTBz4JSlQXYAaj6DxhfZfm4d1kECIlnJJ2T21BqDoJDnld5lLu6VcXQ2ZEo/2f2k77GQ/9w3erwcDtqxK02rPoslFNzSd2SCdafjGKdbcvGW2HVBEu5gYEfOdu1Cdy6Av3+vLPk5To50khBQY90Kk+cmSd7J0+CHw/wSXnVgIVoO4742+aj5pxZQLx3lsi3ZPzIh1VL4QOUlaI98ybrCVNxADQCeXRRDzj0d8NzeKlkm8eXpgpiMVRJWURMa3rU2sHU9wh+YjMyoqGZWv2LlzG5LBqde3RWPQ99ebxVhlly6RgEom8yvZbavcGJ4BA0OjviLYAMb1Wjlu1paLZikEqlvTojhpzz3PVuIBZHl+rUgnUfkuhfmMzTBJTPHPMP0GtqpIAGpyRwbv56DquuEiubl70FZmz52sXGDseoABv9jQ4SNJrDrA+bfIWkPpWwqnKaWIgGPl0n3GKeceQM3RshpaE59awYUDS4ybjtacb2Fr99fx25mTO2W4x5hcDqAvBohxRPXgRB2y0ZmrcJyCV3rfkiGFUK7H8ZBqNQ6GG/GYilgj40q6TgcnXxUxyKkykDiS9VU0QAjAwz0pkCNipJ+ImS1j0LHEOcKMKZ7OsGOuSqBmF24ewBs+XzXY7dTnM/Xc="
+  - secure: LkjG3IYPu7GY7zuMdYyLtdvjR4a6elX6or1Du7LTBz4JSlQXYAaj6DxhfZfm4d1kECIlnJJ2T21BqDoJDnld5lLu6VcXQ2ZEo/2f2k77GQ/9w3erwcDtqxK02rPoslFNzSd2SCdafjGKdbcvGW2HVBEu5gYEfOdu1Cdy6Av3+vLPk5To50khBQY90Kk+cmSd7J0+CHw/wSXnVgIVoO4742+aj5pxZQLx3lsi3ZPzIh1VL4QOUlaI98ybrCVNxADQCeXRRDzj0d8NzeKlkm8eXpgpiMVRJWURMa3rU2sHU9wh+YjMyoqGZWv2LlzG5LBqde3RWPQ99ebxVhlly6RgEom8yvZbavcGJ4BA0OjviLYAMb1Wjlu1paLZikEqlvTojhpzz3PVuIBZHl+rUgnUfkuhfmMzTBJTPHPMP0GtqpIAGpyRwbv56DquuEiubl70FZmz52sXGDseoABv9jQ4SNJrDrA+bfIWkPpWwqnKaWIgGPl0n3GKeceQM3RshpaE59awYUDS4ybjtacb2Fr99fx25mTO2W4x5hcDqAvBohxRPXgRB2y0ZmrcJyCV3rfkiGFUK7H8ZBqNQ6GG/GYilgj40q6TgcnXxUxyKkykDiS9VU0QAjAwz0pkCNipJ+ImS1j0LHEOcKMKZ7OsGOuSqBmF24ewBs+XzXY7dTnM/Xc=
+  - secure: Kg4vX1l5XI6fbqzMMIASNqBNZdaSWPEBx3iqDrQ5deIfc5T8gSv9g43HcCLTx6IhPZP/o1pjUiect3j77iPddD9bGtwoHbFI5iXnsqiJ0xKnF512i+KW7apHWa7mdiCpnr4IDF0EYv4ErmwoMmzuPU+GuZyBViiGkH5EQ7+TJ51W/r3sW0wSmwE/XRNL5Xuk/hC2yQo9FaqGbp+EROG6uKmczzTzi4BYBDAycYFYFTUDQbyGMbmQi9EpudMtkgW6SYVEiRtndNqq1U/Na5249X/iEsb/ux3Byvu+/MH8grG6s9Tpy3payMgJUwW3QDrL8mIpx3kRq2kg7aEFXw5wD+2TV2h10fSRSv0DpKRUir3+HqmQ4npRomdlWoO9fdxH+iQa1WUCu9yRs0LsZ4FGX1WMsmFX7aroOngBwuTNYBrGuA69cP5kP5dw73IksY+R91IqZvTb7kouS8aBIK9njlTci9zyxp4j35HN9ECxpUKztQpj8Ulj/r8xKypakbogAGbPXhx7nmFqlRt0d2/xzV9Ag1V38SCS8Vtp338ohJnKbEOQChNhtU4ferMH+qLBOHCVvGvArdpNhTrsCsdJ2IGOXp6ww8OvhG+80IDzH//DaTyH0A5HWDjC1DZoBol48KUJQ7c7UTngSGuV5vj/PbfxX3wFbxjKRiHFlkrdoH8=
 
 notifications:
   email:
