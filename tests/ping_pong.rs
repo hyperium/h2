@@ -1,5 +1,6 @@
+#[macro_use]
 extern crate h2_test_support;
-use h2_test_support::*;
+use h2_test_support::prelude::*;
 
 #[test]
 fn recv_single_ping() {

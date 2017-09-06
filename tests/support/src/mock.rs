@@ -1,4 +1,4 @@
-use FutureExt;
+use {FutureExt, SendFrame};
 
 use h2::{self, SendError, RecvError};
 use h2::frame::{self, Frame};
@@ -67,7 +67,7 @@ pub fn new() -> (Mock, Handle) {
 
 impl Handle {
     /// Send a frame
-    pub fn send(&mut self, item: ::Frame) -> Result<(), SendError> {
+    pub fn send(&mut self, item: SendFrame) -> Result<(), SendError> {
         // Queue the frame
         self.codec.buffer(item).unwrap();
 
