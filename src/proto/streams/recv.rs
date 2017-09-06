@@ -214,6 +214,7 @@ impl<B, P> Recv<B, P>
                             task: &mut Option<Task>)
         -> Result<(), UserError>
     {
+        trace!("release_capacity; size={}", capacity);
         if capacity > stream.in_flight_recv_data {
             // TODO: Handle error
             unimplemented!();
@@ -226,11 +227,13 @@ impl<B, P> Recv<B, P>
         self.flow.assign_capacity(capacity);
         stream.recv_flow.assign_capacity(capacity);
 
-        // Queue the stream for sending the WINDOW_UPDATE frame.
-        self.pending_window_updates.push(stream);
+        if stream.recv_flow.unclaimed_capacity().is_some() {
+            // Queue the stream for sending the WINDOW_UPDATE frame.
+            self.pending_window_updates.push(stream);
 
-        if let Some(task) = task.take() {
-            task.notify();
+            if let Some(task) = task.take() {
+                task.notify();
+            }
         }
 
         Ok(())
@@ -493,9 +496,7 @@ impl<B, P> Recv<B, P>
         -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
-        let incr = self.flow.unclaimed_capacity();
-
-        if incr > 0 {
+        if let Some(incr) = self.flow.unclaimed_capacity() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             // Ensure the codec has capacity
@@ -536,9 +537,7 @@ impl<B, P> Recv<B, P>
             }
 
             // TODO: de-dup
-            let incr = stream.recv_flow.unclaimed_capacity();
-
-            if incr > 0 {
+            if let Some(incr) = stream.recv_flow.unclaimed_capacity() {
                 // Create the WINDOW_UPDATE frame
                 let frame = frame::WindowUpdate::new(stream.id, incr);
 

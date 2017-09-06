@@ -478,7 +478,7 @@ impl<B, P> StreamRef<B, P>
         me.actions.recv.poll_trailers(&mut stream)
     }
 
-    /// Releases recv capacity back to the peer. This will result in sending
+    /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
     pub fn release_capacity(&mut self, capacity: WindowSize)
         -> Result<(), UserError>
