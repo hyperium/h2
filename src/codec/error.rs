@@ -37,6 +37,9 @@ pub enum UserError {
 
     /// The application attempted to initiate too many streams to remote.
     Rejected,
+
+    /// The released capacity is larger than claimed capacity.
+    ReleaseCapacityTooBig,
 }
 
 // ===== impl RecvError =====
@@ -109,6 +112,7 @@ impl error::Error for UserError {
             UnexpectedFrameType => "unexpected frame type",
             PayloadTooBig => "payload too big",
             Rejected => "rejected",
+            ReleaseCapacityTooBig => "release capacity too big",
         }
     }
 }
