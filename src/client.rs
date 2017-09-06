@@ -24,7 +24,7 @@ pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
 }
 
 /// Marker type indicating a client peer
-pub struct Client<T: AsyncRead + AsyncWrite, B: IntoBuf> {
+pub struct Client<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
 
