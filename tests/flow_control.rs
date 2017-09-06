@@ -1,5 +1,5 @@
 extern crate h2_test_support;
-use h2_test_support::*;
+use h2_test_support::prelude::*;
 
 // In this case, the stream & connection both have capacity, but capacity is not
 // explicitly requested.
