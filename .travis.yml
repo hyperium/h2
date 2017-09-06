@@ -4,13 +4,20 @@ sudo: false
 
 cache: cargo
 
+addons:
+  apt:
+    packages:
+    - libcurl4-openssl-dev
+    - libelf-dev
+    - libdw-dev
+
 matrix:
   include:
     - rust: stable
     - rust: beta
     - rust: nightly
       before_script:
-        - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
+        - pip install --user travis-cargo codecov && export PATH=$HOME/.local/bin:$PATH
       after_success:
         - travis-cargo doc-upload
 
@@ -21,6 +28,12 @@ script:
   - rustdoc --test README.md -L target/debug/deps
   # Generate docs
   - cargo doc --no-deps
+
+after_success:
+  # generate kcov coverage data
+  - travis-cargo coverage --no-sudo
+  # upload to codecov.io
+  - codecov --file target/kcov/kcov-merged/cobertura.xml
 
 env:
   global:
