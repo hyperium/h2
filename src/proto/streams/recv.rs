@@ -215,9 +215,9 @@ impl<B, P> Recv<B, P>
         -> Result<(), UserError>
     {
         trace!("release_capacity; size={}", capacity);
+
         if capacity > stream.in_flight_recv_data {
-            // TODO: Handle error
-            unimplemented!();
+            return Err(UserError::ReleaseCapacityTooBig);
         }
 
         // Decrement in-flight data
