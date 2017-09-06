@@ -2,13 +2,37 @@ extern crate h2_test_support;
 use h2_test_support::*;
 
 #[test]
-#[ignore]
 fn recv_single_ping() {
-    let (mock, handle) = mock::new();
-
-    let h2 = Client::handshake(mock).wait().unwrap();
-    /*
     let _ = ::env_logger::init();
+    let (m, mock) = mock::new();
+
+    // Create the handshake
+    let h2 = Client::handshake(m)
+        // Wait until the connection finishes
+        .then(|res| {
+            res.unwrap()
+            // Ok(res.unwrap())
+        });
+
+    let mock = mock.expect_client_handshake()
+        .then(|res| {
+            let (settings, mut mock) = res.unwrap();
+            println!("GOT settings; {:?}", settings);
+
+            let frame = frame::Ping::new();
+            mock.send(frame.into()).unwrap();
+
+            mock.into_future()
+        })
+        .then(|res| {
+            let (frame, _) = res.unwrap();
+            println!("~~~~~~~~ GOT FRAME: {:?}", frame);
+            Ok(())
+        });
+
+    let _ = h2.join(mock)
+        .wait().unwrap();
+    /*
 
     let mock = mock_io::Builder::new()
         .handshake()

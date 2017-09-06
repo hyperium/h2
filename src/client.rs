@@ -57,6 +57,9 @@ impl<T, B> Client<T, B>
     ///
     /// Returns a future which resolves to the connection value once the H2
     /// handshake has been completed.
+    ///
+    /// It's important to note that this does not **flush** the outbound
+    /// settings to the wire.
     pub fn handshake2(io: T) -> Handshake<T, B> {
         use tokio_io::io;
 

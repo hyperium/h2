@@ -12,6 +12,13 @@ pub struct Ping {
 }
 
 impl Ping {
+    pub fn new() -> Ping {
+        Ping {
+            ack: false,
+            payload: Payload::default(),
+        }
+    }
+
     pub fn pong(payload: Payload) -> Ping {
         Ping { ack: true, payload }
     }

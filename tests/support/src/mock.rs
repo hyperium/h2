@@ -1,49 +1,50 @@
-use h2;
+use h2::{self, SendError, RecvError};
 use h2::frame::{self, Frame};
 
-use futures::{Async, Stream, Poll};
+use futures::{Future, Stream, Poll};
 use futures::task::{self, Task};
 
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::io::read_exact;
 
 use std::{cmp, io};
 use std::io::ErrorKind::WouldBlock;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Mutex};
 
 /// A mock I/O
+#[derive(Debug)]
 pub struct Mock {
     pipe: Pipe,
 }
 
+#[derive(Debug)]
 pub struct Handle {
     codec: ::Codec<Pipe>,
 }
 
+#[derive(Debug)]
 struct Pipe {
-    inner: Arc<Inner>,
+    inner: Arc<Mutex<Inner>>,
 }
 
+#[derive(Debug)]
 struct Inner {
-    state: Mutex<State>,
-    condvar: Condvar,
-}
-
-struct State {
     rx: Vec<u8>,
     rx_task: Option<Task>,
     tx: Vec<u8>,
+    tx_task: Option<Task>,
 }
+
+const PREFACE: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Create a new mock and handle
 pub fn new() -> (Mock, Handle) {
-    let inner = Arc::new(Inner {
-        state: Mutex::new(State {
-            rx: vec![],
-            rx_task: None,
-            tx: vec![],
-        }),
-        condvar: Condvar::new(),
-    });
+    let inner = Arc::new(Mutex::new(Inner {
+        rx: vec![],
+        rx_task: None,
+        tx: vec![],
+        tx_task: None,
+    }));
 
     let mock = Mock {
         pipe: Pipe {
@@ -61,16 +62,8 @@ pub fn new() -> (Mock, Handle) {
 // ===== impl Handle =====
 
 impl Handle {
-    /// Receive the next frame
-    pub fn recv(&mut self) -> Result<Option<h2::frame::Frame>, h2::RecvError> {
-        match self.codec.poll()? {
-            Async::Ready(frame) => Ok(frame),
-            Async::NotReady => panic!(),
-        }
-    }
-
     /// Send a frame
-    pub fn send(&mut self, item: ::Frame) -> Result<(), h2::SendError> {
+    pub fn send(&mut self, item: ::Frame) -> Result<(), SendError> {
         // Queue the frame
         self.codec.buffer(item).unwrap();
 
@@ -80,38 +73,122 @@ impl Handle {
         Ok(())
     }
 
+    /// Writes the client preface
     pub fn write_preface(&mut self) {
         use std::io::Write;
 
         // Write the connnection preface
-        self.codec.get_mut().write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").unwrap();
+        self.codec.get_mut().write(PREFACE).unwrap();
+    }
+
+    /// Read the client preface
+    pub fn read_preface(self)
+        -> Box<Future<Item = Self, Error = io::Error>>
+    {
+        let buf = vec![0; PREFACE.len()];
+        let ret = read_exact(self, buf)
+            .and_then(|(me, buf)| {
+                assert_eq!(buf, PREFACE);
+                Ok(me)
+            });
+
+        Box::new(ret)
     }
 
     /// Perform the H2 handshake
-    pub fn handshake_client(&mut self) -> frame::Settings {
-        self.write_preface();
-
+    pub fn expect_client_handshake(mut self)
+        -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+        // -> frame::Settings
+    {
         // Send a settings frame
         let frame = frame::Settings::default();
         self.send(frame.into()).unwrap();
 
-        // Read a settings frame
-        let settings = match self.recv().unwrap() {
-            Some(Frame::Settings(frame)) => frame,
-            Some(frame) => {
-                panic!("unexpected frame; frame={:?}", frame);
-            }
-            None => {
-                panic!("unexpected EOF");
-            }
-        };
+        let ret = self.read_preface()
+            .map_err(|err| {
+                unimplemented!()
+            })
+            .and_then(|me| me.into_future())
+            // TODO: actually map the error
+            .map_err(|(err, _)| {
+                unimplemented!()
+            })
+            .map(|(frame, mut me)| {
+                match frame {
+                    Some(Frame::Settings(settings)) => {
+                        // Send the ACK
+                        let ack = frame::Settings::ack();
 
-        let ack = frame::Settings::ack();
-        self.send(ack.into()).unwrap();
+                        // TODO: Don't unwrap?
+                        me.send(ack.into()).unwrap();
 
-        // TODO... recv ACK
+                        // TODO: Recv ack?
 
-        settings
+                        (settings, me)
+                    }
+                    Some(frame) => {
+                        panic!("unexpected frame; frame={:?}", frame);
+                    }
+                    None => {
+                        panic!("unexpected EOF");
+                    }
+                }
+            })
+            .then(|res| {
+                let (settings, me) = res.unwrap();
+
+                me.into_future()
+                    .map_err(|_| unimplemented!())
+                    .map(|(frame, me)| {
+                        match frame {
+                            Some(Frame::Settings(ack)) => {
+                                assert!(ack.is_ack());
+                            }
+                            _ => panic!(),
+                        }
+
+                        (settings, me)
+                    })
+            })
+            ;
+
+        Box::new(ret)
+    }
+}
+
+impl Stream for Handle {
+    type Item = Frame;
+    type Error = RecvError;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, RecvError> {
+        self.codec.poll()
+    }
+}
+
+impl io::Read for Handle {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.codec.get_mut().read(buf)
+    }
+}
+
+impl AsyncRead for Handle {
+}
+
+impl io::Write for Handle {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.codec.get_mut().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl AsyncWrite for Handle {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        use std::io::Write;
+        try_nb!(self.flush());
+        Ok(().into())
     }
 }
 
@@ -121,7 +198,7 @@ impl io::Read for Mock {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         assert!(buf.len() > 0, "attempted read with zero length buffer... wut?");
 
-        let mut me = self.pipe.inner.state.lock().unwrap();
+        let mut me = self.pipe.inner.lock().unwrap();
 
         if me.rx.is_empty() {
             me.rx_task = Some(task::current());
@@ -130,17 +207,24 @@ impl io::Read for Mock {
 
         let n = cmp::min(buf.len(), me.rx.len());
         buf[..n].copy_from_slice(&me.rx[..n]);
+        me.rx.drain(..n);
 
         Ok(n)
     }
 }
 
+impl AsyncRead for Mock {
+}
+
 impl io::Write for Mock {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut me = self.pipe.inner.state.lock().unwrap();
+        let mut me = self.pipe.inner.lock().unwrap();
 
         me.tx.extend(buf);
-        self.pipe.inner.condvar.notify_one();
+
+        if let Some(task) = me.tx_task.take() {
+            task.notify();
+        }
 
         Ok(buf.len())
     }
@@ -150,20 +234,30 @@ impl io::Write for Mock {
     }
 }
 
+impl AsyncWrite for Mock {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        use std::io::Write;
+        try_nb!(self.flush());
+        Ok(().into())
+    }
+}
+
 // ===== impl Pipe =====
 
 impl io::Read for Pipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         assert!(buf.len() > 0, "attempted read with zero length buffer... wut?");
 
-        let mut me = self.inner.state.lock().unwrap();
+        let mut me = self.inner.lock().unwrap();
 
-        while me.tx.is_empty() {
-            me = self.inner.condvar.wait(me).unwrap();
+        if me.tx.is_empty() {
+            me.tx_task = Some(task::current());
+            return Err(WouldBlock.into());
         }
 
         let n = cmp::min(buf.len(), me.tx.len());
         buf[..n].copy_from_slice(&me.tx[..n]);
+        me.tx.drain(..n);
 
         Ok(n)
     }
@@ -174,7 +268,7 @@ impl AsyncRead for Pipe {
 
 impl io::Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut me = self.inner.state.lock().unwrap();
+        let mut me = self.inner.lock().unwrap();
         me.rx.extend(buf);
 
         if let Some(task) = me.rx_task.take() {
