@@ -16,7 +16,6 @@ script:
 
 jobs:
   include:
-    - stage: test
     - stage: coverage
       script: ./.ci/coverage.sh
       addons:
@@ -26,7 +25,6 @@ jobs:
             - gcc
             - binutils-dev
     - stage: docs
-      rust: nightly
       script: cargo doc --no-deps
       install: skip
       addons:
