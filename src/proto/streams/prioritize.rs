@@ -460,6 +460,10 @@ impl<B, P> Prioritize<B, P>
                             trace!(" -- updating stream flow --");
                             stream.send_flow.send_data(len as WindowSize);
 
+                            // Decrement the stream's buffered data counter
+                            debug_assert!(stream.buffered_send_data >= len as u32);
+                            stream.buffered_send_data -= len as u32;
+
                             // Assign the capacity back to the connection that
                             // was just consumed from the stream in the previous
                             // line.

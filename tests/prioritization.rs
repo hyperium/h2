@@ -174,6 +174,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
 extern crate futures;
 
 use futures::{Poll, Async};
+use std::fmt;
 
 // TODO: These types should be extracted out
 struct WaitForCapacity {
@@ -188,6 +189,7 @@ struct Drive<T> {
 
 impl<T> Future for Drive<T>
     where T: Future,
+          T::Error: fmt::Debug,
 {
     type Item = (Client<mock::Mock, Bytes>, T::Item);
     type Error = ();
@@ -196,13 +198,13 @@ impl<T> Future for Drive<T>
         match self.fut.poll() {
             Ok(Async::Ready(v)) => return Ok((self.conn.take().unwrap(), v).into()),
             Ok(_) => {}
-            Err(e) => panic!(),
+            Err(e) => panic!("unexpected error; {:?}", e),
         }
 
         match self.conn.as_mut().unwrap().poll() {
             Ok(Async::Ready(_)) => panic!(),
             Ok(Async::NotReady) => {}
-            Err(e) => panic!(),
+            Err(e) => panic!("unexpected error; {:?}", e),
         }
 
         Ok(Async::NotReady)
@@ -224,8 +226,6 @@ impl Future for WaitForCapacity {
 
         let act = self.stream().capacity();
 
-        println!("Capacity: {}", act);
-
         if act >= self.target {
             return Ok(self.stream.take().unwrap().into())
         }
@@ -241,8 +241,6 @@ fn send_data_receive_window_update() {
 
     let h2 = Client::handshake(m).unwrap()
         .and_then(|mut h2| {
-            println!("Handshake complete");
-
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -266,6 +264,12 @@ fn send_data_receive_window_update() {
                 conn: Some(h2),
                 fut: fut,
             }
+        })
+        .and_then(|(h2, mut stream)| {
+            let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+            stream.send_data(payload.into(), true).unwrap();
+
+            h2.unwrap()
         });
 
     let mock = mock.assert_client_handshake().unwrap()
@@ -273,12 +277,10 @@ fn send_data_receive_window_update() {
             mock.into_future().unwrap()
         })
         .and_then(|(frame, mock)| {
-            println!("GOT FRAME; {:?}", frame);
-            let request = assert_headers!(frame.unwrap());
+            let _ = assert_headers!(frame.unwrap());
             mock.into_future().unwrap()
         })
         .and_then(|(frame, mut mock)| {
-            println!("GOT FRAME; {:?}", frame);
             let data = assert_data!(frame.unwrap());
 
             // Update the windows
@@ -289,8 +291,30 @@ fn send_data_receive_window_update() {
             let f = frame::WindowUpdate::new(data.stream_id(), len as u32);
             mock.send(f.into()).unwrap();
 
-            Ok(mock)
-        });
+            mock.into_future().unwrap()
+        })
+        // TODO: Dedup the following lines
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, _)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), (frame::DEFAULT_MAX_FRAME_SIZE-1) as usize);
+            Ok(())
+        })
+        ;
 
     let _ = h2.join(mock)
         .wait().unwrap();
