@@ -22,9 +22,11 @@ matrix:
         # Upload docs
         - travis-cargo doc-upload
         # generate kcov coverage data
-        - travis-cargo coverage --no-sudo
-        # upload to codecov.io
-        - bash <(curl -s https://codecov.io/bash) -s target/kcov
+        - |
+          # Run coverage
+          travis-cargo coverage --no-sudo
+          # upload to codecov.io
+          bash <(curl -s https://codecov.io/bash) -s target/kcov
 
 script:
   # Run tests
