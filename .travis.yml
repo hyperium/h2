@@ -3,19 +3,13 @@ language: rust
 sudo: false
 
 cache: cargo
-
-addons:
-  apt:
-    packages:
-    - libcurl4-openssl-dev
-    - libelf-dev
-    - libdw-dev
+rust:
+ - stable
+ - beta
+ - nightly
 
 matrix:
   include:
-    - rust: stable
-    - rust: beta
-    - rust: nightly
       before_script:
         - pip install --user 'travis-cargo<0.2' && export PATH=$HOME/.local/bin:$PATH
       after_success:
@@ -29,8 +23,32 @@ script:
   - cargo test
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
-  # Generate docs
-  - cargo doc --no-deps
+
+jobs:
+  include:
+    - stage: test
+    - stage: coverage
+      script: ./.ci/coverage.sh
+      addons:
+        apt:
+          packages:
+            - cmake
+            - gcc
+            - binutils-dev
+    - stage: docs
+      rust: nightly
+      script: cargo doc --no-deps
+      install: skip
+      addons:
+        apt:
+          packages:
+          - libcurl4-openssl-dev
+          - libelf-dev
+          - libdw-dev
+      before_script: pip install --user 'travis-cargo<0.2' && export PATH=$HOME/.local/bin:$PATH
+      after_success:
+        # Upload docs
+        - travis-cargo doc-upload
 
 env:
   global:
