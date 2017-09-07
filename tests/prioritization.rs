@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate h2_test_support;
 use h2_test_support::prelude::*;
 
@@ -167,4 +168,154 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
+}
+
+#[macro_use]
+extern crate futures;
+
+use futures::{Poll, Async};
+use std::fmt;
+
+// TODO: These types should be extracted out
+struct WaitForCapacity {
+    stream: Option<client::Stream<Bytes>>,
+    target: usize,
+}
+
+struct Drive<T> {
+    conn: Option<Client<mock::Mock, Bytes>>,
+    fut: T,
+}
+
+impl<T> Future for Drive<T>
+    where T: Future,
+          T::Error: fmt::Debug,
+{
+    type Item = (Client<mock::Mock, Bytes>, T::Item);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.fut.poll() {
+            Ok(Async::Ready(v)) => return Ok((self.conn.take().unwrap(), v).into()),
+            Ok(_) => {}
+            Err(e) => panic!("unexpected error; {:?}", e),
+        }
+
+        match self.conn.as_mut().unwrap().poll() {
+            Ok(Async::Ready(_)) => panic!(),
+            Ok(Async::NotReady) => {}
+            Err(e) => panic!("unexpected error; {:?}", e),
+        }
+
+        Ok(Async::NotReady)
+    }
+}
+
+impl WaitForCapacity {
+    fn stream(&mut self) -> &mut client::Stream<Bytes> {
+        self.stream.as_mut().unwrap()
+    }
+}
+
+impl Future for WaitForCapacity {
+    type Item = client::Stream<Bytes>;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, ()> {
+        let _ = try_ready!(self.stream().poll_capacity().map_err(|_| panic!()));
+
+        let act = self.stream().capacity();
+
+        if act >= self.target {
+            return Ok(self.stream.take().unwrap().into())
+        }
+
+        Ok(Async::NotReady)
+    }
+}
+
+#[test]
+fn send_data_receive_window_update() {
+    let _ = ::env_logger::init();
+    let (m, mock) = mock::new();
+
+    let h2 = Client::handshake(m).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            // Send request
+            let mut stream = h2.request(request, false).unwrap();
+
+            // Send data frame
+            stream.send_data("hello".into(), false).unwrap();
+
+            stream.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
+
+            // Wait for capacity
+            let fut = WaitForCapacity {
+                stream: Some(stream),
+                target: frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
+            };
+
+            Drive {
+                conn: Some(h2),
+                fut: fut,
+            }
+        })
+        .and_then(|(h2, mut stream)| {
+            let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+            stream.send_data(payload.into(), true).unwrap();
+
+            h2.unwrap()
+        });
+
+    let mock = mock.assert_client_handshake().unwrap()
+        .and_then(|(_, mock)| {
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let _ = assert_headers!(frame.unwrap());
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mut mock)| {
+            let data = assert_data!(frame.unwrap());
+
+            // Update the windows
+            let len = data.payload().len();
+            let f = frame::WindowUpdate::new(StreamId::zero(), len as u32);
+            mock.send(f.into()).unwrap();
+
+            let f = frame::WindowUpdate::new(data.stream_id(), len as u32);
+            mock.send(f.into()).unwrap();
+
+            mock.into_future().unwrap()
+        })
+        // TODO: Dedup the following lines
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), frame::DEFAULT_MAX_FRAME_SIZE as usize);
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, _)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload().len(), (frame::DEFAULT_MAX_FRAME_SIZE-1) as usize);
+            Ok(())
+        })
+        ;
+
+    let _ = h2.join(mock)
+        .wait().unwrap();
 }

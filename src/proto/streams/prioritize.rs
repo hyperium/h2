@@ -281,6 +281,8 @@ impl<B, P> Prioritize<B, P>
         // If data is buffered, then schedule the stream for execution
         if stream.buffered_send_data > 0 {
             debug_assert!(stream.send_flow.available() > 0);
+            debug_assert!(!stream.pending_send.is_empty());
+
             self.pending_send.push(stream);
         }
     }
@@ -382,6 +384,7 @@ impl<B, P> Prioritize<B, P>
 
         // If needed, schedule the sender
         if stream.send_flow.available() > 0 {
+            debug_assert!(!stream.pending_send.is_empty());
             self.pending_send.push(stream);
         }
     }
@@ -404,6 +407,7 @@ impl<B, P> Prioritize<B, P>
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
+                    debug_assert!(!stream.pending_send.is_empty());
 
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
@@ -455,6 +459,10 @@ impl<B, P> Prioritize<B, P>
                             // Update the flow control
                             trace!(" -- updating stream flow --");
                             stream.send_flow.send_data(len as WindowSize);
+
+                            // Decrement the stream's buffered data counter
+                            debug_assert!(stream.buffered_send_data >= len as u32);
+                            stream.buffered_send_data -= len as u32;
 
                             // Assign the capacity back to the connection that
                             // was just consumed from the stream in the previous
