@@ -27,16 +27,16 @@ jobs:
     - stage: docs
       script: cargo doc --no-deps
       install: skip
-      addons:
-        apt:
-          packages:
-          - libcurl4-openssl-dev
-          - libelf-dev
-          - libdw-dev
-      before_script: pip install --user 'travis-cargo<0.2' && export PATH=$HOME/.local/bin:$PATH
-      after_success:
-        # Upload docs
-        - travis-cargo doc-upload
+      deploy:
+        provider:  pages
+        skip_cleanup: true
+        github_token: $GH_TOKEN
+        target_branch: gh-pages
+        local_dir: target/doc
+        on:
+          branch: master
+          repo: carllerche/h2
+          rust: nightly
 
 env:
   global:
