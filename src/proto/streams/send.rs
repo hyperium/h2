@@ -86,8 +86,11 @@ where B: Buf,
         -> Result<(), UserError>
     {
         trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
+
+        let end_stream = frame.is_end_stream();
+
         // Update the state
-        stream.state.send_open(frame.is_end_stream())?;
+        stream.state.send_open(end_stream)?;
 
         // Queue the frame for sending
         self.prioritize.queue_frame(frame.into(), stream, task);
@@ -155,6 +158,9 @@ where B: Buf,
 
         trace!("send_trailers -- queuing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
+
+        // Release any excess capacity
+        self.prioritize.reserve_capacity(0, stream);
 
         Ok(())
     }

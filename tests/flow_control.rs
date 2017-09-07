@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate h2_test_support;
 use h2_test_support::prelude::*;
 
@@ -223,4 +224,207 @@ fn recv_data_overflows_window() {
 #[ignore]
 fn recv_window_update_causes_overflow() {
     // A received window update causes the window to overflow.
+}
+
+#[test]
+fn stream_close_by_data_frame_releases_capacity() {
+    let _ = ::env_logger::init();
+    let (m, mock) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    let h2 = Client::handshake(m).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            // Send request
+            let mut s1 = h2.request(request, false).unwrap();
+
+            // This effectively reserves the entire connection window
+            s1.reserve_capacity(window_size);
+
+            // The capacity should be immediately available as nothing else is
+            // happening on the stream.
+            assert_eq!(s1.capacity(), window_size);
+
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            // Create a second stream
+            let mut s2 = h2.request(request, false).unwrap();
+
+            // Request capacity
+            s2.reserve_capacity(5);
+
+            // There should be no available capacity (as it is being held up by
+            // the previous stream
+            assert_eq!(s2.capacity(), 0);
+
+            // Closing the previous stream by sending an empty data frame will
+            // release the capacity to s2
+            s1.send_data("".into(), true).unwrap();
+
+            // The capacity should be available
+            assert_eq!(s2.capacity(), 5);
+
+            // Send the frame
+            s2.send_data("hello".into(), true).unwrap();
+
+            // Wait for the connection to close
+            h2.unwrap()
+        })
+        ;
+
+    let mock = mock.assert_client_handshake().unwrap()
+        // Get the first frame
+        .and_then(|(_, mock)| mock.into_future().unwrap())
+        .and_then(|(frame, mock)| {
+            let request = assert_headers!(frame.unwrap());
+
+            assert_eq!(request.stream_id(), 1);
+            assert!(!request.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let request = assert_headers!(frame.unwrap());
+
+            assert_eq!(request.stream_id(), 3);
+            assert!(!request.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let data = assert_data!(frame.unwrap());
+
+            assert_eq!(data.stream_id(), 1);
+            assert_eq!(data.payload().len(), 0);
+            assert!(data.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, _)| {
+            let data = assert_data!(frame.unwrap());
+
+            assert_eq!(data.stream_id(), 3);
+            assert_eq!(data.payload(), "hello");
+            assert!(data.is_end_stream());
+
+            Ok(())
+        })
+        ;
+
+    let _ = h2.join(mock)
+        .wait().unwrap();
+}
+
+#[test]
+fn stream_close_by_trailers_frame_releases_capacity() {
+    let _ = ::env_logger::init();
+    let (m, mock) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    let h2 = Client::handshake(m).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            // Send request
+            let mut s1 = h2.request(request, false).unwrap();
+
+            // This effectively reserves the entire connection window
+            s1.reserve_capacity(window_size);
+
+            // The capacity should be immediately available as nothing else is
+            // happening on the stream.
+            assert_eq!(s1.capacity(), window_size);
+
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            // Create a second stream
+            let mut s2 = h2.request(request, false).unwrap();
+
+            // Request capacity
+            s2.reserve_capacity(5);
+
+            // There should be no available capacity (as it is being held up by
+            // the previous stream
+            assert_eq!(s2.capacity(), 0);
+
+            // Closing the previous stream by sending a trailers frame will
+            // release the capacity to s2
+            s1.send_trailers(Default::default()).unwrap();
+
+            // The capacity should be available
+            assert_eq!(s2.capacity(), 5);
+
+            // Send the frame
+            s2.send_data("hello".into(), true).unwrap();
+
+            // Wait for the connection to close
+            h2.unwrap()
+        })
+        ;
+
+    let mock = mock.assert_client_handshake().unwrap()
+        // Get the first frame
+        .and_then(|(_, mock)| mock.into_future().unwrap())
+        .and_then(|(frame, mock)| {
+            let request = assert_headers!(frame.unwrap());
+
+            assert_eq!(request.stream_id(), 1);
+            assert!(!request.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let request = assert_headers!(frame.unwrap());
+
+            assert_eq!(request.stream_id(), 3);
+            assert!(!request.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mock)| {
+            let trailers = assert_headers!(frame.unwrap());
+
+            assert_eq!(trailers.stream_id(), 1);
+            assert!(trailers.is_end_stream());
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, _)| {
+            let data = assert_data!(frame.unwrap());
+
+            assert_eq!(data.stream_id(), 3);
+            assert_eq!(data.payload(), "hello");
+            assert!(data.is_end_stream());
+
+            Ok(())
+        })
+        ;
+
+    let _ = h2.join(mock)
+        .wait().unwrap();
+}
+
+#[test]
+#[ignore]
+fn stream_close_by_send_reset_frame_releases_capacity() {
+}
+
+#[test]
+#[ignore]
+fn stream_close_by_recv_reset_frame_releases_capacity() {
 }
