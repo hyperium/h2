@@ -2,6 +2,7 @@ use {client, frame, server, proto};
 use frame::Reason;
 use codec::{SendError, RecvError};
 
+use frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use proto::*;
 
 use http::Request;

@@ -30,6 +30,4 @@ pub type PingPayload = [u8; 8];
 pub type WindowSize = u32;
 
 // Constants
-// TODO: Move these into `frame`
-pub const DEFAULT_INITIAL_WINDOW_SIZE: WindowSize = 65_535;
 pub const MAX_WINDOW_SIZE: WindowSize = (1 << 31) - 1;

@@ -12,6 +12,7 @@ pub struct Ping {
 }
 
 impl Ping {
+    #[cfg(feature = "unstable")]
     pub fn new() -> Ping {
         Ping {
             ack: false,

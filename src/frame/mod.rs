@@ -54,6 +54,7 @@ pub use self::window_update::WindowUpdate;
 // Re-export some constants
 pub use self::settings::{
     DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
+    DEFAULT_INITIAL_WINDOW_SIZE,
     DEFAULT_MAX_FRAME_SIZE,
     MAX_INITIAL_WINDOW_SIZE,
     MAX_MAX_FRAME_SIZE,
