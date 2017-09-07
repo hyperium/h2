@@ -220,23 +220,15 @@ impl<T> FramedRead<T> {
         self.inner.get_mut()
     }
 
-    /// Returns the current max frame setting
-    ///
-    /// This is the largest size this codec will accept from the wire. Larger
-    /// frames will be rejected.
+    /// Returns the current max frame size setting
     #[inline]
-    pub fn max_frame_length(&self) -> usize {
+    pub fn max_frame_size(&self) -> usize {
         self.inner.max_frame_length()
     }
 
-    /// Updates the max frame setting.
-    ///
-    /// The change takes effect the next time a frame is decoded. In other
-    /// words, if a frame is currently in process of being decoded with a frame
-    /// size greater than `val` but less than the max frame length in effect
-    /// before calling this function, then the frame will be allowed.
+    /// Updates the max frame size setting.
     #[inline]
-    pub fn set_max_frame_length(&mut self, val: usize) {
+    pub fn set_max_frame_size(&mut self, val: usize) {
         self.inner.set_max_frame_length(val)
     }
 }
