@@ -4,19 +4,9 @@ sudo: false
 
 cache: cargo
 rust:
- - stable
- - beta
  - nightly
-
-matrix:
-  include:
-      before_script:
-        - pip install --user 'travis-cargo<0.2' && export PATH=$HOME/.local/bin:$PATH
-      after_success:
-        # Upload docs
-        - travis-cargo doc-upload
-        # generate & export kcov coverage data
-        - ./.ci/coverage.sh
+ - beta
+ - stable
 
 script:
   # Run tests
