@@ -174,41 +174,11 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
 extern crate futures;
 
 use futures::{Poll, Async};
-use std::fmt;
 
-// TODO: These types should be extracted out
+// TODO: Extract this out?
 struct WaitForCapacity {
     stream: Option<client::Stream<Bytes>>,
     target: usize,
-}
-
-struct Drive<T> {
-    conn: Option<Client<mock::Mock, Bytes>>,
-    fut: T,
-}
-
-impl<T> Future for Drive<T>
-    where T: Future,
-          T::Error: fmt::Debug,
-{
-    type Item = (Client<mock::Mock, Bytes>, T::Item);
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.fut.poll() {
-            Ok(Async::Ready(v)) => return Ok((self.conn.take().unwrap(), v).into()),
-            Ok(_) => {}
-            Err(e) => panic!("unexpected error; {:?}", e),
-        }
-
-        match self.conn.as_mut().unwrap().poll() {
-            Ok(Async::Ready(_)) => panic!(),
-            Ok(Async::NotReady) => {}
-            Err(e) => panic!("unexpected error; {:?}", e),
-        }
-
-        Ok(Async::NotReady)
-    }
 }
 
 impl WaitForCapacity {
@@ -255,15 +225,10 @@ fn send_data_receive_window_update() {
             stream.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
 
             // Wait for capacity
-            let fut = WaitForCapacity {
+            h2.drive(WaitForCapacity {
                 stream: Some(stream),
                 target: frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
-            };
-
-            Drive {
-                conn: Some(h2),
-                fut: fut,
-            }
+            })
         })
         .and_then(|(h2, mut stream)| {
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
