@@ -9,6 +9,9 @@ pub use self::h2::server::{self, Server};
 // Re-export mock
 pub use super::mock;
 
+// Re-export frames helpers
+pub use super::frames;
+
 // Re-export some type defines
 pub use super::{Codec, SendFrame};
 
@@ -99,9 +102,3 @@ impl<T, B> ClientExt for Client<T, B>
     }
 }
 
-pub mod frames {
-    //! Some useful frames
-
-    pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
-    pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
-}
