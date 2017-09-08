@@ -144,6 +144,12 @@ impl<B, P> Prioritize<B, P>
 
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
+        trace!("reserve_capacity; stream={:?}; requested={:?}; effective={:?}; curr={:?}",
+               stream.id,
+               capacity,
+               capacity + stream.buffered_send_data,
+               stream.requested_send_capacity);
+
         // Actual capacity is `capacity` + the current amount of buffered data.
         // It it were less, then we could never send out the buffered data.
         let capacity = capacity + stream.buffered_send_data;
@@ -242,8 +248,12 @@ impl<B, P> Prioritize<B, P>
             total_requested - stream.send_flow.available(),
             stream.send_flow.window_size());
 
-        trace!("try_assign_capacity; requested={}; additional={}; window={}; conn={}",
-               total_requested, additional, stream.send_flow.window_size(), self.flow.available());
+        trace!("try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
+               total_requested,
+               additional,
+               stream.buffered_send_data,
+               stream.send_flow.window_size(),
+               self.flow.available());
 
         if additional == 0 {
             // Nothing more to do
@@ -296,7 +306,18 @@ impl<B, P> Prioritize<B, P>
         // If data is buffered, then schedule the stream for execution
         if stream.buffered_send_data > 0 {
             debug_assert!(stream.send_flow.available() > 0);
-            debug_assert!(!stream.pending_send.is_empty());
+
+            // TODO: This assertion isn't *exactly* correct. There can still be
+            // buffered send data while the stream's pending send queue is
+            // empty. This can happen when a large data frame is in the process
+            // of being **partially** sent. Once the window has been sent, the
+            // data frame will be returned to the prioritization layer to be
+            // re-scheduled.
+            //
+            // That said, it would be nice to figure out how to make this
+            // assertion correctly.
+            //
+            // debug_assert!(!stream.pending_send.is_empty());
 
             self.pending_send.push(stream);
         }
@@ -464,32 +485,36 @@ impl<B, P> Prioritize<B, P>
                             let len = cmp::min(sz, max_len);
 
                             // Only send up to the stream's window capacity
-                            let len = cmp::min(len, stream_capacity as usize);
+                            let len = cmp::min(len, stream_capacity as usize) as WindowSize;
 
                             // There *must* be be enough connection level
                             // capacity at this point.
-                            debug_assert!(len <= self.flow.window_size() as usize);
+                            debug_assert!(len <= self.flow.window_size());
+
+                            trace!(" --> sending data frame; len={}", len);
 
                             // Update the flow control
                             trace!(" -- updating stream flow --");
-                            stream.send_flow.send_data(len as WindowSize);
+                            stream.send_flow.send_data(len);
 
                             // Decrement the stream's buffered data counter
-                            debug_assert!(stream.buffered_send_data >= len as u32);
-                            stream.buffered_send_data -= len as u32;
+                            debug_assert!(stream.buffered_send_data >= len);
+                            stream.buffered_send_data -= len;
+                            stream.requested_send_capacity -= len;
 
                             // Assign the capacity back to the connection that
                             // was just consumed from the stream in the previous
                             // line.
-                            self.flow.assign_capacity(len as WindowSize);
+                            self.flow.assign_capacity(len);
 
                             trace!(" -- updating connection flow --");
-                            self.flow.send_data(len as WindowSize);
+                            self.flow.send_data(len);
 
                             // Wrap the frame's data payload to ensure that the
                             // correct amount of data gets written.
 
                             let eos = frame.is_end_stream();
+                            let len = len as usize;
 
                             if frame.payload().remaining() > len {
                                 frame.set_end_stream(false);
