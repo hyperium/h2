@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, IntoBuf};
-use frame::{Frame, Head, Kind, Error, StreamId};
+use frame::{Error, Frame, Head, Kind, StreamId};
 
 const ACK_FLAG: u8 = 0x1;
 
@@ -21,7 +21,10 @@ impl Ping {
     }
 
     pub fn pong(payload: Payload) -> Ping {
-        Ping { ack: true, payload }
+        Ping {
+            ack: true,
+            payload,
+        }
     }
 
     pub fn is_ack(&self) -> bool {
@@ -65,7 +68,10 @@ impl Ping {
         //    endpoint MUST NOT respond to PING frames containing this flag.
         let ack = head.flag() & ACK_FLAG != 0;
 
-        Ok(Ping { ack, payload })
+        Ok(Ping {
+               ack,
+               payload,
+           })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {

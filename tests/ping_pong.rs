@@ -8,10 +8,10 @@ fn recv_single_ping() {
     let (m, mock) = mock::new();
 
     // Create the handshake
-    let h2 = Client::handshake(m).unwrap()
-        .and_then(|conn| conn.unwrap());
+    let h2 = Client::handshake(m).unwrap().and_then(|conn| conn.unwrap());
 
-    let mock = mock.assert_client_handshake().unwrap()
+    let mock = mock.assert_client_handshake()
+        .unwrap()
         .and_then(|(_, mut mock)| {
             let frame = frame::Ping::new();
             mock.send(frame.into()).unwrap();
@@ -30,6 +30,5 @@ fn recv_single_ping() {
             Ok(())
         });
 
-    let _ = h2.join(mock)
-        .wait().unwrap();
+    let _ = h2.join(mock).wait().unwrap();
 }

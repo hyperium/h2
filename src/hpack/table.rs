@@ -83,9 +83,7 @@ impl Table {
                 max_size: max_size,
             }
         } else {
-            let capacity = cmp::max(
-                to_raw_capacity(capacity).next_power_of_two(),
-                8);
+            let capacity = cmp::max(to_raw_capacity(capacity).next_power_of_two(), 8);
 
             Table {
                 mask: capacity.wrapping_sub(1),
@@ -203,12 +201,7 @@ impl Table {
         });
     }
 
-    fn index_occupied(&mut self,
-                      header: Header,
-                      hash: HashValue,
-                      mut index: usize)
-        -> Index
-    {
+    fn index_occupied(&mut self, header: Header, hash: HashValue, mut index: usize) -> Index {
         debug_assert!(self.assert_valid_state("top"));
 
         // There already is a match for the given header name. Check if a value
@@ -256,14 +249,14 @@ impl Table {
         }
     }
 
-    fn index_vacant(&mut self,
-                    header: Header,
-                    hash: HashValue,
-                    mut dist: usize,
-                    mut probe: usize,
-                    statik: Option<(usize, bool)>)
-        -> Index
-    {
+    fn index_vacant(
+        &mut self,
+        header: Header,
+        hash: HashValue,
+        mut dist: usize,
+        mut probe: usize,
+        statik: Option<(usize, bool)>,
+    ) -> Index {
         if header.is_sensitive() {
             return Index::new(statik, header);
         }
@@ -299,10 +292,11 @@ impl Table {
 
         let pos_idx = 0usize.wrapping_sub(self.inserted);
 
-        let prev = mem::replace(&mut self.indices[probe], Some(Pos {
-            index: pos_idx,
-            hash: hash,
-        }));
+        let prev = mem::replace(&mut self.indices[probe],
+                                Some(Pos {
+                                         index: pos_idx,
+                                         hash: hash,
+                                     }));
 
         if let Some(mut prev) = prev {
             // Shift forward
@@ -331,10 +325,10 @@ impl Table {
         self.inserted = self.inserted.wrapping_add(1);
 
         self.slots.push_front(Slot {
-            hash: hash,
-            header: header,
-            next: None,
-        });
+                                  hash: hash,
+                                  header: header,
+                                  next: None,
+                              });
     }
 
     pub fn resize(&mut self, size: usize) {
@@ -383,11 +377,12 @@ impl Table {
         // Update the size
         self.size -= slot.header.len();
 
-        debug_assert_eq!(
-            self.indices.iter().filter_map(|p| *p)
-                .filter(|p| p.index == pos_idx)
-                .count(),
-            1);
+        debug_assert_eq!(self.indices
+                             .iter()
+                             .filter_map(|p| *p)
+                             .filter(|p| p.index == pos_idx)
+                             .count(),
+                         1);
 
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
@@ -500,12 +495,12 @@ impl Table {
                 }
 
                 debug_assert!({
-                    let them = self.indices[probe].unwrap();
-                    let their_distance = probe_distance(self.mask, them.hash, probe);
-                    let our_distance = probe_distance(self.mask, pos.hash, probe);
+                                  let them = self.indices[probe].unwrap();
+                                  let their_distance = probe_distance(self.mask, them.hash, probe);
+                                  let our_distance = probe_distance(self.mask, pos.hash, probe);
 
-                    their_distance >= our_distance
-                });
+                                  their_distance >= our_distance
+                              });
             });
         }
     }
@@ -584,8 +579,10 @@ impl Table {
                     }
 
                     assert!(dist <= their_dist,
-                            "could not find entry; actual={}; desired={}; probe={}, dist={}; their_dist={}; index={}; msg={}",
-                            actual, desired, probe, dist, their_dist, index.wrapping_sub(self.inserted), msg);
+                            "could not find entry; actual={}; desired={};" +
+                            "probe={}, dist={}; their_dist={}; index={}; msg={}",
+                            actual, desired, probe, dist, their_dist,
+                            index.wrapping_sub(self.inserted), msg);
 
                     dist += 1;
                 });
@@ -661,7 +658,10 @@ fn hash_header(header: &Header) -> HashValue {
 /// boolean representing if the value matched as well.
 fn index_static(header: &Header) -> Option<(usize, bool)> {
     match *header {
-        Header::Field { ref name, ref value } => {
+        Header::Field {
+            ref name,
+            ref value,
+        } => {
             match *name {
                 header::ACCEPT_CHARSET => Some((15, false)),
                 header::ACCEPT_ENCODING => {

@@ -1,12 +1,13 @@
-use client;
 use super::*;
+use client;
 
-use std::usize;
 use std::marker::PhantomData;
+use std::usize;
 
 #[derive(Debug)]
 pub(super) struct Counts<P>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// Maximum number of locally initiated streams
     max_send_streams: Option<usize>,
@@ -27,7 +28,8 @@ pub(super) struct Counts<P>
 }
 
 impl<P> Counts<P>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// Create a new `Counts` using the provided configuration values.
     pub fn new(config: &Config) -> Self {
@@ -94,7 +96,8 @@ impl<P> Counts<P>
     /// If the stream state transitions to closed, this function will perform
     /// all necessary cleanup.
     pub fn transition<F, B, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> U
-        where F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U
+    where
+        F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
     {
         let is_counted = stream.state.is_counted();
 

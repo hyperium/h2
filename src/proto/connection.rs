@@ -1,13 +1,13 @@
-use {client, frame, server, proto};
+use {client, frame, proto, server};
+use codec::{RecvError, SendError};
 use frame::Reason;
-use codec::{SendError, RecvError};
 
 use frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use proto::*;
 
-use http::Request;
-use futures::{Stream};
 use bytes::{Bytes, IntoBuf};
+use futures::Stream;
+use http::Request;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use std::marker::PhantomData;
@@ -15,7 +15,8 @@ use std::marker::PhantomData;
 /// An H2 connection
 #[derive(Debug)]
 pub(crate) struct Connection<T, P, B: IntoBuf = Bytes>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// Tracks the connection level state transitions.
     state: State,
@@ -52,18 +53,19 @@ enum State {
 }
 
 impl<T, P, B> Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
+where
+    T: AsyncRead + AsyncWrite,
+    P: Peer,
+    B: IntoBuf,
 {
     pub fn new(codec: Codec<T, Prioritized<B::Buf>>) -> Connection<T, P, B> {
         // TODO: Actually configure
         let streams = Streams::new(streams::Config {
-            max_remote_initiated: None,
-            init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            max_local_initiated: None,
-            init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-        });
+                                       max_remote_initiated: None,
+                                       init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+                                       max_local_initiated: None,
+                                       init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+                                   });
 
         Connection {
             state: State::Open,
@@ -83,7 +85,8 @@ impl<T, P, B> Connection<T, P, B>
         // The order of these calls don't really matter too much as only one
         // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
-        try_ready!(self.settings.send_pending_ack(&mut self.codec, &mut self.streams));
+        try_ready!(self.settings
+                       .send_pending_ack(&mut self.codec, &mut self.streams));
         try_ready!(self.streams.send_pending_refusal(&mut self.codec));
 
         Ok(().into())
@@ -128,7 +131,10 @@ impl<T, P, B> Connection<T, P, B>
                         // Attempting to read a frame resulted in a stream level error.
                         // This is handled by resetting the frame then trying to read
                         // another frame.
-                        Err(Stream { id, reason }) => {
+                        Err(Stream {
+                                id,
+                                reason,
+                            }) => {
                             trace!("stream level error; id={:?}; reason={:?}", id, reason);
                             self.streams.send_reset(id, reason);
                         }
@@ -146,14 +152,16 @@ impl<T, P, B> Connection<T, P, B>
                             return Err(e);
                         }
                     }
-                },
+                }
                 State::GoAway(frame) => {
                     // Ensure the codec is ready to accept the frame
                     try_ready!(self.codec.poll_ready());
 
                     // Buffer the GO_AWAY frame
-                    self.codec.buffer(frame.into())
-                        .ok().expect("invalid GO_AWAY frame");
+                    self.codec
+                        .buffer(frame.into())
+                        .ok()
+                        .expect("invalid GO_AWAY frame");
 
                     // GO_AWAY sent, transition the connection to an errored state
                     self.state = State::Flush(frame.reason());
@@ -182,15 +190,15 @@ impl<T, P, B> Connection<T, P, B>
             match try_ready!(self.codec.poll()) {
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
-                    try!(self.streams.recv_headers(frame));
+                    self.streams.recv_headers(frame)?;
                 }
                 Some(Data(frame)) => {
                     trace!("recv DATA; frame={:?}", frame);
-                    try!(self.streams.recv_data(frame));
+                    self.streams.recv_data(frame)?;
                 }
                 Some(Reset(frame)) => {
                     trace!("recv RST_STREAM; frame={:?}", frame);
-                    try!(self.streams.recv_reset(frame));
+                    self.streams.recv_reset(frame)?;
                 }
                 Some(PushPromise(frame)) => {
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);
@@ -229,8 +237,9 @@ impl<T, P, B> Connection<T, P, B>
 }
 
 impl<T, B> Connection<T, client::Peer, B>
-    where T: AsyncRead + AsyncWrite,
-          B: IntoBuf,
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
 {
     /// Returns `Ready` when new the connection is able to support a new request stream.
     pub fn poll_send_request_ready(&mut self) -> Async<()> {
@@ -238,16 +247,19 @@ impl<T, B> Connection<T, client::Peer, B>
     }
 
     /// Initialize a new HTTP/2.0 stream and send the message.
-    pub fn send_request(&mut self, request: Request<()>, end_of_stream: bool)
-        -> Result<StreamRef<B::Buf, client::Peer>, SendError>
-    {
+    pub fn send_request(
+        &mut self,
+        request: Request<()>,
+        end_of_stream: bool,
+    ) -> Result<StreamRef<B::Buf, client::Peer>, SendError> {
         self.streams.send_request(request, end_of_stream)
     }
 }
 
 impl<T, B> Connection<T, server::Peer, B>
-    where T: AsyncRead + AsyncWrite,
-          B: IntoBuf,
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf, server::Peer>> {
         self.streams.next_incoming()
@@ -256,9 +268,10 @@ impl<T, B> Connection<T, server::Peer, B>
 
 #[cfg(feature = "unstable")]
 impl<T, P, B> Connection<T, P, B>
-    where T: AsyncRead + AsyncWrite,
-          P: Peer,
-          B: IntoBuf,
+where
+    T: AsyncRead + AsyncWrite,
+    P: Peer,
+    B: IntoBuf,
 {
     pub fn num_active_streams(&self) -> usize {
         self.streams.num_active_streams()

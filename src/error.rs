@@ -44,13 +44,17 @@ impl From<proto::Error> for Error {
 
 impl From<io::Error> for Error {
     fn from(src: io::Error) -> Error {
-        Error { kind: Kind::Io(src) }
+        Error {
+            kind: Kind::Io(src),
+        }
     }
 }
 
 impl From<Reason> for Error {
     fn from(src: Reason) -> Error {
-        Error { kind: Kind::Proto(src) }
+        Error {
+            kind: Kind::Proto(src),
+        }
     }
 }
 
@@ -65,7 +69,9 @@ impl From<SendError> for Error {
 
 impl From<UserError> for Error {
     fn from(src: UserError) -> Error {
-        Error { kind: Kind::User(src) }
+        Error {
+            kind: Kind::User(src),
+        }
     }
 }
 

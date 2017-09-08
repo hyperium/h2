@@ -1,5 +1,5 @@
-use frame::{Frame, FrameSize, Error, Head, Kind, StreamId};
-use bytes::{BytesMut, BufMut, BigEndian};
+use bytes::{BigEndian, BufMut, BytesMut};
+use frame::{Error, Frame, FrameSize, Head, Kind, StreamId};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Settings {
@@ -54,7 +54,7 @@ impl Settings {
     pub fn ack() -> Settings {
         Settings {
             flags: SettingsFlags::ack(),
-            .. Settings::default()
+            ..Settings::default()
         }
     }
 

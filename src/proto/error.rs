@@ -1,5 +1,5 @@
-use frame::Reason;
 use codec::RecvError;
+use frame::Reason;
 
 use std::io;
 

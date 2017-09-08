@@ -42,7 +42,7 @@ mod window_update;
 pub use self::data::Data;
 pub use self::go_away::GoAway;
 pub use self::head::{Head, Kind};
-pub use self::headers::{Headers, PushPromise, Continuation, Pseudo};
+pub use self::headers::{Continuation, Headers, Pseudo, PushPromise};
 pub use self::ping::Ping;
 pub use self::priority::{Priority, StreamDependency};
 pub use self::reason::Reason;
@@ -52,10 +52,11 @@ pub use self::stream_id::StreamId;
 pub use self::window_update::WindowUpdate;
 
 // Re-export some constants
+
 pub use self::settings::{
-    DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
     DEFAULT_INITIAL_WINDOW_SIZE,
     DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
     MAX_INITIAL_WINDOW_SIZE,
     MAX_MAX_FRAME_SIZE,
 };
@@ -74,12 +75,13 @@ pub enum Frame<T = Bytes> {
     Ping(Ping),
     GoAway(GoAway),
     WindowUpdate(WindowUpdate),
-    Reset(Reset)
+    Reset(Reset),
 }
 
 impl<T> Frame<T> {
     pub fn map<F, U>(self, f: F) -> Frame<U>
-        where F: FnOnce(T) -> U
+    where
+        F: FnOnce(T) -> U,
     {
         use self::Frame::*;
 

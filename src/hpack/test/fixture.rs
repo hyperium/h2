@@ -2,15 +2,15 @@ extern crate bytes;
 extern crate hex;
 extern crate serde_json;
 
-use hpack::{Header, Decoder, Encoder};
+use hpack::{Decoder, Encoder, Header};
 
 use self::bytes::BytesMut;
 use self::hex::FromHex;
 use self::serde_json::Value;
 
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::Cursor;
+use std::io::prelude::*;
 use std::path::Path;
 use std::str;
 
@@ -27,7 +27,10 @@ fn test_story(story: Value) {
     let story = story.as_object().unwrap();
 
     if let Some(cases) = story.get("cases") {
-        let mut cases: Vec<_> = cases.as_array().unwrap().iter()
+        let mut cases: Vec<_> = cases
+            .as_array()
+            .unwrap()
+            .iter()
             .map(|case| {
                 let case = case.as_object().unwrap();
 
@@ -37,8 +40,11 @@ fn test_story(story: Value) {
                 let wire = case.get("wire").unwrap().as_str().unwrap();
                 let wire: Vec<u8> = FromHex::from_hex(wire.as_bytes()).unwrap();
 
-                let expect: Vec<_> = case.get("headers").unwrap()
-                    .as_array().unwrap().iter()
+                let expect: Vec<_> = case.get("headers")
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .iter()
                     .map(|h| {
                         let h = h.as_object().unwrap();
                         let (name, val) = h.iter().next().unwrap();
@@ -67,11 +73,13 @@ fn test_story(story: Value) {
                 decoder.queue_size_update(size);
             }
 
-            decoder.decode(&mut Cursor::new(case.wire.clone().into()), |e| {
-                let (name, value) = expect.remove(0);
-                assert_eq!(name, key_str(&e));
-                assert_eq!(value, value_str(&e));
-            }).unwrap();
+            decoder
+                .decode(&mut Cursor::new(case.wire.clone().into()), |e| {
+                    let (name, value) = expect.remove(0);
+                    assert_eq!(name, key_str(&e));
+                    assert_eq!(value, value_str(&e));
+                })
+                .unwrap();
 
             assert_eq!(0, expect.len());
         }
@@ -88,15 +96,22 @@ fn test_story(story: Value) {
                 decoder.queue_size_update(size);
             }
 
-            let mut input: Vec<_> = case.expect.iter().map(|&(ref name, ref value)| {
-                Header::new(name.clone().into(), value.clone().into()).unwrap().into()
-            }).collect();
+            let mut input: Vec<_> = case.expect
+                .iter()
+                .map(|&(ref name, ref value)| {
+                    Header::new(name.clone().into(), value.clone().into())
+                        .unwrap()
+                        .into()
+                })
+                .collect();
 
             encoder.encode(None, &mut input.clone().into_iter(), &mut buf);
 
-            decoder.decode(&mut Cursor::new(buf.into()), |e| {
-                assert_eq!(e, input.remove(0).reify().unwrap());
-            }).unwrap();
+            decoder
+                .decode(&mut Cursor::new(buf.into()), |e| {
+                    assert_eq!(e, input.remove(0).reify().unwrap());
+                })
+                .unwrap();
 
             assert_eq!(0, input.len());
         }
@@ -112,7 +127,9 @@ struct Case {
 
 fn key_str(e: &Header) -> &str {
     match *e {
-        Header::Field { ref name, .. } => name.as_str(),
+        Header::Field {
+            ref name, ..
+        } => name.as_str(),
         Header::Authority(..) => ":authority",
         Header::Method(..) => ":method",
         Header::Scheme(..) => ":scheme",
@@ -123,7 +140,9 @@ fn key_str(e: &Header) -> &str {
 
 fn value_str(e: &Header) -> &str {
     match *e {
-        Header::Field { ref value, .. } => value.to_str().unwrap(),
+        Header::Field {
+            ref value, ..
+        } => value.to_str().unwrap(),
         Header::Authority(ref v) => &**v,
         Header::Method(ref m) => m.as_str(),
         Header::Scheme(ref v) => &**v,

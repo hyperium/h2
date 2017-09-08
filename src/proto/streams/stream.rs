@@ -15,7 +15,8 @@ use std::usize;
 /// Thus, `ref_count` can be zero and the stream still has to be kept around.
 #[derive(Debug)]
 pub(super) struct Stream<B, P>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// The h2 stream identifier
     pub id: StreamId,
@@ -27,7 +28,6 @@ pub(super) struct Stream<B, P>
     pub ref_count: usize,
 
     // ===== Fields related to sending =====
-
     /// Next node in the accept linked list
     pub next_pending_send: Option<store::Key>,
 
@@ -61,7 +61,6 @@ pub(super) struct Stream<B, P>
     pub send_capacity_inc: bool,
 
     // ===== Fields related to receiving =====
-
     /// Next node in the accept linked list
     pub next_pending_accept: Option<store::Key>,
 
@@ -90,7 +89,6 @@ pub(super) struct Stream<B, P>
 
     /// Validate content-length headers
     pub content_length: ContentLength,
-
 }
 
 /// State related to validating a stream's content-length
@@ -114,21 +112,27 @@ pub(super) struct NextSendCapacity;
 pub(super) struct NextWindowUpdate;
 
 impl<B, P> Stream<B, P>
-    where P: Peer,
+where
+    P: Peer,
 {
-    pub fn new(id: StreamId,
-               init_send_window: WindowSize,
-               init_recv_window: WindowSize) -> Stream<B, P>
-    {
+    pub fn new(
+        id: StreamId,
+        init_send_window: WindowSize,
+        init_recv_window: WindowSize,
+    ) -> Stream<B, P> {
         let mut send_flow = FlowControl::new();
         let mut recv_flow = FlowControl::new();
 
-        recv_flow.inc_window(init_recv_window)
-            .ok().expect("invalid initial receive window");
+        recv_flow
+            .inc_window(init_recv_window)
+            .ok()
+            .expect("invalid initial receive window");
         recv_flow.assign_capacity(init_recv_window);
 
-        send_flow.inc_window(init_send_window)
-            .ok().expect("invalid initial send window size");
+        send_flow
+            .inc_window(init_send_window)
+            .ok()
+            .expect("invalid initial send window size");
 
         Stream {
             id,
@@ -136,7 +140,6 @@ impl<B, P> Stream<B, P>
             ref_count: 0,
 
             // ===== Fields related to sending =====
-
             next_pending_send: None,
             is_pending_send: false,
             send_flow: send_flow,
@@ -149,7 +152,6 @@ impl<B, P> Stream<B, P>
             send_capacity_inc: false,
 
             // ===== Fields related to receiving =====
-
             next_pending_accept: None,
             is_pending_accept: false,
             recv_flow: recv_flow,
@@ -197,10 +199,8 @@ impl<B, P> Stream<B, P>
             // There are no more outstanding references to the stream
             self.ref_count == 0 &&
             // The stream is not in any queue
-            !self.is_pending_send &&
-            !self.is_pending_send_capacity &&
-            !self.is_pending_accept &&
-            !self.is_pending_window_update
+            !self.is_pending_send && !self.is_pending_send_capacity &&
+            !self.is_pending_accept && !self.is_pending_window_update
     }
 
     pub fn assign_capacity(&mut self, capacity: WindowSize) {

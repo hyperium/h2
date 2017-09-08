@@ -16,8 +16,12 @@ matrix:
     - rust: stable
     - rust: beta
     - rust: nightly
-      before_script:
+      install:
         - pip install --user travis-cargo codecov && export PATH=$HOME/.local/bin:$PATH
+        - if ! cargo fmt --help >/dev/null 2>&1 ; then cargo install rustfmt-nightly ; fi
+      after_script:
+        # Check formatting
+        - cargo fmt -- --write-mode=diff
       after_success:
         - travis-cargo doc-upload
 

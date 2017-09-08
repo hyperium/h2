@@ -14,7 +14,8 @@ pub struct PingPong<B> {
 }
 
 impl<B> PingPong<B>
-    where B: Buf,
+where
+    B: Buf,
 {
     pub fn new() -> Self {
         PingPong {
@@ -46,7 +47,8 @@ impl<B> PingPong<B>
 
     /// Send any pending pongs.
     pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
-        where T: AsyncWrite,
+    where
+        T: AsyncWrite,
     {
         if let Some(pong) = self.sending_pong.take() {
             if !dst.poll_ready()?.is_ready() {

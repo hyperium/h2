@@ -1,5 +1,5 @@
-use frame;
 use codec::RecvError;
+use frame;
 use proto::*;
 
 #[derive(Debug)]
@@ -20,21 +20,23 @@ impl Settings {
     pub fn recv_settings(&mut self, frame: frame::Settings) {
         if frame.is_ack() {
             debug!("received remote settings ack");
-            // TODO: handle acks
+        // TODO: handle acks
         } else {
             assert!(self.pending.is_none());
             self.pending = Some(frame);
         }
     }
 
-    pub fn send_pending_ack<T, B, C, P>(&mut self,
-                                        dst: &mut Codec<T, B>,
-                                        streams: &mut Streams<C, P>)
-        -> Poll<(), RecvError>
-        where T: AsyncWrite,
-              B: Buf,
-              C: Buf,
-              P: Peer,
+    pub fn send_pending_ack<T, B, C, P>(
+        &mut self,
+        dst: &mut Codec<T, B>,
+        streams: &mut Streams<C, P>,
+    ) -> Poll<(), RecvError>
+    where
+        T: AsyncWrite,
+        B: Buf,
+        C: Buf,
+        P: Peer,
     {
         trace!("send_pending_ack; pending={:?}", self.pending);
 
@@ -48,7 +50,9 @@ impl Settings {
             let frame = frame::Settings::ack();
 
             // Buffer the settings frame
-            dst.buffer(frame.into()).ok().expect("invalid settings frame");
+            dst.buffer(frame.into())
+                .ok()
+                .expect("invalid settings frame");
 
             trace!("ACK sent; applying settings");
 

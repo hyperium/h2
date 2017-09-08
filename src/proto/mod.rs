@@ -8,7 +8,7 @@ mod streams;
 pub(crate) use self::connection::Connection;
 pub(crate) use self::error::Error;
 pub(crate) use self::peer::Peer;
-pub(crate) use self::streams::{Streams, StreamRef};
+pub(crate) use self::streams::{StreamRef, Streams};
 
 use codec::Codec;
 
@@ -18,7 +18,7 @@ use self::streams::Prioritized;
 
 use frame::{self, Frame};
 
-use futures::{task, Poll, Async};
+use futures::{task, Async, Poll};
 use futures::task::Task;
 
 use bytes::Buf;

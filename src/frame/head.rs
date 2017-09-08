@@ -1,6 +1,6 @@
 use super::StreamId;
 
-use bytes::{BufMut, BigEndian};
+use bytes::{BigEndian, BufMut};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Head {

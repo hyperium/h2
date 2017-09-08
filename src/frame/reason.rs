@@ -37,7 +37,10 @@ impl Reason {
             RefusedStream => "refused stream before processing any application logic",
             Cancel => "stream no longer needed",
             CompressionError => "unable to maintain the header compression context",
-            ConnectError => "connection established in response to a CONNECT request was reset or abnormally closed",
+            ConnectError => {
+                "connection established in response to a CONNECT request \
+                 was reset or abnormally closed"
+            }
             EnhanceYourCalm => "detected excessive load generating behavior",
             InadequateSecurity => "security properties do not meet minimum requirements",
             Http11Required => "endpoint requires HTTP/1.1",

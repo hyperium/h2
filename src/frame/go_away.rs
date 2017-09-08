@@ -1,6 +1,6 @@
-use frame::{self, Head, Error, Kind, StreamId, Reason};
+use frame::{self, Error, Head, Kind, Reason, StreamId};
 
-use bytes::{BufMut, BigEndian};
+use bytes::{BigEndian, BufMut};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct GoAway {
@@ -35,9 +35,9 @@ impl GoAway {
         let error_code = unpack_octets_4!(payload, 4, u32);
 
         Ok(GoAway {
-            last_stream_id: last_stream_id,
-            error_code: error_code,
-        })
+               last_stream_id: last_stream_id,
+               error_code: error_code,
+           })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {

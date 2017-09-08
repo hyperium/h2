@@ -9,8 +9,8 @@ mod store;
 mod stream;
 mod streams;
 
-pub(crate) use self::streams::{Streams, StreamRef};
 pub(crate) use self::prioritize::Prioritized;
+pub(crate) use self::streams::{StreamRef, Streams};
 
 use self::buffer::Buffer;
 use self::counts::Counts;
@@ -19,15 +19,15 @@ use self::prioritize::Prioritize;
 use self::recv::Recv;
 use self::send::Send;
 use self::state::State;
-use self::store::{Store, Entry};
+use self::store::{Entry, Store};
 use self::stream::Stream;
 
+use error::Reason::*;
 use frame::StreamId;
 use proto::*;
-use error::Reason::*;
 
-use http::{Request, Response};
 use bytes::Bytes;
+use http::{Request, Response};
 
 #[derive(Debug)]
 pub struct Config {

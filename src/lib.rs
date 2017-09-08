@@ -7,12 +7,15 @@ extern crate futures;
 extern crate tokio_io;
 
 // HTTP types
+
 extern crate http;
 
 // Buffer utilities
+
 extern crate bytes;
 
 // Hash function used for HPACK encoding and tracking stream states.
+
 extern crate fnv;
 
 extern crate byteorder;
@@ -43,4 +46,4 @@ pub mod server;
 pub use error::{Error, Reason};
 
 #[cfg(feature = "unstable")]
-pub use codec::{Codec, SendError, RecvError, UserError};
+pub use codec::{Codec, RecvError, SendError, UserError};

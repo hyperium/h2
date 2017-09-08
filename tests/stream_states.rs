@@ -20,13 +20,13 @@ fn send_recv_headers_only() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let mut stream = h2.request(request, true).unwrap();
@@ -62,13 +62,13 @@ fn send_recv_data() {
         ])
         .build();
 
-    let mut h2 = Client::handshake2(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake2(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let mut stream = h2.request(request, false).unwrap();
@@ -119,13 +119,13 @@ fn send_headers_recv_data_single_frame() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let mut stream = h2.request(request, true).unwrap();
@@ -154,10 +154,10 @@ fn closed_streams_are_released() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io).unwrap()
+    let h2 = Client::handshake(io)
+        .unwrap()
         .and_then(|mut h2| {
-            let request = Request::get("https://example.com/")
-                .body(()).unwrap();
+            let request = Request::get("https://example.com/").body(()).unwrap();
 
             // Send request
             let stream = h2.request(request, true).unwrap();
@@ -179,26 +179,18 @@ fn closed_streams_are_released() {
             assert_eq!(0, h2.num_wired_streams());
 
             Ok(())
-        })
-        ;
+        });
 
-    let srv = srv.assert_client_handshake().unwrap()
+    let srv = srv.assert_client_handshake()
+        .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1)
-                .request("GET", "https://example.com/")
-                .eos()
-        )
-        .send_frame(
-            frames::headers(1)
-                .response(204)
-                .eos()
-        )
-        .close()
-        ;
+        .recv_frame(frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .eos())
+        .send_frame(frames::headers(1).response(204).eos())
+        .close();
 
-    let _ = h2.join(srv)
-        .wait().unwrap();
+    let _ = h2.join(srv).wait().unwrap();
 }
 
 /*

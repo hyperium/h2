@@ -1,12 +1,12 @@
-use super::{StreamId, StreamDependency};
+use super::{StreamDependency, StreamId};
+use frame::{self, Error, Frame, Head, Kind};
 use hpack;
-use frame::{self, Frame, Head, Kind, Error};
 
-use http::{uri, Method, StatusCode, Uri, HeaderMap};
+use http::{uri, HeaderMap, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
-use bytes::{BytesMut, Bytes};
 use byteorder::{BigEndian, ByteOrder};
+use bytes::{Bytes, BytesMut};
 use string::String;
 
 use std::fmt;
@@ -89,10 +89,7 @@ const END_STREAM: u8 = 0x1;
 const END_HEADERS: u8 = 0x4;
 const PADDED: u8 = 0x8;
 const PRIORITY: u8 = 0x20;
-const ALL: u8 = END_STREAM
-              | END_HEADERS
-              | PADDED
-              | PRIORITY;
+const ALL: u8 = END_STREAM | END_HEADERS | PADDED | PRIORITY;
 
 // ===== impl Headers =====
 
@@ -124,9 +121,7 @@ impl Headers {
     /// Loads the header frame but doesn't actually do HPACK decoding.
     ///
     /// HPACK decoding is done in the `load_hpack` step.
-    pub fn load(head: Head, mut src: BytesMut)
-        -> Result<(Self, BytesMut), Error>
-    {
+    pub fn load(head: Head, mut src: BytesMut) -> Result<(Self, BytesMut), Error> {
         let flags = HeadersFlag(head.flag());
         let mut pad = 0;
 
@@ -177,11 +172,7 @@ impl Headers {
         Ok((headers, src))
     }
 
-    pub fn load_hpack(&mut self,
-                      src: BytesMut,
-                      decoder: &mut hpack::Decoder)
-        -> Result<(), Error>
-    {
+    pub fn load_hpack(&mut self, src: BytesMut, decoder: &mut hpack::Decoder) -> Result<(), Error> {
         let mut reg = false;
         let mut malformed = false;
 
@@ -210,7 +201,10 @@ impl Headers {
             use hpack::Header::*;
 
             match header {
-                Field { name, value } => {
+                Field {
+                    name,
+                    value,
+                } => {
                     // Connection level header fields are not supported and must
                     // result in a protocol error.
 
@@ -274,9 +268,7 @@ impl Headers {
         self.fields
     }
 
-    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut)
-        -> Option<Continuation>
-    {
+    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
         let head = self.head();
         let pos = dst.len();
 
@@ -295,10 +287,10 @@ impl Headers {
             hpack::Encode::Full => None,
             hpack::Encode::Partial(state) => {
                 Some(Continuation {
-                    stream_id: self.stream_id,
-                    hpack: state,
-                    headers: headers,
-                })
+                         stream_id: self.stream_id,
+                         hpack: state,
+                         headers: headers,
+                     })
             }
         };
 
@@ -306,7 +298,7 @@ impl Headers {
         let len = (dst.len() - pos) - frame::HEADER_LEN;
 
         // Write the frame length
-        BigEndian::write_uint(&mut dst[pos..pos+3], len as u64, 3);
+        BigEndian::write_uint(&mut dst[pos..pos + 3], len as u64, 3);
 
         ret
     }
@@ -336,9 +328,7 @@ impl fmt::Debug for Headers {
 // ===== impl PushPromise =====
 
 impl PushPromise {
-    pub fn load(head: Head, payload: &[u8])
-        -> Result<Self, Error>
-    {
+    pub fn load(head: Head, payload: &[u8]) -> Result<Self, Error> {
         let flags = PushPromiseFlag(head.flag());
 
         // TODO: Handle padding
@@ -346,10 +336,10 @@ impl PushPromise {
         let (promised_id, _) = StreamId::parse(&payload[..4]);
 
         Ok(PushPromise {
-            stream_id: head.stream_id(),
-            promised_id: promised_id,
-            flags: flags,
-        })
+               stream_id: head.stream_id(),
+               promised_id: promised_id,
+               flags: flags,
+           })
     }
 
     pub fn stream_id(&self) -> StreamId {
@@ -377,7 +367,8 @@ impl Pseudo {
             unsafe { String::from_utf8_unchecked(src) }
         }
 
-        let path = parts.path_and_query
+        let path = parts
+            .path_and_query
             .map(|v| v.into())
             .unwrap_or_else(|| Bytes::from_static(b"/"));
 
@@ -456,10 +447,12 @@ impl Iterator for Iter {
 
         self.pseudo = None;
 
-        self.fields.next()
-            .map(|(name, value)| {
-                Field { name: name, value: value}
-            })
+        self.fields.next().map(|(name, value)| {
+            Field {
+                name: name,
+                value: value,
+            }
+        })
     }
 }
 
