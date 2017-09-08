@@ -2,8 +2,6 @@ codecov:
   notify:
     require_ci_to_pass: true
 coverage:
-  ignore:
-    - tests/.*
   notify:
     slack:
       default:
