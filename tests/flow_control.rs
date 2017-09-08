@@ -54,7 +54,7 @@ fn send_data_without_requesting_capacity() {
 fn release_capacity_sends_window_update() {
     let _ = ::env_logger::init();
 
-    let payload = vec![0u8; 65_535];
+    let payload = vec![0u8; 16384];
 
     let (io, srv) = mock::new();
 
@@ -69,19 +69,17 @@ fn release_capacity_sends_window_update() {
             frames::headers(1)
                 .response(200)
         )
-        .send_frame(frames::data(1, &payload[0..16_384]))
-        .send_frame(frames::data(1, &payload[16_384..16_384 * 2]))
-        .send_frame(frames::data(1, &payload[16_384 * 2..16_384 * 3]))
+        .send_frame(frames::data(1, &payload[..]))
+        .send_frame(frames::data(1, &payload[..]))
+        .send_frame(frames::data(1, &payload[..]))
+        .send_frame(frames::data(1, &payload[1..]))
         .recv_frame(
-            frames::window_update(0, 32_768)
+            frames::window_update(0, 65_535)
         )
         .recv_frame(
-            frames::window_update(1, 32_768)
+            frames::window_update(1, 65_535)
         )
-        .send_frame(
-            frames::data(1, &payload[16_384 * 3..])
-                .eos()
-        )
+        .send_frame(frames::data(1, &payload[0..1]).eos())
         // gotta end the connection
         .map(drop);
 
@@ -110,14 +108,17 @@ fn release_capacity_sends_window_update() {
                     assert_eq!(buf.unwrap().len(), 16_384);
                     body.into_future().unwrap()
                 })
+                .and_then(|(buf, body)| {
+                    assert_eq!(buf.unwrap().len(), 16_384);
+                    body.into_future().unwrap()
+                })
                 .and_then(|(buf, mut body)| {
-                    let buf = buf.unwrap();
-                    assert_eq!(buf.len(), 16_384);
-                    body.release_capacity(buf.len() * 2).unwrap();
+                    assert_eq!(buf.unwrap().len(), 16_383);
+                    body.release_capacity(65_535).unwrap();
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, _)| {
-                    assert_eq!(buf.unwrap().len(), 16_383);
+                    assert_eq!(buf.unwrap().len(), 1);
                     Ok(())
                 });
             h2.unwrap().join(req)
