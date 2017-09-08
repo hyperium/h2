@@ -238,11 +238,10 @@ fn send_data_receive_window_update() {
         });
 
     let mock = mock.assert_client_handshake().unwrap()
-        .and_then(|(_, mock)| {
-            mock.into_future().unwrap()
-        })
+        .and_then(|(_, mock)| mock.into_future().unwrap())
         .and_then(|(frame, mock)| {
-            let _ = assert_headers!(frame.unwrap());
+            let request = assert_headers!(frame.unwrap());
+            assert!(!request.is_end_stream());
             mock.into_future().unwrap()
         })
         .and_then(|(frame, mut mock)| {
