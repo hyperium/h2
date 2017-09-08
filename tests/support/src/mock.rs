@@ -335,6 +335,12 @@ pub trait HandleFutureExt {
             frame: Some(frame.into()),
         }
     }
+
+    fn close(self) -> Box<Future<Item=(), Error=()>>
+        where Self: Future<Error = ()> + Sized + 'static,
+    {
+        Box::new(self.map(drop))
+    }
 }
 
 pub struct RecvFrame<T> {

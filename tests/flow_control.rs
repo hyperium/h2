@@ -424,9 +424,9 @@ impl Future for GetResponse {
 #[test]
 fn recv_window_update_on_stream_closed_by_data_frame() {
     let _ = ::env_logger::init();
-    let (m, mock) = mock::new();
+    let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(m).unwrap()
+    let h2 = Client::handshake(io).unwrap()
         .and_then(|mut h2| {
             let request = Request::builder()
                 .method(Method::POST)
@@ -451,40 +451,21 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
         })
         ;
 
-    let mock = mock.assert_client_handshake().unwrap()
-        // Get the first frame
-        .and_then(|(_, mock)| mock.into_future().unwrap())
-        .and_then(|(frame, mut mock)| {
-            let request = assert_headers!(frame.unwrap());
-
-            assert_eq!(request.stream_id(), 1);
-            assert!(!request.is_end_stream());
-
-            // Send the response which also closes the stream
-            let mut f = frame::Headers::new(
-                request.stream_id(),
-                frame::Pseudo::response(StatusCode::OK),
-                HeaderMap::new());
-            f.set_end_stream();
-
-            mock.send(f.into()).unwrap();
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, mut mock)| {
-            let data = assert_data!(frame.unwrap());
-            assert_eq!(data.payload(), "hello");
-
-            // Send a window update just for fun
-            let f = frame::WindowUpdate::new(
-                data.stream_id(), data.payload().len() as u32);
-
-            mock.send(f.into()).unwrap();
-
-            Ok(())
-        })
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        .recv_frame(frames::data(1, "hello").eos())
+        .send_frame(frames::window_update(1, 5))
+        .map(drop)
         ;
 
-    let _ = h2.join(mock)
+    let _ = h2.join(srv)
         .wait().unwrap();
 }
