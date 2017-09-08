@@ -402,3 +402,92 @@ fn stream_close_by_send_reset_frame_releases_capacity() {
 #[ignore]
 fn stream_close_by_recv_reset_frame_releases_capacity() {
 }
+
+use futures::{Async, Poll};
+
+struct GetResponse {
+    stream: Option<client::Stream<Bytes>>,
+}
+
+impl Future for GetResponse {
+    type Item = (Response<client::Body<Bytes>>, client::Stream<Bytes>);
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let response = match self.stream.as_mut().unwrap().poll_response() {
+            Ok(Async::Ready(v)) => v,
+            Ok(Async::NotReady) => return Ok(Async::NotReady),
+            Err(e) => panic!("unexpected error; {:?}", e),
+        };
+
+        Ok(Async::Ready((response, self.stream.take().unwrap())))
+    }
+}
+
+#[test]
+fn recv_window_update_on_stream_closed_by_data_frame() {
+    let _ = ::env_logger::init();
+    let (m, mock) = mock::new();
+
+    let h2 = Client::handshake(m).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let stream = h2.request(request, false).unwrap();
+
+            // Wait for the response
+            h2.drive(GetResponse {
+                stream: Some(stream),
+            })
+        })
+        .and_then(|(h2, (response, mut stream))| {
+            assert_eq!(response.status(), StatusCode::OK);
+
+            // Send a data frame, this will also close the connection
+            stream.send_data("hello".into(), true).unwrap();
+
+            // Wait for the connection to close
+            h2.unwrap()
+        })
+        ;
+
+    let mock = mock.assert_client_handshake().unwrap()
+        // Get the first frame
+        .and_then(|(_, mock)| mock.into_future().unwrap())
+        .and_then(|(frame, mut mock)| {
+            let request = assert_headers!(frame.unwrap());
+
+            assert_eq!(request.stream_id(), 1);
+            assert!(!request.is_end_stream());
+
+            // Send the response which also closes the stream
+            let mut f = frame::Headers::new(
+                request.stream_id(),
+                frame::Pseudo::response(StatusCode::OK),
+                HeaderMap::new());
+            f.set_end_stream();
+
+            mock.send(f.into()).unwrap();
+
+            mock.into_future().unwrap()
+        })
+        .and_then(|(frame, mut mock)| {
+            let data = assert_data!(frame.unwrap());
+            assert_eq!(data.payload(), "hello");
+
+            // Send a window update just for fun
+            let f = frame::WindowUpdate::new(
+                data.stream_id(), data.payload().len() as u32);
+
+            mock.send(f.into()).unwrap();
+
+            Ok(())
+        })
+        ;
+
+    let _ = h2.join(mock)
+        .wait().unwrap();
+}
