@@ -54,7 +54,7 @@ fn send_data_without_requesting_capacity() {
 fn release_capacity_sends_window_update() {
     let _ = ::env_logger::init();
 
-    let payload = vec![0u8; 16384];
+    let payload = vec![0u8; 16_384];
 
     let (io, srv) = mock::new();
 
@@ -72,14 +72,13 @@ fn release_capacity_sends_window_update() {
         .send_frame(frames::data(1, &payload[..]))
         .send_frame(frames::data(1, &payload[..]))
         .send_frame(frames::data(1, &payload[..]))
-        .send_frame(frames::data(1, &payload[1..]))
         .recv_frame(
-            frames::window_update(0, 65_535)
+            frames::window_update(0, 32_768)
         )
         .recv_frame(
-            frames::window_update(1, 65_535)
+            frames::window_update(1, 32_768)
         )
-        .send_frame(frames::data(1, &payload[0..1]).eos())
+        .send_frame(frames::data(1, &payload[..]).eos())
         // gotta end the connection
         .map(drop);
 
@@ -101,24 +100,21 @@ fn release_capacity_sends_window_update() {
 
                 // read some body to use up window size to below half
                 .and_then(|(buf, body)| {
-                    assert_eq!(buf.unwrap().len(), 16_384);
+                    assert_eq!(buf.unwrap().len(), payload.len());
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, body)| {
-                    assert_eq!(buf.unwrap().len(), 16_384);
-                    body.into_future().unwrap()
-                })
-                .and_then(|(buf, body)| {
-                    assert_eq!(buf.unwrap().len(), 16_384);
+                    assert_eq!(buf.unwrap().len(), payload.len());
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, mut body)| {
-                    assert_eq!(buf.unwrap().len(), 16_383);
-                    body.release_capacity(65_535).unwrap();
+                    let buf = buf.unwrap();
+                    assert_eq!(buf.len(), payload.len());
+                    body.release_capacity(buf.len() * 2).unwrap();
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, _)| {
-                    assert_eq!(buf.unwrap().len(), 1);
+                    assert_eq!(buf.unwrap().len(), payload.len());
                     Ok(())
                 });
             h2.unwrap().join(req)
