@@ -211,11 +211,13 @@ impl<B, P> Streams<B, P>
         let actions = &mut me.actions;
         let last_processed_id = actions.recv.last_processed_id();
 
-        me.store.for_each(|mut stream| {
-            // TODO: Where do we transition???
-            actions.recv.recv_err(err, &mut *stream);
-            Ok::<_, ()>(())
-        }).ok().expect("unexpected error processing error");
+        me.store.retain(|stream| {
+            let (_, unlink) = actions.transition(stream, |actions, stream| {
+                actions.recv.recv_err(err, &mut *stream);
+            });
+
+            !unlink
+        });
 
         last_processed_id
     }
@@ -273,7 +275,16 @@ impl<B, P> Streams<B, P>
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
-            me.actions.recv.next_incoming(&mut me.store)
+            match me.actions.recv.next_incoming(&mut me.store) {
+                Some(key) => {
+                    // Increment the ref count
+                    me.store.resolve(key).ref_inc();
+
+                    // Return the key
+                    Some(key)
+                }
+                None => None,
+            }
         };
 
         key.map(|key| {
@@ -621,12 +632,18 @@ impl<B, P> Drop for StreamRef<B, P>
 
         let me = &mut *me;
 
-        let mut stream = me.store.resolve(self.key);
-        stream.ref_dec();
+        let id = {
+            let mut stream = me.store.resolve(self.key);
+            stream.ref_dec();
 
-        if stream.is_released() {
-            stream.remove();
-        }
+            if !stream.is_released() {
+                return;
+            }
+
+            stream.remove()
+        };
+
+        debug_assert!(!me.store.contains_id(&id));
     }
 }
 

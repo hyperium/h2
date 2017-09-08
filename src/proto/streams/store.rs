@@ -2,8 +2,9 @@ use super::*;
 
 use slab;
 
+use ordermap::{self, OrderMap};
+
 use std::ops;
-use std::collections::{HashMap, hash_map};
 use std::marker::PhantomData;
 
 /// Storage for streams
@@ -12,7 +13,7 @@ pub(super) struct Store<B, P>
     where P: Peer,
 {
     slab: slab::Slab<Stream<B, P>>,
-    ids: HashMap<StreamId, usize>,
+    ids: OrderMap<StreamId, usize>,
 }
 
 /// "Pointer" to an entry in the store
@@ -60,13 +61,13 @@ pub(super) enum Entry<'a, B: 'a, P: Peer + 'a> {
 }
 
 pub(super) struct OccupiedEntry<'a> {
-    ids: hash_map::OccupiedEntry<'a, StreamId, usize>,
+    ids: ordermap::OccupiedEntry<'a, StreamId, usize>,
 }
 
 pub(super) struct VacantEntry<'a, B: 'a, P>
     where P: Peer + 'a,
 {
-    ids: hash_map::VacantEntry<'a, StreamId, usize>,
+    ids: ordermap::VacantEntry<'a, StreamId, usize>,
     slab: &'a mut slab::Slab<Stream<B, P>>,
 }
 
@@ -84,8 +85,12 @@ impl<B, P> Store<B, P>
     pub fn new() -> Self {
         Store {
             slab: slab::Slab::new(),
-            ids: HashMap::new(),
+            ids: OrderMap::new(),
         }
+    }
+
+    pub fn contains_id(&self, id: &StreamId) -> bool {
+        self.ids.contains_key(id)
     }
 
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<B, P>> {
@@ -110,7 +115,7 @@ impl<B, P> Store<B, P>
     }
 
     pub fn find_entry(&mut self, id: StreamId) -> Entry<B, P> {
-        use self::hash_map::Entry::*;
+        use self::ordermap::Entry::*;
 
         match self.ids.entry(id) {
             Occupied(e) => {
@@ -138,6 +143,27 @@ impl<B, P> Store<B, P>
         }
 
         Ok(())
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+        where F: FnMut(Ptr<B, P>) -> bool
+    {
+        let mut len = self.ids.len();
+        let mut i = 0;
+
+        while i < len {
+            let retain = f(Ptr {
+                key: Key(*self.ids.get_index(i).unwrap().1),
+                slab: &mut self.slab,
+            });
+
+            if retain {
+                i += 1;
+            } else {
+                let _ = self.ids.swap_remove_index(i);
+                len -= 1;
+            }
+        }
     }
 
     pub fn unlink(&mut self, id: StreamId) {
@@ -272,8 +298,8 @@ impl<'a, B: 'a, P> Ptr<'a, B, P>
     }
 
     // Remove the stream from the store
-    pub fn remove(self) {
-        self.slab.remove(self.key.0);
+    pub fn remove(self) -> StreamId {
+        self.slab.remove(self.key.0).id
     }
 }
 
