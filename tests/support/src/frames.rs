@@ -12,7 +12,7 @@ pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 // ==== helper functions to easily construct h2 Frames ====
 
 pub fn headers<T>(id: T) -> MockHeaders
-where T: Into<StreamId>,
+    where T: Into<StreamId>,
 {
     MockHeaders(frame::Headers::new(
         id.into(),
@@ -22,14 +22,14 @@ where T: Into<StreamId>,
 }
 
 pub fn data<T, B>(id: T, buf: B) -> MockData
-where T: Into<StreamId>,
-      B: Into<Bytes>,
+    where T: Into<StreamId>,
+          B: Into<Bytes>,
 {
     MockData(frame::Data::new(id.into(), buf.into()))
 }
 
 pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
-where T: Into<StreamId>,
+    where T: Into<StreamId>,
 {
     frame::WindowUpdate::new(id.into(), sz)
 }
@@ -40,8 +40,8 @@ pub struct MockHeaders(frame::Headers);
 
 impl MockHeaders {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
-    where M: HttpTryInto<http::Method>,
-          U: HttpTryInto<http::Uri>,
+        where M: HttpTryInto<http::Method>,
+              U: HttpTryInto<http::Uri>,
     {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
@@ -55,7 +55,7 @@ impl MockHeaders {
     }
 
     pub fn response<S>(self, status: S) -> Self
-    where S: HttpTryInto<http::StatusCode>,
+        where S: HttpTryInto<http::StatusCode>,
     {
         let status = status.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
@@ -148,8 +148,8 @@ pub trait HttpTryInto<T> {
 }
 
 impl<T, U> HttpTryInto<T> for U
-where T: HttpTryFrom<U>,
-      T::Error: fmt::Debug,
+    where T: HttpTryFrom<U>,
+          T::Error: fmt::Debug,
 {
     type Error = T::Error;
 
