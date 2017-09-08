@@ -1,5 +1,18 @@
 use super::*;
 
+use std::usize;
+
+/// Tracks Stream related state
+///
+/// # Reference counting
+///
+/// There can be a number of outstanding handles to a single Stream. These are
+/// tracked using reference counting. The `ref_count` field represents the
+/// number of outstanding userspace handles that can reach this stream.
+///
+/// It's important to note that when the stream is placed in an internal queue
+/// (such as an accept queue), this is **not** tracked by a reference count.
+/// Thus, `ref_count` can be zero and the stream still has to be kept around.
 #[derive(Debug)]
 pub(super) struct Stream<B, P>
     where P: Peer,
@@ -9,6 +22,9 @@ pub(super) struct Stream<B, P>
 
     /// Current state of the stream
     pub state: State,
+
+    /// Number of outstanding handles pointing to this stream
+    pub ref_count: usize,
 
     // ===== Fields related to sending =====
 
@@ -117,6 +133,7 @@ impl<B, P> Stream<B, P>
         Stream {
             id,
             state: State::default(),
+            ref_count: 0,
 
             // ===== Fields related to sending =====
 
@@ -144,6 +161,46 @@ impl<B, P> Stream<B, P>
             pending_push_promises: store::Queue::new(),
             content_length: ContentLength::Omitted,
         }
+    }
+
+    /// Increment the stream's ref count
+    pub fn ref_inc(&mut self) {
+        assert!(self.ref_count < usize::MAX);
+        self.ref_count += 1;
+    }
+
+    /// Decrements the stream's ref count
+    pub fn ref_dec(&mut self) {
+        assert!(self.ref_count > 0);
+        self.ref_count -= 1;
+    }
+
+    /// Returns true if the stream is closed
+    pub fn is_closed(&self) -> bool {
+        // The state has fully transitioned to closed.
+        self.state.is_closed() &&
+            // Because outbound frames transition the stream state before being
+            // buffered, we have to ensure that all frames have been flushed.
+            self.pending_send.is_empty() &&
+            // Sometimes large data frames are sent out in chunks. After a chunk
+            // of the frame is sent, the remainder is pushed back onto the send
+            // queue to be rescheduled.
+            //
+            // Checking for additional buffered data lets us catch this case.
+            self.buffered_send_data == 0
+    }
+
+    /// Returns true if the stream is no longer in use
+    pub fn is_released(&self) -> bool {
+        // The stream is closed and fully flushed
+        self.is_closed() &&
+            // There are no more outstanding references to the stream
+            self.ref_count == 0 &&
+            // The stream is not in any queue
+            !self.is_pending_send &&
+            !self.is_pending_send_capacity &&
+            !self.is_pending_accept &&
+            !self.is_pending_window_update
     }
 
     pub fn assign_capacity(&mut self, capacity: WindowSize) {

@@ -139,6 +139,10 @@ impl<B, P> Store<B, P>
 
         Ok(())
     }
+
+    pub fn unlink(&mut self, id: StreamId) {
+        self.ids.remove(&id);
+    }
 }
 
 impl<B, P> Resolve<B, P> for Store<B, P>
@@ -265,6 +269,11 @@ impl<'a, B: 'a, P> Ptr<'a, B, P>
 {
     pub fn key(&self) -> Key {
         self.key
+    }
+
+    // Remove the stream from the store
+    pub fn remove(self) {
+        self.slab.remove(self.key.0);
     }
 }
 

@@ -52,6 +52,28 @@ struct Actions<B, P>
     task: Option<task::Task>,
 }
 
+macro_rules! transition {
+    ($me:ident, $stream:expr, |$a:ident, $b:ident| $t:block) => {{
+        let stream_id;
+        let unlink;
+
+        let ret = {
+            let stream = $stream;
+            stream_id = stream.id;
+
+            let (ret, u) = $me.actions.transition(stream, |$a, $b| $t);
+            unlink = u;
+            ret
+        };
+
+        if unlink {
+            $me.store.unlink(stream_id);
+        }
+
+        ret
+    }};
+}
+
 impl<B, P> Streams<B, P>
     where B: Buf,
           P: Peer,
@@ -94,30 +116,32 @@ impl<B, P> Streams<B, P>
             }
         };
 
-        let stream = me.store.resolve(key);
+        transition! {
+            me,
+            me.store.resolve(key),
+            |actions, stream| {
+                let res = if stream.state.is_recv_headers() {
+                    actions.recv.recv_headers(frame, stream)
+                } else {
+                    if !frame.is_end_stream() {
+                        // TODO: Is this the right error
+                        return Err(RecvError::Connection(ProtocolError));
+                    }
 
-        me.actions.transition(stream, |actions, stream| {
-            let res = if stream.state.is_recv_headers() {
-                actions.recv.recv_headers(frame, stream)
-            } else {
-                if !frame.is_end_stream() {
-                    // TODO: Is this the right error
-                    return Err(RecvError::Connection(ProtocolError));
+                    actions.recv.recv_trailers(frame, stream)
+                };
+
+                // TODO: extract this
+                match res {
+                    Err(RecvError::Stream { reason, .. }) => {
+                        // Reset the stream.
+                        actions.send.send_reset(reason, stream, &mut actions.task);
+                        Ok(())
+                    }
+                    res => res,
                 }
-
-                actions.recv.recv_trailers(frame, stream)
-            };
-
-            // TODO: extract this
-            match res {
-                Err(RecvError::Stream { reason, .. }) => {
-                    // Reset the stream.
-                    actions.send.send_reset(reason, stream, &mut actions.task);
-                    Ok(())
-                }
-                res => res,
             }
-        })
+        }
     }
 
     pub fn recv_data(&mut self, frame: frame::Data)
@@ -128,21 +152,23 @@ impl<B, P> Streams<B, P>
 
         let id = frame.stream_id();
 
-        let stream = match me.store.find_mut(&id) {
-            Some(stream) => stream,
-            None => return Err(RecvError::Connection(ProtocolError)),
-        };
-
-        me.actions.transition(stream, |actions, stream| {
-            match actions.recv.recv_data(frame, stream) {
-                Err(RecvError::Stream { reason, .. }) => {
-                    // Reset the stream.
-                    actions.send.send_reset(reason, stream, &mut actions.task);
-                    Ok(())
+        transition! {
+            me,
+            match me.store.find_mut(&id) {
+                Some(stream) => stream,
+                None => return Err(RecvError::Connection(ProtocolError)),
+            },
+            |actions, stream| {
+                match actions.recv.recv_data(frame, stream) {
+                    Err(RecvError::Stream { reason, .. }) => {
+                        // Reset the stream.
+                        actions.send.send_reset(reason, stream, &mut actions.task);
+                        Ok(())
+                    }
+                    res => res,
                 }
-                res => res,
             }
-        })
+        }
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset)
@@ -157,22 +183,24 @@ impl<B, P> Streams<B, P>
             return Err(RecvError::Connection(ProtocolError));
         }
 
-        let stream = match me.store.find_mut(&id) {
-            Some(stream) => stream,
-            None => {
-                // TODO: Are there other error cases?
-                me.actions.ensure_not_idle(id)
-                    .map_err(RecvError::Connection)?;
+        transition! {
+            me,
+            match me.store.find_mut(&id) {
+                Some(stream) => stream,
+                None => {
+                    // TODO: Are there other error cases?
+                    me.actions.ensure_not_idle(id)
+                        .map_err(RecvError::Connection)?;
 
-                return Ok(());
+                    return Ok(());
+                }
+            },
+            |actions, stream| {
+                actions.recv.recv_reset(frame, stream)?;
+                assert!(stream.state.is_closed());
+                Ok(())
             }
-        };
-
-        me.actions.transition(stream, |actions, stream| {
-            actions.recv.recv_reset(frame, stream)?;
-            assert!(stream.state.is_closed());
-            Ok(())
-        })
+        }
     }
 
     /// Handle a received error and return the ID of the last processed stream.
@@ -184,6 +212,7 @@ impl<B, P> Streams<B, P>
         let last_processed_id = actions.recv.last_processed_id();
 
         me.store.for_each(|mut stream| {
+            // TODO: Where do we transition???
             actions.recv.recv_err(err, &mut *stream);
             Ok::<_, ()>(())
         }).ok().expect("unexpected error processing error");
@@ -336,6 +365,9 @@ impl<B, P> Streams<B, P>
             // closed state.
             debug_assert!(!stream.state.is_closed());
 
+            // Increment the stream ref count as we will be returning a handle.
+            stream.ref_inc();
+
             stream.key()
         };
 
@@ -364,12 +396,13 @@ impl<B, P> Streams<B, P>
             }
         };
 
-
-        let stream = me.store.resolve(key);
-
-        me.actions.transition(stream, move |actions, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
-        })
+        transition! {
+            me,
+            me.store.resolve(key),
+            |actions, stream| {
+                actions.send.send_reset(reason, stream, &mut actions.task)
+            }
+        }
     }
 }
 
@@ -396,16 +429,18 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        transition! {
+            me,
+            me.store.resolve(self.key),
+            |actions, stream| {
+                // Create the data frame
+                let mut frame = frame::Data::new(stream.id, data);
+                frame.set_end_stream(end_stream);
 
-        // Create the data frame
-        let mut frame = frame::Data::new(stream.id, data);
-        frame.set_end_stream(end_stream);
-
-        me.actions.transition(stream, |actions, stream| {
-            // Send the data frame
-            actions.send.send_data(frame, stream, &mut actions.task)
-        })
+                // Send the data frame
+                actions.send.send_data(frame, stream, &mut actions.task)
+            }
+        }
     }
 
     pub fn send_trailers(&mut self, trailers: HeaderMap)
@@ -414,25 +449,30 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        transition! {
+            me,
+            me.store.resolve(self.key),
+            |actions, stream| {
+                // Create the trailers frame
+                let frame = frame::Headers::trailers(stream.id, trailers);
 
-        // Create the trailers frame
-        let frame = frame::Headers::trailers(stream.id, trailers);
-
-        me.actions.transition(stream, |actions, stream| {
-            // Send the trailers frame
-            actions.send.send_trailers(frame, stream, &mut actions.task)
-        })
+                // Send the trailers frame
+                actions.send.send_trailers(frame, stream, &mut actions.task)
+            }
+        }
     }
 
     pub fn send_reset(&mut self, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
-        me.actions.transition(stream, move |actions, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
-        })
+        transition! {
+            me,
+            me.store.resolve(self.key),
+            |actions, stream| {
+                actions.send.send_reset(reason, stream, &mut actions.task)
+            }
+        }
     }
 
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
@@ -441,14 +481,16 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        transition! {
+            me,
+            me.store.resolve(self.key),
+            |actions, stream| {
+                let frame = server::Peer::convert_send_message(
+                    stream.id, response, end_of_stream);
 
-        let frame = server::Peer::convert_send_message(
-            stream.id, response, end_of_stream);
-
-        me.actions.transition(stream, |actions, stream| {
-            actions.send.send_headers(frame, stream, &mut actions.task)
-        })
+                actions.send.send_headers(frame, stream, &mut actions.task)
+            }
+        }
     }
 
     pub fn body_is_empty(&self) -> bool {
@@ -559,9 +601,31 @@ impl<B, P> Clone for StreamRef<B, P>
     where P: Peer,
 {
     fn clone(&self) -> Self {
+        // Increment the ref count
+        self.inner.lock().unwrap()
+            .store.resolve(self.key)
+            .ref_inc();
+
         StreamRef {
             inner: self.inner.clone(),
             key: self.key.clone(),
+        }
+    }
+}
+
+impl<B, P> Drop for StreamRef<B, P>
+    where P: Peer,
+{
+    fn drop(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+        stream.ref_dec();
+
+        if stream.is_released() {
+            stream.remove();
         }
     }
 }
@@ -595,17 +659,30 @@ impl<B, P> Actions<B, P>
         P::is_server() == id.is_server_initiated()
     }
 
-    fn transition<F, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> U
+    fn transition<F, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> (U, bool)
         where F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
     {
         let is_counted = stream.state.is_counted();
 
+        // Run the action
         let ret = f(self, &mut stream);
 
-        if is_counted && stream.state.is_closed() {
+        // Now figure out if the stream transitioned to a state that requires it
+        // being unlinked. Unlinking means that it is removed from the stream
+        // identifer -> stream map.
+        let mut unlink = false;
+
+        if is_counted && stream.is_closed() {
+            // Decrement the number of active streams.
             self.dec_num_streams(stream.id);
+            unlink = true;
         }
 
-        ret
+        // Release the stream if it requires releasing
+        if stream.is_released() {
+            stream.remove();
+        }
+
+        (ret, unlink)
     }
 }
