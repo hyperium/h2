@@ -17,16 +17,12 @@ matrix:
     - rust: beta
     - rust: nightly
       before_script:
-        - pip install --user travis-cargo codecov && export PATH=$HOME/.local/bin:$PATH
+        - pip install --user 'travis-cargo<0.2' && export PATH=$HOME/.local/bin:$PATH
       after_success:
         # Upload docs
         - travis-cargo doc-upload
-        # generate kcov coverage data
-        - |
-          # Run coverage
-          travis-cargo coverage --no-sudo
-          # upload to codecov.io
-          bash <(curl -s https://codecov.io/bash) -s target/kcov
+        # generate & export kcov coverage data
+        - ./.ci/coverage.sh
 
 script:
   # Run tests
