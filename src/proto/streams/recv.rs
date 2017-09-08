@@ -525,7 +525,7 @@ impl<B, P> Recv<B, P>
             try_ready!(dst.poll_ready());
 
             // Get the next stream
-            let stream = match self.pending_window_updates.pop(store) {
+            let mut stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
                 None => return Ok(().into()),
             };
@@ -543,6 +543,9 @@ impl<B, P> Recv<B, P>
 
                 // Buffer it
                 dst.buffer(frame.into()).ok().expect("invalid WINDOW_UPDATE frame");
+
+                // Update flow control
+                stream.recv_flow.inc_window(incr).ok().expect("unexpected flow control state");
             }
         }
     }
