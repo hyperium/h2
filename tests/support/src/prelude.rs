@@ -7,7 +7,7 @@ pub use self::h2::client::{self, Client};
 pub use self::h2::server::{self, Server};
 
 // Re-export mock
-pub use super::mock;
+pub use super::mock::{self, HandleFutureExt};
 
 // Re-export frames helpers
 pub use super::frames;
