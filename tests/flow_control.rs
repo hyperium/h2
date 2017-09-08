@@ -187,8 +187,78 @@ fn expand_window_calls_are_coalesced() {
 }
 
 #[test]
+fn recv_data_overflows_connection_window() {
+    let _ = ::env_logger::init();
+
+    let (io, srv) = mock::new();
+
+    let mock = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        // fill the whole window
+        .send_frame(frames::data(1, vec![0u8; 16_384]))
+        .send_frame(frames::data(1, vec![0u8; 16_384]))
+        .send_frame(frames::data(1, vec![0u8; 16_384]))
+        .send_frame(frames::data(1, vec![0u8; 16_383]))
+        // this frame overflows the window!
+        .send_frame(frames::data(1, vec![0u8; 128]).eos())
+        // expecting goaway for the conn, not stream
+        .recv_frame(frames::go_away(0).flow_control());
+        // connection is ended by client
+
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let req = h2.request(request, true).unwrap()
+                .unwrap()
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_parts().1;
+                    body.concat2()
+                        .unwrap()
+                        /* FIXME: body stream should error also
+                        .then(|res| {
+                            let err = res.unwrap_err();
+                            assert_eq!(
+                                err.to_string(),
+                                "protocol error: flow-control protocol violated"
+                            );
+                            Ok::<(), ()>(())
+                        })
+                        */
+                });
+
+            // client should see a flow control error
+            let conn = h2.then(|res| {
+                let err = res.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    "protocol error: flow-control protocol violated"
+                );
+                Ok::<(), ()>(())
+            });
+            conn.unwrap().join(req)
+        });
+    h2.join(mock).wait().unwrap();
+
+}
+
+#[test]
 #[ignore]
-fn recv_data_overflows_window() {
+fn recv_data_overflows_stream_window() {
+    // this tests for when streams have smaller windows than their connection
 }
 
 #[test]

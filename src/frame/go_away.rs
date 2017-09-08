@@ -16,6 +16,10 @@ impl GoAway {
         }
     }
 
+    pub fn last_stream_id(&self) -> StreamId {
+        self.last_stream_id
+    }
+
     pub fn reason(&self) -> Reason {
         self.error_code.into()
     }
