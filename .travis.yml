@@ -20,7 +20,7 @@ jobs:
       before_install: |
         pip install 'travis-cargo<0.2' --user &&
         export PATH=$HOME/.local/bin:$PATH
-      after_test: travis-cargo coveralls --no-sudo --verify
+      after_success: travis-cargo coveralls --no-sudo --verify
       addons:
       apt:
         packages:
