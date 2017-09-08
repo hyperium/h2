@@ -53,90 +53,75 @@ fn send_data_without_requesting_capacity() {
 fn release_capacity_sends_window_update() {
     let _ = ::env_logger::init();
 
-    let payload = vec![0; 65_535];
+    let payload = vec![0u8; 65_535];
 
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .write(&[
-            // GET /
-            0, 0, 16, 1, 5, 0, 0, 0, 1, 130, 135, 65, 139, 157, 41,
-            172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
-        ])
-        .write(frames::SETTINGS_ACK)
-        // Read response
-        .read(&[0, 0, 1, 1, 4, 0, 0, 0, 1, 0x88])
-        .read(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .read(&payload[0..16_384])
-        .read(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .read(&payload[16_384..16_384*2])
-        .read(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .read(&payload[16_384*2..16_384*3])
-        .write(&[0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 128, 0])
-        .write(&[0, 0, 4, 8, 0, 0, 0, 0, 1, 0, 0, 128, 0])
-        .read(&[
-            // DATA
-            0, 63, 255, 0, 1, 0, 0, 0, 1,
-        ])
-        .read(&payload[16_384*3..16_384*4 - 1])
+    let (io, srv) = mock::new();
 
-        // we send a 2nd stream in order to test the window update is
-        // is actually written to the socket
-        .write(&[
-            // GET /
-            0, 0, 4, 1, 5, 0, 0, 0, 3, 130, 135, 190, 132,
-        ])
-        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 3, 0x88])
-        .build();
+    let mock = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        .send_frame(frames::data(1, &payload[0..16_384]))
+        .send_frame(frames::data(1, &payload[16_384..16_384 * 2]))
+        .send_frame(frames::data(1, &payload[16_384 * 2..16_384 * 3]))
+        .recv_frame(
+            frames::window_update(0, 32_768)
+        )
+        .recv_frame(
+            frames::window_update(1, 32_768)
+        )
+        .send_frame(
+            frames::data(1, &payload[16_384 * 3..])
+                .eos()
+        )
+        // gotta end the connection
+        .map(drop);
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
 
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+            let req = h2.request(request, true).unwrap()
+                .unwrap()
+                // Get the response
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_parts().1;
+                    body.into_future().unwrap()
+                })
 
-    let mut stream = h2.request(request, true).unwrap();
-
-    // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    // read some body to use up window size to below half
-    let mut body = resp.into_parts().1;
-    let buf = h2.run(poll_fn(|| body.poll())).unwrap().unwrap();
-    assert_eq!(buf.len(), 16_384);
-    let buf = h2.run(poll_fn(|| body.poll())).unwrap().unwrap();
-    assert_eq!(buf.len(), 16_384);
-    let buf = h2.run(poll_fn(|| body.poll())).unwrap().unwrap();
-    assert_eq!(buf.len(), 16_384);
-
-    // release some capacity to send a window_update
-    body.release_capacity(buf.len() * 2).unwrap();
-
-    let buf = h2.run(poll_fn(|| body.poll())).unwrap().unwrap();
-    assert_eq!(buf.len(), 16_383);
-
-
-    // send a 2nd stream to force flushing of window updates
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
-    let mut stream = h2.request(request, true).unwrap();
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    h2.wait().unwrap();
+                // read some body to use up window size to below half
+                .and_then(|(buf, body)| {
+                    assert_eq!(buf.unwrap().len(), 16_384);
+                    body.into_future().unwrap()
+                })
+                .and_then(|(buf, body)| {
+                    assert_eq!(buf.unwrap().len(), 16_384);
+                    body.into_future().unwrap()
+                })
+                .and_then(|(buf, mut body)| {
+                    let buf = buf.unwrap();
+                    assert_eq!(buf.len(), 16_384);
+                    body.release_capacity(buf.len() * 2).unwrap();
+                    body.into_future().unwrap()
+                })
+                .and_then(|(buf, _)| {
+                    assert_eq!(buf.unwrap().len(), 16_383);
+                    Ok(())
+                });
+            h2.unwrap().join(req)
+        });
+    h2.join(mock).wait().unwrap();
 }
 
 #[test]
@@ -145,63 +130,52 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
 
     let payload = [0; 16];
 
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .write(&[
-            // GET /
-            0, 0, 16, 1, 5, 0, 0, 0, 1, 130, 135, 65, 139, 157, 41,
-            172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
-        ])
-        .write(frames::SETTINGS_ACK)
-        // Read response
-        .read(&[0, 0, 1, 1, 4, 0, 0, 0, 1, 0x88])
-        .read(&[
-            // DATA
-            0, 0, 16, 0, 1, 0, 0, 0, 1,
-        ])
-        .read(&payload[..])
-        // write() or WINDOW_UPDATE purposefully excluded
+    let (io, srv) = mock::new();
 
-        // we send a 2nd stream in order to test the window update is
-        // is actually written to the socket
-        .write(&[
-            // GET /
-            0, 0, 4, 1, 5, 0, 0, 0, 3, 130, 135, 190, 132,
-        ])
-        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 3, 0x88])
-        .build();
+    let mock = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        .send_frame(frames::data(1, &payload[..]).eos())
+        // gotta end the connection
+        .map(drop);
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
 
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
-
-    let mut stream = h2.request(request, true).unwrap();
-
-    // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let mut body = resp.into_parts().1;
-    let buf = h2.run(poll_fn(|| body.poll())).unwrap().unwrap();
-
-    // release some capacity to send a window_update
-    body.release_capacity(buf.len()).unwrap();
-
-    // send a 2nd stream to force flushing of window updates
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
-    let mut stream = h2.request(request, true).unwrap();
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-
-    h2.wait().unwrap();
+            let req = h2.request(request, true).unwrap()
+                .unwrap()
+                // Get the response
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_parts().1;
+                    body.into_future().unwrap()
+                })
+                // read the small body and then release it
+                .and_then(|(buf, mut body)| {
+                    let buf = buf.unwrap();
+                    assert_eq!(buf.len(), 16);
+                    body.release_capacity(buf.len()).unwrap();
+                    body.into_future().unwrap()
+                })
+                .and_then(|(buf, _)| {
+                    assert!(buf.is_none());
+                    Ok(())
+                });
+            h2.unwrap().join(req)
+        });
+    h2.join(mock).wait().unwrap();
 }
 
 #[test]

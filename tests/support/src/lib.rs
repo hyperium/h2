@@ -16,6 +16,7 @@ mod assert;
 #[macro_use]
 pub mod raw;
 
+pub mod frames;
 pub mod prelude;
 pub mod mock;
 
