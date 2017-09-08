@@ -18,8 +18,8 @@ More information about this crate can be found in the [crate documentation][dox]
 ## Features
 
 * Client and server HTTP/2.0 implementation.
-* Implements the full HTTP/2.0 specification (soon).
-* Passes [h2spec](https://github.com/summerwind/h2spec) (soon).
+* Implements the full HTTP/2.0 specification.
+* Passes [h2spec](https://github.com/summerwind/h2spec).
 * Focus on performance and correctness.
 * Built on [Tokio](https://tokio.rs).
 
