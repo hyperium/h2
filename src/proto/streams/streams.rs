@@ -430,7 +430,7 @@ impl<B> Streams<B, client::Peer>
     }
 }
 
-// #[cfg(feature = "unstable")]
+#[cfg(feature = "unstable")]
 impl<B, P> Streams<B, P>
     where B: Buf,
           P: Peer,
