@@ -430,6 +430,22 @@ impl<B> Streams<B, client::Peer>
     }
 }
 
+// #[cfg(feature = "unstable")]
+impl<B, P> Streams<B, P>
+    where B: Buf,
+          P: Peer,
+{
+    pub fn num_active_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.store.num_active_streams()
+    }
+
+    pub fn num_wired_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.store.num_wired_streams()
+    }
+}
+
 // ===== impl StreamRef =====
 
 impl<B, P> StreamRef<B, P>

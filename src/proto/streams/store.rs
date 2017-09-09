@@ -200,6 +200,19 @@ impl<B, P> ops::IndexMut<Key> for Store<B, P>
     }
 }
 
+#[cfg(feature = "unstable")]
+impl<B, P> Store<B, P>
+    where P: Peer,
+{
+    pub fn num_active_streams(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn num_wired_streams(&self) -> usize {
+        self.slab.len()
+    }
+}
+
 // ===== impl Queue =====
 
 impl<B, N, P> Queue<B, N, P>

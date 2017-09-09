@@ -253,3 +253,18 @@ impl<T, B> Connection<T, server::Peer, B>
         self.streams.next_incoming()
     }
 }
+
+#[cfg(feature = "unstable")]
+impl<T, P, B> Connection<T, P, B>
+    where T: AsyncRead + AsyncWrite,
+          P: Peer,
+          B: IntoBuf,
+{
+    pub fn num_active_streams(&self) -> usize {
+        self.streams.num_active_streams()
+    }
+
+    pub fn num_wired_streams(&self) -> usize {
+        self.streams.num_wired_streams()
+    }
+}

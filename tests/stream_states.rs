@@ -149,6 +149,58 @@ fn send_headers_recv_data_single_frame() {
     h2.wait().unwrap();
 }
 
+#[test]
+fn closed_streams_are_released() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::get("https://example.com/")
+                .body(()).unwrap();
+
+            // Send request
+            let stream = h2.request(request, true).unwrap();
+            h2.drive(stream)
+        })
+        .and_then(|(h2, response)| {
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            // There are no active streams
+            assert_eq!(0, h2.num_active_streams());
+
+            // The response contains a handle for the body. This keeps the
+            // stream wired.
+            assert_eq!(1, h2.num_wired_streams());
+
+            drop(response);
+
+            // The stream state is now free
+            assert_eq!(0, h2.num_wired_streams());
+
+            Ok(())
+        })
+        ;
+
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(204)
+                .eos()
+        )
+        .close()
+        ;
+
+    let _ = h2.join(srv)
+        .wait().unwrap();
+}
+
 /*
 #[test]
 fn send_data_after_headers_eos() {
