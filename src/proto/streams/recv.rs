@@ -111,6 +111,13 @@ impl<B, P> Recv<B, P>
 
         try!(self.ensure_can_open(id));
 
+        if id < self.next_stream_id {
+            return Err(RecvError::Connection(ProtocolError));
+        }
+
+        self.next_stream_id = id;
+        self.next_stream_id.increment();
+
         if !self.can_inc_num_streams() {
             self.refused = Some(id);
             return Ok(None);
@@ -133,13 +140,6 @@ impl<B, P> Recv<B, P>
         if is_initial {
             if !self.can_inc_num_streams() {
                 unimplemented!();
-            }
-
-            if frame.stream_id() >= self.next_stream_id {
-                self.next_stream_id = frame.stream_id();
-                self.next_stream_id.increment();
-            } else {
-                return Err(RecvError::Connection(ProtocolError));
             }
 
             // TODO: be smarter about this logic

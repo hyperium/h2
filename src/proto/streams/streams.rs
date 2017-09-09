@@ -120,6 +120,8 @@ impl<B, P> Streams<B, P>
             me,
             me.store.resolve(key),
             |actions, stream| {
+                trace!("recv_headers; stream={:?}; state={:?}", stream.id, stream.state);
+
                 let res = if stream.state.is_recv_headers() {
                     actions.recv.recv_headers(frame, stream)
                 } else {
@@ -689,10 +691,13 @@ impl<B, P> Actions<B, P>
         // identifer -> stream map.
         let mut unlink = false;
 
-        if is_counted && stream.is_closed() {
-            // Decrement the number of active streams.
-            self.dec_num_streams(stream.id);
+        if stream.is_closed() {
             unlink = true;
+
+            if is_counted {
+                // Decrement the number of active streams.
+                self.dec_num_streams(stream.id);
+            }
         }
 
         // Release the stream if it requires releasing
