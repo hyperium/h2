@@ -34,6 +34,8 @@ pub(crate) struct StreamRef<B, P>
 struct Inner<B, P>
     where P: Peer,
 {
+    /// Tracks send & recv stream concurrency.
+    counts: Counts<P>,
     actions: Actions<B, P>,
     store: Store<B, P>,
 }
@@ -59,6 +61,7 @@ impl<B, P> Streams<B, P>
     pub fn new(config: Config) -> Self {
         Streams {
             inner: Arc::new(Mutex::new(Inner {
+                counts: Counts::new(&config),
                 actions: Actions {
                     recv: Recv::new(&config),
                     send: Send::new(&config),
@@ -80,7 +83,7 @@ impl<B, P> Streams<B, P>
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                match try!(me.actions.recv.open(id)) {
+                match try!(me.actions.recv.open(id, &mut me.counts)) {
                     Some(stream_id) => {
                         let stream = Stream::new(
                             stream_id,
@@ -95,10 +98,13 @@ impl<B, P> Streams<B, P>
         };
 
         let stream = me.store.resolve(key);
+        let actions = &mut me.actions;
 
-        me.actions.transition(stream, |actions, stream| {
+        me.counts.transition(stream, |counts, stream| {
+            trace!("recv_headers; stream={:?}; state={:?}", stream.id, stream.state);
+
             let res = if stream.state.is_recv_headers() {
-                actions.recv.recv_headers(frame, stream)
+                actions.recv.recv_headers(frame, stream, counts)
             } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
@@ -133,7 +139,9 @@ impl<B, P> Streams<B, P>
             None => return Err(RecvError::Connection(ProtocolError)),
         };
 
-        me.actions.transition(stream, |actions, stream| {
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
             match actions.recv.recv_data(frame, stream) {
                 Err(RecvError::Stream { reason, .. }) => {
                     // Reset the stream.
@@ -168,7 +176,9 @@ impl<B, P> Streams<B, P>
             }
         };
 
-        me.actions.transition(stream, |actions, stream| {
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
             actions.recv.recv_reset(frame, stream)?;
             assert!(stream.state.is_closed());
             Ok(())
@@ -181,12 +191,16 @@ impl<B, P> Streams<B, P>
         let me = &mut *me;
 
         let actions = &mut me.actions;
+        let counts = &mut me.counts;
+
         let last_processed_id = actions.recv.last_processed_id();
 
-        me.store.for_each(|mut stream| {
-            actions.recv.recv_err(err, &mut *stream);
-            Ok::<_, ()>(())
-        }).ok().expect("unexpected error processing error");
+        me.store.for_each(|stream| {
+            counts.transition(stream, |_, stream| {
+                actions.recv.recv_err(err, &mut *stream);
+                Ok::<_, ()>(())
+            })
+        }).unwrap();
 
         last_processed_id
     }
@@ -244,7 +258,16 @@ impl<B, P> Streams<B, P>
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
-            me.actions.recv.next_incoming(&mut me.store)
+            match me.actions.recv.next_incoming(&mut me.store) {
+                Some(key) => {
+                    // Increment the ref count
+                    me.store.resolve(key).ref_inc();
+
+                    // Return the key
+                    Some(key)
+                }
+                None => None,
+            }
         };
 
         key.map(|key| {
@@ -278,7 +301,7 @@ impl<B, P> Streams<B, P>
         try_ready!(me.actions.recv.poll_complete(&mut me.store, dst));
 
         // Send any other pending frames
-        try_ready!(me.actions.send.poll_complete(&mut me.store, dst));
+        try_ready!(me.actions.send.poll_complete(&mut me.store, &mut me.counts, dst));
 
         // Nothing else to do, track the task
         me.actions.task = Some(task::current());
@@ -291,6 +314,8 @@ impl<B, P> Streams<B, P>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
+
+        me.counts.apply_remote_settings(frame);
 
         me.actions.send.apply_remote_settings(
             frame, &mut me.store, &mut me.actions.task)
@@ -312,7 +337,7 @@ impl<B, P> Streams<B, P>
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let stream_id = me.actions.send.open()?;
+            let stream_id = me.actions.send.open(&mut me.counts)?;
 
             let mut stream = Stream::new(
                 stream_id,
@@ -336,6 +361,9 @@ impl<B, P> Streams<B, P>
             // closed state.
             debug_assert!(!stream.state.is_closed());
 
+            // Increment the stream ref count as we will be returning a handle.
+            stream.ref_inc();
+
             stream.key()
         };
 
@@ -352,7 +380,7 @@ impl<B, P> Streams<B, P>
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                match me.actions.recv.open(id) {
+                match me.actions.recv.open(id, &mut me.counts) {
                     Ok(Some(stream_id)) => {
                         let stream = Stream::new(
                             stream_id, 0, 0);
@@ -364,10 +392,10 @@ impl<B, P> Streams<B, P>
             }
         };
 
-
         let stream = me.store.resolve(key);
+        let actions = &mut me.actions;
 
-        me.actions.transition(stream, move |actions, stream| {
+        me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(reason, stream, &mut actions.task)
         })
     }
@@ -380,7 +408,23 @@ impl<B> Streams<B, client::Peer>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.send.poll_open_ready()
+        me.counts.poll_open_ready()
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl<B, P> Streams<B, P>
+    where B: Buf,
+          P: Peer,
+{
+    pub fn num_active_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.store.num_active_streams()
+    }
+
+    pub fn num_wired_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.store.num_wired_streams()
     }
 }
 
@@ -397,12 +441,13 @@ impl<B, P> StreamRef<B, P>
         let me = &mut *me;
 
         let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-        // Create the data frame
-        let mut frame = frame::Data::new(stream.id, data);
-        frame.set_end_stream(end_stream);
+        me.counts.transition(stream, |_, stream| {
+            // Create the data frame
+            let mut frame = frame::Data::new(stream.id, data);
+            frame.set_end_stream(end_stream);
 
-        me.actions.transition(stream, |actions, stream| {
             // Send the data frame
             actions.send.send_data(frame, stream, &mut actions.task)
         })
@@ -415,11 +460,12 @@ impl<B, P> StreamRef<B, P>
         let me = &mut *me;
 
         let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-        // Create the trailers frame
-        let frame = frame::Headers::trailers(stream.id, trailers);
+        me.counts.transition(stream, |_, stream| {
+            // Create the trailers frame
+            let frame = frame::Headers::trailers(stream.id, trailers);
 
-        me.actions.transition(stream, |actions, stream| {
             // Send the trailers frame
             actions.send.send_trailers(frame, stream, &mut actions.task)
         })
@@ -430,7 +476,9 @@ impl<B, P> StreamRef<B, P>
         let me = &mut *me;
 
         let stream = me.store.resolve(self.key);
-        me.actions.transition(stream, move |actions, stream| {
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(reason, stream, &mut actions.task)
         })
     }
@@ -442,11 +490,12 @@ impl<B, P> StreamRef<B, P>
         let me = &mut *me;
 
         let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-        let frame = server::Peer::convert_send_message(
-            stream.id, response, end_of_stream);
+        me.counts.transition(stream, |_, stream| {
+            let frame = server::Peer::convert_send_message(
+                stream.id, response, end_of_stream);
 
-        me.actions.transition(stream, |actions, stream| {
             actions.send.send_headers(frame, stream, &mut actions.task)
         })
     }
@@ -559,10 +608,38 @@ impl<B, P> Clone for StreamRef<B, P>
     where P: Peer,
 {
     fn clone(&self) -> Self {
+        // Increment the ref count
+        self.inner.lock().unwrap()
+            .store.resolve(self.key)
+            .ref_inc();
+
         StreamRef {
             inner: self.inner.clone(),
             key: self.key.clone(),
         }
+    }
+}
+
+impl<B, P> Drop for StreamRef<B, P>
+    where P: Peer,
+{
+    fn drop(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+
+        let me = &mut *me;
+
+        let id = {
+            let mut stream = me.store.resolve(self.key);
+            stream.ref_dec();
+
+            if !stream.is_released() {
+                return;
+            }
+
+            stream.remove()
+        };
+
+        debug_assert!(!me.store.contains_id(&id));
     }
 }
 
@@ -575,37 +652,10 @@ impl<B, P> Actions<B, P>
     fn ensure_not_idle(&mut self, id: StreamId)
         -> Result<(), Reason>
     {
-        if self.is_local_init(id) {
+        if P::is_local_init(id) {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
         }
-    }
-
-    fn dec_num_streams(&mut self, id: StreamId) {
-        if self.is_local_init(id) {
-            self.send.dec_num_streams();
-        } else {
-            self.recv.dec_num_streams();
-        }
-    }
-
-    fn is_local_init(&self, id: StreamId) -> bool {
-        assert!(!id.is_zero());
-        P::is_server() == id.is_server_initiated()
-    }
-
-    fn transition<F, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> U
-        where F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
-    {
-        let is_counted = stream.state.is_counted();
-
-        let ret = f(self, &mut stream);
-
-        if is_counted && stream.state.is_closed() {
-            self.dec_num_streams(stream.id);
-        }
-
-        ret
     }
 }

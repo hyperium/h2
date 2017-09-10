@@ -142,6 +142,29 @@ impl<T, B> fmt::Debug for Client<T, B>
     }
 }
 
+#[cfg(feature = "unstable")]
+impl<T, B> Client<T, B>
+    where T: AsyncRead + AsyncWrite,
+          B: IntoBuf
+{
+    /// Returns the number of active streams.
+    ///
+    /// An active stream is a stream that has not yet transitioned to a closed
+    /// state.
+    pub fn num_active_streams(&self) -> usize {
+        self.connection.num_active_streams()
+    }
+
+    /// Returns the number of streams that are held in memory.
+    ///
+    /// A wired stream is a stream that is either active or is closed but must
+    /// stay in memory for some reason. For example, there are still outstanding
+    /// userspace handles pointing to the slot.
+    pub fn num_wired_streams(&self) -> usize {
+        self.connection.num_wired_streams()
+    }
+}
+
 // ===== impl Handshake =====
 
 impl<T, B: IntoBuf> Future for Handshake<T, B>

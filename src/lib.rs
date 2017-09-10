@@ -24,6 +24,8 @@ extern crate log;
 
 extern crate string;
 
+extern crate ordermap;
+
 mod error;
 mod codec;
 mod hpack;

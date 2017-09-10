@@ -19,4 +19,9 @@ pub trait Peer {
         end_of_stream: bool) -> Headers;
 
     fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError>;
+
+    fn is_local_init(id: StreamId) -> bool {
+        assert!(!id.is_zero());
+        Self::is_server() == id.is_server_initiated()
+    }
 }

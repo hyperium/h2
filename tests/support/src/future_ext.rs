@@ -71,23 +71,35 @@ impl<T, U> Future for Drive<T, U>
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.future.poll() {
-            Ok(Async::Ready(val)) => {
-                // Get the driver
-                let driver = self.driver.take().unwrap();
+        let mut looped = false;
 
-                return Ok((driver, val).into())
+        loop {
+            match self.future.poll() {
+                Ok(Async::Ready(val)) => {
+                    // Get the driver
+                    let driver = self.driver.take().unwrap();
+
+                    return Ok((driver, val).into())
+                }
+                Ok(_) => {}
+                Err(e) => panic!("unexpected error; {:?}", e),
             }
-            Ok(_) => {}
-            Err(e) => panic!("unexpected error; {:?}", e),
-        }
 
-        match self.driver.as_mut().unwrap().poll() {
-            Ok(Async::Ready(_)) => panic!("driver resolved before future"),
-            Ok(Async::NotReady) => {}
-            Err(e) => panic!("unexpected error; {:?}", e),
-        }
+            match self.driver.as_mut().unwrap().poll() {
+                Ok(Async::Ready(_)) => {
+                    if looped {
+                        // Try polling the future one last time
+                        panic!("driver resolved before future")
+                    } else {
+                        looped = true;
+                        continue;
+                    }
+                }
+                Ok(Async::NotReady) => {}
+                Err(e) => panic!("unexpected error; {:?}", e),
+            }
 
-        Ok(Async::NotReady)
+            return Ok(Async::NotReady);
+        }
     }
 }

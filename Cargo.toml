@@ -24,6 +24,7 @@ log = "0.3.8"
 fnv = "1.0.5"
 slab = "0.4.0"
 string = { git = "https://github.com/carllerche/string" }
+ordermap = "0.2"
 
 [dev-dependencies]
 

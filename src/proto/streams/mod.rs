@@ -1,4 +1,5 @@
 mod buffer;
+mod counts;
 mod flow_control;
 mod prioritize;
 mod recv;
@@ -12,6 +13,7 @@ pub(crate) use self::streams::{Streams, StreamRef};
 pub(crate) use self::prioritize::Prioritized;
 
 use self::buffer::Buffer;
+use self::counts::Counts;
 use self::flow_control::FlowControl;
 use self::prioritize::Prioritize;
 use self::recv::Recv;

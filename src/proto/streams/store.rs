@@ -2,8 +2,9 @@ use super::*;
 
 use slab;
 
+use ordermap::{self, OrderMap};
+
 use std::ops;
-use std::collections::{HashMap, hash_map};
 use std::marker::PhantomData;
 
 /// Storage for streams
@@ -12,7 +13,7 @@ pub(super) struct Store<B, P>
     where P: Peer,
 {
     slab: slab::Slab<Stream<B, P>>,
-    ids: HashMap<StreamId, usize>,
+    ids: OrderMap<StreamId, usize>,
 }
 
 /// "Pointer" to an entry in the store
@@ -20,7 +21,7 @@ pub(super) struct Ptr<'a, B: 'a, P>
     where P: Peer + 'a,
 {
     key: Key,
-    slab: &'a mut slab::Slab<Stream<B, P>>,
+    store: &'a mut Store<B, P>,
 }
 
 /// References an entry in the store.
@@ -60,13 +61,13 @@ pub(super) enum Entry<'a, B: 'a, P: Peer + 'a> {
 }
 
 pub(super) struct OccupiedEntry<'a> {
-    ids: hash_map::OccupiedEntry<'a, StreamId, usize>,
+    ids: ordermap::OccupiedEntry<'a, StreamId, usize>,
 }
 
 pub(super) struct VacantEntry<'a, B: 'a, P>
     where P: Peer + 'a,
 {
-    ids: hash_map::VacantEntry<'a, StreamId, usize>,
+    ids: ordermap::VacantEntry<'a, StreamId, usize>,
     slab: &'a mut slab::Slab<Stream<B, P>>,
 }
 
@@ -84,19 +85,24 @@ impl<B, P> Store<B, P>
     pub fn new() -> Self {
         Store {
             slab: slab::Slab::new(),
-            ids: HashMap::new(),
+            ids: OrderMap::new(),
         }
     }
 
+    pub fn contains_id(&self, id: &StreamId) -> bool {
+        self.ids.contains_key(id)
+    }
+
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<B, P>> {
-        if let Some(&key) = self.ids.get(id) {
-            Some(Ptr {
-                key: Key(key),
-                slab: &mut self.slab,
-            })
-        } else {
-            None
-        }
+        let key = match self.ids.get(id) {
+            Some(key) => *key,
+            None => return None,
+        };
+
+        Some(Ptr {
+            key: Key(key),
+            store: self,
+        })
     }
 
     pub fn insert(&mut self, id: StreamId, val: Stream<B, P>) -> Ptr<B, P> {
@@ -105,12 +111,12 @@ impl<B, P> Store<B, P>
 
         Ptr {
             key: Key(key),
-            slab: &mut self.slab,
+            store: self,
         }
     }
 
     pub fn find_entry(&mut self, id: StreamId) -> Entry<B, P> {
-        use self::hash_map::Entry::*;
+        use self::ordermap::Entry::*;
 
         match self.ids.entry(id) {
             Occupied(e) => {
@@ -130,11 +136,27 @@ impl<B, P> Store<B, P>
     pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
         where F: FnMut(Ptr<B, P>) -> Result<(), E>,
     {
-        for &key in self.ids.values() {
+        let mut len = self.ids.len();
+        let mut i = 0;
+
+        while i < len {
+            // Get the key by index, this makes the borrow checker happy
+            let key = *self.ids.get_index(i).unwrap().1;
+
             f(Ptr {
                 key: Key(key),
-                slab: &mut self.slab,
+                store: self,
             })?;
+
+            // TODO: This logic probably could be better...
+            let new_len = self.ids.len();
+
+            if new_len < len {
+                debug_assert!(new_len == len - 1);
+                len -= 1;
+            } else {
+                i += 1;
+            }
         }
 
         Ok(())
@@ -147,7 +169,7 @@ impl<B, P> Resolve<B, P> for Store<B, P>
     fn resolve(&mut self, key: Key) -> Ptr<B, P> {
         Ptr {
             key: key,
-            slab: &mut self.slab,
+            store: self,
         }
     }
 }
@@ -167,6 +189,19 @@ impl<B, P> ops::IndexMut<Key> for Store<B, P>
 {
     fn index_mut(&mut self, key: Key) -> &mut Self::Output {
         self.slab.index_mut(key.0)
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl<B, P> Store<B, P>
+    where P: Peer,
+{
+    pub fn num_active_streams(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn num_wired_streams(&self) -> usize {
+        self.slab.len()
     }
 }
 
@@ -263,8 +298,27 @@ impl<B, N, P> Queue<B, N, P>
 impl<'a, B: 'a, P> Ptr<'a, B, P>
     where P: Peer,
 {
+    /// Returns the Key associated with the stream
     pub fn key(&self) -> Key {
         self.key
+    }
+
+    /// Remove the stream from the store
+    pub fn remove(self) -> StreamId {
+        // The stream must have been unlinked before this point
+        debug_assert!(!self.store.ids.contains_key(&self.id));
+
+        // Remove the stream state
+        self.store.slab.remove(self.key.0).id
+    }
+
+    /// Remove the StreamId -> stream state association.
+    ///
+    /// This will effectively remove the stream as far as the H2 protocol is
+    /// concerned.
+    pub fn unlink(&mut self) {
+        let id = self.id;
+        self.store.ids.remove(&id);
     }
 }
 
@@ -274,7 +328,7 @@ impl<'a, B: 'a, P> Resolve<B, P> for Ptr<'a, B, P>
     fn resolve(&mut self, key: Key) -> Ptr<B, P> {
         Ptr {
             key: key,
-            slab: &mut *self.slab,
+            store: &mut *self.store,
         }
     }
 }
@@ -285,7 +339,7 @@ impl<'a, B: 'a, P> ops::Deref for Ptr<'a, B, P>
     type Target = Stream<B, P>;
 
     fn deref(&self) -> &Stream<B, P> {
-        &self.slab[self.key.0]
+        &self.store.slab[self.key.0]
     }
 }
 
@@ -293,7 +347,7 @@ impl<'a, B: 'a, P> ops::DerefMut for Ptr<'a, B, P>
     where P: Peer,
 {
     fn deref_mut(&mut self) -> &mut Stream<B, P> {
-        &mut self.slab[self.key.0]
+        &mut self.store.slab[self.key.0]
     }
 }
 

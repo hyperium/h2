@@ -13,12 +13,6 @@ use std::marker::PhantomData;
 pub(super) struct Recv<B, P>
     where P: Peer,
 {
-    /// Maximum number of remote initiated streams
-    max_streams: Option<usize>,
-
-    /// Current number of remote initiated streams
-    num_streams: usize,
-
     /// Initial window size of remote initiated streams
     init_window_sz: WindowSize,
 
@@ -77,8 +71,6 @@ impl<B, P> Recv<B, P>
         flow.assign_capacity(config.init_remote_window_sz);
 
         Recv {
-            max_streams: config.max_remote_initiated,
-            num_streams: 0,
             init_window_sz: config.init_remote_window_sz,
             flow: flow,
             next_stream_id: next_stream_id.into(),
@@ -104,14 +96,21 @@ impl<B, P> Recv<B, P>
     /// Update state reflecting a new, remotely opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, id: StreamId)
+    pub fn open(&mut self, id: StreamId, counts: &mut Counts<P>)
         -> Result<Option<StreamId>, RecvError>
     {
         assert!(self.refused.is_none());
 
         try!(self.ensure_can_open(id));
 
-        if !self.can_inc_num_streams() {
+        if id < self.next_stream_id {
+            return Err(RecvError::Connection(ProtocolError));
+        }
+
+        self.next_stream_id = id;
+        self.next_stream_id.increment();
+
+        if !counts.can_inc_num_recv_streams() {
             self.refused = Some(id);
             return Ok(None);
         }
@@ -124,31 +123,21 @@ impl<B, P> Recv<B, P>
     /// The caller ensures that the frame represents headers and not trailers.
     pub fn recv_headers(&mut self,
                         frame: frame::Headers,
-                        stream: &mut store::Ptr<B, P>)
+                        stream: &mut store::Ptr<B, P>,
+                        counts: &mut Counts<P>)
         -> Result<(), RecvError>
     {
         trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
         if is_initial {
-            if !self.can_inc_num_streams() {
-                unimplemented!();
-            }
-
-            if frame.stream_id() >= self.next_stream_id {
-                self.next_stream_id = frame.stream_id();
-                self.next_stream_id.increment();
-            } else {
-                return Err(RecvError::Connection(ProtocolError));
-            }
-
             // TODO: be smarter about this logic
             if frame.stream_id() > self.last_processed_id {
                 self.last_processed_id = frame.stream_id();
             }
 
             // Increment the number of concurrent streams
-            self.inc_num_streams();
+            counts.inc_num_recv_streams();
         }
 
         if !stream.content_length.is_head() {
@@ -395,30 +384,6 @@ impl<B, P> Recv<B, P>
 
         // If a receiver is waiting, notify it
         stream.notify_recv();
-    }
-
-    /// Returns true if the current stream concurrency can be incremetned
-    fn can_inc_num_streams(&self) -> bool {
-        if let Some(max) = self.max_streams {
-            max > self.num_streams
-        } else {
-            true
-        }
-    }
-
-    /// Increments the number of concurrenty streams. Panics on failure as this
-    /// should have been validated before hand.
-    fn inc_num_streams(&mut self) {
-        if !self.can_inc_num_streams() {
-            panic!();
-        }
-
-        // Increment the number of remote initiated streams
-        self.num_streams += 1;
-    }
-
-    pub fn dec_num_streams(&mut self) {
-        self.num_streams -= 1;
     }
 
     /// Returns true if the remote peer can initiate a stream with the given ID.
