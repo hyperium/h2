@@ -34,6 +34,8 @@ pub(crate) struct StreamRef<B, P>
 struct Inner<B, P>
     where P: Peer,
 {
+    /// Tracks send & recv stream concurrency.
+    counts: Counts<P>,
     actions: Actions<B, P>,
     store: Store<B, P>,
 }
@@ -52,28 +54,6 @@ struct Actions<B, P>
     task: Option<task::Task>,
 }
 
-macro_rules! transition {
-    ($me:ident, $stream:expr, |$a:ident, $b:ident| $t:block) => {{
-        let stream_id;
-        let unlink;
-
-        let ret = {
-            let stream = $stream;
-            stream_id = stream.id;
-
-            let (ret, u) = $me.actions.transition(stream, |$a, $b| $t);
-            unlink = u;
-            ret
-        };
-
-        if unlink {
-            $me.store.unlink(stream_id);
-        }
-
-        ret
-    }};
-}
-
 impl<B, P> Streams<B, P>
     where B: Buf,
           P: Peer,
@@ -81,6 +61,7 @@ impl<B, P> Streams<B, P>
     pub fn new(config: Config) -> Self {
         Streams {
             inner: Arc::new(Mutex::new(Inner {
+                counts: Counts::new(&config),
                 actions: Actions {
                     recv: Recv::new(&config),
                     send: Send::new(&config),
@@ -102,7 +83,7 @@ impl<B, P> Streams<B, P>
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                match try!(me.actions.recv.open(id)) {
+                match try!(me.actions.recv.open(id, &mut me.counts)) {
                     Some(stream_id) => {
                         let stream = Stream::new(
                             stream_id,
@@ -116,34 +97,33 @@ impl<B, P> Streams<B, P>
             }
         };
 
-        transition! {
-            me,
-            me.store.resolve(key),
-            |actions, stream| {
-                trace!("recv_headers; stream={:?}; state={:?}", stream.id, stream.state);
+        let stream = me.store.resolve(key);
+        let actions = &mut me.actions;
 
-                let res = if stream.state.is_recv_headers() {
-                    actions.recv.recv_headers(frame, stream)
-                } else {
-                    if !frame.is_end_stream() {
-                        // TODO: Is this the right error
-                        return Err(RecvError::Connection(ProtocolError));
-                    }
+        me.counts.transition(stream, |counts, stream| {
+            trace!("recv_headers; stream={:?}; state={:?}", stream.id, stream.state);
 
-                    actions.recv.recv_trailers(frame, stream)
-                };
-
-                // TODO: extract this
-                match res {
-                    Err(RecvError::Stream { reason, .. }) => {
-                        // Reset the stream.
-                        actions.send.send_reset(reason, stream, &mut actions.task);
-                        Ok(())
-                    }
-                    res => res,
+            let res = if stream.state.is_recv_headers() {
+                actions.recv.recv_headers(frame, stream, counts)
+            } else {
+                if !frame.is_end_stream() {
+                    // TODO: Is this the right error
+                    return Err(RecvError::Connection(ProtocolError));
                 }
+
+                actions.recv.recv_trailers(frame, stream)
+            };
+
+            // TODO: extract this
+            match res {
+                Err(RecvError::Stream { reason, .. }) => {
+                    // Reset the stream.
+                    actions.send.send_reset(reason, stream, &mut actions.task);
+                    Ok(())
+                }
+                res => res,
             }
-        }
+        })
     }
 
     pub fn recv_data(&mut self, frame: frame::Data)
@@ -154,23 +134,23 @@ impl<B, P> Streams<B, P>
 
         let id = frame.stream_id();
 
-        transition! {
-            me,
-            match me.store.find_mut(&id) {
-                Some(stream) => stream,
-                None => return Err(RecvError::Connection(ProtocolError)),
-            },
-            |actions, stream| {
-                match actions.recv.recv_data(frame, stream) {
-                    Err(RecvError::Stream { reason, .. }) => {
-                        // Reset the stream.
-                        actions.send.send_reset(reason, stream, &mut actions.task);
-                        Ok(())
-                    }
-                    res => res,
+        let stream = match me.store.find_mut(&id) {
+            Some(stream) => stream,
+            None => return Err(RecvError::Connection(ProtocolError)),
+        };
+
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
+            match actions.recv.recv_data(frame, stream) {
+                Err(RecvError::Stream { reason, .. }) => {
+                    // Reset the stream.
+                    actions.send.send_reset(reason, stream, &mut actions.task);
+                    Ok(())
                 }
+                res => res,
             }
-        }
+        })
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset)
@@ -185,24 +165,24 @@ impl<B, P> Streams<B, P>
             return Err(RecvError::Connection(ProtocolError));
         }
 
-        transition! {
-            me,
-            match me.store.find_mut(&id) {
-                Some(stream) => stream,
-                None => {
-                    // TODO: Are there other error cases?
-                    me.actions.ensure_not_idle(id)
-                        .map_err(RecvError::Connection)?;
+        let stream = match me.store.find_mut(&id) {
+            Some(stream) => stream,
+            None => {
+                // TODO: Are there other error cases?
+                me.actions.ensure_not_idle(id)
+                    .map_err(RecvError::Connection)?;
 
-                    return Ok(());
-                }
-            },
-            |actions, stream| {
-                actions.recv.recv_reset(frame, stream)?;
-                assert!(stream.state.is_closed());
-                Ok(())
+                return Ok(());
             }
-        }
+        };
+
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
+            actions.recv.recv_reset(frame, stream)?;
+            assert!(stream.state.is_closed());
+            Ok(())
+        })
     }
 
     /// Handle a received error and return the ID of the last processed stream.
@@ -211,15 +191,16 @@ impl<B, P> Streams<B, P>
         let me = &mut *me;
 
         let actions = &mut me.actions;
+        let counts = &mut me.counts;
+
         let last_processed_id = actions.recv.last_processed_id();
 
-        me.store.retain(|stream| {
-            let (_, unlink) = actions.transition(stream, |actions, stream| {
+        me.store.for_each(|stream| {
+            counts.transition(stream, |_, stream| {
                 actions.recv.recv_err(err, &mut *stream);
-            });
-
-            !unlink
-        });
+                Ok::<_, ()>(())
+            })
+        }).unwrap();
 
         last_processed_id
     }
@@ -320,7 +301,7 @@ impl<B, P> Streams<B, P>
         try_ready!(me.actions.recv.poll_complete(&mut me.store, dst));
 
         // Send any other pending frames
-        try_ready!(me.actions.send.poll_complete(&mut me.store, dst));
+        try_ready!(me.actions.send.poll_complete(&mut me.store, &mut me.counts, dst));
 
         // Nothing else to do, track the task
         me.actions.task = Some(task::current());
@@ -333,6 +314,8 @@ impl<B, P> Streams<B, P>
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
+
+        me.counts.apply_remote_settings(frame);
 
         me.actions.send.apply_remote_settings(
             frame, &mut me.store, &mut me.actions.task)
@@ -354,7 +337,7 @@ impl<B, P> Streams<B, P>
             let me = &mut *me;
 
             // Initialize a new stream. This fails if the connection is at capacity.
-            let stream_id = me.actions.send.open()?;
+            let stream_id = me.actions.send.open(&mut me.counts)?;
 
             let mut stream = Stream::new(
                 stream_id,
@@ -397,7 +380,7 @@ impl<B, P> Streams<B, P>
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                match me.actions.recv.open(id) {
+                match me.actions.recv.open(id, &mut me.counts) {
                     Ok(Some(stream_id)) => {
                         let stream = Stream::new(
                             stream_id, 0, 0);
@@ -409,13 +392,12 @@ impl<B, P> Streams<B, P>
             }
         };
 
-        transition! {
-            me,
-            me.store.resolve(key),
-            |actions, stream| {
-                actions.send.send_reset(reason, stream, &mut actions.task)
-            }
-        }
+        let stream = me.store.resolve(key);
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
+            actions.send.send_reset(reason, stream, &mut actions.task)
+        })
     }
 }
 
@@ -426,7 +408,7 @@ impl<B> Streams<B, client::Peer>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.send.poll_open_ready()
+        me.counts.poll_open_ready()
     }
 }
 
@@ -458,18 +440,17 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        transition! {
-            me,
-            me.store.resolve(self.key),
-            |actions, stream| {
-                // Create the data frame
-                let mut frame = frame::Data::new(stream.id, data);
-                frame.set_end_stream(end_stream);
+        let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-                // Send the data frame
-                actions.send.send_data(frame, stream, &mut actions.task)
-            }
-        }
+        me.counts.transition(stream, |_, stream| {
+            // Create the data frame
+            let mut frame = frame::Data::new(stream.id, data);
+            frame.set_end_stream(end_stream);
+
+            // Send the data frame
+            actions.send.send_data(frame, stream, &mut actions.task)
+        })
     }
 
     pub fn send_trailers(&mut self, trailers: HeaderMap)
@@ -478,30 +459,28 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        transition! {
-            me,
-            me.store.resolve(self.key),
-            |actions, stream| {
-                // Create the trailers frame
-                let frame = frame::Headers::trailers(stream.id, trailers);
+        let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-                // Send the trailers frame
-                actions.send.send_trailers(frame, stream, &mut actions.task)
-            }
-        }
+        me.counts.transition(stream, |_, stream| {
+            // Create the trailers frame
+            let frame = frame::Headers::trailers(stream.id, trailers);
+
+            // Send the trailers frame
+            actions.send.send_trailers(frame, stream, &mut actions.task)
+        })
     }
 
     pub fn send_reset(&mut self, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        transition! {
-            me,
-            me.store.resolve(self.key),
-            |actions, stream| {
-                actions.send.send_reset(reason, stream, &mut actions.task)
-            }
-        }
+        let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
+
+        me.counts.transition(stream, |_, stream| {
+            actions.send.send_reset(reason, stream, &mut actions.task)
+        })
     }
 
     pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
@@ -510,16 +489,15 @@ impl<B, P> StreamRef<B, P>
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        transition! {
-            me,
-            me.store.resolve(self.key),
-            |actions, stream| {
-                let frame = server::Peer::convert_send_message(
-                    stream.id, response, end_of_stream);
+        let stream = me.store.resolve(self.key);
+        let actions = &mut me.actions;
 
-                actions.send.send_headers(frame, stream, &mut actions.task)
-            }
-        }
+        me.counts.transition(stream, |_, stream| {
+            let frame = server::Peer::convert_send_message(
+                stream.id, response, end_of_stream);
+
+            actions.send.send_headers(frame, stream, &mut actions.task)
+        })
     }
 
     pub fn body_is_empty(&self) -> bool {
@@ -674,53 +652,10 @@ impl<B, P> Actions<B, P>
     fn ensure_not_idle(&mut self, id: StreamId)
         -> Result<(), Reason>
     {
-        if self.is_local_init(id) {
+        if P::is_local_init(id) {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
         }
-    }
-
-    fn dec_num_streams(&mut self, id: StreamId) {
-        if self.is_local_init(id) {
-            self.send.dec_num_streams();
-        } else {
-            self.recv.dec_num_streams();
-        }
-    }
-
-    fn is_local_init(&self, id: StreamId) -> bool {
-        assert!(!id.is_zero());
-        P::is_server() == id.is_server_initiated()
-    }
-
-    fn transition<F, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> (U, bool)
-        where F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
-    {
-        let is_counted = stream.state.is_counted();
-
-        // Run the action
-        let ret = f(self, &mut stream);
-
-        // Now figure out if the stream transitioned to a state that requires it
-        // being unlinked. Unlinking means that it is removed from the stream
-        // identifer -> stream map.
-        let mut unlink = false;
-
-        if stream.is_closed() {
-            unlink = true;
-
-            if is_counted {
-                // Decrement the number of active streams.
-                self.dec_num_streams(stream.id);
-            }
-        }
-
-        // Release the stream if it requires releasing
-        if stream.is_released() {
-            stream.remove();
-        }
-
-        (ret, unlink)
     }
 }

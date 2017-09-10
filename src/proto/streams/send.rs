@@ -1,4 +1,3 @@
-use client;
 use frame::{self, Reason};
 use codec::{RecvError, UserError};
 use codec::UserError::*;
@@ -14,20 +13,11 @@ use std::io;
 pub(super) struct Send<B, P>
     where P: Peer,
 {
-    /// Maximum number of locally initiated streams
-    max_streams: Option<usize>,
-
-    /// Current number of locally initiated streams
-    num_streams: usize,
-
     /// Stream identifier to use for next initialized stream.
     next_stream_id: StreamId,
 
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
-
-    /// Task awaiting notification to open a new stream.
-    blocked_open: Option<task::Task>,
 
     /// Prioritization layer
     prioritize: Prioritize<B, P>,
@@ -42,11 +32,8 @@ where B: Buf,
         let next_stream_id = if P::is_server() { 2 } else { 1 };
 
         Send {
-            max_streams: config.max_local_initiated,
-            num_streams: 0,
             next_stream_id: next_stream_id.into(),
             init_window_sz: config.init_local_window_sz,
-            blocked_open: None,
             prioritize: Prioritize::new(config),
         }
     }
@@ -59,22 +46,20 @@ where B: Buf,
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self)
+    pub fn open(&mut self, counts: &mut Counts<P>)
         -> Result<StreamId, UserError>
     {
         try!(self.ensure_can_open());
 
-        if let Some(max) = self.max_streams {
-            if max <= self.num_streams {
-                return Err(Rejected.into());
-            }
+        if !counts.can_inc_num_send_streams() {
+            return Err(Rejected.into());
         }
 
         let ret = self.next_stream_id;
+        self.next_stream_id.increment();
 
         // Increment the number of locally initiated streams
-        self.num_streams += 1;
-        self.next_stream_id.increment();
+        counts.inc_num_send_streams();
 
         Ok(ret)
     }
@@ -167,11 +152,12 @@ where B: Buf,
 
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
+                            counts: &mut Counts<P>,
                             dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), io::Error>
         where T: AsyncWrite,
     {
-        self.prioritize.poll_complete(store, dst)
+        self.prioritize.poll_complete(store, counts, dst)
     }
 
     /// Request capacity to send data
@@ -237,10 +223,6 @@ where B: Buf,
                                  task: &mut Option<Task>)
         -> Result<(), RecvError>
     {
-        if let Some(val) = settings.max_concurrent_streams() {
-            self.max_streams = Some(val as usize);
-        }
-
         // Applies an update to the remote endpoint's initial window size.
         //
         // Per RFC 7540 §6.9.2:
@@ -304,16 +286,6 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn dec_num_streams(&mut self) {
-        self.num_streams -= 1;
-
-        if self.num_streams < self.max_streams.unwrap_or(::std::usize::MAX) {
-            if let Some(task) = self.blocked_open.take() {
-                task.notify();
-            }
-        }
-    }
-
     /// Returns true if the local actor can initiate a stream with the given ID.
     fn ensure_can_open(&self) -> Result<(), UserError> {
         if P::is_server() {
@@ -324,20 +296,5 @@ where B: Buf,
         // TODO: Handle StreamId overflow
 
         Ok(())
-    }
-}
-
-impl<B> Send<B, client::Peer>
-where B: Buf,
-{
-    pub fn poll_open_ready(&mut self) -> Async<()> {
-        if let Some(max) = self.max_streams {
-            if max <= self.num_streams {
-                self.blocked_open = Some(task::current());
-                return Async::NotReady;
-            }
-        }
-
-        return Async::Ready(());
     }
 }

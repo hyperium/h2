@@ -325,6 +325,7 @@ impl<B, P> Prioritize<B, P>
 
     pub fn poll_complete<T>(&mut self,
                             store: &mut Store<B, P>,
+                            counts: &mut Counts<P>,
                             dst: &mut Codec<T, Prioritized<B>>)
         -> Poll<(), io::Error>
         where T: AsyncWrite,
@@ -341,7 +342,7 @@ impl<B, P> Prioritize<B, P>
         trace!("poll_complete");
 
         loop {
-            match self.pop_frame(store, max_frame_len) {
+            match self.pop_frame(store, max_frame_len, counts) {
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
 
@@ -433,7 +434,7 @@ impl<B, P> Prioritize<B, P>
         }
     }
 
-    fn pop_frame(&mut self, store: &mut Store<B, P>, max_len: usize)
+    fn pop_frame(&mut self, store: &mut Store<B, P>, max_len: usize, counts: &mut Counts<P>)
         -> Option<Frame<Prioritized<B>>>
     {
         trace!("pop_frame");
@@ -443,6 +444,8 @@ impl<B, P> Prioritize<B, P>
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
                     debug_assert!(!stream.pending_send.is_empty());
+
+                    let is_counted = stream.state.is_counted();
 
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
@@ -540,6 +543,8 @@ impl<B, P> Prioritize<B, P>
                         // any more capacity.
                         self.pending_send.push(&mut stream);
                     }
+
+                    counts.transition_after(stream, is_counted);
 
                     return Some(frame);
                 }
