@@ -4,21 +4,20 @@ use frame::Reason::*;
 use proto::{self, Connection, WindowSize};
 
 use bytes::{Bytes, IntoBuf};
-use futures::{AndThen, Async, AsyncSink, Future, MapErr, Poll, Sink};
+use futures::{Async, Future, MapErr, Poll};
 use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
 use std::fmt;
-use std::io::Error as IoError;
+use std::io;
+use std::marker::PhantomData;
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
-    inner: AndThen<
-        MapErr<WriteAll<T, &'static [u8]>, fn(IoError) -> ::Error>,
-        Result<Client<T, B>, ::Error>,
-        fn((T, &'static [u8])) -> Result<Client<T, B>, ::Error>,
-    >,
+    inner: MapErr<WriteAll<T, &'static [u8]>, fn(io::Error) -> ::Error>,
+    settings: Settings,
+    _marker: PhantomData<B>,
 }
 
 /// Marker type indicating a client peer
@@ -36,6 +35,12 @@ pub struct Body<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf, Peer>,
 }
 
+/// Build a Client.
+#[derive(Debug, Default)]
+pub struct Builder {
+    settings: Settings,
+}
+
 #[derive(Debug)]
 pub(crate) struct Peer;
 
@@ -43,16 +48,7 @@ impl<T> Client<T, Bytes>
 where
     T: AsyncRead + AsyncWrite,
 {
-    pub fn handshake(io: T) -> Handshake<T, Bytes> {
-        Client::handshake2(io)
-    }
-}
 
-impl<T, B> Client<T, B>
-where
-    T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
-{
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
@@ -60,41 +56,35 @@ where
     ///
     /// It's important to note that this does not **flush** the outbound
     /// settings to the wire.
-    pub fn handshake2(io: T) -> Handshake<T, B> {
+    pub fn handshake(io: T) -> Handshake<T, Bytes> {
+        Builder::default().handshake(io)
+    }
+}
+
+impl Client<(), Bytes> {
+    /// Creates a Client Builder to customize a Client before binding.
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+impl<T, B> Client<T, B>
+where T: AsyncRead + AsyncWrite,
+      B: IntoBuf
+{
+    fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
         use tokio_io::io;
 
         debug!("binding client connection");
 
-        let bind: fn((T, &'static [u8]))
-            -> Result<Client<T, B>, ::Error> = |(io, _)| {
-            debug!("client connection bound");
-
-            // Create the codec
-            let mut codec = Codec::new(io);
-
-            // Create the initial SETTINGS frame
-            let settings = Settings::default();
-
-            // Send initial settings frame
-            match codec.start_send(settings.into()) {
-                Ok(AsyncSink::Ready) => {
-                    let connection = Connection::new(codec);
-                    Ok(Client {
-                        connection,
-                    })
-                },
-                Ok(_) => unreachable!(),
-                Err(e) => Err(::Error::from(e)),
-            }
-        };
-
         let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         let handshake = io::write_all(io, msg)
-            .map_err(::Error::from as fn(IoError) -> ::Error)
-            .and_then(bind);
+            .map_err(::Error::from as _);
 
         Handshake {
             inner: handshake,
+            settings: settings,
+            _marker: PhantomData,
         }
     }
 
@@ -172,6 +162,30 @@ where
     }
 }
 
+// ===== impl Builder =====
+
+impl Builder {
+    /// Set the initial window size of the remote peer.
+    pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
+        self.settings.set_initial_window_size(Some(size));
+        self
+    }
+
+    /// Bind an H2 client connection.
+    ///
+    /// Returns a future which resolves to the connection value once the H2
+    /// handshake has been completed.
+    ///
+    /// It's important to note that this does not **flush** the outbound
+    /// settings to the wire.
+    pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
+        where T: AsyncRead + AsyncWrite,
+              B: IntoBuf
+    {
+        Client::handshake2(io, self.settings.clone())
+    }
+}
+
 // ===== impl Handshake =====
 
 impl<T, B: IntoBuf> Future for Handshake<T, B>
@@ -182,7 +196,21 @@ where
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
+        let (io, _) = try_ready!(self.inner.poll());
+
+        debug!("client connection bound");
+
+        // Create the codec
+        let mut codec = Codec::new(io);
+
+        // Send initial settings frame
+        codec.buffer(self.settings.clone().into())
+           .expect("invalid SETTINGS frame");
+
+        let connection = Connection::new(codec, &self.settings);
+        Ok(Async::Ready(Client {
+            connection,
+        }))
     }
 }
 

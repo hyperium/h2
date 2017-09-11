@@ -66,6 +66,10 @@ impl Settings {
         self.initial_window_size
     }
 
+    pub fn set_initial_window_size(&mut self, size: Option<u32>) {
+        self.initial_window_size = size;
+    }
+
     pub fn max_concurrent_streams(&self) -> Option<u32> {
         self.max_concurrent_streams
     }
