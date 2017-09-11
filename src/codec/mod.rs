@@ -30,11 +30,14 @@ impl<T, B> Codec<T, B>
     /// Returns a new `Codec` with the default max frame size
     #[inline]
     pub fn new(io: T) -> Self {
-        Self::with_max_frame_size(io, frame::DEFAULT_MAX_FRAME_SIZE as usize)
+        Self::with_max_recv_frame_size(
+            io,
+            frame::DEFAULT_MAX_FRAME_SIZE as usize
+        )
     }
 
     /// Returns a new `Codec` with the given maximum frame size
-    pub fn with_max_frame_size(io: T, max_frame_size: usize) -> Self {
+    pub fn with_max_recv_frame_size(io: T, max_frame_size: usize) -> Self {
         // Wrap with writer
         let framed_write = FramedWrite::new(io);
 
