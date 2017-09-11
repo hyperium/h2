@@ -127,8 +127,8 @@ fn update_max_frame_len_at_rest() {
 
     assert_eq!(poll_data!(codec).payload(), &b"hello"[..]);
 
-    codec.set_max_frame_size(2);
+    codec.set_max_recv_frame_size(2);
 
-    assert_eq!(codec.max_frame_size(), 2);
+    assert_eq!(codec.max_recv_frame_size(), 2);
     assert_eq!(codec.poll().unwrap_err().description(), "frame size too big");
 }
