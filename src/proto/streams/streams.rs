@@ -114,15 +114,7 @@ impl<B, P> Streams<B, P>
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            // TODO: extract this
-            match res {
-                Err(RecvError::Stream { reason, .. }) => {
-                    // Reset the stream.
-                    actions.send.send_reset(reason, stream, &mut actions.task);
-                    Ok(())
-                }
-                res => res,
-            }
+            actions.reset_on_recv_stream_err(stream, res)
         })
     }
 
@@ -142,14 +134,8 @@ impl<B, P> Streams<B, P>
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            match actions.recv.recv_data(frame, stream) {
-                Err(RecvError::Stream { reason, .. }) => {
-                    // Reset the stream.
-                    actions.send.send_reset(reason, stream, &mut actions.task);
-                    Ok(())
-                }
-                res => res,
-            }
+            let res = actions.recv.recv_data(frame, stream);
+            actions.reset_on_recv_stream_err(stream, res)
         })
     }
 
@@ -649,6 +635,21 @@ impl<B, P> Actions<B, P>
     where B: Buf,
           P: Peer,
 {
+
+    fn reset_on_recv_stream_err(&mut self,
+                                stream: &mut store::Ptr<B, P>,
+                                res: Result<(), RecvError>)
+                                -> Result<(), RecvError>
+    {
+        if let Err(RecvError::Stream { reason, .. }) = res {
+            // Reset the stream.
+            self.send.send_reset(reason, stream, &mut self.task);
+            Ok(())
+        } else {
+            res
+        }
+    }
+
     fn ensure_not_idle(&mut self, id: StreamId)
         -> Result<(), Reason>
     {
