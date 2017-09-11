@@ -23,13 +23,13 @@ script:
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
 
-after_success: |
-    bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh) &&
-    if [[ "$TRAVIS_RUST_VERSION" == "nightly" ]] then
-      cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
-    fi &&
-    cargo tarpaulin --out Xml &&
-    bash <(curl -s https://codecov.io/bash)
+after_success:
+  - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
+  - |
+  if [[ "$TRAVIS_RUST_VERSION" == "nightly" ]]; then
+    cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+  fi
+  - cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash)
 
 jobs:
   include:
