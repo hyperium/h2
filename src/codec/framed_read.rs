@@ -219,6 +219,18 @@ impl<T> FramedRead<T> {
     pub fn get_mut(&mut self) -> &mut T {
         self.inner.get_mut()
     }
+
+    /// Returns the current max frame size setting
+    #[inline]
+    pub fn max_frame_size(&self) -> usize {
+        self.inner.max_frame_length()
+    }
+
+    /// Updates the max frame size setting.
+    #[inline]
+    pub fn set_max_frame_size(&mut self, val: usize) {
+        self.inner.set_max_frame_length(val)
+    }
 }
 
 impl<T> Stream for FramedRead<T>

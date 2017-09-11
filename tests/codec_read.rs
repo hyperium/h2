@@ -2,6 +2,8 @@
 extern crate h2_test_support;
 use h2_test_support::prelude::*;
 
+use std::error::Error;
+
 #[test]
 fn read_none() {
     let mut codec = Codec::from(
@@ -110,4 +112,23 @@ fn read_headers_with_pseudo() {
 
 #[test]
 fn read_headers_empty_payload() {
+}
+
+#[test]
+fn update_max_frame_len_at_rest() {
+    // TODO: add test for updating max frame length in flight as well?
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            "world",
+        ];
+    };
+
+    assert_eq!(poll_data!(codec).payload(), &b"hello"[..]);
+
+    codec.set_max_recv_frame_size(2);
+
+    assert_eq!(codec.max_recv_frame_size(), 2);
+    assert_eq!(codec.poll().unwrap_err().description(), "frame size too big");
 }

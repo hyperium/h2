@@ -27,7 +27,17 @@ impl<T, B> Codec<T, B>
     where T: AsyncRead + AsyncWrite,
           B: Buf,
 {
+    /// Returns a new `Codec` with the default max frame size
+    #[inline]
     pub fn new(io: T) -> Self {
+        Self::with_max_recv_frame_size(
+            io,
+            frame::DEFAULT_MAX_FRAME_SIZE as usize
+        )
+    }
+
+    /// Returns a new `Codec` with the given maximum frame size
+    pub fn with_max_recv_frame_size(io: T, max_frame_size: usize) -> Self {
         // Wrap with writer
         let framed_write = FramedWrite::new(io);
 
@@ -37,9 +47,7 @@ impl<T, B> Codec<T, B>
             .length_field_length(3)
             .length_adjustment(9)
             .num_skip(0) // Don't skip the header
-            // TODO: make this configurable and allow it to be changed during
-            // runtime.
-            .max_frame_length(frame::DEFAULT_MAX_FRAME_SIZE as usize)
+            .max_frame_length(max_frame_size)
             .new_read(framed_write);
 
         let inner = FramedRead::new(delimited);
@@ -49,6 +57,29 @@ impl<T, B> Codec<T, B>
 }
 
 impl<T, B> Codec<T, B> {
+
+    /// Updates the max received frame size.
+    ///
+    /// The change takes effect the next time a frame is decoded. In other
+    /// words, if a frame is currently in process of being decoded with a frame
+    /// size greater than `val` but less than the max frame size in effect
+    /// before calling this function, then the frame will be allowed.
+    #[inline]
+    pub fn set_max_recv_frame_size(&mut self, val: usize) {
+        // TODO: should probably make some assertions about max frame size...
+        self.inner.set_max_frame_size(val)
+
+    }
+
+    /// Returns the current max received frame size setting.
+    ///
+    /// This is the largest size this codec will accept from the wire. Larger
+    /// frames will be rejected.
+    #[inline]
+    pub fn max_recv_frame_size(&self) -> usize {
+        self.inner.max_frame_size()
+    }
+
     /// Returns the max frame size that can be sent to the peer.
     pub fn max_send_frame_size(&self) -> usize {
         self.inner.get_ref().max_frame_size()
