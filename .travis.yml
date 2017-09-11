@@ -24,10 +24,7 @@ jobs:
           - libelf-dev
           - libdw-dev
           - binutils-dev
-      before_script: |
-        pip install 'travis-cargo<0.2' --user &&
-        export PATH=$HOME/.local/bin:$PATH
-      after_success: travis-cargo coveralls --no-sudo --verify
+      after_success: ./.ci/coverage.sh
     - stage: docs
       script: cargo doc --no-deps
       install: skip
