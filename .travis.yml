@@ -24,11 +24,11 @@ script:
   - cargo test
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
+  
+after_success: ./.ci/coverage.sh
 
 jobs:
   include:
-    - stage: coverage
-      after_success: ./.ci/coverage.sh
     - stage: docs
       script: cargo doc --no-deps
       install: skip
