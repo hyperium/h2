@@ -6,6 +6,14 @@ cache:
   cargo: true
   apt: true
 
+addons:
+  apt:
+    packages:
+    - libcurl4-openssl-dev
+    - libelf-dev
+    - libdw-dev
+    - binutils-dev
+
 rust:
  - nightly
  - beta
@@ -20,13 +28,6 @@ script:
 jobs:
   include:
     - stage: coverage
-      addons:
-        apt:
-          packages:
-          - libcurl4-openssl-dev
-          - libelf-dev
-          - libdw-dev
-          - binutils-dev
       after_success: ./.ci/coverage.sh
     - stage: docs
       script: cargo doc --no-deps
