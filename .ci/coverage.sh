@@ -12,7 +12,7 @@ cmake .. &&
 make &&
 make install DESTDIR=../tmp &&
 cd ../.. &&
-./kcov-master/tmp/usr/local/bin/kcov --exclude-pattern=/.cargo --coveralls-id=$TRAVIS_JOB_ID --verify  target/kcov target/debug/!(*.*) &&
+./kcov-master/tmp/usr/local/bin/kcov --exclude-pattern=/.cargo --coveralls-id=$TRAVIS_JOB_ID --verify  target/kcov target/debug/*-*[!.]? &&
 echo "Uploaded coverage to coveralls!" &&
 bash <(curl -s https://codecov.io/bash) -s target/kcov &&
 echo "Uploaded code coverage to codecov!"
