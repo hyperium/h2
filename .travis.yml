@@ -2,7 +2,10 @@
 language: rust
 sudo: false
 
-cache: cargo
+cache:
+  cargo: true
+  apt: true
+
 rust:
  - nightly
  - beta
