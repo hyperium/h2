@@ -12,6 +12,7 @@ addons:
     - libcurl4-openssl-dev
     - libelf-dev
     - libdw-dev
+    - libbfd-dev
     - binutils-dev
 
 rust:
@@ -24,7 +25,7 @@ script:
   - cargo test
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
-  
+
 after_success: ./.ci/coverage.sh
 
 jobs:
