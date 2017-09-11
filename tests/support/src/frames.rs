@@ -34,6 +34,12 @@ pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
     frame::WindowUpdate::new(id.into(), sz)
 }
 
+pub fn go_away<T>(id: T) -> MockGoAway
+    where T: Into<StreamId>,
+{
+    MockGoAway(frame::GoAway::new(id.into(), frame::Reason::NoError))
+}
+
 // Headers helpers
 
 pub struct MockHeaders(frame::Headers);
@@ -136,6 +142,35 @@ impl From<MockData> for SendFrame {
         let mut frame = frame::Data::new(id, payload.into_buf());
         frame.set_end_stream(eos);
         Frame::Data(frame)
+    }
+}
+
+
+// GoAway helpers
+
+pub struct MockGoAway(frame::GoAway);
+
+impl MockGoAway {
+    pub fn flow_control(self) -> Self {
+        MockGoAway(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
+    }
+}
+
+impl fmt::Debug for MockGoAway {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl From<MockGoAway> for Frame {
+    fn from(src: MockGoAway) -> Self {
+        Frame::GoAway(src.0)
+    }
+}
+
+impl From<MockGoAway> for SendFrame {
+    fn from(src: MockGoAway) -> Self {
+        Frame::GoAway(src.0)
     }
 }
 
