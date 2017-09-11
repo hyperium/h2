@@ -225,17 +225,8 @@ fn recv_data_overflows_connection_window() {
             .and_then(|resp| {
                 assert_eq!(resp.status(), StatusCode::OK);
                 let body = resp.into_parts().1;
+                // FIXME: body stream should error also
                 body.concat2().unwrap()
-                /* FIXME: body stream should error also
-                        .then(|res| {
-                            let err = res.unwrap_err();
-                            assert_eq!(
-                                err.to_string(),
-                                "protocol error: flow-control protocol violated"
-                            );
-                            Ok::<(), ()>(())
-                        })
-                        */
             });
 
         // client should see a flow control error

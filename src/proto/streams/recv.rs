@@ -565,16 +565,7 @@ where
                 // No more data frames
                 Ok(None.into())
             },
-            None => {
-                if stream.state.is_recv_closed() {
-                    // No more data frames will be received
-                    Ok(None.into())
-                } else {
-                    // Request to get notified once more data frames arrive
-                    stream.recv_task = Some(task::current());
-                    Ok(Async::NotReady)
-                }
-            },
+            None => self.schedule_recv(stream),
         }
     }
 
@@ -590,16 +581,18 @@ where
                 // we do?
                 unimplemented!();
             },
-            None => {
-                if stream.state.is_recv_closed() {
-                    // There will be no trailer frame
-                    Ok(None.into())
-                } else {
-                    // Request to get notified once another frame arrives
-                    stream.recv_task = Some(task::current());
-                    Ok(Async::NotReady)
-                }
-            },
+            None => self.schedule_recv(stream),
+        }
+    }
+
+    fn schedule_recv<T>(&mut self, stream: &mut Stream<B, P>) -> Poll<Option<T>, proto::Error> {
+        if stream.state.ensure_recv_open()? {
+            // Request to get notified once more frames arrive
+            stream.recv_task = Some(task::current());
+            Ok(Async::NotReady)
+        } else {
+            // No more frames will be received
+            Ok(None.into())
         }
     }
 }
