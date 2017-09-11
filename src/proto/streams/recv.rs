@@ -1,7 +1,7 @@
 use super::*;
 use {client, frame, proto, server};
 use codec::{RecvError, UserError};
-use frame::Reason;
+use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 use proto::*;
 
 use http::HeaderMap;
@@ -64,13 +64,14 @@ where
 
         let mut flow = FlowControl::new();
 
-        flow.inc_window(config.init_remote_window_sz)
-            .ok()
+        // connections always have the default window size, regardless of
+        // settings
+        flow.inc_window(DEFAULT_INITIAL_WINDOW_SIZE)
             .expect("invalid initial remote window size");
-        flow.assign_capacity(config.init_remote_window_sz);
+        flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE);
 
         Recv {
-            init_window_sz: config.init_remote_window_sz,
+            init_window_sz: config.init_local_window_sz,
             flow: flow,
             next_stream_id: next_stream_id.into(),
             pending_window_updates: store::Queue::new(),
