@@ -14,5 +14,8 @@ sudo make install &&
 cd ../.. &&
 rm -rf kcov-master
 
-./kcov-master/tmp/usr/local/bin/kcov –coveralls-id=$TRAVIS_JOB_ID --verify –exclude-pattern=/.cargo target/kcov target/debug/!(*.*)  &&
-echo "Uploaded code coverage"
+./kcov-master/tmp/usr/local/bin/kcov –coveralls-id=$TRAVIS_JOB_ID --verify –exclude-pattern=/.cargo target/kcov target/debug/!(*.*) &&
+echo "Uploaded coverage to coveralls!"
+
+bash <(curl -s https://codecov.io/bash) -s target/kcov &&
+echo "Uploaded code coverage to codecov!"
