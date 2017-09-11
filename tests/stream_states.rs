@@ -62,10 +62,7 @@ fn send_recv_data() {
         ])
         .build();
 
-    let mut h2 = Client::builder()
-        .handshake(mock)
-        .wait()
-        .unwrap();
+    let mut h2 = Client::builder().handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)

@@ -48,7 +48,6 @@ impl<T> Client<T, Bytes>
 where
     T: AsyncRead + AsyncWrite,
 {
-
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
@@ -69,8 +68,9 @@ impl Client<(), Bytes> {
 }
 
 impl<T, B> Client<T, B>
-where T: AsyncRead + AsyncWrite,
-      B: IntoBuf
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
 {
     fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
         use tokio_io::io;
@@ -78,8 +78,7 @@ where T: AsyncRead + AsyncWrite,
         debug!("binding client connection");
 
         let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        let handshake = io::write_all(io, msg)
-            .map_err(::Error::from as _);
+        let handshake = io::write_all(io, msg).map_err(::Error::from as _);
 
         Handshake {
             inner: handshake,
@@ -179,8 +178,9 @@ impl Builder {
     /// It's important to note that this does not **flush** the outbound
     /// settings to the wire.
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
-        where T: AsyncRead + AsyncWrite,
-              B: IntoBuf
+    where
+        T: AsyncRead + AsyncWrite,
+        B: IntoBuf,
     {
         Client::handshake2(io, self.settings.clone())
     }
@@ -204,8 +204,9 @@ where
         let mut codec = Codec::new(io);
 
         // Send initial settings frame
-        codec.buffer(self.settings.clone().into())
-           .expect("invalid SETTINGS frame");
+        codec
+            .buffer(self.settings.clone().into())
+            .expect("invalid SETTINGS frame");
 
         let connection = Connection::new(codec, &self.settings);
         Ok(Async::Ready(Client {
