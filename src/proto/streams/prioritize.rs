@@ -246,7 +246,8 @@ impl<B, P> Prioritize<B, P>
         // Don't assign more than the window has available!
         let additional = cmp::min(
             total_requested - stream.send_flow.available(),
-            stream.send_flow.window_size());
+            // Can't assign more than what is available
+            stream.send_flow.window_size() - stream.send_flow.available());
 
         trace!("try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
                total_requested,
