@@ -43,6 +43,7 @@ jobs:
           branch: master
           repo: carllerche/h2
           rust: nightly
+      after_success: skip
 
 env:
   global:
