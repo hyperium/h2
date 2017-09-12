@@ -25,8 +25,8 @@ script:
 
 after_success:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
-  - test $TRAVIS_RUST_VERSION = nightly && cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
-  - cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash)
+  - test $TRAVIS_RUST_VERSION = nightly && cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID -- --skip hpack
+  - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
 
 jobs:
   include:
