@@ -5,6 +5,7 @@ use h2::frame::{self, Frame};
 
 use futures::{Async, Future, Stream, Poll};
 use futures::task::{self, Task};
+use futures::sync::oneshot;
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::read_exact;
@@ -100,12 +101,18 @@ impl Handle {
     }
 
     /// Perform the H2 handshake
-    pub fn assert_client_handshake(mut self)
+    pub fn assert_client_handshake(self)
+        -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    {
+        self.assert_client_handshake_with_settings(frame::Settings::default())
+    }
+
+    /// Perform the H2 handshake
+    pub fn assert_client_handshake_with_settings(mut self, settings: frame::Settings)
         -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
     {
         // Send a settings frame
-        let frame = frame::Settings::default();
-        self.send(frame.into()).unwrap();
+        self.send(settings.into()).unwrap();
 
         let ret = self.read_preface().unwrap()
             .and_then(|me| me.into_future().unwrap())
@@ -336,6 +343,31 @@ pub trait HandleFutureExt {
         }
     }
 
+    fn idle_ms(self, ms: usize) -> Box<Future<Item=Handle, Error=Self::Error>>
+        where Self: Sized + 'static,
+              Self: Future<Item=Handle>,
+              Self::Error: fmt::Debug,
+    {
+        use std::thread;
+        use std::time::Duration;
+
+
+        Box::new(self.and_then(move |handle| {
+            // This is terrible... but oh well
+            let (tx, rx) = oneshot::channel();
+
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(ms as u64));
+                tx.send(()).unwrap();
+            });
+
+            Idle {
+                handle: Some(handle),
+                timeout: rx,
+            }.map_err(|_| unreachable!())
+        }))
+    }
+
     fn close(self) -> Box<Future<Item=(), Error=()>>
         where Self: Future<Error = ()> + Sized + 'static,
     {
@@ -384,6 +416,29 @@ impl<T> Future for SendFrameFut<T>
         };
         handle.send(self.frame.take().unwrap()).unwrap();
         Ok(Async::Ready(handle))
+    }
+}
+
+pub struct Idle {
+    handle: Option<Handle>,
+    timeout: oneshot::Receiver<()>,
+}
+
+impl Future for Idle {
+    type Item = Handle;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if self.timeout.poll().unwrap().is_ready() {
+            return Ok(self.handle.take().unwrap().into());
+        }
+
+        match self.handle.as_mut().unwrap().poll() {
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            res => {
+                panic!("Received unexpected frame on handle; frame={:?}", res);
+            }
+        }
     }
 }
 

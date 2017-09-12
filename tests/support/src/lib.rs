@@ -6,6 +6,8 @@ pub extern crate http;
 
 #[macro_use]
 pub extern crate tokio_io;
+
+#[macro_use]
 pub extern crate futures;
 pub extern crate mock_io;
 pub extern crate env_logger;
@@ -19,6 +21,7 @@ pub mod raw;
 pub mod frames;
 pub mod prelude;
 pub mod mock;
+pub mod util;
 
 mod future_ext;
 

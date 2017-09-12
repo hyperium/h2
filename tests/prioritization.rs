@@ -170,40 +170,6 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
     h2.wait().unwrap();
 }
 
-#[macro_use]
-extern crate futures;
-
-use futures::{Poll, Async};
-
-// TODO: Extract this out?
-struct WaitForCapacity {
-    stream: Option<client::Stream<Bytes>>,
-    target: usize,
-}
-
-impl WaitForCapacity {
-    fn stream(&mut self) -> &mut client::Stream<Bytes> {
-        self.stream.as_mut().unwrap()
-    }
-}
-
-impl Future for WaitForCapacity {
-    type Item = client::Stream<Bytes>;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, ()> {
-        let _ = try_ready!(self.stream().poll_capacity().map_err(|_| panic!()));
-
-        let act = self.stream().capacity();
-
-        if act >= self.target {
-            return Ok(self.stream.take().unwrap().into())
-        }
-
-        Ok(Async::NotReady)
-    }
-}
-
 #[test]
 fn send_data_receive_window_update() {
     let _ = ::env_logger::init();
@@ -225,10 +191,7 @@ fn send_data_receive_window_update() {
             stream.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
 
             // Wait for capacity
-            h2.drive(WaitForCapacity {
-                stream: Some(stream),
-                target: frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
-            })
+            h2.drive(util::wait_for_capacity(stream, frame::DEFAULT_INITIAL_WINDOW_SIZE as usize))
         })
         .and_then(|(h2, mut stream)| {
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];

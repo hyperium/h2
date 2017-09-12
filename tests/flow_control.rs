@@ -539,3 +539,83 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
     let _ = h2.join(srv)
         .wait().unwrap();
 }
+
+#[test]
+fn reserved_capacity_assigned_in_multi_window_updates() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let mut stream = h2.request(request, false).unwrap();
+
+            // Consume the capacity
+            let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+            stream.send_data(payload.into(), false).unwrap();
+
+            // Reserve more data than we want
+            stream.reserve_capacity(10);
+
+            h2.drive(util::wait_for_capacity(stream, 5))
+        })
+        .and_then(|(h2, mut stream)| {
+            stream.send_data("hello".into(), false).unwrap();
+            stream.send_data("world".into(), true).unwrap();
+
+            h2.drive(GetResponse { stream: Some(stream) })
+        })
+        .and_then(|(h2, (response, _))| {
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            // Wait for the connection to close
+            h2.unwrap()
+        })
+        ;
+
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(frames::data(1, vec![0u8; 16_384]))
+        .recv_frame(frames::data(1, vec![0u8; 16_384]))
+        .recv_frame(frames::data(1, vec![0u8; 16_384]))
+        .recv_frame(frames::data(1, vec![0u8; 16_383]))
+        .idle_ms(100)
+        // Increase the connection window
+        .send_frame(
+            frames::window_update(0, 10))
+        // Incrementally increase the stream window
+        .send_frame(
+            frames::window_update(1, 4))
+        .idle_ms(50)
+        .send_frame(
+            frames::window_update(1, 1))
+        // Receive first chunk
+        .recv_frame(frames::data(1, "hello"))
+        .send_frame(
+            frames::window_update(1, 5))
+        // Receive second chunk
+        .recv_frame(
+            frames::data(1, "world").eos())
+        .send_frame(
+            frames::headers(1)
+                .response(204)
+                .eos()
+        )
+        /*
+        .recv_frame(frames::data(1, "hello").eos())
+        .send_frame(frames::window_update(1, 5))
+        */
+        .map(drop)
+        ;
+
+    let _ = h2.join(srv)
+        .wait().unwrap();
+}

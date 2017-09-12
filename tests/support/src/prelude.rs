@@ -13,6 +13,9 @@ pub use super::mock::{self, HandleFutureExt};
 // Re-export frames helpers
 pub use super::frames;
 
+// Re-export utility mod
+pub use super::util;
+
 // Re-export some type defines
 pub use super::{Codec, SendFrame};
 
