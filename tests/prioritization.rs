@@ -25,13 +25,13 @@ fn single_stream_send_large_body() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
 
@@ -79,13 +79,13 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
 
@@ -144,13 +144,13 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
 
@@ -175,12 +175,14 @@ fn send_data_receive_window_update() {
     let _ = ::env_logger::init();
     let (m, mock) = mock::new();
 
-    let h2 = Client::handshake(m).unwrap()
+    let h2 = Client::handshake(m)
+        .unwrap()
         .and_then(|mut h2| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+                .body(())
+                .unwrap();
 
             // Send request
             let mut stream = h2.request(request, false).unwrap();
@@ -240,9 +242,7 @@ fn send_data_receive_window_update() {
             let data = assert_data!(frame.unwrap());
             assert_eq!(data.payload().len(), (frame::DEFAULT_MAX_FRAME_SIZE-1) as usize);
             Ok(())
-        })
-        ;
+        });
 
-    let _ = h2.join(mock)
-        .wait().unwrap();
+    let _ = h2.join(mock).wait().unwrap();
 }

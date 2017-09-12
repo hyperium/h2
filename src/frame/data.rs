@@ -1,5 +1,5 @@
-use frame::{util, Frame, Head, Error, StreamId, Kind};
-use bytes::{BufMut, Bytes, Buf};
+use bytes::{Buf, BufMut, Bytes};
+use frame::{util, Error, Frame, Head, Kind, StreamId};
 
 use std::fmt;
 
@@ -92,7 +92,8 @@ impl<T> Data<T> {
     }
 
     pub(crate) fn map<F, U>(self, f: F) -> Data<U>
-        where F: FnOnce(T) -> U,
+    where
+        F: FnOnce(T) -> U,
     {
         Data {
             stream_id: self.stream_id,
@@ -120,11 +121,11 @@ impl Data<Bytes> {
         };
 
         Ok(Data {
-            stream_id: head.stream_id(),
-            data: payload,
-            flags: flags,
-            pad_len: pad_len,
-        })
+               stream_id: head.stream_id(),
+               data: payload,
+               flags: flags,
+               pad_len: pad_len,
+           })
     }
 }
 

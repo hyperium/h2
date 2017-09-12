@@ -13,8 +13,7 @@ fn handshake() {
         .write(SETTINGS_ACK)
         .build();
 
-    let h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let h2 = Client::handshake(mock).wait().unwrap();
 
     trace!("hands have been shook");
 
@@ -40,13 +39,13 @@ fn recv_invalid_server_stream_id() {
         .write(&[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let stream = h2.request(request, true).unwrap();
@@ -60,19 +59,16 @@ fn recv_invalid_server_stream_id() {
 
 #[test]
 #[ignore]
-fn request_without_scheme() {
-}
+fn request_without_scheme() {}
 
 #[test]
 #[ignore]
-fn request_with_h1_version() {
-}
+fn request_with_h1_version() {}
 
 
 #[test]
 #[ignore]
-fn sending_request_on_closed_soket() {
-}
+fn sending_request_on_closed_soket() {}
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];

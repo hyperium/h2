@@ -6,10 +6,7 @@ use std::{error, fmt, io};
 #[derive(Debug)]
 pub enum RecvError {
     Connection(Reason),
-    Stream {
-        id: StreamId,
-        reason: Reason,
-    },
+    Stream { id: StreamId, reason: Reason },
     Io(io::Error),
 }
 
@@ -56,7 +53,9 @@ impl error::Error for RecvError {
 
         match *self {
             Connection(ref reason) => reason.description(),
-            Stream { ref reason, .. } => reason.description(),
+            Stream {
+                ref reason, ..
+            } => reason.description(),
             Io(ref e) => e.description(),
         }
     }

@@ -23,13 +23,13 @@ fn recv_trailers_only() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let mut stream = h2.request(request, true).unwrap();
@@ -71,13 +71,13 @@ fn send_trailers_immediately() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     info!("sending request");
     let mut stream = h2.request(request, false).unwrap();

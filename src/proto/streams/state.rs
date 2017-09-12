@@ -1,7 +1,7 @@
-use frame::Reason;
-use frame::Reason::*;
 use codec::{RecvError, UserError};
 use codec::UserError::*;
+use frame::Reason;
+use frame::Reason::*;
 use proto;
 
 use self::Inner::*;
@@ -58,10 +58,7 @@ enum Inner {
     // TODO: these states shouldn't count against concurrency limits:
     //ReservedLocal,
     ReservedRemote,
-    Open {
-        local: Peer,
-        remote: Peer,
-    },
+    Open { local: Peer, remote: Peer },
     HalfClosedLocal(Peer), // TODO: explicitly name this value
     HalfClosedRemote(Peer),
     // When reset, a reason is provided
@@ -96,7 +93,10 @@ impl State {
                     }
                 }
             }
-            Open { local: AwaitingHeaders, remote } => {
+            Open {
+                local: AwaitingHeaders,
+                remote,
+            } => {
                 if eos {
                     HalfClosedLocal(remote)
                 } else {
@@ -155,7 +155,10 @@ impl State {
                     }
                 }
             }
-            Open { local, remote: AwaitingHeaders } => {
+            Open {
+                local,
+                remote: AwaitingHeaders,
+            } => {
                 if eos {
                     HalfClosedRemote(local)
                 } else {
@@ -195,7 +198,9 @@ impl State {
     /// Indicates that the remote side will not send more data to the local.
     pub fn recv_close(&mut self) -> Result<(), RecvError> {
         match self.inner {
-            Open { local, .. } => {
+            Open {
+                local, ..
+            } => {
                 // The remote side will continue to receive data.
                 trace!("recv_close: Open => HalfClosedRemote({:?})", local);
                 self.inner = HalfClosedRemote(local);
@@ -218,9 +223,9 @@ impl State {
             _ => {
                 trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
-                    Proto(reason) => Some(Cause::Proto(reason)),
-                    Io(..) => Some(Cause::Io),
-                });
+                                        Proto(reason) => Some(Cause::Proto(reason)),
+                                        Io(..) => Some(Cause::Io),
+                                    });
             }
         }
     }
@@ -228,7 +233,9 @@ impl State {
     /// Indicates that the local side will not send more data to the local.
     pub fn send_close(&mut self) {
         match self.inner {
-            Open { remote, .. } => {
+            Open {
+                remote, ..
+            } => {
                 // The remote side will continue to receive data.
                 trace!("send_close: Open => HalfClosedLocal({:?})", remote);
                 self.inner = HalfClosedLocal(remote);
@@ -259,7 +266,9 @@ impl State {
     /// concurrency limit.
     pub fn is_counted(&self) -> bool {
         match self.inner {
-            Open { .. } => true,
+            Open {
+                ..
+            } => true,
             HalfClosedLocal(..) => true,
             HalfClosedRemote(..) => true,
             _ => false,
@@ -268,7 +277,10 @@ impl State {
 
     pub fn is_send_streaming(&self) -> bool {
         match self.inner {
-            Open { local: Peer::Streaming, .. } => true,
+            Open {
+                local: Peer::Streaming,
+                ..
+            } => true,
             HalfClosedRemote(Peer::Streaming) => true,
             _ => false,
         }
@@ -278,7 +290,10 @@ impl State {
     pub fn is_recv_headers(&self) -> bool {
         match self.inner {
             Idle => true,
-            Open { remote: AwaitingHeaders, .. } => true,
+            Open {
+                remote: AwaitingHeaders,
+                ..
+            } => true,
             HalfClosedLocal(AwaitingHeaders) => true,
             _ => false,
         }
@@ -286,7 +301,10 @@ impl State {
 
     pub fn is_recv_streaming(&self) -> bool {
         match self.inner {
-            Open { remote: Peer::Streaming, .. } => true,
+            Open {
+                remote: Peer::Streaming,
+                ..
+            } => true,
             HalfClosedLocal(Peer::Streaming) => true,
             _ => false,
         }
@@ -311,12 +329,8 @@ impl State {
 
         // TODO: Is this correct?
         match self.inner {
-            Closed(Some(Cause::Proto(reason))) => {
-                Err(proto::Error::Proto(reason))
-            }
-            Closed(Some(Cause::Io)) => {
-                Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into()))
-            }
+            Closed(Some(Cause::Proto(reason))) => Err(proto::Error::Proto(reason)),
+            Closed(Some(Cause::Io)) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
             _ => Ok(()),
         }
     }
@@ -324,7 +338,9 @@ impl State {
 
 impl Default for State {
     fn default() -> State {
-        State { inner: Inner::Idle }
+        State {
+            inner: Inner::Idle,
+        }
     }
 }
 

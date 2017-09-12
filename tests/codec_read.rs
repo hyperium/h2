@@ -6,16 +6,13 @@ use std::error::Error;
 
 #[test]
 fn read_none() {
-    let mut codec = Codec::from(
-        mock_io::Builder::new()
-        .build());
+    let mut codec = Codec::from(mock_io::Builder::new().build());
 
     assert_closed!(codec);
 }
 
 #[test]
-fn read_frame_too_big() {
-}
+fn read_frame_too_big() {}
 
 // ===== DATA =====
 
@@ -103,16 +100,13 @@ fn read_data_stream_id_zero() {
 // ===== HEADERS =====
 
 #[test]
-fn read_headers_without_pseudo() {
-}
+fn read_headers_without_pseudo() {}
 
 #[test]
-fn read_headers_with_pseudo() {
-}
+fn read_headers_with_pseudo() {}
 
 #[test]
-fn read_headers_empty_payload() {
-}
+fn read_headers_empty_payload() {}
 
 #[test]
 fn update_max_frame_len_at_rest() {
@@ -130,5 +124,6 @@ fn update_max_frame_len_at_rest() {
     codec.set_max_recv_frame_size(2);
 
     assert_eq!(codec.max_recv_frame_size(), 2);
-    assert_eq!(codec.poll().unwrap_err().description(), "frame size too big");
+    assert_eq!(codec.poll().unwrap_err().description(),
+               "frame size too big");
 }

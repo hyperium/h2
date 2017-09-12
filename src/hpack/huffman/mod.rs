@@ -1,9 +1,9 @@
 mod table;
 
-use self::table::{ENCODE_TABLE, DECODE_TABLE};
+use self::table::{DECODE_TABLE, ENCODE_TABLE};
 use hpack::{DecoderError, EncoderError};
 
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
 
 // Constructed in the generated `table.rs` file
 struct Decoder {
@@ -24,11 +24,11 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
     buf.reserve(src.len() << 1);
 
     for b in src {
-        if let Some(b) = try!(decoder.decode4(b >> 4)) {
+        if let Some(b) = decoder.decode4(b >> 4)? {
             buf.put_u8(b);
         }
 
-        if let Some(b) = try!(decoder.decode4(b & 0xf)) {
+        if let Some(b) = decoder.decode4(b & 0xf)? {
             buf.put_u8(b);
         }
     }
@@ -161,10 +161,27 @@ mod test {
     #[test]
     fn encode_decode_str() {
         const DATA: &'static [&'static str] = &[
-            "hello world", ":method", ":scheme", ":authority", "yahoo.co.jp", "GET", "http", ":path", "/images/top/sp2/cmn/logo-ns-130528.png",
-            "example.com", "hpack-test", "xxxxxxx1", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:16.0) Gecko/20100101 Firefox/16.0",
-            "accept", "Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "cookie", "B=76j09a189a6h4&b=3&s=0b",
-            "TE", "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi non bibendum libero. Etiam ultrices lorem ut",
+            "hello world",
+            ":method",
+            ":scheme",
+            ":authority",
+            "yahoo.co.jp",
+            "GET",
+            "http",
+            ":path",
+            "/images/top/sp2/cmn/logo-ns-130528.png",
+            "example.com",
+            "hpack-test",
+            "xxxxxxx1",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:16.0) Gecko/20100101 Firefox/16.0",
+            "accept",
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "cookie",
+            "B=76j09a189a6h4&b=3&s=0b",
+            "TE",
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi non bibendum libero. \
+             Etiam ultrices lorem ut.",
         ];
 
         for s in DATA {
@@ -180,9 +197,8 @@ mod test {
 
     #[test]
     fn encode_decode_u8() {
-        const DATA: &'static [&'static [u8]] = &[
-            b"\0", b"\0\0\0", b"\0\x01\x02\x03\x04\x05", b"\xFF\xF8",
-        ];
+        const DATA: &'static [&'static [u8]] =
+            &[b"\0", b"\0\0\0", b"\0\x01\x02\x03\x04\x05", b"\xFF\xF8"];
 
         for s in DATA {
             let mut dst = Vec::with_capacity(s.len());

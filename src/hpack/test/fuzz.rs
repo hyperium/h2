@@ -2,13 +2,13 @@ extern crate bytes;
 extern crate quickcheck;
 extern crate rand;
 
-use hpack::{Header, Decoder, Encoder, Encode};
+use hpack::{Decoder, Encode, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use self::bytes::{BytesMut, Bytes};
-use self::quickcheck::{QuickCheck, Arbitrary, Gen, TestResult};
-use self::rand::{StdRng, Rng, SeedableRng};
+use self::bytes::{Bytes, BytesMut};
+use self::quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
+use self::rand::{Rng, SeedableRng, StdRng};
 
 use std::io::Cursor;
 
@@ -130,8 +130,7 @@ impl FuzzHpack {
             let mut index = None;
             let mut input = frame.headers.into_iter();
 
-            let mut buf = BytesMut::with_capacity(
-                chunks.pop().unwrap_or(MAX_CHUNK));
+            let mut buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
 
             if let Some(max) = frame.resizes.iter().max() {
                 decoder.queue_size_update(*max);
@@ -149,20 +148,23 @@ impl FuzzHpack {
                         index = Some(i);
 
                         // Decode the chunk!
-                        decoder.decode(&mut Cursor::new(buf.into()), |e| {
-                            assert_eq!(e, expect.remove(0).reify().unwrap());
-                        }).unwrap();
+                        decoder
+                            .decode(&mut Cursor::new(buf.into()), |e| {
+                                assert_eq!(e, expect.remove(0).reify().unwrap());
+                            })
+                            .unwrap();
 
-                        buf = BytesMut::with_capacity(
-                            chunks.pop().unwrap_or(MAX_CHUNK));
+                        buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
                     }
                 }
             }
 
             // Decode the chunk!
-            decoder.decode(&mut Cursor::new(buf.into()), |e| {
-                assert_eq!(e, expect.remove(0).reify().unwrap());
-            }).unwrap();
+            decoder
+                .decode(&mut Cursor::new(buf.into()), |e| {
+                    assert_eq!(e, expect.remove(0).reify().unwrap());
+                })
+                .unwrap();
         }
 
         assert_eq!(0, expect.len());
@@ -193,9 +195,9 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                     4 => Method::DELETE,
                     5 => {
                         let n: usize = g.gen_range(3, 7);
-                        let bytes: Vec<u8> = (0..n).map(|_| {
-                            g.choose(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap().clone()
-                        }).collect();
+                        let bytes: Vec<u8> = (0..n)
+                            .map(|_| g.choose(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap().clone())
+                            .collect();
 
                         Method::from_bytes(&bytes).unwrap()
                     }
@@ -237,7 +239,10 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             value.set_sensitive(true);
         }
 
-        Header::Field { name: Some(name), value: value }
+        Header::Field {
+            name: Some(name),
+            value: value,
+        }
     }
 }
 
@@ -320,7 +325,8 @@ fn gen_header_name(g: &mut StdRng) -> HeaderName {
             header::X_DNS_PREFETCH_CONTROL,
             header::X_FRAME_OPTIONS,
             header::X_XSS_PROTECTION,
-        ]).unwrap().clone()
+        ]).unwrap()
+            .clone()
     } else {
         let value = gen_string(g, 1, 25);
         HeaderName::from_bytes(value.as_bytes()).unwrap()
@@ -333,10 +339,14 @@ fn gen_header_value(g: &mut StdRng) -> HeaderValue {
 }
 
 fn gen_string(g: &mut StdRng, min: usize, max: usize) -> String {
-    let bytes: Vec<_> = (min..max).map(|_| {
-        // Chars to pick from
-        g.choose(b"ABCDEFGHIJKLMNOPQRSTUVabcdefghilpqrstuvwxyz----").unwrap().clone()
-    }).collect();
+    let bytes: Vec<_> = (min..max)
+        .map(|_| {
+            // Chars to pick from
+            g.choose(b"ABCDEFGHIJKLMNOPQRSTUVabcdefghilpqrstuvwxyz----")
+                .unwrap()
+                .clone()
+        })
+        .collect();
 
     String::from_utf8(bytes).unwrap()
 }

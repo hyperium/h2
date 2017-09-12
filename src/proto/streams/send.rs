@@ -1,8 +1,8 @@
-use frame::{self, Reason};
+use super::*;
 use codec::{RecvError, UserError};
 use codec::UserError::*;
+use frame::{self, Reason};
 use proto::*;
-use super::*;
 
 use bytes::Buf;
 
@@ -11,7 +11,8 @@ use std::io;
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
 pub(super) struct Send<B, P>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// Stream identifier to use for next initialized stream.
     next_stream_id: StreamId,
@@ -24,8 +25,9 @@ pub(super) struct Send<B, P>
 }
 
 impl<B, P> Send<B, P>
-where B: Buf,
-      P: Peer,
+where
+    B: Buf,
+    P: Peer,
 {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
@@ -46,10 +48,8 @@ where B: Buf,
     /// Update state reflecting a new, locally opened stream
     ///
     /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, counts: &mut Counts<P>)
-        -> Result<StreamId, UserError>
-    {
-        try!(self.ensure_can_open());
+    pub fn open(&mut self, counts: &mut Counts<P>) -> Result<StreamId, UserError> {
+        self.ensure_can_open()?;
 
         if !counts.can_inc_num_send_streams() {
             return Err(Rejected.into());
@@ -64,13 +64,15 @@ where B: Buf,
         Ok(ret)
     }
 
-    pub fn send_headers(&mut self,
-                        frame: frame::Headers,
-                        stream: &mut store::Ptr<B, P>,
-                        task: &mut Option<Task>)
-        -> Result<(), UserError>
-    {
-        trace!("send_headers; frame={:?}; init_window={:?}", frame, self.init_window_sz);
+    pub fn send_headers(
+        &mut self,
+        frame: frame::Headers,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), UserError> {
+        trace!("send_headers; frame={:?}; init_window={:?}",
+               frame,
+               self.init_window_sz);
 
         let end_stream = frame.is_end_stream();
 
@@ -83,11 +85,12 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn send_reset(&mut self,
-                      reason: Reason,
-                      stream: &mut store::Ptr<B, P>,
-                      task: &mut Option<Task>)
-    {
+    pub fn send_reset(
+        &mut self,
+        reason: Reason,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) {
         if stream.state.is_reset() {
             // Don't double reset
             return;
@@ -116,24 +119,25 @@ where B: Buf,
         self.prioritize.queue_frame(frame.into(), stream, task);
 
         // Re-assign all capacity to the connection
-        self.prioritize.assign_connection_capacity(available, stream);
+        self.prioritize
+            .assign_connection_capacity(available, stream);
     }
 
-    pub fn send_data(&mut self,
-                     frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B, P>,
-                     task: &mut Option<Task>)
-        -> Result<(), UserError>
-    {
+    pub fn send_data(
+        &mut self,
+        frame: frame::Data<B>,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), UserError> {
         self.prioritize.send_data(frame, stream, task)
     }
 
-    pub fn send_trailers(&mut self,
-                         frame: frame::Headers,
-                         stream: &mut store::Ptr<B, P>,
-                         task: &mut Option<Task>)
-        -> Result<(), UserError>
-    {
+    pub fn send_trailers(
+        &mut self,
+        frame: frame::Headers,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), UserError> {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
             return Err(UnexpectedFrameType.into());
@@ -150,12 +154,14 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B, P>,
-                            counts: &mut Counts<P>,
-                            dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), io::Error>
-        where T: AsyncWrite,
+    pub fn poll_complete<T>(
+        &mut self,
+        store: &mut Store<B, P>,
+        counts: &mut Counts<P>,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> Poll<(), io::Error>
+    where
+        T: AsyncWrite,
     {
         self.prioritize.poll_complete(store, counts, dst)
     }
@@ -165,9 +171,10 @@ where B: Buf,
         self.prioritize.reserve_capacity(capacity, stream)
     }
 
-    pub fn poll_capacity(&mut self, stream: &mut store::Ptr<B, P>)
-        -> Poll<Option<WindowSize>, UserError>
-    {
+    pub fn poll_capacity(
+        &mut self,
+        stream: &mut store::Ptr<B, P>,
+    ) -> Poll<Option<WindowSize>, UserError> {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
         }
@@ -193,20 +200,21 @@ where B: Buf,
         }
     }
 
-    pub fn recv_connection_window_update(&mut self,
-                                         frame: frame::WindowUpdate,
-                                         store: &mut Store<B, P>)
-        -> Result<(), Reason>
-    {
-        self.prioritize.recv_connection_window_update(frame.size_increment(), store)
+    pub fn recv_connection_window_update(
+        &mut self,
+        frame: frame::WindowUpdate,
+        store: &mut Store<B, P>,
+    ) -> Result<(), Reason> {
+        self.prioritize
+            .recv_connection_window_update(frame.size_increment(), store)
     }
 
-    pub fn recv_stream_window_update(&mut self,
-                                     sz: WindowSize,
-                                     stream: &mut store::Ptr<B, P>,
-                                     task: &mut Option<Task>)
-        -> Result<(), Reason>
-    {
+    pub fn recv_stream_window_update(
+        &mut self,
+        sz: WindowSize,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
             self.send_reset(FlowControlError.into(), stream, task);
@@ -217,12 +225,12 @@ where B: Buf,
         Ok(())
     }
 
-    pub fn apply_remote_settings(&mut self,
-                                 settings: &frame::Settings,
-                                 store: &mut Store<B, P>,
-                                 task: &mut Option<Task>)
-        -> Result<(), RecvError>
-    {
+    pub fn apply_remote_settings(
+        &mut self,
+        settings: &frame::Settings,
+        store: &mut Store<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), RecvError> {
         // Applies an update to the remote endpoint's initial window size.
         //
         // Per RFC 7540 §6.9.2:
@@ -254,7 +262,9 @@ where B: Buf,
 
                     stream.send_flow.dec_window(dec);
                     trace!("decremented stream window; id={:?}; decr={}; flow={:?}",
-                           stream.id, dec, stream.send_flow);
+                           stream.id,
+                           dec,
+                           stream.send_flow);
 
                     // TODO: Probably try to assign capacity?
 

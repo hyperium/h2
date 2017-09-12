@@ -1,28 +1,27 @@
+
+extern crate bytes;
+extern crate env_logger;
+extern crate futures;
 extern crate h2;
 extern crate http;
-extern crate bytes;
-extern crate futures;
 extern crate tokio_core;
-extern crate env_logger;
 
 use h2::server::Server;
 
-use http::*;
 use bytes::*;
 use futures::*;
+use http::*;
 
-use tokio_core::reactor;
 use tokio_core::net::TcpListener;
+use tokio_core::reactor;
 
 pub fn main() {
     let _ = env_logger::init();
 
-    let mut core = reactor::Core::new().unwrap();;
+    let mut core = reactor::Core::new().unwrap();
     let handle = core.handle();
 
-    let listener = TcpListener::bind(
-        &"127.0.0.1:5928".parse().unwrap(),
-        &handle).unwrap();
+    let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap(), &handle).unwrap();
 
     println!("listening on {:?}", listener.local_addr());
 
@@ -37,9 +36,7 @@ pub fn main() {
                 conn.for_each(|(request, mut stream)| {
                     println!("GOT request: {:?}", request);
 
-                    let response = Response::builder()
-                        .status(StatusCode::OK)
-                        .body(()).unwrap();
+                    let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
                     if let Err(e) = stream.send_response(response, false) {
                         println!(" error responding; err={:?}", e);
@@ -60,9 +57,10 @@ pub fn main() {
 
                     Ok(())
                 }).and_then(|_| {
-                    println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
-                    Ok(())
-                })
+                        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! \
+                                  ~~~~~~~~~~~");
+                        Ok(())
+                    })
             })
             .then(|res| {
                 if let Err(e) = res {
@@ -70,8 +68,7 @@ pub fn main() {
                 }
 
                 Ok(())
-            })
-            ;
+            });
 
         handle.spawn(connection);
         Ok(())

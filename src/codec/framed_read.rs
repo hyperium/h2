@@ -101,9 +101,9 @@ impl<T> FramedRead<T> {
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
-                            id: head.stream_id(),
-                            reason: ProtocolError,
-                        });
+                                       id: head.stream_id(),
+                                       reason: ProtocolError,
+                                   });
                     }
                     _ => return Err(Connection(ProtocolError)),
                 };
@@ -114,9 +114,9 @@ impl<T> FramedRead<T> {
                         Ok(_) => {}
                         Err(frame::Error::MalformedMessage) => {
                             return Err(Stream {
-                                id: head.stream_id(),
-                                reason: ProtocolError,
-                            });
+                                           id: head.stream_id(),
+                                           reason: ProtocolError,
+                                       });
                         }
                         Err(_) => return Err(Connection(ProtocolError)),
                     }
@@ -125,9 +125,9 @@ impl<T> FramedRead<T> {
                 } else {
                     // Defer loading the frame
                     self.partial = Some(Partial {
-                        frame: Continuable::Headers(headers),
-                        buf: payload,
-                    });
+                                            frame: Continuable::Headers(headers),
+                                            buf: payload,
+                                        });
 
                     return Ok(None);
                 }
@@ -157,9 +157,9 @@ impl<T> FramedRead<T> {
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
-                            id: head.stream_id(),
-                            reason: ProtocolError,
-                        });
+                                       id: head.stream_id(),
+                                       reason: ProtocolError,
+                                   });
                     }
                     Err(_) => return Err(Connection(ProtocolError)),
                 }
@@ -192,9 +192,9 @@ impl<T> FramedRead<T> {
                             Ok(_) => {}
                             Err(frame::Error::MalformedMessage) => {
                                 return Err(Stream {
-                                    id: head.stream_id(),
-                                    reason: ProtocolError,
-                                });
+                                               id: head.stream_id(),
+                                               reason: ProtocolError,
+                                           });
                             }
                             Err(_) => return Err(Connection(ProtocolError)),
                         }
@@ -234,7 +234,8 @@ impl<T> FramedRead<T> {
 }
 
 impl<T> Stream for FramedRead<T>
-    where T: AsyncRead,
+where
+    T: AsyncRead,
 {
     type Item = Frame;
     type Error = RecvError;
@@ -248,7 +249,7 @@ impl<T> Stream for FramedRead<T>
             };
 
             trace!("poll; bytes={}B", bytes.len());
-            if let Some(frame) = try!(self.decode_frame(bytes)) {
+            if let Some(frame) = self.decode_frame(bytes)? {
                 debug!("received; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));
             }

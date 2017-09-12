@@ -1,12 +1,12 @@
-use frame::{self, StreamId, Reason};
-use frame::Reason::*;
 use codec::{Codec, RecvError};
+use frame::{self, Reason, StreamId};
+use frame::Reason::*;
 use proto::{self, Connection, WindowSize};
 
-use http::{Request, Response, HeaderMap};
-use futures::{self, Future, Poll, Async};
+use bytes::{Buf, Bytes, IntoBuf};
+use futures::{self, Async, Future, Poll};
+use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, Buf, IntoBuf};
 
 use std::fmt;
 
@@ -60,7 +60,8 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 // ===== impl Server =====
 
 impl<T> Server<T, Bytes>
-    where T: AsyncRead + AsyncWrite + 'static,
+where
+    T: AsyncRead + AsyncWrite + 'static,
 {
     pub fn handshake(io: T) -> Handshake<T, Bytes> {
         Server::handshake2(io)
@@ -68,8 +69,9 @@ impl<T> Server<T, Bytes>
 }
 
 impl<T, B> Server<T, B>
-    where T: AsyncRead + AsyncWrite + 'static,
-          B: IntoBuf + 'static,
+where
+    T: AsyncRead + AsyncWrite + 'static,
+    B: IntoBuf + 'static,
 {
     /// Bind an H2 server connection.
     ///
@@ -82,32 +84,37 @@ impl<T, B> Server<T, B>
         // Create the initial SETTINGS frame
         let settings = frame::Settings::default();
 
-       // Send initial settings frame
-       codec.buffer(settings.into())
-           .ok().expect("invalid SETTINGS frame");
+        // Send initial settings frame
+        codec
+            .buffer(settings.into())
+            .ok()
+            .expect("invalid SETTINGS frame");
 
         // Flush pending settings frame and then wait for the client preface
         let handshake = Flush::new(codec)
             .and_then(ReadPreface::new)
             .map(move |codec| {
                 let connection = Connection::new(codec);
-                Server { connection }
-            })
-            ;
+                Server {
+                    connection,
+                }
+            });
 
-        Handshake { inner: Box::new(handshake) }
+        Handshake {
+            inner: Box::new(handshake),
+        }
     }
 
     /// Returns `Ready` when the underlying connection has closed.
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
-        self.connection.poll()
-            .map_err(Into::into)
+        self.connection.poll().map_err(Into::into)
     }
 }
 
 impl<T, B> futures::Stream for Server<T, B>
-    where T: AsyncRead + AsyncWrite + 'static,
-          B: IntoBuf + 'static,
+where
+    T: AsyncRead + AsyncWrite + 'static,
+    B: IntoBuf + 'static,
 {
     type Item = (Request<Body<B>>, Stream<B>);
     type Error = ::Error;
@@ -119,7 +126,7 @@ impl<T, B> futures::Stream for Server<T, B>
             Async::Ready(_) => {
                 // If the socket is closed, don't return anything
                 // TODO: drop any pending streams
-                return Ok(None.into())
+                return Ok(None.into());
             }
             _ => {}
         }
@@ -127,10 +134,14 @@ impl<T, B> futures::Stream for Server<T, B>
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
-            let body = Body { inner: inner.clone() };
+            let body = Body {
+                inner: inner.clone(),
+            };
 
             let request = Request::from_parts(head, body);
-            let incoming = Stream { inner };
+            let incoming = Stream {
+                inner,
+            };
 
             return Ok(Some((request, incoming)).into());
         }
@@ -140,9 +151,10 @@ impl<T, B> futures::Stream for Server<T, B>
 }
 
 impl<T, B> fmt::Debug for Server<T, B>
-    where T: fmt::Debug,
-          B: fmt::Debug + IntoBuf,
-          B::Buf: fmt::Debug,
+where
+    T: fmt::Debug,
+    B: fmt::Debug + IntoBuf,
+    B::Buf: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Server")
@@ -155,10 +167,13 @@ impl<T, B> fmt::Debug for Server<T, B>
 
 impl<B: IntoBuf> Stream<B> {
     /// Send a response
-    pub fn send_response(&mut self, response: Response<()>, end_of_stream: bool)
-        -> Result<(), ::Error>
-    {
-        self.inner.send_response(response, end_of_stream)
+    pub fn send_response(
+        &mut self,
+        response: Response<()>,
+        end_of_stream: bool,
+    ) -> Result<(), ::Error> {
+        self.inner
+            .send_response(response, end_of_stream)
             .map_err(Into::into)
     }
 
@@ -180,19 +195,15 @@ impl<B: IntoBuf> Stream<B> {
     }
 
     /// Send a single data frame
-    pub fn send_data(&mut self, data: B, end_of_stream: bool)
-        -> Result<(), ::Error>
-    {
-        self.inner.send_data(data.into_buf(), end_of_stream)
+    pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), ::Error> {
+        self.inner
+            .send_data(data.into_buf(), end_of_stream)
             .map_err(Into::into)
     }
 
     /// Send trailers
-    pub fn send_trailers(&mut self, trailers: HeaderMap)
-        -> Result<(), ::Error>
-    {
-        self.inner.send_trailers(trailers)
-            .map_err(Into::into)
+    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
+        self.inner.send_trailers(trailers).map_err(Into::into)
     }
 
     pub fn send_reset(mut self, reason: Reason) {
@@ -202,8 +213,9 @@ impl<B: IntoBuf> Stream<B> {
 
 impl Stream<Bytes> {
     /// Send the body
-    pub fn send<T>(self, src: T, end_of_stream: bool,) -> Send<T>
-        where T: futures::Stream<Item = Bytes, Error = ::Error>,
+    pub fn send<T>(self, src: T, end_of_stream: bool) -> Send<T>
+    where
+        T: futures::Stream<Item = Bytes, Error = ::Error>,
     {
         Send {
             src: src,
@@ -223,7 +235,8 @@ impl<B: IntoBuf> Body<B> {
     }
 
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
-        self.inner.release_capacity(sz as proto::WindowSize)
+        self.inner
+            .release_capacity(sz as proto::WindowSize)
             .map_err(Into::into)
     }
 
@@ -231,8 +244,7 @@ impl<B: IntoBuf> Body<B> {
     ///
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
-        self.inner.poll_trailers()
-            .map_err(Into::into)
+        self.inner.poll_trailers().map_err(Into::into)
     }
 }
 
@@ -241,15 +253,15 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.poll_data()
-            .map_err(Into::into)
+        self.inner.poll_data().map_err(Into::into)
     }
 }
 
 // ===== impl Send =====
 
 impl<T> Future for Send<T>
-    where T: futures::Stream<Item = Bytes, Error = ::Error>,
+where
+    T: futures::Stream<Item = Bytes, Error = ::Error>,
 {
     type Item = Stream<Bytes>;
     type Error = ::Error;
@@ -303,13 +315,16 @@ impl<T> Future for Send<T>
 
 impl<T, B: Buf> Flush<T, B> {
     fn new(codec: Codec<T, B>) -> Self {
-        Flush { codec: Some(codec) }
+        Flush {
+            codec: Some(codec),
+        }
     }
 }
 
 impl<T, B> Future for Flush<T, B>
-    where T: AsyncWrite,
-          B: Buf,
+where
+    T: AsyncWrite,
+    B: Buf,
 {
     type Item = Codec<T, B>;
     type Error = ::Error;
@@ -337,8 +352,9 @@ impl<T, B: Buf> ReadPreface<T, B> {
 }
 
 impl<T, B> Future for ReadPreface<T, B>
-    where T: AsyncRead,
-          B: Buf,
+where
+    T: AsyncRead,
+    B: Buf,
 {
     type Item = Codec<T, B>;
     type Error = ::Error;
@@ -350,7 +366,7 @@ impl<T, B> Future for ReadPreface<T, B>
         while rem > 0 {
             let n = try_nb!(self.inner_mut().read(&mut buf[..rem]));
 
-            if PREFACE[self.pos..self.pos+n] != buf[..n] {
+            if PREFACE[self.pos..self.pos + n] != buf[..n] {
                 // TODO: Should this just write the GO_AWAY frame directly?
                 return Err(ProtocolError.into());
             }
@@ -375,8 +391,9 @@ impl<T, B: IntoBuf> Future for Handshake<T, B> {
 }
 
 impl<T, B> fmt::Debug for Handshake<T, B>
-    where T: fmt::Debug,
-          B: fmt::Debug + IntoBuf,
+where
+    T: fmt::Debug,
+    B: fmt::Debug + IntoBuf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "server::Handshake")
@@ -394,12 +411,17 @@ impl proto::Peer for Peer {
     fn convert_send_message(
         id: StreamId,
         response: Self::Send,
-        end_of_stream: bool) -> frame::Headers
-    {
+        end_of_stream: bool,
+    ) -> frame::Headers {
         use http::response::Parts;
 
         // Extract the components of the HTTP request
-        let (Parts { status, headers, .. }, _) = response.into_parts();
+        let (Parts {
+                 status,
+                 headers,
+                 ..
+             },
+             _) = response.into_parts();
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
@@ -415,10 +437,8 @@ impl proto::Peer for Peer {
         frame
     }
 
-    fn convert_poll_message(headers: frame::Headers)
-        -> Result<Self::Poll, RecvError>
-    {
-        use http::{Version, uri};
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {
+        use http::{uri, Version};
 
         let mut b = Request::builder();
 
@@ -480,9 +500,9 @@ impl proto::Peer for Peer {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
                 return Err(RecvError::Stream {
-                    id: stream_id,
-                    reason: ProtocolError,
-                });
+                               id: stream_id,
+                               reason: ProtocolError,
+                           });
             }
         };
 

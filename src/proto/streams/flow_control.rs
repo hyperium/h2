@@ -1,5 +1,5 @@
 use frame::Reason;
-use proto::{MAX_WINDOW_SIZE, WindowSize};
+use proto::{WindowSize, MAX_WINDOW_SIZE};
 
 // We don't want to send WINDOW_UPDATE frames for tiny changes, but instead
 // aggregate them when the changes are significant. Many implementations do
@@ -87,8 +87,7 @@ impl FlowControl {
         }
 
         let unclaimed = available - self.window_size;
-        let threshold = self.window_size / UNCLAIMED_DENOMINATOR
-            * UNCLAIMED_NUMERATOR;
+        let threshold = self.window_size / UNCLAIMED_DENOMINATOR * UNCLAIMED_NUMERATOR;
 
         if unclaimed < threshold {
             None
@@ -111,7 +110,10 @@ impl FlowControl {
             return Err(Reason::FlowControlError);
         }
 
-        trace!("inc_window; sz={}; old={}; new={}", sz, self.window_size, val);
+        trace!("inc_window; sz={}; old={}; new={}",
+               sz,
+               self.window_size,
+               val);
 
         self.window_size = val;
         Ok(())
@@ -130,7 +132,9 @@ impl FlowControl {
     /// must ensure that the window has capacity.
     pub fn send_data(&mut self, sz: WindowSize) {
         trace!("send_data; sz={}; window={}; available={}",
-               sz, self.window_size, self.available);
+               sz,
+               self.window_size,
+               self.available);
 
         // Ensure that the argument is correct
         assert!(sz <= self.window_size as WindowSize);

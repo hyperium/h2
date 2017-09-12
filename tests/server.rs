@@ -17,13 +17,11 @@ fn read_preface_in_multiple_frames() {
         .read(SETTINGS_ACK)
         .build();
 
-    let h2 = Server::handshake(mock)
-        .wait().unwrap();
+    let h2 = Server::handshake(mock).wait().unwrap();
 
     assert!(Stream::wait(h2).next().is_none());
 }
 
 #[test]
 #[ignore]
-fn accept_with_pending_connections_after_socket_close() {
-}
+fn accept_with_pending_connections_after_socket_close() {}

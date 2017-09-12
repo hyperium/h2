@@ -29,9 +29,9 @@ impl Priority {
         }
 
         Ok(Priority {
-            stream_id: head.stream_id(),
-            dependency: dependency,
-        })
+               stream_id: head.stream_id(),
+               dependency: dependency,
+           })
     }
 }
 
@@ -63,10 +63,7 @@ impl StreamDependency {
         // Read the weight
         let weight = src[4];
 
-        Ok(StreamDependency::new(
-                dependency_id,
-                weight,
-                is_exclusive))
+        Ok(StreamDependency::new(dependency_id, weight, is_exclusive))
     }
 
     pub fn dependency_id(&self) -> StreamId {

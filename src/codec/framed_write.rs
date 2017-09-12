@@ -3,9 +3,9 @@ use codec::UserError::*;
 use frame::{self, Frame, FrameSize};
 use hpack;
 
+use bytes::{Buf, BufMut, BytesMut};
 use futures::*;
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{BytesMut, Buf, BufMut};
 
 use std::io::{self, Cursor};
 
@@ -51,8 +51,9 @@ const CHAIN_THRESHOLD: usize = 256;
 
 // TODO: Make generic
 impl<T, B> FramedWrite<T, B>
-    where T: AsyncWrite,
-          B: Buf,
+where
+    T: AsyncWrite,
+    B: Buf,
 {
     pub fn new(inner: T) -> FramedWrite<T, B> {
         FramedWrite {
@@ -72,7 +73,7 @@ impl<T, B> FramedWrite<T, B>
     pub fn poll_ready(&mut self) -> Poll<(), io::Error> {
         if !self.has_capacity() {
             // Try flushing
-            try!(self.flush());
+            self.flush()?;
 
             if !self.has_capacity() {
                 return Ok(Async::NotReady);
@@ -248,7 +249,8 @@ impl<T: io::Read, B> io::Read for FramedWrite<T, B> {
 
 impl<T: AsyncRead, B> AsyncRead for FramedWrite<T, B> {
     fn read_buf<B2: BufMut>(&mut self, buf: &mut B2) -> Poll<usize, io::Error>
-        where Self: Sized,
+    where
+        Self: Sized,
     {
         self.inner.read_buf(buf)
     }

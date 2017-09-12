@@ -27,13 +27,13 @@ fn send_data_without_requesting_capacity() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock)
-        .wait().unwrap();
+    let mut h2 = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
         .uri("https://http2.akamai.com/")
-        .body(()).unwrap();
+        .body(())
+        .unwrap();
 
     let mut stream = h2.request(request, false).unwrap();
 
@@ -82,14 +82,14 @@ fn release_capacity_sends_window_update() {
         // gotta end the connection
         .map(drop);
 
-    let h2 = Client::handshake(io).unwrap()
-        .and_then(|mut h2| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            let req = h2.request(request, true).unwrap()
+        let req = h2.request(request, true).unwrap()
                 .unwrap()
                 // Get the response
                 .and_then(|resp| {
@@ -117,8 +117,8 @@ fn release_capacity_sends_window_update() {
                     assert_eq!(buf.unwrap().len(), payload.len());
                     Ok(())
                 });
-            h2.unwrap().join(req)
-        });
+        h2.unwrap().join(req)
+    });
     h2.join(mock).wait().unwrap();
 }
 
@@ -145,14 +145,14 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
         // gotta end the connection
         .map(drop);
 
-    let h2 = Client::handshake(io).unwrap()
-        .and_then(|mut h2| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            let req = h2.request(request, true).unwrap()
+        let req = h2.request(request, true).unwrap()
                 .unwrap()
                 // Get the response
                 .and_then(|resp| {
@@ -171,20 +171,18 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
                     assert!(buf.is_none());
                     Ok(())
                 });
-            h2.unwrap().join(req)
-        });
+        h2.unwrap().join(req)
+    });
     h2.join(mock).wait().unwrap();
 }
 
 #[test]
 #[ignore]
-fn expand_window_sends_window_update() {
-}
+fn expand_window_sends_window_update() {}
 
 #[test]
 #[ignore]
-fn expand_window_calls_are_coalesced() {
-}
+fn expand_window_calls_are_coalesced() {}
 
 #[test]
 fn recv_data_overflows_connection_window() {
@@ -212,23 +210,23 @@ fn recv_data_overflows_connection_window() {
         .send_frame(frames::data(1, vec![0u8; 128]).eos())
         // expecting goaway for the conn, not stream
         .recv_frame(frames::go_away(0).flow_control());
-        // connection is ended by client
+    // connection is ended by client
 
-    let h2 = Client::handshake(io).unwrap()
-        .and_then(|mut h2| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            let req = h2.request(request, true).unwrap()
-                .unwrap()
-                .and_then(|resp| {
-                    assert_eq!(resp.status(), StatusCode::OK);
-                    let body = resp.into_parts().1;
-                    body.concat2()
-                        .unwrap()
-                        /* FIXME: body stream should error also
+        let req = h2.request(request, true)
+            .unwrap()
+            .unwrap()
+            .and_then(|resp| {
+                assert_eq!(resp.status(), StatusCode::OK);
+                let body = resp.into_parts().1;
+                body.concat2().unwrap()
+                /* FIXME: body stream should error also
                         .then(|res| {
                             let err = res.unwrap_err();
                             assert_eq!(
@@ -238,21 +236,18 @@ fn recv_data_overflows_connection_window() {
                             Ok::<(), ()>(())
                         })
                         */
-                });
-
-            // client should see a flow control error
-            let conn = h2.then(|res| {
-                let err = res.unwrap_err();
-                assert_eq!(
-                    err.to_string(),
-                    "protocol error: flow-control protocol violated"
-                );
-                Ok::<(), ()>(())
             });
-            conn.unwrap().join(req)
-        });
-    h2.join(mock).wait().unwrap();
 
+        // client should see a flow control error
+        let conn = h2.then(|res| {
+            let err = res.unwrap_err();
+            assert_eq!(err.to_string(),
+                       "protocol error: flow-control protocol violated");
+            Ok::<(), ()>(())
+        });
+        conn.unwrap().join(req)
+    });
+    h2.join(mock).wait().unwrap();
 }
 
 #[test]
@@ -274,52 +269,52 @@ fn stream_close_by_data_frame_releases_capacity() {
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(m).unwrap()
-        .and_then(|mut h2| {
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+    let h2 = Client::handshake(m).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            // Send request
-            let mut s1 = h2.request(request, false).unwrap();
+        // Send request
+        let mut s1 = h2.request(request, false).unwrap();
 
-            // This effectively reserves the entire connection window
-            s1.reserve_capacity(window_size);
+        // This effectively reserves the entire connection window
+        s1.reserve_capacity(window_size);
 
-            // The capacity should be immediately available as nothing else is
-            // happening on the stream.
-            assert_eq!(s1.capacity(), window_size);
+        // The capacity should be immediately available as nothing else is
+        // happening on the stream.
+        assert_eq!(s1.capacity(), window_size);
 
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            // Create a second stream
-            let mut s2 = h2.request(request, false).unwrap();
+        // Create a second stream
+        let mut s2 = h2.request(request, false).unwrap();
 
-            // Request capacity
-            s2.reserve_capacity(5);
+        // Request capacity
+        s2.reserve_capacity(5);
 
-            // There should be no available capacity (as it is being held up by
-            // the previous stream
-            assert_eq!(s2.capacity(), 0);
+        // There should be no available capacity (as it is being held up by
+        // the previous stream
+        assert_eq!(s2.capacity(), 0);
 
-            // Closing the previous stream by sending an empty data frame will
-            // release the capacity to s2
-            s1.send_data("".into(), true).unwrap();
+        // Closing the previous stream by sending an empty data frame will
+        // release the capacity to s2
+        s1.send_data("".into(), true).unwrap();
 
-            // The capacity should be available
-            assert_eq!(s2.capacity(), 5);
+        // The capacity should be available
+        assert_eq!(s2.capacity(), 5);
 
-            // Send the frame
-            s2.send_data("hello".into(), true).unwrap();
+        // Send the frame
+        s2.send_data("hello".into(), true).unwrap();
 
-            // Wait for the connection to close
-            h2.unwrap()
-        })
-        ;
+        // Wait for the connection to close
+        h2.unwrap()
+    });
 
     let mock = mock.assert_client_handshake().unwrap()
         // Get the first frame
@@ -357,11 +352,9 @@ fn stream_close_by_data_frame_releases_capacity() {
             assert!(data.is_end_stream());
 
             Ok(())
-        })
-        ;
+        });
 
-    let _ = h2.join(mock)
-        .wait().unwrap();
+    let _ = h2.join(mock).wait().unwrap();
 }
 
 #[test]
@@ -371,52 +364,52 @@ fn stream_close_by_trailers_frame_releases_capacity() {
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(m).unwrap()
-        .and_then(|mut h2| {
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+    let h2 = Client::handshake(m).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            // Send request
-            let mut s1 = h2.request(request, false).unwrap();
+        // Send request
+        let mut s1 = h2.request(request, false).unwrap();
 
-            // This effectively reserves the entire connection window
-            s1.reserve_capacity(window_size);
+        // This effectively reserves the entire connection window
+        s1.reserve_capacity(window_size);
 
-            // The capacity should be immediately available as nothing else is
-            // happening on the stream.
-            assert_eq!(s1.capacity(), window_size);
+        // The capacity should be immediately available as nothing else is
+        // happening on the stream.
+        assert_eq!(s1.capacity(), window_size);
 
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
 
-            // Create a second stream
-            let mut s2 = h2.request(request, false).unwrap();
+        // Create a second stream
+        let mut s2 = h2.request(request, false).unwrap();
 
-            // Request capacity
-            s2.reserve_capacity(5);
+        // Request capacity
+        s2.reserve_capacity(5);
 
-            // There should be no available capacity (as it is being held up by
-            // the previous stream
-            assert_eq!(s2.capacity(), 0);
+        // There should be no available capacity (as it is being held up by
+        // the previous stream
+        assert_eq!(s2.capacity(), 0);
 
-            // Closing the previous stream by sending a trailers frame will
-            // release the capacity to s2
-            s1.send_trailers(Default::default()).unwrap();
+        // Closing the previous stream by sending a trailers frame will
+        // release the capacity to s2
+        s1.send_trailers(Default::default()).unwrap();
 
-            // The capacity should be available
-            assert_eq!(s2.capacity(), 5);
+        // The capacity should be available
+        assert_eq!(s2.capacity(), 5);
 
-            // Send the frame
-            s2.send_data("hello".into(), true).unwrap();
+        // Send the frame
+        s2.send_data("hello".into(), true).unwrap();
 
-            // Wait for the connection to close
-            h2.unwrap()
-        })
-        ;
+        // Wait for the connection to close
+        h2.unwrap()
+    });
 
     let mock = mock.assert_client_handshake().unwrap()
         // Get the first frame
@@ -453,22 +446,18 @@ fn stream_close_by_trailers_frame_releases_capacity() {
             assert!(data.is_end_stream());
 
             Ok(())
-        })
-        ;
+        });
 
-    let _ = h2.join(mock)
-        .wait().unwrap();
+    let _ = h2.join(mock).wait().unwrap();
 }
 
 #[test]
 #[ignore]
-fn stream_close_by_send_reset_frame_releases_capacity() {
-}
+fn stream_close_by_send_reset_frame_releases_capacity() {}
 
 #[test]
 #[ignore]
-fn stream_close_by_recv_reset_frame_releases_capacity() {
-}
+fn stream_close_by_recv_reset_frame_releases_capacity() {}
 
 use futures::{Async, Poll};
 
@@ -496,19 +485,21 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io).unwrap()
+    let h2 = Client::handshake(io)
+        .unwrap()
         .and_then(|mut h2| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+                .body(())
+                .unwrap();
 
             let stream = h2.request(request, false).unwrap();
 
             // Wait for the response
             h2.drive(GetResponse {
-                stream: Some(stream),
-            })
+                         stream: Some(stream),
+                     })
         })
         .and_then(|(h2, (response, mut stream))| {
             assert_eq!(response.status(), StatusCode::OK);
@@ -518,26 +509,18 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
 
             // Wait for the connection to close
             h2.unwrap()
-        })
-        ;
+        });
 
-    let srv = srv.assert_client_handshake().unwrap()
+    let srv = srv.assert_client_handshake()
+        .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1)
-                .request("POST", "https://http2.akamai.com/")
-        )
-        .send_frame(
-            frames::headers(1)
-                .response(200)
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+        .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))
-        .map(drop)
-        ;
+        .map(drop);
 
-    let _ = h2.join(srv)
-        .wait().unwrap();
+    let _ = h2.join(srv).wait().unwrap();
 }
 
 #[test]
@@ -545,12 +528,14 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io).unwrap()
+    let h2 = Client::handshake(io)
+        .unwrap()
         .and_then(|mut h2| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
-                .body(()).unwrap();
+                .body(())
+                .unwrap();
 
             let mut stream = h2.request(request, false).unwrap();
 
@@ -567,15 +552,16 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
             stream.send_data("hello".into(), false).unwrap();
             stream.send_data("world".into(), true).unwrap();
 
-            h2.drive(GetResponse { stream: Some(stream) })
+            h2.drive(GetResponse {
+                         stream: Some(stream),
+                     })
         })
         .and_then(|(h2, (response, _))| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // Wait for the connection to close
             h2.unwrap()
-        })
-        ;
+        });
 
     let srv = srv.assert_client_handshake().unwrap()
         .recv_settings()
@@ -613,9 +599,7 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))
         */
-        .map(drop)
-        ;
+        .map(drop);
 
-    let _ = h2.join(srv)
-        .wait().unwrap();
+    let _ = h2.join(srv).wait().unwrap();
 }

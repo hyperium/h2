@@ -1,8 +1,8 @@
 use super::{huffman, Header};
-use super::table::{Table, Index};
+use super::table::{Index, Table};
 
+use bytes::{BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};
-use bytes::{BytesMut, BufMut};
 
 #[derive(Debug)]
 pub struct Encoder {
@@ -76,9 +76,14 @@ impl Encoder {
     }
 
     /// Encode a set of headers into the provide buffer
-    pub fn encode<I>(&mut self, resume: Option<EncodeState>, headers: &mut I, dst: &mut BytesMut)
-        -> Encode
-        where I: Iterator<Item=Header<Option<HeaderName>>>,
+    pub fn encode<I>(
+        &mut self,
+        resume: Option<EncodeState>,
+        headers: &mut I,
+        dst: &mut BytesMut,
+    ) -> Encode
+    where
+        I: Iterator<Item = Header<Option<HeaderName>>>,
     {
         let len = dst.len();
 
@@ -94,15 +99,8 @@ impl Encoder {
             let len = dst.len();
 
             let res = match resume.value {
-                Some(ref value) => {
-                    self.encode_header_without_name(
-                        &resume.index,
-                        value,
-                        dst)
-                }
-                None => {
-                    self.encode_header(&resume.index, dst)
-                }
+                Some(ref value) => self.encode_header_without_name(&resume.index, value, dst),
+                None => self.encode_header(&resume.index, dst),
             };
 
             if res.is_err() {
@@ -126,9 +124,9 @@ impl Encoder {
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                            index: index,
-                            value: None,
-                        });
+                                                   index: index,
+                                                   value: None,
+                                               });
                     }
 
                     last_index = Some(index);
@@ -138,17 +136,15 @@ impl Encoder {
                 // which case, we skip table lookup and just use the same index
                 // as the previous entry.
                 Err(value) => {
-                    let res = self.encode_header_without_name(
-                        last_index.as_ref().unwrap(),
-                        &value,
-                        dst);
+                    let res =
+                        self.encode_header_without_name(last_index.as_ref().unwrap(), &value, dst);
 
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                            index: last_index.unwrap(),
-                            value: Some(value),
-                        });
+                                                   index: last_index.unwrap(),
+                                                   value: Some(value),
+                                               });
                     }
                 }
             };
@@ -161,13 +157,13 @@ impl Encoder {
         match self.size_update.take() {
             Some(SizeUpdate::One(val)) => {
                 self.table.resize(val);
-                try!(encode_size_update(val, dst));
+                encode_size_update(val, dst)?;
             }
             Some(SizeUpdate::Two(min, max)) => {
                 self.table.resize(min);
                 self.table.resize(max);
-                try!(encode_size_update(min, dst));
-                try!(encode_size_update(max, dst));
+                encode_size_update(min, dst)?;
+                encode_size_update(max, dst)?;
             }
             None => {}
         }
@@ -175,21 +171,15 @@ impl Encoder {
         Ok(())
     }
 
-    fn encode_header(&mut self, index: &Index, dst: &mut BytesMut)
-        -> Result<(), EncoderError>
-    {
+    fn encode_header(&mut self, index: &Index, dst: &mut BytesMut) -> Result<(), EncoderError> {
         match *index {
             Index::Indexed(idx, _) => {
-                try!(encode_int(idx, 7, 0x80, dst));
+                encode_int(idx, 7, 0x80, dst)?;
             }
             Index::Name(idx, _) => {
                 let header = self.table.resolve(&index);
 
-                try!(encode_not_indexed(
-                        idx,
-                        header.value_slice(),
-                        header.is_sensitive(),
-                        dst));
+                encode_not_indexed(idx, header.value_slice(), header.is_sensitive(), dst)?;
             }
             Index::Inserted(_) => {
                 let header = self.table.resolve(&index);
@@ -202,57 +192,52 @@ impl Encoder {
 
                 dst.put_u8(0b01000000);
 
-                try!(encode_str(header.name().as_slice(), dst));
-                try!(encode_str(header.value_slice(), dst));
+                encode_str(header.name().as_slice(), dst)?;
+                encode_str(header.value_slice(), dst)?;
             }
             Index::InsertedValue(idx, _) => {
                 let header = self.table.resolve(&index);
 
                 assert!(!header.is_sensitive());
 
-                try!(encode_int(idx, 6, 0b01000000, dst));
-                try!(encode_str(header.value_slice(), dst));
+                encode_int(idx, 6, 0b01000000, dst)?;
+                encode_str(header.value_slice(), dst)?;
             }
             Index::NotIndexed(_) => {
                 let header = self.table.resolve(&index);
 
-                try!(encode_not_indexed2(
-                        header.name().as_slice(),
-                        header.value_slice(),
-                        header.is_sensitive(),
-                        dst));
+                encode_not_indexed2(header.name().as_slice(),
+                                    header.value_slice(),
+                                    header.is_sensitive(),
+                                    dst)?;
             }
         }
 
         Ok(())
     }
 
-    fn encode_header_without_name(&mut self, last: &Index,
-                                  value: &HeaderValue, dst: &mut BytesMut)
-        -> Result<(), EncoderError>
-    {
+    fn encode_header_without_name(
+        &mut self,
+        last: &Index,
+        value: &HeaderValue,
+        dst: &mut BytesMut,
+    ) -> Result<(), EncoderError> {
         match *last {
             Index::Indexed(..) |
-                Index::Name(..) |
-                Index::Inserted(..) |
-                Index::InsertedValue(..) =>
-            {
+            Index::Name(..) |
+            Index::Inserted(..) |
+            Index::InsertedValue(..) => {
                 let idx = self.table.resolve_idx(last);
 
-                try!(encode_not_indexed(
-                        idx,
-                        value.as_ref(),
-                        value.is_sensitive(),
-                        dst));
+                encode_not_indexed(idx, value.as_ref(), value.is_sensitive(), dst)?;
             }
             Index::NotIndexed(_) => {
                 let last = self.table.resolve(last);
 
-                try!(encode_not_indexed2(
-                        last.name().as_slice(),
-                        value.as_ref(),
-                        value.is_sensitive(),
-                        dst));
+                encode_not_indexed2(last.name().as_slice(),
+                                    value.as_ref(),
+                                    value.is_sensitive(),
+                                    dst)?;
             }
         }
 
@@ -270,24 +255,28 @@ fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) -> Result<(), EncoderE
     encode_int(val, 5, 0b00100000, dst)
 }
 
-fn encode_not_indexed(name: usize, value: &[u8],
-                      sensitive: bool, dst: &mut BytesMut)
-    -> Result<(), EncoderError>
-{
+fn encode_not_indexed(
+    name: usize,
+    value: &[u8],
+    sensitive: bool,
+    dst: &mut BytesMut,
+) -> Result<(), EncoderError> {
     if sensitive {
-        try!(encode_int(name, 4, 0b10000, dst));
+        encode_int(name, 4, 0b10000, dst)?;
     } else {
-        try!(encode_int(name, 4, 0, dst));
+        encode_int(name, 4, 0, dst)?;
     }
 
-    try!(encode_str(value, dst));
+    encode_str(value, dst)?;
     Ok(())
 }
 
-fn encode_not_indexed2(name: &[u8], value: &[u8],
-                       sensitive: bool, dst: &mut BytesMut)
-    -> Result<(), EncoderError>
-{
+fn encode_not_indexed2(
+    name: &[u8],
+    value: &[u8],
+    sensitive: bool,
+    dst: &mut BytesMut,
+) -> Result<(), EncoderError> {
     if !dst.has_remaining_mut() {
         return Err(EncoderError::BufferOverflow);
     }
@@ -298,8 +287,8 @@ fn encode_not_indexed2(name: &[u8], value: &[u8],
         dst.put_u8(0);
     }
 
-    try!(encode_str(name, dst));
-    try!(encode_str(value, dst));
+    encode_str(name, dst)?;
+    encode_str(value, dst)?;
     Ok(())
 }
 
@@ -317,7 +306,7 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
         dst.put_u8(0);
 
         // Encode with huffman
-        try!(huffman::encode(val, dst));
+        huffman::encode(val, dst)?;
 
         let huff_len = dst.len() - (idx + 1);
 
@@ -330,7 +319,7 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
 
             let head_len = {
                 let mut head_dst = Cursor::new(&mut buf);
-                try!(encode_int(huff_len, 7, 0x80, &mut head_dst));
+                encode_int(huff_len, 7, 0x80, &mut head_dst)?;
                 head_dst.position() as usize
             };
 
@@ -343,8 +332,8 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
 
             // Shift the header forward
             for i in 0..huff_len {
-                let src_i = idx + 1 + (huff_len - (i+1));
-                let dst_i = idx + head_len + (huff_len - (i+1));
+                let src_i = idx + 1 + (huff_len - (i + 1));
+                let dst_i = idx + head_len + (huff_len - (i + 1));
                 dst[dst_i] = dst[src_i];
             }
 
@@ -366,9 +355,8 @@ fn encode_int<B: BufMut>(
     mut value: usize,   // The integer to encode
     prefix_bits: usize, // The number of bits in the prefix
     first_byte: u8,     // The base upon which to start encoding the int
-    dst: &mut B)        // The destination buffer
-    -> Result<(), EncoderError>
-{
+    dst: &mut B,
+) -> Result<(), EncoderError> {
     let mut rem = dst.remaining_mut();
 
     if rem == 0 {
@@ -444,7 +432,7 @@ mod test {
         let res = encode(&mut encoder, vec![method("PATCH")]);
 
         assert_eq!(res[0], 0b01000000 | 2); // Incremental indexing w/ name pulled from table
-        assert_eq!(res[1], 0x80 | 5);       // header value w/ huffman coding
+        assert_eq!(res[1], 0x80 | 5); // header value w/ huffman coding
 
         assert_eq!("PATCH", huff_decode(&res[2..7]));
         assert_eq!(encoder.table.len(), 1);
@@ -522,7 +510,7 @@ mod test {
         for i in 1..65 {
             let key = format!("x-hello-world-{:02}", i);
             let res = encode(&mut encoder, vec![header(&key, &key)]);
-            assert_eq!(0x80 | (61 + (65-i)), res[0]);
+            assert_eq!(0x80 | (61 + (65 - i)), res[0]);
         }
     }
 
@@ -547,7 +535,10 @@ mod test {
         let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: Some(name), value: value };
+        let header = Header::Field {
+            name: Some(name),
+            value: value,
+        };
 
         // Now, try to encode the sensitive header
 
@@ -564,7 +555,10 @@ mod test {
         let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: Some(name), value: value };
+        let header = Header::Field {
+            name: Some(name),
+            value: value,
+        };
 
         let mut encoder = Encoder::default();
         let res = encode(&mut encoder, vec![header]);
@@ -576,13 +570,17 @@ mod test {
         // Using the name component of a previously indexed header (without
         // sensitive flag set)
 
-        let _ = encode(&mut encoder, vec![self::header("my-password", "not-so-secret")]);
+        let _ = encode(&mut encoder,
+                       vec![self::header("my-password", "not-so-secret")]);
 
         let name = "my-password".parse().unwrap();
         let mut value = HeaderValue::from_bytes(b"12345").unwrap();
         value.set_sensitive(true);
 
-        let header = Header::Field { name: Some(name), value: value };
+        let header = Header::Field {
+            name: Some(name),
+            value: value,
+        };
         let res = encode(&mut encoder, vec![header]);
 
         assert_eq!(&[0b11111, 47], &res[..2]);
@@ -743,16 +741,19 @@ mod test {
     fn test_nameless_header() {
         let mut encoder = Encoder::default();
 
-        let res = encode(&mut encoder, vec![
-            Header::Field {
-                name: Some("hello".parse().unwrap()),
-                value: HeaderValue::from_bytes(b"world").unwrap(),
-            },
-            Header::Field {
-                name: None,
-                value: HeaderValue::from_bytes(b"zomg").unwrap(),
-            },
-        ]);
+        let res = encode(
+            &mut encoder,
+            vec![
+                Header::Field {
+                    name: Some("hello".parse().unwrap()),
+                    value: HeaderValue::from_bytes(b"world").unwrap(),
+                },
+                Header::Field {
+                    name: None,
+                    value: HeaderValue::from_bytes(b"zomg").unwrap(),
+                },
+            ],
+        );
 
         assert_eq!(&[0x40, 0x80 | 4], &res[0..2]);
         assert_eq!("hello", huff_decode(&res[2..6]));
@@ -824,7 +825,10 @@ mod test {
         let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
         let value = HeaderValue::from_bytes(val.as_bytes()).unwrap();
 
-        Header::Field { name: Some(name), value: value }
+        Header::Field {
+            name: Some(name),
+            value: value,
+        }
     }
 
     fn huff_decode(src: &[u8]) -> BytesMut {

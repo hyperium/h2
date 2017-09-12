@@ -1,6 +1,6 @@
-use frame::{self, Head, Kind, Error, StreamId};
+use frame::{self, Error, Head, Kind, StreamId};
 
-use bytes::{BufMut, BigEndian};
+use bytes::{BigEndian, BufMut};
 
 const SIZE_INCREMENT_MASK: u32 = 1 << 31;
 
@@ -42,9 +42,9 @@ impl WindowUpdate {
         }
 
         Ok(WindowUpdate {
-            stream_id: head.stream_id(),
-            size_increment,
-        })
+               stream_id: head.stream_id(),
+               size_increment,
+           })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {

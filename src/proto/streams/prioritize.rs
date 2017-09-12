@@ -8,12 +8,13 @@ use codec::UserError::*;
 
 use bytes::buf::Take;
 
+use std::{cmp, fmt};
 use std::io;
-use std::{fmt, cmp};
 
 #[derive(Debug)]
 pub(super) struct Prioritize<B, P>
-    where P: Peer,
+where
+    P: Peer,
 {
     /// Queue of streams waiting for socket capacity to send a frame
     pending_send: store::Queue<B, stream::NextSend, P>,
@@ -41,14 +42,16 @@ pub(crate) struct Prioritized<B> {
 // ===== impl Prioritize =====
 
 impl<B, P> Prioritize<B, P>
-    where B: Buf,
-          P: Peer,
+where
+    B: Buf,
+    P: Peer,
 {
     pub fn new(config: &Config) -> Prioritize<B, P> {
         let mut flow = FlowControl::new();
 
         flow.inc_window(config.init_local_window_sz)
-            .ok().expect("invalid initial window size");
+            .ok()
+            .expect("invalid initial window size");
 
         flow.assign_capacity(config.init_local_window_sz);
 
@@ -63,11 +66,12 @@ impl<B, P> Prioritize<B, P>
     }
 
     /// Queue a frame to be sent to the remote
-    pub fn queue_frame(&mut self,
-                       frame: Frame<B>,
-                       stream: &mut store::Ptr<B, P>,
-                       task: &mut Option<Task>)
-    {
+    pub fn queue_frame(
+        &mut self,
+        frame: Frame<B>,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) {
         // Queue the frame in the buffer
         stream.pending_send.push_back(&mut self.buffer, frame);
 
@@ -81,12 +85,12 @@ impl<B, P> Prioritize<B, P>
     }
 
     /// Send a data frame
-    pub fn send_data(&mut self,
-                     frame: frame::Data<B>,
-                     stream: &mut store::Ptr<B, P>,
-                     task: &mut Option<Task>)
-        -> Result<(), UserError>
-    {
+    pub fn send_data(
+        &mut self,
+        frame: frame::Data<B>,
+        stream: &mut store::Ptr<B, P>,
+        task: &mut Option<Task>,
+    ) -> Result<(), UserError> {
         let sz = frame.payload().remaining();
 
         if sz > MAX_WINDOW_SIZE as usize {
@@ -108,7 +112,9 @@ impl<B, P> Prioritize<B, P>
         stream.buffered_send_data += sz;
 
         trace!("send_data; sz={}; buffered={}; requested={}",
-               sz, stream.buffered_send_data, stream.requested_send_capacity);
+               sz,
+               stream.buffered_send_data,
+               stream.requested_send_capacity);
 
         // Implicitly request more send capacity if not enough has been
         // requested yet.
@@ -136,7 +142,9 @@ impl<B, P> Prioritize<B, P>
             // The stream has no capacity to send the frame now, save it but
             // don't notify the conneciton task. Once additional capacity
             // becomes available, the frame will be flushed.
-            stream.pending_send.push_back(&mut self.buffer, frame.into());
+            stream
+                .pending_send
+                .push_back(&mut self.buffer, frame.into());
         }
 
         Ok(())
@@ -183,13 +191,16 @@ impl<B, P> Prioritize<B, P>
         }
     }
 
-    pub fn recv_stream_window_update(&mut self,
-                                     inc: WindowSize,
-                                     stream: &mut store::Ptr<B, P>)
-        -> Result<(), Reason>
-    {
+    pub fn recv_stream_window_update(
+        &mut self,
+        inc: WindowSize,
+        stream: &mut store::Ptr<B, P>,
+    ) -> Result<(), Reason> {
         trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
-               stream.id, stream.state, inc, stream.send_flow);
+               stream.id,
+               stream.state,
+               inc,
+               stream.send_flow);
 
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
@@ -201,11 +212,11 @@ impl<B, P> Prioritize<B, P>
         Ok(())
     }
 
-    pub fn recv_connection_window_update(&mut self,
-                                         inc: WindowSize,
-                                         store: &mut Store<B, P>)
-        -> Result<(), Reason>
-    {
+    pub fn recv_connection_window_update(
+        &mut self,
+        inc: WindowSize,
+        store: &mut Store<B, P>,
+    ) -> Result<(), Reason> {
         // Update the connection's window
         self.flow.inc_window(inc)?;
 
@@ -213,10 +224,9 @@ impl<B, P> Prioritize<B, P>
         Ok(())
     }
 
-    pub fn assign_connection_capacity<R>(&mut self,
-                                         inc: WindowSize,
-                                         store: &mut R)
-        where R: Resolve<B, P>
+    pub fn assign_connection_capacity<R>(&mut self, inc: WindowSize, store: &mut R)
+    where
+        R: Resolve<B, P>,
     {
         self.flow.assign_capacity(inc);
 
@@ -244,10 +254,9 @@ impl<B, P> Prioritize<B, P>
 
         // The amount of additional capacity that the stream requests.
         // Don't assign more than the window has available!
-        let additional = cmp::min(
-            total_requested - stream.send_flow.available(),
-            // Can't assign more than what is available
-            stream.send_flow.window_size() - stream.send_flow.available());
+        let additional = cmp::min(total_requested - stream.send_flow.available(),
+                                  // Can't assign more than what is available
+                                  stream.send_flow.window_size() - stream.send_flow.available());
 
         trace!("try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
                total_requested,
@@ -265,7 +274,8 @@ impl<B, P> Prioritize<B, P>
         // streaming state (more data could be sent) or there is buffered data
         // waiting to be sent.
         debug_assert!(stream.state.is_send_streaming() || stream.buffered_send_data > 0,
-                      "state={:?}", stream.state);
+                      "state={:?}",
+                      stream.state);
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available();
@@ -286,7 +296,8 @@ impl<B, P> Prioritize<B, P>
             self.flow.claim_capacity(assign);
         }
 
-        trace!("try_assign_capacity; available={}; requested={}; buffered={}; has_unavailable={:?}",
+        trace!("try_assign_capacity; available={}; requested={}; buffered={}; \
+                has_unavailable={:?}",
                stream.send_flow.available(),
                stream.requested_send_capacity,
                stream.buffered_send_data,
@@ -324,12 +335,14 @@ impl<B, P> Prioritize<B, P>
         }
     }
 
-    pub fn poll_complete<T>(&mut self,
-                            store: &mut Store<B, P>,
-                            counts: &mut Counts<P>,
-                            dst: &mut Codec<T, Prioritized<B>>)
-        -> Poll<(), io::Error>
-        where T: AsyncWrite,
+    pub fn poll_complete<T>(
+        &mut self,
+        store: &mut Store<B, P>,
+        counts: &mut Counts<P>,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> Poll<(), io::Error>
+    where
+        T: AsyncWrite,
     {
         // Ensure codec is ready
         try_ready!(dst.poll_ready());
@@ -378,15 +391,18 @@ impl<B, P> Prioritize<B, P>
     /// When a data frame is written to the codec, it may not be written in its
     /// entirety (large chunks are split up into potentially many data frames).
     /// In this case, the stream needs to be reprioritized.
-    fn reclaim_frame<T>(&mut self,
-                        store: &mut Store<B, P>,
-                        dst: &mut Codec<T, Prioritized<B>>) -> bool
-    {
+    fn reclaim_frame<T>(
+        &mut self,
+        store: &mut Store<B, P>,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> bool {
         trace!("try reclaim frame");
 
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
-            trace!("  -> reclaimed; frame={:?}; sz={}", frame, frame.payload().remaining());
+            trace!("  -> reclaimed; frame={:?}; sz={}",
+                   frame,
+                   frame.payload().remaining());
 
             let mut eos = false;
             let key = frame.payload().stream;
@@ -435,9 +451,12 @@ impl<B, P> Prioritize<B, P>
         }
     }
 
-    fn pop_frame(&mut self, store: &mut Store<B, P>, max_len: usize, counts: &mut Counts<P>)
-        -> Option<Frame<Prioritized<B>>>
-    {
+    fn pop_frame(
+        &mut self,
+        store: &mut Store<B, P>,
+        max_len: usize,
+        counts: &mut Counts<P>,
+    ) -> Option<Frame<Prioritized<B>>> {
         trace!("pop_frame");
 
         loop {
@@ -455,7 +474,8 @@ impl<B, P> Prioritize<B, P>
                             let stream_capacity = stream.send_flow.available();
                             let sz = frame.payload().remaining();
 
-                            trace!(" --> data frame; stream={:?}; sz={}; eos={:?}; window={}; available={}; requested={}",
+                            trace!(" --> data frame; stream={:?}; sz={}; eos={:?}; \
+                                    window={}; available={}; requested={}",
                                    frame.stream_id(),
                                    sz,
                                    frame.is_end_stream(),
@@ -479,7 +499,9 @@ impl<B, P> Prioritize<B, P>
                                 // happen if the remote reduced the stream
                                 // window. In this case, we need to buffer the
                                 // frame and wait for a window update...
-                                stream.pending_send.push_front(&mut self.buffer, frame.into());
+                                stream
+                                    .pending_send
+                                    .push_front(&mut self.buffer, frame.into());
                                 continue;
                             }
 
@@ -556,7 +578,8 @@ impl<B, P> Prioritize<B, P>
 // ===== impl Prioritized =====
 
 impl<B> Buf for Prioritized<B>
-    where B: Buf,
+where
+    B: Buf,
 {
     fn remaining(&self) -> usize {
         self.inner.remaining()
