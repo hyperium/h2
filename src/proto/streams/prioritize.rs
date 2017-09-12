@@ -452,8 +452,6 @@ impl<B, P> Prioritize<B, P>
                         Frame::Data(mut frame) => {
                             // Get the amount of capacity remaining for stream's
                             // window.
-                            //
-                            // TODO: Is this the right thing to check?
                             let stream_capacity = stream.send_flow.available();
                             let sz = frame.payload().remaining();
 
