@@ -249,6 +249,7 @@ impl<T> Stream for FramedRead<T>
 
             trace!("poll; bytes={}B", bytes.len());
             if let Some(frame) = try!(self.decode_frame(bytes)) {
+                debug!("received; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));
             }
         }
