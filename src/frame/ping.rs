@@ -69,9 +69,9 @@ impl Ping {
         let ack = head.flag() & ACK_FLAG != 0;
 
         Ok(Ping {
-               ack,
-               payload,
-           })
+            ack,
+            payload,
+        })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {

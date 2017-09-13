@@ -81,11 +81,11 @@ impl FuzzHpack {
                     let low = rng.gen_range(0, high);
 
                     frame.resizes.extend(&[low, high]);
-                }
+                },
                 1...3 => {
                     frame.resizes.push(rng.gen_range(128, MAX_CHUNK * 2));
-                }
-                _ => {}
+                },
+                _ => {},
             }
 
             for _ in 0..rng.gen_range(1, (num - added) + 1) {
@@ -155,7 +155,7 @@ impl FuzzHpack {
                             .unwrap();
 
                         buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
-                    }
+                    },
                 }
             }
 
@@ -185,7 +185,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             0 => {
                 let value = gen_string(g, 4, 20);
                 Header::Authority(to_shared(value))
-            }
+            },
             1 => {
                 let method = match g.next_u32() % 6 {
                     0 => Method::GET,
@@ -200,12 +200,12 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                             .collect();
 
                         Method::from_bytes(&bytes).unwrap()
-                    }
+                    },
                     _ => unreachable!(),
                 };
 
                 Header::Method(method)
-            }
+            },
             2 => {
                 let value = match g.next_u32() % 2 {
                     0 => "http",
@@ -214,7 +214,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                 };
 
                 Header::Scheme(to_shared(value.to_string()))
-            }
+            },
             3 => {
                 let value = match g.next_u32() % 100 {
                     0 => "/".to_string(),
@@ -223,12 +223,12 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                 };
 
                 Header::Path(to_shared(value))
-            }
+            },
             4 => {
                 let status = (g.gen::<u16>() % 500) + 100;
 
                 Header::Status(StatusCode::from_u16(status).unwrap())
-            }
+            },
             _ => unreachable!(),
         }
     } else {

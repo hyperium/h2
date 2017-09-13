@@ -36,10 +36,10 @@ impl Future for Process {
                 match try_ready!(self.body.poll()) {
                     Some(chunk) => {
                         println!("GOT CHUNK = {:?}", chunk);
-                    }
+                    },
                     None => {
                         self.trailers = true;
-                    }
+                    },
                 }
             }
         }

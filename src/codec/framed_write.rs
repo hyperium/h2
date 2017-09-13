@@ -120,32 +120,32 @@ where
                     // Save off the last frame...
                     self.last_data_frame = Some(v);
                 }
-            }
+            },
             Frame::Headers(v) => {
                 if let Some(continuation) = v.encode(&mut self.hpack, self.buf.get_mut()) {
                     self.next = Some(Next::Continuation(continuation));
                 }
-            }
+            },
             Frame::PushPromise(v) => {
                 debug!("unimplemented PUSH_PROMISE write; frame={:?}", v);
                 unimplemented!();
-            }
+            },
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded settings; rem={:?}", self.buf.remaining());
-            }
+            },
             Frame::GoAway(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded go_away; rem={:?}", self.buf.remaining());
-            }
+            },
             Frame::Ping(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded ping; rem={:?}", self.buf.remaining());
-            }
+            },
             Frame::WindowUpdate(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded window_update; rem={:?}", self.buf.remaining());
-            }
+            },
 
             Frame::Priority(_) => {
                 /*
@@ -153,11 +153,11 @@ where
                 trace!("encoded priority; rem={:?}", self.buf.remaining());
                 */
                 unimplemented!();
-            }
+            },
             Frame::Reset(v) => {
                 v.encode(self.buf.get_mut());
                 trace!("encoded reset; rem={:?}", self.buf.remaining());
-            }
+            },
         }
 
         Ok(())
@@ -172,10 +172,10 @@ where
                 Some(Next::Data(ref mut frame)) => {
                     let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
                     try_ready!(self.inner.write_buf(&mut buf));
-                }
+                },
                 _ => {
                     try_ready!(self.inner.write_buf(&mut self.buf));
-                }
+                },
             }
         }
 
@@ -183,11 +183,11 @@ where
         match self.next.take() {
             Some(Next::Data(frame)) => {
                 self.last_data_frame = Some(frame);
-            }
+            },
             Some(Next::Continuation(_)) => {
                 unimplemented!();
-            }
-            None => {}
+            },
+            None => {},
         }
 
         trace!("flushing buffer");

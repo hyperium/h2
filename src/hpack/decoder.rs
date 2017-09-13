@@ -186,7 +186,7 @@ impl Decoder {
                     trace!("    Indexed; rem={:?}", src.remaining());
                     can_resize = false;
                     f(self.decode_indexed(src)?);
-                }
+                },
                 LiteralWithIndexing => {
                     trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
                     can_resize = false;
@@ -196,13 +196,13 @@ impl Decoder {
                     self.table.insert(entry.clone());
 
                     f(entry);
-                }
+                },
                 LiteralWithoutIndexing => {
                     trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     f(entry);
-                }
+                },
                 LiteralNeverIndexed => {
                     trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
                     can_resize = false;
@@ -211,7 +211,7 @@ impl Decoder {
                     // TODO: Track that this should never be indexed
 
                     f(entry);
-                }
+                },
                 SizeUpdate => {
                     trace!("    SizeUpdate; rem={:?}", src.remaining());
                     if !can_resize {
@@ -220,7 +220,7 @@ impl Decoder {
 
                     // Handle the dynamic table size update
                     self.process_size_update(src)?;
-                }
+                },
             }
         }
 
@@ -234,9 +234,11 @@ impl Decoder {
             return Err(DecoderError::InvalidMaxDynamicSize);
         }
 
-        debug!("Decoder changed max table size from {} to {}",
-               self.table.size(),
-               new_size);
+        debug!(
+            "Decoder changed max table size from {} to {}",
+            self.table.size(),
+            new_size
+        );
 
         self.table.set_max_size(new_size);
 
@@ -287,9 +289,11 @@ impl Decoder {
         let len = decode_int(buf, 7)?;
 
         if len > buf.remaining() {
-            trace!("decode_string underflow; len={}; remaining={}",
-                   len,
-                   buf.remaining());
+            trace!(
+                "decode_string underflow; len={}; remaining={}",
+                len,
+                buf.remaining()
+            );
             return Err(DecoderError::StringUnderflow);
         }
 
@@ -489,7 +493,7 @@ impl Table {
                         // Can never happen as the size of the table must reach
                         // 0 by the time we've exhausted all elements.
                         panic!("Size of table != 0, but no headers left!");
-                    }
+                    },
                 };
 
                 self.size -= last.len();
@@ -563,288 +567,194 @@ pub fn get_static(idx: usize) -> Header {
         12 => Header::Status(StatusCode::BAD_REQUEST),
         13 => Header::Status(StatusCode::NOT_FOUND),
         14 => Header::Status(StatusCode::INTERNAL_SERVER_ERROR),
-        15 => {
-            Header::Field {
-                name: header::ACCEPT_CHARSET,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        16 => {
-            Header::Field {
-                name: header::ACCEPT_ENCODING,
-                value: HeaderValue::from_static("gzip, deflate"),
-            }
-        }
-        17 => {
-            Header::Field {
-                name: header::ACCEPT_LANGUAGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        18 => {
-            Header::Field {
-                name: header::ACCEPT_RANGES,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        19 => {
-            Header::Field {
-                name: header::ACCEPT,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        20 => {
-            Header::Field {
-                name: header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        21 => {
-            Header::Field {
-                name: header::AGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        22 => {
-            Header::Field {
-                name: header::ALLOW,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        23 => {
-            Header::Field {
-                name: header::AUTHORIZATION,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        24 => {
-            Header::Field {
-                name: header::CACHE_CONTROL,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        25 => {
-            Header::Field {
-                name: header::CONTENT_DISPOSITION,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        26 => {
-            Header::Field {
-                name: header::CONTENT_ENCODING,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        27 => {
-            Header::Field {
-                name: header::CONTENT_LANGUAGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        28 => {
-            Header::Field {
-                name: header::CONTENT_LENGTH,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        29 => {
-            Header::Field {
-                name: header::CONTENT_LOCATION,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        30 => {
-            Header::Field {
-                name: header::CONTENT_RANGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        31 => {
-            Header::Field {
-                name: header::CONTENT_TYPE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        32 => {
-            Header::Field {
-                name: header::COOKIE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        33 => {
-            Header::Field {
-                name: header::DATE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        34 => {
-            Header::Field {
-                name: header::ETAG,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        35 => {
-            Header::Field {
-                name: header::EXPECT,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        36 => {
-            Header::Field {
-                name: header::EXPIRES,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        37 => {
-            Header::Field {
-                name: header::FROM,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        38 => {
-            Header::Field {
-                name: header::HOST,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        39 => {
-            Header::Field {
-                name: header::IF_MATCH,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        40 => {
-            Header::Field {
-                name: header::IF_MODIFIED_SINCE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        41 => {
-            Header::Field {
-                name: header::IF_NONE_MATCH,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        42 => {
-            Header::Field {
-                name: header::IF_RANGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        43 => {
-            Header::Field {
-                name: header::IF_UNMODIFIED_SINCE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        44 => {
-            Header::Field {
-                name: header::LAST_MODIFIED,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        45 => {
-            Header::Field {
-                name: header::LINK,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        46 => {
-            Header::Field {
-                name: header::LOCATION,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        47 => {
-            Header::Field {
-                name: header::MAX_FORWARDS,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        48 => {
-            Header::Field {
-                name: header::PROXY_AUTHENTICATE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        49 => {
-            Header::Field {
-                name: header::PROXY_AUTHORIZATION,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        50 => {
-            Header::Field {
-                name: header::RANGE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        51 => {
-            Header::Field {
-                name: header::REFERER,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        52 => {
-            Header::Field {
-                name: header::REFRESH,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        53 => {
-            Header::Field {
-                name: header::RETRY_AFTER,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        54 => {
-            Header::Field {
-                name: header::SERVER,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        55 => {
-            Header::Field {
-                name: header::SET_COOKIE,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        56 => {
-            Header::Field {
-                name: header::STRICT_TRANSPORT_SECURITY,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        57 => {
-            Header::Field {
-                name: header::TRANSFER_ENCODING,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        58 => {
-            Header::Field {
-                name: header::USER_AGENT,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        59 => {
-            Header::Field {
-                name: header::VARY,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        60 => {
-            Header::Field {
-                name: header::VIA,
-                value: HeaderValue::from_static(""),
-            }
-        }
-        61 => {
-            Header::Field {
-                name: header::WWW_AUTHENTICATE,
-                value: HeaderValue::from_static(""),
-            }
-        }
+        15 => Header::Field {
+            name: header::ACCEPT_CHARSET,
+            value: HeaderValue::from_static(""),
+        },
+        16 => Header::Field {
+            name: header::ACCEPT_ENCODING,
+            value: HeaderValue::from_static("gzip, deflate"),
+        },
+        17 => Header::Field {
+            name: header::ACCEPT_LANGUAGE,
+            value: HeaderValue::from_static(""),
+        },
+        18 => Header::Field {
+            name: header::ACCEPT_RANGES,
+            value: HeaderValue::from_static(""),
+        },
+        19 => Header::Field {
+            name: header::ACCEPT,
+            value: HeaderValue::from_static(""),
+        },
+        20 => Header::Field {
+            name: header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            value: HeaderValue::from_static(""),
+        },
+        21 => Header::Field {
+            name: header::AGE,
+            value: HeaderValue::from_static(""),
+        },
+        22 => Header::Field {
+            name: header::ALLOW,
+            value: HeaderValue::from_static(""),
+        },
+        23 => Header::Field {
+            name: header::AUTHORIZATION,
+            value: HeaderValue::from_static(""),
+        },
+        24 => Header::Field {
+            name: header::CACHE_CONTROL,
+            value: HeaderValue::from_static(""),
+        },
+        25 => Header::Field {
+            name: header::CONTENT_DISPOSITION,
+            value: HeaderValue::from_static(""),
+        },
+        26 => Header::Field {
+            name: header::CONTENT_ENCODING,
+            value: HeaderValue::from_static(""),
+        },
+        27 => Header::Field {
+            name: header::CONTENT_LANGUAGE,
+            value: HeaderValue::from_static(""),
+        },
+        28 => Header::Field {
+            name: header::CONTENT_LENGTH,
+            value: HeaderValue::from_static(""),
+        },
+        29 => Header::Field {
+            name: header::CONTENT_LOCATION,
+            value: HeaderValue::from_static(""),
+        },
+        30 => Header::Field {
+            name: header::CONTENT_RANGE,
+            value: HeaderValue::from_static(""),
+        },
+        31 => Header::Field {
+            name: header::CONTENT_TYPE,
+            value: HeaderValue::from_static(""),
+        },
+        32 => Header::Field {
+            name: header::COOKIE,
+            value: HeaderValue::from_static(""),
+        },
+        33 => Header::Field {
+            name: header::DATE,
+            value: HeaderValue::from_static(""),
+        },
+        34 => Header::Field {
+            name: header::ETAG,
+            value: HeaderValue::from_static(""),
+        },
+        35 => Header::Field {
+            name: header::EXPECT,
+            value: HeaderValue::from_static(""),
+        },
+        36 => Header::Field {
+            name: header::EXPIRES,
+            value: HeaderValue::from_static(""),
+        },
+        37 => Header::Field {
+            name: header::FROM,
+            value: HeaderValue::from_static(""),
+        },
+        38 => Header::Field {
+            name: header::HOST,
+            value: HeaderValue::from_static(""),
+        },
+        39 => Header::Field {
+            name: header::IF_MATCH,
+            value: HeaderValue::from_static(""),
+        },
+        40 => Header::Field {
+            name: header::IF_MODIFIED_SINCE,
+            value: HeaderValue::from_static(""),
+        },
+        41 => Header::Field {
+            name: header::IF_NONE_MATCH,
+            value: HeaderValue::from_static(""),
+        },
+        42 => Header::Field {
+            name: header::IF_RANGE,
+            value: HeaderValue::from_static(""),
+        },
+        43 => Header::Field {
+            name: header::IF_UNMODIFIED_SINCE,
+            value: HeaderValue::from_static(""),
+        },
+        44 => Header::Field {
+            name: header::LAST_MODIFIED,
+            value: HeaderValue::from_static(""),
+        },
+        45 => Header::Field {
+            name: header::LINK,
+            value: HeaderValue::from_static(""),
+        },
+        46 => Header::Field {
+            name: header::LOCATION,
+            value: HeaderValue::from_static(""),
+        },
+        47 => Header::Field {
+            name: header::MAX_FORWARDS,
+            value: HeaderValue::from_static(""),
+        },
+        48 => Header::Field {
+            name: header::PROXY_AUTHENTICATE,
+            value: HeaderValue::from_static(""),
+        },
+        49 => Header::Field {
+            name: header::PROXY_AUTHORIZATION,
+            value: HeaderValue::from_static(""),
+        },
+        50 => Header::Field {
+            name: header::RANGE,
+            value: HeaderValue::from_static(""),
+        },
+        51 => Header::Field {
+            name: header::REFERER,
+            value: HeaderValue::from_static(""),
+        },
+        52 => Header::Field {
+            name: header::REFRESH,
+            value: HeaderValue::from_static(""),
+        },
+        53 => Header::Field {
+            name: header::RETRY_AFTER,
+            value: HeaderValue::from_static(""),
+        },
+        54 => Header::Field {
+            name: header::SERVER,
+            value: HeaderValue::from_static(""),
+        },
+        55 => Header::Field {
+            name: header::SET_COOKIE,
+            value: HeaderValue::from_static(""),
+        },
+        56 => Header::Field {
+            name: header::STRICT_TRANSPORT_SECURITY,
+            value: HeaderValue::from_static(""),
+        },
+        57 => Header::Field {
+            name: header::TRANSFER_ENCODING,
+            value: HeaderValue::from_static(""),
+        },
+        58 => Header::Field {
+            name: header::USER_AGENT,
+            value: HeaderValue::from_static(""),
+        },
+        59 => Header::Field {
+            name: header::VARY,
+            value: HeaderValue::from_static(""),
+        },
+        60 => Header::Field {
+            name: header::VIA,
+            value: HeaderValue::from_static(""),
+        },
+        61 => Header::Field {
+            name: header::WWW_AUTHENTICATE,
+            value: HeaderValue::from_static(""),
+        },
         _ => unreachable!(),
     }
 }

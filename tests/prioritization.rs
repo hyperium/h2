@@ -193,7 +193,10 @@ fn send_data_receive_window_update() {
             stream.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
 
             // Wait for capacity
-            h2.drive(util::wait_for_capacity(stream, frame::DEFAULT_INITIAL_WINDOW_SIZE as usize))
+            h2.drive(util::wait_for_capacity(
+                stream,
+                frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
+            ))
         })
         .and_then(|(h2, mut stream)| {
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];

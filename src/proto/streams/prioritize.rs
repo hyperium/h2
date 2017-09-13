@@ -111,10 +111,12 @@ where
         // Update the buffered data counter
         stream.buffered_send_data += sz;
 
-        trace!("send_data; sz={}; buffered={}; requested={}",
-               sz,
-               stream.buffered_send_data,
-               stream.requested_send_capacity);
+        trace!(
+            "send_data; sz={}; buffered={}; requested={}",
+            sz,
+            stream.buffered_send_data,
+            stream.requested_send_capacity
+        );
 
         // Implicitly request more send capacity if not enough has been
         // requested yet.
@@ -130,9 +132,11 @@ where
             self.reserve_capacity(0, stream);
         }
 
-        trace!("send_data (2); available={}; buffered={}",
-               stream.send_flow.available(),
-               stream.buffered_send_data);
+        trace!(
+            "send_data (2); available={}; buffered={}",
+            stream.send_flow.available(),
+            stream.buffered_send_data
+        );
 
         if stream.send_flow.available() >= stream.buffered_send_data {
             // The stream currently has capacity to send the data frame, so
@@ -152,11 +156,13 @@ where
 
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
-        trace!("reserve_capacity; stream={:?}; requested={:?}; effective={:?}; curr={:?}",
-               stream.id,
-               capacity,
-               capacity + stream.buffered_send_data,
-               stream.requested_send_capacity);
+        trace!(
+            "reserve_capacity; stream={:?}; requested={:?}; effective={:?}; curr={:?}",
+            stream.id,
+            capacity,
+            capacity + stream.buffered_send_data,
+            stream.requested_send_capacity
+        );
 
         // Actual capacity is `capacity` + the current amount of buffered data.
         // It it were less, then we could never send out the buffered data.
@@ -196,11 +202,13 @@ where
         inc: WindowSize,
         stream: &mut store::Ptr<B, P>,
     ) -> Result<(), Reason> {
-        trace!("recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
-               stream.id,
-               stream.state,
-               inc,
-               stream.send_flow);
+        trace!(
+            "recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
+            stream.id,
+            stream.state,
+            inc,
+            stream.send_flow
+        );
 
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
@@ -254,16 +262,20 @@ where
 
         // The amount of additional capacity that the stream requests.
         // Don't assign more than the window has available!
-        let additional = cmp::min(total_requested - stream.send_flow.available(),
-                                  // Can't assign more than what is available
-                                  stream.send_flow.window_size() - stream.send_flow.available());
+        let additional = cmp::min(
+            total_requested - stream.send_flow.available(),
+            // Can't assign more than what is available
+            stream.send_flow.window_size() - stream.send_flow.available(),
+        );
 
-        trace!("try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
-               total_requested,
-               additional,
-               stream.buffered_send_data,
-               stream.send_flow.window_size(),
-               self.flow.available());
+        trace!(
+            "try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
+            total_requested,
+            additional,
+            stream.buffered_send_data,
+            stream.send_flow.window_size(),
+            self.flow.available()
+        );
 
         if additional == 0 {
             // Nothing more to do
@@ -273,9 +285,11 @@ where
         // If the stream has requested capacity, then it must be in the
         // streaming state (more data could be sent) or there is buffered data
         // waiting to be sent.
-        debug_assert!(stream.state.is_send_streaming() || stream.buffered_send_data > 0,
-                      "state={:?}",
-                      stream.state);
+        debug_assert!(
+            stream.state.is_send_streaming() || stream.buffered_send_data > 0,
+            "state={:?}",
+            stream.state
+        );
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available();
@@ -296,12 +310,13 @@ where
             self.flow.claim_capacity(assign);
         }
 
-        trace!("try_assign_capacity; available={}; requested={}; buffered={}; \
-                has_unavailable={:?}",
-               stream.send_flow.available(),
-               stream.requested_send_capacity,
-               stream.buffered_send_data,
-               stream.send_flow.has_unavailable());
+        trace!(
+            "try_assign_capacity; available={}; requested={}; buffered={}; has_unavailable={:?}",
+            stream.send_flow.available(),
+            stream.requested_send_capacity,
+            stream.buffered_send_data,
+            stream.send_flow.has_unavailable()
+        );
 
         if stream.send_flow.available() < stream.requested_send_capacity {
             if stream.send_flow.has_unavailable() {
@@ -367,7 +382,7 @@ where
 
                     // Because, always try to reclaim...
                     self.reclaim_frame(store, dst);
-                }
+                },
                 None => {
                     // Try to flush the codec.
                     try_ready!(dst.flush());
@@ -379,7 +394,7 @@ where
 
                     // No need to poll ready as poll_complete() does this for
                     // us...
-                }
+                },
             }
         }
     }
@@ -400,9 +415,11 @@ where
 
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
-            trace!("  -> reclaimed; frame={:?}; sz={}",
-                   frame,
-                   frame.payload().remaining());
+            trace!(
+                "  -> reclaimed; frame={:?}; sz={}",
+                frame,
+                frame.payload().remaining()
+            );
 
             let mut eos = false;
             let key = frame.payload().stream;
@@ -474,20 +491,24 @@ where
                             let stream_capacity = stream.send_flow.available();
                             let sz = frame.payload().remaining();
 
-                            trace!(" --> data frame; stream={:?}; sz={}; eos={:?}; \
-                                    window={}; available={}; requested={}",
-                                   frame.stream_id(),
-                                   sz,
-                                   frame.is_end_stream(),
-                                   stream_capacity,
-                                   stream.send_flow.available(),
-                                   stream.requested_send_capacity);
+                            trace!(
+                                " --> data frame; stream={:?}; sz={}; eos={:?}; window={}; \
+                                 available={}; requested={}",
+                                frame.stream_id(),
+                                sz,
+                                frame.is_end_stream(),
+                                stream_capacity,
+                                stream.send_flow.available(),
+                                stream.requested_send_capacity
+                            );
 
                             // Zero length data frames always have capacity to
                             // be sent.
                             if sz > 0 && stream_capacity == 0 {
-                                trace!(" --> stream capacity is 0; requested={}",
-                                       stream.requested_send_capacity);
+                                trace!(
+                                    " --> stream capacity is 0; requested={}",
+                                    stream.requested_send_capacity
+                                );
 
                                 // Ensure that the stream is waiting for
                                 // connection level capacity
@@ -551,7 +572,7 @@ where
                                     stream: stream.key(),
                                 }
                             }))
-                        }
+                        },
                         frame => frame.map(|_| unreachable!()),
                     };
 
@@ -568,7 +589,7 @@ where
                     counts.transition_after(stream, is_counted);
 
                     return Some(frame);
-                }
+                },
                 None => return None,
             }
         }

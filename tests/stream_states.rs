@@ -184,9 +184,11 @@ fn closed_streams_are_released() {
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(frames::headers(1)
-                        .request("GET", "https://example.com/")
-                        .eos())
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
         .send_frame(frames::headers(1).response(204).eos())
         .close();
 

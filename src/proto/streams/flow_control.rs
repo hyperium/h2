@@ -110,10 +110,12 @@ impl FlowControl {
             return Err(Reason::FlowControlError);
         }
 
-        trace!("inc_window; sz={}; old={}; new={}",
-               sz,
-               self.window_size,
-               val);
+        trace!(
+            "inc_window; sz={}; old={}; new={}",
+            sz,
+            self.window_size,
+            val
+        );
 
         self.window_size = val;
         Ok(())
@@ -131,10 +133,12 @@ impl FlowControl {
     /// Decrements the window reflecting data has actually been sent. The caller
     /// must ensure that the window has capacity.
     pub fn send_data(&mut self, sz: WindowSize) {
-        trace!("send_data; sz={}; window={}; available={}",
-               sz,
-               self.window_size,
-               self.available);
+        trace!(
+            "send_data; sz={}; window={}; available={}",
+            sz,
+            self.window_size,
+            self.available
+        );
 
         // Ensure that the argument is correct
         assert!(sz <= self.window_size as WindowSize);

@@ -80,9 +80,9 @@ where
                 Ok(AsyncSink::Ready) => {
                     let connection = Connection::new(codec);
                     Ok(Client {
-                           connection,
-                       })
-                }
+                        connection,
+                    })
+                },
                 Ok(_) => unreachable!(),
                 Err(e) => Err(::Error::from(e)),
             }
@@ -294,13 +294,15 @@ impl proto::Peer for Peer {
     fn convert_send_message(id: StreamId, request: Self::Send, end_of_stream: bool) -> Headers {
         use http::request::Parts;
 
-        let (Parts {
-                 method,
-                 uri,
-                 headers,
-                 ..
-             },
-             _) = request.into_parts();
+        let (
+            Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            _,
+        ) = request.into_parts();
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
@@ -332,10 +334,10 @@ impl proto::Peer for Peer {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
                 return Err(RecvError::Stream {
-                               id: stream_id,
-                               reason: ProtocolError,
-                           });
-            }
+                    id: stream_id,
+                    reason: ProtocolError,
+                });
+            },
         };
 
         *response.headers_mut() = fields;

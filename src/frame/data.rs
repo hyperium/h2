@@ -121,11 +121,11 @@ impl Data<Bytes> {
         };
 
         Ok(Data {
-               stream_id: head.stream_id(),
-               data: payload,
-               flags: flags,
-               pad_len: pad_len,
-           })
+            stream_id: head.stream_id(),
+            data: payload,
+            flags: flags,
+            pad_len: pad_len,
+        })
     }
 }
 

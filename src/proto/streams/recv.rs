@@ -150,7 +150,7 @@ where
                     Ok(v) => v,
                     Err(_) => {
                         unimplemented!();
-                    }
+                    },
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
@@ -185,9 +185,9 @@ where
 
         if stream.ensure_content_length_zero().is_err() {
             return Err(RecvError::Stream {
-                           id: stream.id,
-                           reason: ProtocolError,
-                       });
+                id: stream.id,
+                reason: ProtocolError,
+            });
         }
 
         let trailers = frame.into_fields();
@@ -264,10 +264,12 @@ where
             return Err(RecvError::Connection(ProtocolError));
         }
 
-        trace!("recv_data; size={}; connection={}; stream={}",
-               sz,
-               self.flow.window_size(),
-               stream.recv_flow.window_size());
+        trace!(
+            "recv_data; size={}; connection={}; stream={}",
+            sz,
+            self.flow.window_size(),
+            stream.recv_flow.window_size()
+        );
 
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
@@ -286,17 +288,17 @@ where
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
             return Err(RecvError::Stream {
-                           id: stream.id,
-                           reason: ProtocolError,
-                       });
+                id: stream.id,
+                reason: ProtocolError,
+            });
         }
 
         if frame.is_end_stream() {
             if stream.ensure_content_length_zero().is_err() {
                 return Err(RecvError::Stream {
-                               id: stream.id,
-                               reason: ProtocolError,
-                           });
+                    id: stream.id,
+                    reason: ProtocolError,
+                });
             }
 
             if stream.state.recv_close().is_err() {
@@ -343,9 +345,11 @@ where
         // TODO: All earlier stream IDs should be implicitly closed.
 
         // Now, create a new entry for the stream
-        let mut new_stream = Stream::new(frame.promised_id(),
-                                         send.init_window_sz(),
-                                         self.init_window_sz);
+        let mut new_stream = Stream::new(
+            frame.promised_id(),
+            send.init_window_sz(),
+            self.init_window_sz,
+        );
 
         new_stream.state.reserve_remote()?;
 
@@ -559,7 +563,7 @@ where
 
                 // No more data frames
                 Ok(None.into())
-            }
+            },
             None => {
                 if stream.state.is_recv_closed() {
                     // No more data frames will be received
@@ -569,7 +573,7 @@ where
                     stream.recv_task = Some(task::current());
                     Ok(Async::NotReady)
                 }
-            }
+            },
         }
     }
 
@@ -584,7 +588,7 @@ where
                 // the entire set of data frames have been consumed. What should
                 // we do?
                 unimplemented!();
-            }
+            },
             None => {
                 if stream.state.is_recv_closed() {
                     // There will be no trailer frame
@@ -594,7 +598,7 @@ where
                     stream.recv_task = Some(task::current());
                     Ok(Async::NotReady)
                 }
-            }
+            },
         }
     }
 }
@@ -630,7 +634,7 @@ where
 
                 stream.recv_task = Some(task::current());
                 Ok(Async::NotReady)
-            }
+            },
         }
     }
 }

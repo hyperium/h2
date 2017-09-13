@@ -292,11 +292,13 @@ impl Table {
 
         let pos_idx = 0usize.wrapping_sub(self.inserted);
 
-        let prev = mem::replace(&mut self.indices[probe],
-                                Some(Pos {
-                                         index: pos_idx,
-                                         hash: hash,
-                                     }));
+        let prev = mem::replace(
+            &mut self.indices[probe],
+            Some(Pos {
+                index: pos_idx,
+                hash: hash,
+            }),
+        );
 
         if let Some(mut prev) = prev {
             // Shift forward
@@ -325,10 +327,10 @@ impl Table {
         self.inserted = self.inserted.wrapping_add(1);
 
         self.slots.push_front(Slot {
-                                  hash: hash,
-                                  header: header,
-                                  next: None,
-                              });
+            hash: hash,
+            header: header,
+            next: None,
+        });
     }
 
     pub fn resize(&mut self, size: usize) {
@@ -377,12 +379,14 @@ impl Table {
         // Update the size
         self.size -= slot.header.len();
 
-        debug_assert_eq!(self.indices
-                             .iter()
-                             .filter_map(|p| *p)
-                             .filter(|p| p.index == pos_idx)
-                             .count(),
-                         1);
+        debug_assert_eq!(
+            self.indices
+                .iter()
+                .filter_map(|p| *p)
+                .filter(|p| p.index == pos_idx)
+                .count(),
+            1
+        );
 
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
@@ -495,12 +499,12 @@ impl Table {
                 }
 
                 debug_assert!({
-                                  let them = self.indices[probe].unwrap();
-                                  let their_distance = probe_distance(self.mask, them.hash, probe);
-                                  let our_distance = probe_distance(self.mask, pos.hash, probe);
+                    let them = self.indices[probe].unwrap();
+                    let their_distance = probe_distance(self.mask, them.hash, probe);
+                    let our_distance = probe_distance(self.mask, pos.hash, probe);
 
-                                  their_distance >= our_distance
-                              });
+                    their_distance >= our_distance
+                });
             });
         }
     }
@@ -661,97 +665,85 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
         Header::Field {
             ref name,
             ref value,
-        } => {
-            match *name {
-                header::ACCEPT_CHARSET => Some((15, false)),
-                header::ACCEPT_ENCODING => {
-                    if value == "gzip, deflate" {
-                        Some((16, true))
-                    } else {
-                        Some((16, false))
-                    }
-                }
-                header::ACCEPT_LANGUAGE => Some((17, false)),
-                header::ACCEPT_RANGES => Some((18, false)),
-                header::ACCEPT => Some((19, false)),
-                header::ACCESS_CONTROL_ALLOW_ORIGIN => Some((20, false)),
-                header::AGE => Some((21, false)),
-                header::ALLOW => Some((22, false)),
-                header::AUTHORIZATION => Some((23, false)),
-                header::CACHE_CONTROL => Some((24, false)),
-                header::CONTENT_DISPOSITION => Some((25, false)),
-                header::CONTENT_ENCODING => Some((26, false)),
-                header::CONTENT_LANGUAGE => Some((27, false)),
-                header::CONTENT_LENGTH => Some((28, false)),
-                header::CONTENT_LOCATION => Some((29, false)),
-                header::CONTENT_RANGE => Some((30, false)),
-                header::CONTENT_TYPE => Some((31, false)),
-                header::COOKIE => Some((32, false)),
-                header::DATE => Some((33, false)),
-                header::ETAG => Some((34, false)),
-                header::EXPECT => Some((35, false)),
-                header::EXPIRES => Some((36, false)),
-                header::FROM => Some((37, false)),
-                header::HOST => Some((38, false)),
-                header::IF_MATCH => Some((39, false)),
-                header::IF_MODIFIED_SINCE => Some((40, false)),
-                header::IF_NONE_MATCH => Some((41, false)),
-                header::IF_RANGE => Some((42, false)),
-                header::IF_UNMODIFIED_SINCE => Some((43, false)),
-                header::LAST_MODIFIED => Some((44, false)),
-                header::LINK => Some((45, false)),
-                header::LOCATION => Some((46, false)),
-                header::MAX_FORWARDS => Some((47, false)),
-                header::PROXY_AUTHENTICATE => Some((48, false)),
-                header::PROXY_AUTHORIZATION => Some((49, false)),
-                header::RANGE => Some((50, false)),
-                header::REFERER => Some((51, false)),
-                header::REFRESH => Some((52, false)),
-                header::RETRY_AFTER => Some((53, false)),
-                header::SERVER => Some((54, false)),
-                header::SET_COOKIE => Some((55, false)),
-                header::STRICT_TRANSPORT_SECURITY => Some((56, false)),
-                header::TRANSFER_ENCODING => Some((57, false)),
-                header::USER_AGENT => Some((58, false)),
-                header::VARY => Some((59, false)),
-                header::VIA => Some((60, false)),
-                header::WWW_AUTHENTICATE => Some((61, false)),
-                _ => None,
-            }
-        }
+        } => match *name {
+            header::ACCEPT_CHARSET => Some((15, false)),
+            header::ACCEPT_ENCODING => if value == "gzip, deflate" {
+                Some((16, true))
+            } else {
+                Some((16, false))
+            },
+            header::ACCEPT_LANGUAGE => Some((17, false)),
+            header::ACCEPT_RANGES => Some((18, false)),
+            header::ACCEPT => Some((19, false)),
+            header::ACCESS_CONTROL_ALLOW_ORIGIN => Some((20, false)),
+            header::AGE => Some((21, false)),
+            header::ALLOW => Some((22, false)),
+            header::AUTHORIZATION => Some((23, false)),
+            header::CACHE_CONTROL => Some((24, false)),
+            header::CONTENT_DISPOSITION => Some((25, false)),
+            header::CONTENT_ENCODING => Some((26, false)),
+            header::CONTENT_LANGUAGE => Some((27, false)),
+            header::CONTENT_LENGTH => Some((28, false)),
+            header::CONTENT_LOCATION => Some((29, false)),
+            header::CONTENT_RANGE => Some((30, false)),
+            header::CONTENT_TYPE => Some((31, false)),
+            header::COOKIE => Some((32, false)),
+            header::DATE => Some((33, false)),
+            header::ETAG => Some((34, false)),
+            header::EXPECT => Some((35, false)),
+            header::EXPIRES => Some((36, false)),
+            header::FROM => Some((37, false)),
+            header::HOST => Some((38, false)),
+            header::IF_MATCH => Some((39, false)),
+            header::IF_MODIFIED_SINCE => Some((40, false)),
+            header::IF_NONE_MATCH => Some((41, false)),
+            header::IF_RANGE => Some((42, false)),
+            header::IF_UNMODIFIED_SINCE => Some((43, false)),
+            header::LAST_MODIFIED => Some((44, false)),
+            header::LINK => Some((45, false)),
+            header::LOCATION => Some((46, false)),
+            header::MAX_FORWARDS => Some((47, false)),
+            header::PROXY_AUTHENTICATE => Some((48, false)),
+            header::PROXY_AUTHORIZATION => Some((49, false)),
+            header::RANGE => Some((50, false)),
+            header::REFERER => Some((51, false)),
+            header::REFRESH => Some((52, false)),
+            header::RETRY_AFTER => Some((53, false)),
+            header::SERVER => Some((54, false)),
+            header::SET_COOKIE => Some((55, false)),
+            header::STRICT_TRANSPORT_SECURITY => Some((56, false)),
+            header::TRANSFER_ENCODING => Some((57, false)),
+            header::USER_AGENT => Some((58, false)),
+            header::VARY => Some((59, false)),
+            header::VIA => Some((60, false)),
+            header::WWW_AUTHENTICATE => Some((61, false)),
+            _ => None,
+        },
         Header::Authority(_) => Some((1, false)),
-        Header::Method(ref v) => {
-            match *v {
-                Method::GET => Some((2, true)),
-                Method::POST => Some((3, true)),
-                _ => Some((2, false)),
-            }
-        }
-        Header::Scheme(ref v) => {
-            match &**v {
-                "http" => Some((6, true)),
-                "https" => Some((7, true)),
-                _ => Some((6, false)),
-            }
-        }
-        Header::Path(ref v) => {
-            match &**v {
-                "/" => Some((4, true)),
-                "/index.html" => Some((5, true)),
-                _ => Some((4, false)),
-            }
-        }
-        Header::Status(ref v) => {
-            match u16::from(*v) {
-                200 => Some((8, true)),
-                204 => Some((9, true)),
-                206 => Some((10, true)),
-                304 => Some((11, true)),
-                400 => Some((12, true)),
-                404 => Some((13, true)),
-                500 => Some((14, true)),
-                _ => Some((8, false)),
-            }
-        }
+        Header::Method(ref v) => match *v {
+            Method::GET => Some((2, true)),
+            Method::POST => Some((3, true)),
+            _ => Some((2, false)),
+        },
+        Header::Scheme(ref v) => match &**v {
+            "http" => Some((6, true)),
+            "https" => Some((7, true)),
+            _ => Some((6, false)),
+        },
+        Header::Path(ref v) => match &**v {
+            "/" => Some((4, true)),
+            "/index.html" => Some((5, true)),
+            _ => Some((4, false)),
+        },
+        Header::Status(ref v) => match u16::from(*v) {
+            200 => Some((8, true)),
+            204 => Some((9, true)),
+            206 => Some((10, true)),
+            304 => Some((11, true)),
+            400 => Some((12, true)),
+            404 => Some((13, true)),
+            500 => Some((14, true)),
+            _ => Some((8, false)),
+        },
     }
 }

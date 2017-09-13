@@ -217,14 +217,12 @@ where
     /// Returns `Err` when the decrement cannot be completed due to overflow.
     pub fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
         match self.content_length {
-            ContentLength::Remaining(ref mut rem) => {
-                match rem.checked_sub(len as u64) {
-                    Some(val) => *rem = val,
-                    None => return Err(()),
-                }
-            }
+            ContentLength::Remaining(ref mut rem) => match rem.checked_sub(len as u64) {
+                Some(val) => *rem = val,
+                None => return Err(()),
+            },
             ContentLength::Head => return Err(()),
-            _ => {}
+            _ => {},
         }
 
         Ok(())

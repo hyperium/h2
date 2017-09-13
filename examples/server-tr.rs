@@ -1,4 +1,3 @@
-
 extern crate bytes;
 extern crate env_logger;
 extern crate futures;
@@ -57,8 +56,9 @@ pub fn main() {
 
                     Ok(())
                 }).and_then(|_| {
-                        println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! \
-                                  ~~~~~~~~~~~");
+                        println!(
+                            "~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~"
+                        );
                         Ok(())
                     })
             })
