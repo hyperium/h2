@@ -12,11 +12,6 @@ repository = "carllerche/h2"
 branch = "master"
 service = "github"
 
-[badges.coveralls]
-repository = "carllerche/h2"
-branch = "master"
-service = "github"
-
 [features]
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards
