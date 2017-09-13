@@ -33,7 +33,7 @@ impl Reason {
             FlowControlError => "flow-control protocol violated",
             SettingsTimeout => "settings ACK not received in timely manner",
             StreamClosed => "received frame when stream half-closed",
-            FrameSizeError => "frame sent with invalid size",
+            FrameSizeError => "frame with invalid size",
             RefusedStream => "refused stream before processing any application logic",
             Cancel => "stream no longer needed",
             CompressionError => "unable to maintain the header compression context",

@@ -26,7 +26,7 @@ pub struct Handle {
 }
 
 #[derive(Debug)]
-struct Pipe {
+pub struct Pipe {
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -67,6 +67,11 @@ pub fn new() -> (Mock, Handle) {
 // ===== impl Handle =====
 
 impl Handle {
+    /// Get a mutable reference to inner Codec.
+    pub fn codec_mut(&mut self) -> &mut ::Codec<Pipe> {
+        &mut self.codec
+    }
+
     /// Send a frame
     pub fn send(&mut self, item: SendFrame) -> Result<(), SendError> {
         // Queue the frame
@@ -237,7 +242,7 @@ impl io::Write for Mock {
         let mut me = self.pipe.inner.lock().unwrap();
 
         if me.closed {
-            return Err(io::ErrorKind::BrokenPipe.into());
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "mock closed"));
         }
 
         me.tx.extend(buf);

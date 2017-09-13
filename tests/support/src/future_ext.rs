@@ -12,6 +12,18 @@ pub trait FutureExt: Future {
         Unwrap { inner: self }
     }
 
+    /// Panic on error, with a message.
+    fn expect<T>(self, msg: T) -> Expect<Self>
+        where Self: Sized,
+              Self::Error: fmt::Debug,
+              T: fmt::Display,
+    {
+        Expect {
+            inner: self,
+            msg: msg.to_string(),
+        }
+    }
+
     /// Drive `other` by polling `self`.
     ///
     /// `self` must not resolve before `other` does.
@@ -48,6 +60,28 @@ impl<T> Future for Unwrap<T>
 
     fn poll(&mut self) -> Poll<T::Item, ()> {
         Ok(self.inner.poll().unwrap())
+    }
+}
+
+
+// ===== Expect ======
+
+/// Panic on error
+pub struct Expect<T> {
+    inner: T,
+    msg: String,
+}
+
+impl<T> Future for Expect<T>
+    where T: Future,
+          T::Item: fmt::Debug,
+          T::Error: fmt::Debug,
+{
+    type Item = T::Item;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<T::Item, ()> {
+        Ok(self.inner.poll().expect(&self.msg))
     }
 }
 

@@ -195,6 +195,110 @@ fn closed_streams_are_released() {
     let _ = h2.join(srv).wait().unwrap();
 }
 
+#[test]
+fn errors_if_recv_frame_exceeds_max_frame_size() {
+    let _ = ::env_logger::init();
+    let (io, mut srv) = mock::new();
+
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let req = h2.request(request, true)
+            .unwrap()
+            .unwrap()
+            .and_then(|resp| {
+                assert_eq!(resp.status(), StatusCode::OK);
+                let body = resp.into_parts().1;
+                body.concat2().then(|res| {
+                    let err = res.unwrap_err();
+                    assert_eq!(err.to_string(), "protocol error: frame with invalid size");
+                    Ok::<(), ()>(())
+                })
+            });
+
+        // client should see a conn error
+        let conn = h2.then(|res| {
+            let err = res.unwrap_err();
+            assert_eq!(err.to_string(), "protocol error: frame with invalid size");
+            Ok::<(), ()>(())
+        });
+        conn.unwrap().join(req)
+    });
+
+    // a bad peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 4);
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .ignore_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_385]).eos())
+        .recv_frame(frames::go_away(0).frame_size())
+        .close();
+
+    let _ = h2.join(srv).wait().unwrap();
+}
+
+
+#[test]
+fn configure_max_frame_size() {
+    let _ = ::env_logger::init();
+    let (io, mut srv) = mock::new();
+
+    let h2 = Client::builder()
+        .max_frame_size(16_384 * 2)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = h2.request(request, true)
+                .unwrap()
+                .expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_parts().1;
+                    body.concat2().expect("body")
+                })
+                .and_then(|buf| {
+                    assert_eq!(buf.len(), 16_385);
+                    Ok(())
+                });
+
+            h2.expect("client").join(req)
+        });
+
+    // a good peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 2);
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .ignore_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_385]).eos())
+        .close();
+
+    let _ = h2.join(srv).wait().expect("wait");
+}
+
 /*
 #[test]
 fn send_data_after_headers_eos() {

@@ -45,10 +45,12 @@ where
             .length_field_length(3)
             .length_adjustment(9)
             .num_skip(0) // Don't skip the header
-            .max_frame_length(max_frame_size)
             .new_read(framed_write);
 
-        let inner = FramedRead::new(delimited);
+        let mut inner = FramedRead::new(delimited);
+
+        // Use FramedRead's method since it checks the value is within range.
+        inner.set_max_frame_size(max_frame_size);
 
         Codec {
             inner,
@@ -66,7 +68,6 @@ impl<T, B> Codec<T, B> {
     #[cfg(feature = "unstable")]
     #[inline]
     pub fn set_max_recv_frame_size(&mut self, val: usize) {
-        // TODO: should probably make some assertions about max frame size...
         self.inner.set_max_frame_size(val)
     }
 
