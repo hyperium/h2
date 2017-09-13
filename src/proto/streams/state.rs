@@ -314,14 +314,15 @@ impl State {
         }
     }
 
-    pub fn ensure_recv_open(&self) -> Result<(), proto::Error> {
+    pub fn ensure_recv_open(&self) -> Result<bool, proto::Error> {
         use std::io;
 
         // TODO: Is this correct?
         match self.inner {
             Closed(Some(Cause::Proto(reason))) => Err(proto::Error::Proto(reason)),
             Closed(Some(Cause::Io)) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
-            _ => Ok(()),
+            Closed(None) | HalfClosedRemote(..) => Ok(false),
+            _ => Ok(true),
         }
     }
 }

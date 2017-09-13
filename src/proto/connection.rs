@@ -58,15 +58,19 @@ where
     P: Peer,
     B: IntoBuf,
 {
-    pub fn new(codec: Codec<T, Prioritized<B::Buf>>) -> Connection<T, P, B> {
+    pub fn new(
+        codec: Codec<T, Prioritized<B::Buf>>,
+        settings: &frame::Settings,
+    ) -> Connection<T, P, B> {
         // TODO: Actually configure
         let streams = Streams::new(streams::Config {
             max_remote_initiated: None,
             init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             max_local_initiated: None,
-            init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            init_local_window_sz: settings
+                .initial_window_size()
+                .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
         });
-
         Connection {
             state: State::Open,
             codec: codec,

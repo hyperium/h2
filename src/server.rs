@@ -1,5 +1,5 @@
 use codec::{Codec, RecvError};
-use frame::{self, Reason, StreamId};
+use frame::{self, Reason, Settings, StreamId};
 use frame::Reason::*;
 use proto::{self, Connection, WindowSize};
 
@@ -82,19 +82,18 @@ where
         let mut codec = Codec::new(io);
 
         // Create the initial SETTINGS frame
-        let settings = frame::Settings::default();
+        let settings = Settings::default();
 
         // Send initial settings frame
         codec
             .buffer(settings.into())
-            .ok()
             .expect("invalid SETTINGS frame");
 
         // Flush pending settings frame and then wait for the client preface
         let handshake = Flush::new(codec)
             .and_then(ReadPreface::new)
             .map(move |codec| {
-                let connection = Connection::new(codec);
+                let connection = Connection::new(codec, &Settings::default());
                 Server {
                     connection,
                 }
