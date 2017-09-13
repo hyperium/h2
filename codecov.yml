@@ -1,6 +1,7 @@
 codecov:
   notify:
     require_ci_to_pass: true
+
 coverage:
   ignore:
     - tests/.*
@@ -9,3 +10,5 @@ coverage:
       default:
         url: "https://hooks.slack.com/services/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"
         threshold: 1%
+
+comment: off
