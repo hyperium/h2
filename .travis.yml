@@ -44,6 +44,11 @@ jobs:
           repo: carllerche/h2
           rust: nightly
       after_success: skip
+    - stage: fmt
+      rust: nightly
+      install: if ! cargo fmt --help >/dev/null 2>&1 ; then cargo install rustfmt-nightly ; fi
+      script: cargo fmt -- --write-mode=diff
+      after_success: skip
 
 env:
   global:
