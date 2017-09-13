@@ -218,7 +218,7 @@ impl Headers {
                         reg = true;
                         self.fields.append(name, value);
                     }
-                }
+                },
                 Authority(v) => set_pseudo!(authority, v),
                 Method(v) => set_pseudo!(method, v),
                 Scheme(v) => set_pseudo!(scheme, v),
@@ -285,13 +285,11 @@ impl Headers {
 
         let ret = match encoder.encode(None, &mut headers, dst) {
             hpack::Encode::Full => None,
-            hpack::Encode::Partial(state) => {
-                Some(Continuation {
-                         stream_id: self.stream_id,
-                         hpack: state,
-                         headers: headers,
-                     })
-            }
+            hpack::Encode::Partial(state) => Some(Continuation {
+                stream_id: self.stream_id,
+                hpack: state,
+                headers: headers,
+            }),
         };
 
         // Compute the frame length
@@ -336,10 +334,10 @@ impl PushPromise {
         let (promised_id, _) = StreamId::parse(&payload[..4]);
 
         Ok(PushPromise {
-               stream_id: head.stream_id(),
-               promised_id: promised_id,
-               flags: flags,
-           })
+            stream_id: head.stream_id(),
+            promised_id: promised_id,
+            flags: flags,
+        })
     }
 
     pub fn stream_id(&self) -> StreamId {

@@ -38,25 +38,23 @@ impl Header<Option<HeaderName>> {
         use self::Header::*;
 
         Ok(match self {
-               Field {
-                   name: Some(n),
-                   value,
-               } => {
-                   Field {
-                       name: n,
-                       value: value,
-                   }
-               }
-               Field {
-                   name: None,
-                   value,
-               } => return Err(value),
-               Authority(v) => Authority(v),
-               Method(v) => Method(v),
-               Scheme(v) => Scheme(v),
-               Path(v) => Path(v),
-               Status(v) => Status(v),
-           })
+            Field {
+                name: Some(n),
+                value,
+            } => Field {
+                name: n,
+                value: value,
+            },
+            Field {
+                name: None,
+                value,
+            } => return Err(value),
+            Authority(v) => Authority(v),
+            Method(v) => Method(v),
+            Scheme(v) => Scheme(v),
+            Path(v) => Path(v),
+            Status(v) => Status(v),
+        })
     }
 }
 
@@ -67,23 +65,23 @@ impl Header {
                 b"authority" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Authority(value))
-                }
+                },
                 b"method" => {
                     let method = Method::from_bytes(&value)?;
                     Ok(Header::Method(method))
-                }
+                },
                 b"scheme" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Scheme(value))
-                }
+                },
                 b"path" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Path(value))
-                }
+                },
                 b"status" => {
                     let status = StatusCode::from_bytes(&value)?;
                     Ok(Header::Status(status))
-                }
+                },
                 _ => Err(DecoderError::InvalidPseudoheader),
             }
         } else {
@@ -92,9 +90,9 @@ impl Header {
             let value = HeaderValue::from_bytes(&value)?;
 
             Ok(Header::Field {
-                   name: name,
-                   value: value,
-               })
+                name: name,
+                value: value,
+            })
         }
     }
 
@@ -151,37 +149,27 @@ impl Header {
                     } => a == value,
                     _ => false,
                 }
-            }
-            Header::Authority(ref a) => {
-                match *other {
-                    Header::Authority(ref b) => a == b,
-                    _ => false,
-                }
-            }
-            Header::Method(ref a) => {
-                match *other {
-                    Header::Method(ref b) => a == b,
-                    _ => false,
-                }
-            }
-            Header::Scheme(ref a) => {
-                match *other {
-                    Header::Scheme(ref b) => a == b,
-                    _ => false,
-                }
-            }
-            Header::Path(ref a) => {
-                match *other {
-                    Header::Path(ref b) => a == b,
-                    _ => false,
-                }
-            }
-            Header::Status(ref a) => {
-                match *other {
-                    Header::Status(ref b) => a == b,
-                    _ => false,
-                }
-            }
+            },
+            Header::Authority(ref a) => match *other {
+                Header::Authority(ref b) => a == b,
+                _ => false,
+            },
+            Header::Method(ref a) => match *other {
+                Header::Method(ref b) => a == b,
+                _ => false,
+            },
+            Header::Scheme(ref a) => match *other {
+                Header::Scheme(ref b) => a == b,
+                _ => false,
+            },
+            Header::Path(ref a) => match *other {
+                Header::Path(ref b) => a == b,
+                _ => false,
+            },
+            Header::Status(ref a) => match *other {
+                Header::Status(ref b) => a == b,
+                _ => false,
+            },
         }
     }
 
@@ -201,20 +189,18 @@ impl Header {
         match *self {
             Header::Field {
                 ref name, ..
-            } => {
-                match *name {
-                    header::AGE |
-                    header::AUTHORIZATION |
-                    header::CONTENT_LENGTH |
-                    header::ETAG |
-                    header::IF_MODIFIED_SINCE |
-                    header::IF_NONE_MATCH |
-                    header::LOCATION |
-                    header::COOKIE |
-                    header::SET_COOKIE => true,
-                    _ => false,
-                }
-            }
+            } => match *name {
+                header::AGE |
+                header::AUTHORIZATION |
+                header::CONTENT_LENGTH |
+                header::ETAG |
+                header::IF_MODIFIED_SINCE |
+                header::IF_NONE_MATCH |
+                header::LOCATION |
+                header::COOKIE |
+                header::SET_COOKIE => true,
+                _ => false,
+            },
             Header::Path(..) => true,
             _ => false,
         }
@@ -228,12 +214,10 @@ impl From<Header> for Header<Option<HeaderName>> {
             Header::Field {
                 name,
                 value,
-            } => {
-                Header::Field {
-                    name: Some(name),
-                    value,
-                }
-            }
+            } => Header::Field {
+                name: Some(name),
+                value,
+            },
             Header::Authority(v) => Header::Authority(v),
             Header::Method(v) => Header::Method(v),
             Header::Scheme(v) => Header::Scheme(v),
@@ -246,12 +230,10 @@ impl From<Header> for Header<Option<HeaderName>> {
 impl<'a> Name<'a> {
     pub fn into_entry(self, value: Bytes) -> Result<Header, DecoderError> {
         match self {
-            Name::Field(name) => {
-                Ok(Header::Field {
-                       name: name.clone(),
-                       value: HeaderValue::from_bytes(&*value)?,
-                   })
-            }
+            Name::Field(name) => Ok(Header::Field {
+                name: name.clone(),
+                value: HeaderValue::from_bytes(&*value)?,
+            }),
             Name::Authority => Ok(Header::Authority(String::try_from(value)?)),
             Name::Method => Ok(Header::Method(Method::from_bytes(&*value)?)),
             Name::Scheme => Ok(Header::Scheme(String::try_from(value)?)),
@@ -262,7 +244,7 @@ impl<'a> Name<'a> {
                     // TODO: better error handling
                     Err(_) => Err(DecoderError::InvalidStatusCode),
                 }
-            }
+            },
         }
     }
 

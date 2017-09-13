@@ -83,40 +83,34 @@ impl State {
         let local = Peer::Streaming;
 
         self.inner = match self.inner {
-            Idle => {
-                if eos {
-                    HalfClosedLocal(AwaitingHeaders)
-                } else {
-                    Open {
-                        local,
-                        remote: AwaitingHeaders,
-                    }
+            Idle => if eos {
+                HalfClosedLocal(AwaitingHeaders)
+            } else {
+                Open {
+                    local,
+                    remote: AwaitingHeaders,
                 }
-            }
+            },
             Open {
                 local: AwaitingHeaders,
                 remote,
-            } => {
-                if eos {
-                    HalfClosedLocal(remote)
-                } else {
-                    Open {
-                        local,
-                        remote,
-                    }
+            } => if eos {
+                HalfClosedLocal(remote)
+            } else {
+                Open {
+                    local,
+                    remote,
                 }
-            }
-            HalfClosedRemote(AwaitingHeaders) => {
-                if eos {
-                    Closed(None)
-                } else {
-                    HalfClosedRemote(local)
-                }
-            }
+            },
+            HalfClosedRemote(AwaitingHeaders) => if eos {
+                Closed(None)
+            } else {
+                HalfClosedRemote(local)
+            },
             _ => {
                 // All other transitions result in a protocol error
                 return Err(UnexpectedFrameType);
-            }
+            },
         };
 
         return Ok(());
@@ -142,7 +136,7 @@ impl State {
                         remote,
                     }
                 }
-            }
+            },
             ReservedRemote => {
                 initial = true;
 
@@ -154,31 +148,27 @@ impl State {
                         remote,
                     }
                 }
-            }
+            },
             Open {
                 local,
                 remote: AwaitingHeaders,
-            } => {
-                if eos {
-                    HalfClosedRemote(local)
-                } else {
-                    Open {
-                        local,
-                        remote,
-                    }
+            } => if eos {
+                HalfClosedRemote(local)
+            } else {
+                Open {
+                    local,
+                    remote,
                 }
-            }
-            HalfClosedLocal(AwaitingHeaders) => {
-                if eos {
-                    Closed(None)
-                } else {
-                    HalfClosedLocal(remote)
-                }
-            }
+            },
+            HalfClosedLocal(AwaitingHeaders) => if eos {
+                Closed(None)
+            } else {
+                HalfClosedLocal(remote)
+            },
             _ => {
                 // All other transitions result in a protocol error
                 return Err(RecvError::Connection(ProtocolError));
-            }
+            },
         };
 
         return Ok(initial);
@@ -190,7 +180,7 @@ impl State {
             Idle => {
                 self.inner = ReservedRemote;
                 Ok(())
-            }
+            },
             _ => Err(RecvError::Connection(ProtocolError)),
         }
     }
@@ -205,12 +195,12 @@ impl State {
                 trace!("recv_close: Open => HalfClosedRemote({:?})", local);
                 self.inner = HalfClosedRemote(local);
                 Ok(())
-            }
+            },
             HalfClosedLocal(..) => {
                 trace!("recv_close: HalfClosedLocal => Closed");
                 self.inner = Closed(None);
                 Ok(())
-            }
+            },
             _ => Err(RecvError::Connection(ProtocolError)),
         }
     }
@@ -219,14 +209,14 @@ impl State {
         use proto::Error::*;
 
         match self.inner {
-            Closed(..) => {}
+            Closed(..) => {},
             _ => {
                 trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
-                                        Proto(reason) => Some(Cause::Proto(reason)),
-                                        Io(..) => Some(Cause::Io),
-                                    });
-            }
+                    Proto(reason) => Some(Cause::Proto(reason)),
+                    Io(..) => Some(Cause::Io),
+                });
+            },
         }
     }
 
@@ -239,11 +229,11 @@ impl State {
                 // The remote side will continue to receive data.
                 trace!("send_close: Open => HalfClosedLocal({:?})", remote);
                 self.inner = HalfClosedLocal(remote);
-            }
+            },
             HalfClosedRemote(..) => {
                 trace!("send_close: HalfClosedRemote => Closed");
                 self.inner = Closed(None);
-            }
+            },
             _ => panic!("transition send_close on unexpected state"),
         }
     }

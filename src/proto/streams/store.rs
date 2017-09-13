@@ -106,9 +106,9 @@ where
         };
 
         Some(Ptr {
-                 key: Key(key),
-                 store: self,
-             })
+            key: Key(key),
+            store: self,
+        })
     }
 
     pub fn insert(&mut self, id: StreamId, val: Stream<B, P>) -> Ptr<B, P> {
@@ -125,17 +125,13 @@ where
         use self::ordermap::Entry::*;
 
         match self.ids.entry(id) {
-            Occupied(e) => {
-                Entry::Occupied(OccupiedEntry {
-                                    ids: e,
-                                })
-            }
-            Vacant(e) => {
-                Entry::Vacant(VacantEntry {
-                                  ids: e,
-                                  slab: &mut self.slab,
-                              })
-            }
+            Occupied(e) => Entry::Occupied(OccupiedEntry {
+                ids: e,
+            }),
+            Vacant(e) => Entry::Vacant(VacantEntry {
+                ids: e,
+                slab: &mut self.slab,
+            }),
         }
     }
 
@@ -151,9 +147,9 @@ where
             let key = *self.ids.get_index(i).unwrap().1;
 
             f(Ptr {
-                  key: Key(key),
-                  store: self,
-              })?;
+                key: Key(key),
+                store: self,
+            })?;
 
             // TODO: This logic probably could be better...
             let new_len = self.ids.len();
@@ -268,14 +264,14 @@ where
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
-            }
+            },
             None => {
                 trace!(" -> first entry");
                 self.indices = Some(store::Indices {
-                                        head: stream.key(),
-                                        tail: stream.key(),
-                                    });
-            }
+                    head: stream.key(),
+                    tail: stream.key(),
+                });
+            },
         }
 
         true

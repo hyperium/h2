@@ -61,11 +61,11 @@ where
     pub fn new(codec: Codec<T, Prioritized<B::Buf>>) -> Connection<T, P, B> {
         // TODO: Actually configure
         let streams = Streams::new(streams::Config {
-                                       max_remote_initiated: None,
-                                       init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-                                       max_local_initiated: None,
-                                       init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-                                   });
+            max_remote_initiated: None,
+            init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            max_local_initiated: None,
+            init_local_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+        });
 
         Connection {
             state: State::Open,
@@ -85,8 +85,10 @@ where
         // The order of these calls don't really matter too much as only one
         // should have pending work.
         try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
-        try_ready!(self.settings
-                       .send_pending_ack(&mut self.codec, &mut self.streams));
+        try_ready!(
+            self.settings
+                .send_pending_ack(&mut self.codec, &mut self.streams)
+        );
         try_ready!(self.streams.send_pending_refusal(&mut self.codec));
 
         Ok(().into())
@@ -112,7 +114,7 @@ where
                             try_ready!(self.streams.poll_complete(&mut self.codec));
 
                             return Ok(Async::NotReady);
-                        }
+                        },
                         // Attempting to read a frame resulted in a connection level
                         // error. This is handled by setting a GO_AWAY frame followed by
                         // terminating the connection.
@@ -127,17 +129,17 @@ where
 
                             // Transition to the going away state.
                             self.state = State::GoAway(frame);
-                        }
+                        },
                         // Attempting to read a frame resulted in a stream level error.
                         // This is handled by resetting the frame then trying to read
                         // another frame.
                         Err(Stream {
-                                id,
-                                reason,
-                            }) => {
+                            id,
+                            reason,
+                        }) => {
                             trace!("stream level error; id={:?}; reason={:?}", id, reason);
                             self.streams.send_reset(id, reason);
-                        }
+                        },
                         // Attempting to read a frame resulted in an I/O error. All
                         // active streams must be reset.
                         //
@@ -150,9 +152,9 @@ where
 
                             // Return the error
                             return Err(e);
-                        }
+                        },
                     }
-                }
+                },
                 State::GoAway(frame) => {
                     // Ensure the codec is ready to accept the frame
                     try_ready!(self.codec.poll_ready());
@@ -165,17 +167,17 @@ where
 
                     // GO_AWAY sent, transition the connection to an errored state
                     self.state = State::Flush(frame.reason());
-                }
+                },
                 State::Flush(reason) => {
                     // Flush the codec
                     try_ready!(self.codec.flush());
 
                     // Transition the state to error
                     self.state = State::Error(reason);
-                }
+                },
                 State::Error(reason) => {
                     return Err(reason.into());
-                }
+                },
             }
         }
     }
@@ -191,46 +193,46 @@ where
                 Some(Headers(frame)) => {
                     trace!("recv HEADERS; frame={:?}", frame);
                     self.streams.recv_headers(frame)?;
-                }
+                },
                 Some(Data(frame)) => {
                     trace!("recv DATA; frame={:?}", frame);
                     self.streams.recv_data(frame)?;
-                }
+                },
                 Some(Reset(frame)) => {
                     trace!("recv RST_STREAM; frame={:?}", frame);
                     self.streams.recv_reset(frame)?;
-                }
+                },
                 Some(PushPromise(frame)) => {
                     trace!("recv PUSH_PROMISE; frame={:?}", frame);
                     self.streams.recv_push_promise(frame)?;
-                }
+                },
                 Some(Settings(frame)) => {
                     trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
-                }
+                },
                 Some(GoAway(_)) => {
                     // TODO: handle the last_processed_id. Also, should this be
                     // handled as an error?
                     // let _ = RecvError::Proto(frame.reason());
                     return Ok(().into());
-                }
+                },
                 Some(Ping(frame)) => {
                     trace!("recv PING; frame={:?}", frame);
                     self.ping_pong.recv_ping(frame);
-                }
+                },
                 Some(WindowUpdate(frame)) => {
                     trace!("recv WINDOW_UPDATE; frame={:?}", frame);
                     self.streams.recv_window_update(frame)?;
-                }
+                },
                 Some(Priority(frame)) => {
                     trace!("recv PRIORITY; frame={:?}", frame);
                     // TODO: handle
-                }
+                },
                 None => {
                     // TODO: Is this correct?
                     trace!("codec closed");
                     return Ok(Async::Ready(()));
-                }
+                },
             }
         }
     }

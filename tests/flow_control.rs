@@ -241,8 +241,10 @@ fn recv_data_overflows_connection_window() {
         // client should see a flow control error
         let conn = h2.then(|res| {
             let err = res.unwrap_err();
-            assert_eq!(err.to_string(),
-                       "protocol error: flow-control protocol violated");
+            assert_eq!(
+                err.to_string(),
+                "protocol error: flow-control protocol violated"
+            );
             Ok::<(), ()>(())
         });
         conn.unwrap().join(req)
@@ -498,8 +500,8 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
 
             // Wait for the response
             h2.drive(GetResponse {
-                         stream: Some(stream),
-                     })
+                stream: Some(stream),
+            })
         })
         .and_then(|(h2, (response, mut stream))| {
             assert_eq!(response.status(), StatusCode::OK);
@@ -514,7 +516,9 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+        .recv_frame(
+            frames::headers(1).request("POST", "https://http2.akamai.com/"),
+        )
         .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))
@@ -553,8 +557,8 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
             stream.send_data("world".into(), true).unwrap();
 
             h2.drive(GetResponse {
-                         stream: Some(stream),
-                     })
+                stream: Some(stream),
+            })
         })
         .and_then(|(h2, (response, _))| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);

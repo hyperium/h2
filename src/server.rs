@@ -127,8 +127,8 @@ where
                 // If the socket is closed, don't return anything
                 // TODO: drop any pending streams
                 return Ok(None.into());
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         if let Some(inner) = self.connection.next_incoming() {
@@ -296,7 +296,7 @@ where
                     }
 
                     dst.send_data(chunk, false)?;
-                }
+                },
                 None => {
                     // TODO: It would be nice to not have to send an extra
                     // frame...
@@ -305,7 +305,7 @@ where
                     }
 
                     return Ok(Async::Ready(self.dst.take().unwrap()));
-                }
+                },
             }
         }
     }
@@ -416,12 +416,14 @@ impl proto::Peer for Peer {
         use http::response::Parts;
 
         // Extract the components of the HTTP request
-        let (Parts {
-                 status,
-                 headers,
-                 ..
-             },
-             _) = response.into_parts();
+        let (
+            Parts {
+                status,
+                headers,
+                ..
+            },
+            _,
+        ) = response.into_parts();
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
@@ -500,10 +502,10 @@ impl proto::Peer for Peer {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
                 return Err(RecvError::Stream {
-                               id: stream_id,
-                               reason: ProtocolError,
-                           });
-            }
+                    id: stream_id,
+                    reason: ProtocolError,
+                });
+            },
         };
 
         *request.headers_mut() = fields;

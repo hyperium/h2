@@ -70,24 +70,24 @@ impl<T> FramedRead<T> {
                 let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::Ping => {
                 let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::WindowUpdate => {
                 let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
                 let res = frame::Data::load(head, bytes.freeze());
 
                 // TODO: Should this always be connection level? Probably not...
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::Headers => {
                 // Drop the frame header
                 // TODO: Change to drain: carllerche/bytes#130
@@ -101,23 +101,23 @@ impl<T> FramedRead<T> {
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
-                                       id: head.stream_id(),
-                                       reason: ProtocolError,
-                                   });
-                    }
+                            id: head.stream_id(),
+                            reason: ProtocolError,
+                        });
+                    },
                     _ => return Err(Connection(ProtocolError)),
                 };
 
                 if headers.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
                     match headers.load_hpack(payload, &mut self.hpack) {
-                        Ok(_) => {}
+                        Ok(_) => {},
                         Err(frame::Error::MalformedMessage) => {
                             return Err(Stream {
-                                           id: head.stream_id(),
-                                           reason: ProtocolError,
-                                       });
-                        }
+                                id: head.stream_id(),
+                                reason: ProtocolError,
+                            });
+                        },
                         Err(_) => return Err(Connection(ProtocolError)),
                     }
 
@@ -125,25 +125,25 @@ impl<T> FramedRead<T> {
                 } else {
                     // Defer loading the frame
                     self.partial = Some(Partial {
-                                            frame: Continuable::Headers(headers),
-                                            buf: payload,
-                                        });
+                        frame: Continuable::Headers(headers),
+                        buf: payload,
+                    });
 
                     return Ok(None);
                 }
-            }
+            },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::GoAway => {
                 let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::PushPromise => {
                 let res = frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..]);
                 res.map_err(|_| Connection(ProtocolError))?.into()
-            }
+            },
             Kind::Priority => {
                 if head.stream_id() == 0 {
                     // Invalid stream identifier
@@ -157,13 +157,13 @@ impl<T> FramedRead<T> {
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
-                                       id: head.stream_id(),
-                                       reason: ProtocolError,
-                                   });
-                    }
+                            id: head.stream_id(),
+                            reason: ProtocolError,
+                        });
+                    },
                     Err(_) => return Err(Connection(ProtocolError)),
                 }
-            }
+            },
             Kind::Continuation => {
                 // TODO: Un-hack this
                 let end_of_headers = (head.flag() & 0x4) == 0x4;
@@ -189,24 +189,24 @@ impl<T> FramedRead<T> {
                         }
 
                         match frame.load_hpack(partial.buf, &mut self.hpack) {
-                            Ok(_) => {}
+                            Ok(_) => {},
                             Err(frame::Error::MalformedMessage) => {
                                 return Err(Stream {
-                                               id: head.stream_id(),
-                                               reason: ProtocolError,
-                                           });
-                            }
+                                    id: head.stream_id(),
+                                    reason: ProtocolError,
+                                });
+                            },
                             Err(_) => return Err(Connection(ProtocolError)),
                         }
 
                         frame.into()
-                    }
+                    },
                 }
-            }
+            },
             Kind::Unknown => {
                 // Unknown frames are ignored
                 return Ok(None);
-            }
+            },
         };
 
         Ok(Some(frame))

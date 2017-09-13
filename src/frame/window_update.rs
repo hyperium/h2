@@ -42,9 +42,9 @@ impl WindowUpdate {
         }
 
         Ok(WindowUpdate {
-               stream_id: head.stream_id(),
-               size_increment,
-           })
+            stream_id: head.stream_id(),
+            size_increment,
+        })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {

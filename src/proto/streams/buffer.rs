@@ -50,41 +50,41 @@ impl<T> Deque<T> {
 
     pub fn push_back(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
-                                      value,
-                                      next: None,
-                                  });
+            value,
+            next: None,
+        });
 
         match self.indices {
             Some(ref mut idxs) => {
                 buf.slab[idxs.tail].next = Some(key);
                 idxs.tail = key;
-            }
+            },
             None => {
                 self.indices = Some(Indices {
-                                        head: key,
-                                        tail: key,
-                                    });
-            }
+                    head: key,
+                    tail: key,
+                });
+            },
         }
     }
 
     pub fn push_front(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
-                                      value,
-                                      next: None,
-                                  });
+            value,
+            next: None,
+        });
 
         match self.indices {
             Some(ref mut idxs) => {
                 buf.slab[key].next = Some(idxs.head);
                 idxs.head = key;
-            }
+            },
             None => {
                 self.indices = Some(Indices {
-                                        head: key,
-                                        tail: key,
-                                    });
-            }
+                    head: key,
+                    tail: key,
+                });
+            },
         }
     }
 
@@ -102,7 +102,7 @@ impl<T> Deque<T> {
                 }
 
                 return Some(slot.value);
-            }
+            },
             None => None,
         }
     }

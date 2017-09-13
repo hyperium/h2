@@ -47,31 +47,27 @@ impl Encoder {
     #[allow(dead_code)]
     pub fn update_max_size(&mut self, val: usize) {
         match self.size_update {
-            Some(SizeUpdate::One(old)) => {
-                if val > old {
-                    if old > self.table.max_size() {
-                        self.size_update = Some(SizeUpdate::One(val));
-                    } else {
-                        self.size_update = Some(SizeUpdate::Two(old, val));
-                    }
-                } else {
-                    self.size_update = Some(SizeUpdate::One(val));
-                }
-            }
-            Some(SizeUpdate::Two(min, _)) => {
-                if val < min {
+            Some(SizeUpdate::One(old)) => if val > old {
+                if old > self.table.max_size() {
                     self.size_update = Some(SizeUpdate::One(val));
                 } else {
-                    self.size_update = Some(SizeUpdate::Two(min, val));
+                    self.size_update = Some(SizeUpdate::Two(old, val));
                 }
-            }
+            } else {
+                self.size_update = Some(SizeUpdate::One(val));
+            },
+            Some(SizeUpdate::Two(min, _)) => if val < min {
+                self.size_update = Some(SizeUpdate::One(val));
+            } else {
+                self.size_update = Some(SizeUpdate::Two(min, val));
+            },
             None => {
                 if val != self.table.max_size() {
                     // Don't bother writing a frame if the value already matches
                     // the table's max size.
                     self.size_update = Some(SizeUpdate::One(val));
                 }
-            }
+            },
         }
     }
 
@@ -124,13 +120,13 @@ impl Encoder {
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                                                   index: index,
-                                                   value: None,
-                                               });
+                            index: index,
+                            value: None,
+                        });
                     }
 
                     last_index = Some(index);
-                }
+                },
                 // The header does not have an associated name. This means that
                 // the name is the same as the previously yielded header. In
                 // which case, we skip table lookup and just use the same index
@@ -142,11 +138,11 @@ impl Encoder {
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                                                   index: last_index.unwrap(),
-                                                   value: Some(value),
-                                               });
+                            index: last_index.unwrap(),
+                            value: Some(value),
+                        });
                     }
-                }
+                },
             };
         }
 
@@ -158,14 +154,14 @@ impl Encoder {
             Some(SizeUpdate::One(val)) => {
                 self.table.resize(val);
                 encode_size_update(val, dst)?;
-            }
+            },
             Some(SizeUpdate::Two(min, max)) => {
                 self.table.resize(min);
                 self.table.resize(max);
                 encode_size_update(min, dst)?;
                 encode_size_update(max, dst)?;
-            }
-            None => {}
+            },
+            None => {},
         }
 
         Ok(())
@@ -175,12 +171,12 @@ impl Encoder {
         match *index {
             Index::Indexed(idx, _) => {
                 encode_int(idx, 7, 0x80, dst)?;
-            }
+            },
             Index::Name(idx, _) => {
                 let header = self.table.resolve(&index);
 
                 encode_not_indexed(idx, header.value_slice(), header.is_sensitive(), dst)?;
-            }
+            },
             Index::Inserted(_) => {
                 let header = self.table.resolve(&index);
 
@@ -194,7 +190,7 @@ impl Encoder {
 
                 encode_str(header.name().as_slice(), dst)?;
                 encode_str(header.value_slice(), dst)?;
-            }
+            },
             Index::InsertedValue(idx, _) => {
                 let header = self.table.resolve(&index);
 
@@ -202,15 +198,17 @@ impl Encoder {
 
                 encode_int(idx, 6, 0b01000000, dst)?;
                 encode_str(header.value_slice(), dst)?;
-            }
+            },
             Index::NotIndexed(_) => {
                 let header = self.table.resolve(&index);
 
-                encode_not_indexed2(header.name().as_slice(),
-                                    header.value_slice(),
-                                    header.is_sensitive(),
-                                    dst)?;
-            }
+                encode_not_indexed2(
+                    header.name().as_slice(),
+                    header.value_slice(),
+                    header.is_sensitive(),
+                    dst,
+                )?;
+            },
         }
 
         Ok(())
@@ -230,15 +228,17 @@ impl Encoder {
                 let idx = self.table.resolve_idx(last);
 
                 encode_not_indexed(idx, value.as_ref(), value.is_sensitive(), dst)?;
-            }
+            },
             Index::NotIndexed(_) => {
                 let last = self.table.resolve(last);
 
-                encode_not_indexed2(last.name().as_slice(),
-                                    value.as_ref(),
-                                    value.is_sensitive(),
-                                    dst)?;
-            }
+                encode_not_indexed2(
+                    last.name().as_slice(),
+                    value.as_ref(),
+                    value.is_sensitive(),
+                    dst,
+                )?;
+            },
         }
 
         Ok(())
@@ -570,8 +570,10 @@ mod test {
         // Using the name component of a previously indexed header (without
         // sensitive flag set)
 
-        let _ = encode(&mut encoder,
-                       vec![self::header("my-password", "not-so-secret")]);
+        let _ = encode(
+            &mut encoder,
+            vec![self::header("my-password", "not-so-secret")],
+        );
 
         let name = "my-password".parse().unwrap();
         let mut value = HeaderValue::from_bytes(b"12345").unwrap();
@@ -794,7 +796,7 @@ mod test {
         dst.clear();
 
         match encoder.encode(Some(resume), &mut input, &mut dst) {
-            Encode::Full => {}
+            Encode::Full => {},
             _ => panic!(),
         }
 

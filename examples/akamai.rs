@@ -27,11 +27,12 @@ pub fn main() {
     let _ = env_logger::init();
 
     let tls_client_config = std::sync::Arc::new({
-                                                    let mut c = rustls::ClientConfig::new();
-                                                    c.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-                                                    c.alpn_protocols.push(ALPN_H2.to_owned());
-                                                    c
-                                                });
+        let mut c = rustls::ClientConfig::new();
+        c.root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        c.alpn_protocols.push(ALPN_H2.to_owned());
+        c
+    });
 
     // Sync DNS resolution.
     let addr = "http2.akamai.com:443"

@@ -40,7 +40,7 @@ impl Reason {
             ConnectError => {
                 "connection established in response to a CONNECT request \
                  was reset or abnormally closed"
-            }
+            },
             EnhanceYourCalm => "detected excessive load generating behavior",
             InadequateSecurity => "security properties do not meet minimum requirements",
             Http11Required => "endpoint requires HTTP/1.1",

@@ -70,9 +70,11 @@ where
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
-        trace!("send_headers; frame={:?}; init_window={:?}",
-               frame,
-               self.init_window_sz);
+        trace!(
+            "send_headers; frame={:?}; init_window={:?}",
+            frame,
+            self.init_window_sz
+        );
 
         let end_stream = frame.is_end_stream();
 
@@ -261,10 +263,12 @@ where
                     let stream = &mut *stream;
 
                     stream.send_flow.dec_window(dec);
-                    trace!("decremented stream window; id={:?}; decr={}; flow={:?}",
-                           stream.id,
-                           dec,
-                           stream.send_flow);
+                    trace!(
+                        "decremented stream window; id={:?}; decr={}; flow={:?}",
+                        stream.id,
+                        dec,
+                        stream.send_flow
+                    );
 
                     // TODO: Probably try to assign capacity?
 

@@ -66,14 +66,14 @@ where
     pub fn new(config: Config) -> Self {
         Streams {
             inner: Arc::new(Mutex::new(Inner {
-                                           counts: Counts::new(&config),
-                                           actions: Actions {
-                                               recv: Recv::new(&config),
-                                               send: Send::new(&config),
-                                               task: None,
-                                           },
-                                           store: Store::new(),
-                                       })),
+                counts: Counts::new(&config),
+                actions: Actions {
+                    recv: Recv::new(&config),
+                    send: Send::new(&config),
+                    task: None,
+                },
+                store: Store::new(),
+            })),
         }
     }
 
@@ -85,27 +85,29 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => {
-                match me.actions.recv.open(id, &mut me.counts)? {
-                    Some(stream_id) => {
-                        let stream = Stream::new(stream_id,
-                                                 me.actions.send.init_window_sz(),
-                                                 me.actions.recv.init_window_sz());
+            Entry::Vacant(e) => match me.actions.recv.open(id, &mut me.counts)? {
+                Some(stream_id) => {
+                    let stream = Stream::new(
+                        stream_id,
+                        me.actions.send.init_window_sz(),
+                        me.actions.recv.init_window_sz(),
+                    );
 
-                        e.insert(stream)
-                    }
-                    None => return Ok(()),
-                }
-            }
+                    e.insert(stream)
+                },
+                None => return Ok(()),
+            },
         };
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |counts, stream| {
-            trace!("recv_headers; stream={:?}; state={:?}",
-                   stream.id,
-                   stream.state);
+            trace!(
+                "recv_headers; stream={:?}; state={:?}",
+                stream.id,
+                stream.state
+            );
 
             let res = if stream.state.is_recv_headers() {
                 actions.recv.recv_headers(frame, stream, counts)
@@ -160,7 +162,7 @@ where
                     .map_err(RecvError::Connection)?;
 
                 return Ok(());
-            }
+            },
         };
 
         let actions = &mut me.actions;
@@ -211,11 +213,11 @@ where
                 // This result is ignored as there is nothing to do when there
                 // is an error. The stream is reset by the function on error and
                 // the error is informational.
-                let _ = me.actions
-                    .send
-                    .recv_stream_window_update(frame.size_increment(),
-                                               &mut stream,
-                                               &mut me.actions.task);
+                let _ = me.actions.send.recv_stream_window_update(
+                    frame.size_increment(),
+                    &mut stream,
+                    &mut me.actions.task,
+                );
             } else {
                 me.actions
                     .recv
@@ -255,7 +257,7 @@ where
 
                     // Return the key
                     Some(key)
-                }
+                },
                 None => None,
             }
         };
@@ -294,9 +296,11 @@ where
         try_ready!(me.actions.recv.poll_complete(&mut me.store, dst));
 
         // Send any other pending frames
-        try_ready!(me.actions
-                       .send
-                       .poll_complete(&mut me.store, &mut me.counts, dst));
+        try_ready!(me.actions.send.poll_complete(
+            &mut me.store,
+            &mut me.counts,
+            dst
+        ));
 
         // Nothing else to do, track the task
         me.actions.task = Some(task::current());
@@ -335,9 +339,11 @@ where
             // Initialize a new stream. This fails if the connection is at capacity.
             let stream_id = me.actions.send.open(&mut me.counts)?;
 
-            let mut stream = Stream::new(stream_id,
-                                         me.actions.send.init_window_sz(),
-                                         me.actions.recv.init_window_sz());
+            let mut stream = Stream::new(
+                stream_id,
+                me.actions.send.init_window_sz(),
+                me.actions.recv.init_window_sz(),
+            );
 
             if *request.method() == Method::HEAD {
                 stream.content_length = ContentLength::Head;
@@ -363,9 +369,9 @@ where
         };
 
         Ok(StreamRef {
-               inner: self.inner.clone(),
-               key: key,
-           })
+            inner: self.inner.clone(),
+            key: key,
+        })
     }
 
     pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
@@ -374,16 +380,14 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => {
-                match me.actions.recv.open(id, &mut me.counts) {
-                    Ok(Some(stream_id)) => {
-                        let stream = Stream::new(stream_id, 0, 0);
+            Entry::Vacant(e) => match me.actions.recv.open(id, &mut me.counts) {
+                Ok(Some(stream_id)) => {
+                    let stream = Stream::new(stream_id, 0, 0);
 
-                        e.insert(stream)
-                    }
-                    _ => return,
-                }
-            }
+                    e.insert(stream)
+                },
+                _ => return,
+            },
         };
 
         let stream = me.store.resolve(key);
@@ -651,8 +655,8 @@ where
         res: Result<(), RecvError>,
     ) -> Result<(), RecvError> {
         if let Err(RecvError::Stream {
-                       reason, ..
-                   }) = res
+            reason, ..
+        }) = res
         {
             // Reset the stream.
             self.send.send_reset(reason, stream, &mut self.task);
