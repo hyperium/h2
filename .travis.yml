@@ -17,6 +17,11 @@ rust:
  - beta
  - stable
 
+matrix:
+  allow_failures:
+  - rust: nightly
+  fast_finish: true
+
 script:
   # Run tests
   - cargo test
