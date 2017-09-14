@@ -16,6 +16,7 @@ impl GoAway {
         }
     }
 
+    #[cfg(feature = "unstable")]
     pub fn last_stream_id(&self) -> StreamId {
         self.last_stream_id
     }

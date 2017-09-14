@@ -11,21 +11,21 @@ pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 // ==== helper functions to easily construct h2 Frames ====
 
-pub fn headers<T>(id: T) -> MockHeaders
+pub fn headers<T>(id: T) -> Mock<frame::Headers>
     where T: Into<StreamId>,
 {
-    MockHeaders(frame::Headers::new(
+    Mock(frame::Headers::new(
         id.into(),
         frame::Pseudo::default(),
         HeaderMap::default(),
     ))
 }
 
-pub fn data<T, B>(id: T, buf: B) -> MockData
+pub fn data<T, B>(id: T, buf: B) -> Mock<frame::Data>
     where T: Into<StreamId>,
           B: Into<Bytes>,
 {
-    MockData(frame::Data::new(id.into(), buf.into()))
+    Mock(frame::Data::new(id.into(), buf.into()))
 }
 
 pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
@@ -34,17 +34,38 @@ pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
     frame::WindowUpdate::new(id.into(), sz)
 }
 
-pub fn go_away<T>(id: T) -> MockGoAway
+pub fn go_away<T>(id: T) -> Mock<frame::GoAway>
     where T: Into<StreamId>,
 {
-    MockGoAway(frame::GoAway::new(id.into(), frame::Reason::NoError))
+    Mock(frame::GoAway::new(id.into(), frame::Reason::NoError))
+}
+
+pub fn reset<T>(id: T) -> Mock<frame::Reset>
+    where T: Into<StreamId>,
+{
+    Mock(frame::Reset::new(id.into(), frame::Reason::NoError))
+}
+
+// === Generic helpers of all frame types
+
+pub struct Mock<T>(T);
+
+impl<T: fmt::Debug> fmt::Debug for Mock<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl<T> From<Mock<T>> for Frame
+where T: Into<Frame> {
+    fn from(src: Mock<T>) -> Self {
+        src.0.into()
+    }
 }
 
 // Headers helpers
 
-pub struct MockHeaders(frame::Headers);
-
-impl MockHeaders {
+impl Mock<frame::Headers> {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
         where M: HttpTryInto<http::Method>,
               U: HttpTryInto<http::Uri>,
@@ -57,7 +78,7 @@ impl MockHeaders {
             frame::Pseudo::request(method, uri),
             fields
         );
-        MockHeaders(frame)
+        Mock(frame)
     }
 
     pub fn response<S>(self, status: S) -> Self
@@ -70,13 +91,13 @@ impl MockHeaders {
             frame::Pseudo::response(status),
             fields
         );
-        MockHeaders(frame)
+        Mock(frame)
     }
 
     pub fn fields(self, fields: HeaderMap) -> Self {
         let (id, pseudo, _) = self.into_parts();
         let frame = frame::Headers::new(id, pseudo, fields);
-        MockHeaders(frame)
+        Mock(frame)
     }
 
     pub fn eos(mut self) -> Self {
@@ -93,49 +114,23 @@ impl MockHeaders {
     }
 }
 
-impl fmt::Debug for MockHeaders {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl From<MockHeaders> for Frame {
-    fn from(src: MockHeaders) -> Self {
-        Frame::Headers(src.0)
-    }
-}
-
-impl From<MockHeaders> for SendFrame {
-    fn from(src: MockHeaders) -> Self {
+impl From<Mock<frame::Headers>> for SendFrame {
+    fn from(src: Mock<frame::Headers>) -> Self {
         Frame::Headers(src.0)
     }
 }
 
 // Data helpers
 
-pub struct MockData(frame::Data);
-
-impl MockData {
+impl Mock<frame::Data> {
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream(true);
         self
     }
 }
 
-impl fmt::Debug for MockData {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl From<MockData> for Frame {
-    fn from(src: MockData) -> Self {
-        Frame::Data(src.0)
-    }
-}
-
-impl From<MockData> for SendFrame {
-    fn from(src: MockData) -> Self {
+impl From<Mock<frame::Data>> for SendFrame {
+    fn from(src: Mock<frame::Data>) -> Self {
         let id = src.0.stream_id();
         let eos = src.0.is_end_stream();
         let payload = src.0.into_payload();
@@ -145,32 +140,32 @@ impl From<MockData> for SendFrame {
     }
 }
 
-
 // GoAway helpers
 
-pub struct MockGoAway(frame::GoAway);
-
-impl MockGoAway {
+impl Mock<frame::GoAway> {
     pub fn flow_control(self) -> Self {
-        MockGoAway(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
+        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
     }
 }
 
-impl fmt::Debug for MockGoAway {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl From<MockGoAway> for Frame {
-    fn from(src: MockGoAway) -> Self {
+impl From<Mock<frame::GoAway>> for SendFrame {
+    fn from(src: Mock<frame::GoAway>) -> Self {
         Frame::GoAway(src.0)
     }
 }
 
-impl From<MockGoAway> for SendFrame {
-    fn from(src: MockGoAway) -> Self {
-        Frame::GoAway(src.0)
+// ==== Reset helpers
+
+impl Mock<frame::Reset> {
+    pub fn flow_control(self) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, frame::Reason::FlowControlError))
+    }
+}
+
+impl From<Mock<frame::Reset>> for SendFrame {
+    fn from(src: Mock<frame::Reset>) -> Self {
+        Frame::Reset(src.0)
     }
 }
 
