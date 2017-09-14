@@ -222,6 +222,12 @@ where
         self.flow.assign_capacity(capacity);
         stream.recv_flow.assign_capacity(capacity);
 
+        if self.flow.unclaimed_capacity().is_some() {
+            if let Some(task) = task.take() {
+                task.notify();
+            }
+        }
+
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
             self.pending_window_updates.push(stream);
