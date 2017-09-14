@@ -29,7 +29,7 @@ This crate is intended to only be an implementation of the HTTP/2.0
 specification. It does not handle:
 
 * Managing TCP connections
-* HTTP 1.0 ugprade
+* HTTP 1.0 upgrade
 * TLS
 * Any feature not described by the HTTP/2.0 specification.
 
