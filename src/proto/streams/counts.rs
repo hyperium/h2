@@ -34,9 +34,9 @@ where
     /// Create a new `Counts` using the provided configuration values.
     pub fn new(config: &Config) -> Self {
         Counts {
-            max_send_streams: config.max_local_initiated,
+            max_send_streams: config.local_max_initiated,
             num_send_streams: 0,
-            max_recv_streams: config.max_remote_initiated,
+            max_recv_streams: config.remote_max_initiated,
             num_recv_streams: 0,
             blocked_open: None,
             _p: PhantomData,

@@ -38,6 +38,9 @@ where
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
+    /// If push promises are allowed to be recevied.
+    is_push_enabled: bool,
+
     _p: PhantomData<B>,
 }
 
@@ -71,7 +74,7 @@ where
         flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE);
 
         Recv {
-            init_window_sz: config.init_local_window_sz,
+            init_window_sz: config.local_init_window_sz,
             flow: flow,
             next_stream_id: next_stream_id.into(),
             pending_window_updates: store::Queue::new(),
@@ -79,6 +82,7 @@ where
             pending_accept: store::Queue::new(),
             buffer: Buffer::new(),
             refused: None,
+            is_push_enabled: config.local_push_enabled,
             _p: PhantomData,
         }
     }
@@ -429,10 +433,20 @@ where
         // TODO: Are there other rules?
         if P::is_server() {
             // The remote is a client and cannot reserve
+            trace!("recv_push_promise; error remote is client");
             return Err(RecvError::Connection(ProtocolError));
         }
 
         if !promised_id.is_server_initiated() {
+            trace!(
+                "recv_push_promise; error promised id is invalid {:?}",
+                promised_id
+            );
+            return Err(RecvError::Connection(ProtocolError));
+        }
+
+        if !self.is_push_enabled {
+            trace!("recv_push_promise; error push is disabled");
             return Err(RecvError::Connection(ProtocolError));
         }
 
