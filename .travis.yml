@@ -8,19 +8,14 @@ cache:
   apt: true
 
 addons:
-    apt:
-        packages:
-            - libssl-dev
+  apt:
+    packages:
+    - libssl-dev
 
 rust:
- - nightly
- - beta
- - stable
-
-matrix:
-  allow_failures:
-  - rust: nightly
-  fast_finish: true
+- nightly
+- beta
+- stable
 
 script:
   # Run tests
@@ -33,6 +28,8 @@ after_success:
   - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
 
 jobs:
+  allow_failures:
+  - rust: nightly
   include:
     - stage: docs
       script: cargo doc --no-deps
