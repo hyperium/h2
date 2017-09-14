@@ -63,6 +63,7 @@ impl<T, B> Codec<T, B> {
     /// words, if a frame is currently in process of being decoded with a frame
     /// size greater than `val` but less than the max frame size in effect
     /// before calling this function, then the frame will be allowed.
+    #[cfg(feature = "unstable")]
     #[inline]
     pub fn set_max_recv_frame_size(&mut self, val: usize) {
         // TODO: should probably make some assertions about max frame size...
@@ -73,6 +74,7 @@ impl<T, B> Codec<T, B> {
     ///
     /// This is the largest size this codec will accept from the wire. Larger
     /// frames will be rejected.
+    #[cfg(feature = "unstable")]
     #[inline]
     pub fn max_recv_frame_size(&self) -> usize {
         self.inner.max_frame_size()

@@ -326,6 +326,14 @@ pub trait HandleFutureExt {
         }
     }
 
+    fn ignore_settings(self) -> Box<Future<Item=Handle, Error=()>>
+        where Self: Sized + 'static,
+              Self: Future<Item=(frame::Settings, Handle)>,
+              Self::Error: fmt::Debug,
+    {
+        Box::new(self.map(|(_settings, handle)| handle).unwrap())
+    }
+
     fn recv_frame<T>(self, frame: T) -> RecvFrame<<Self as IntoRecvFrame>::Future>
         where Self: IntoRecvFrame + Sized,
               T: Into<Frame>,
