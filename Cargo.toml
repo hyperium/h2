@@ -3,6 +3,15 @@ name = "h2"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 
+[badges.travis-ci]
+repository = "carllerche/h2"
+branch = "master"
+
+[badges.codecov]
+repository = "carllerche/h2"
+branch = "master"
+service = "github"
+
 [features]
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards

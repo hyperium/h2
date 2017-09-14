@@ -1,43 +1,55 @@
 ---
 language: rust
+dist: trusty
 sudo: false
 
-cache: cargo
+cache:
+  cargo: true
+  apt: true
 
 addons:
   apt:
     packages:
-    - libcurl4-openssl-dev
-    - libelf-dev
-    - libdw-dev
+    - libssl-dev
 
-matrix:
-  include:
-    - rust: stable
-    - rust: beta
-    - rust: nightly
-      install:
-        - pip install --user travis-cargo codecov && export PATH=$HOME/.local/bin:$PATH
-        - if ! cargo fmt --help >/dev/null 2>&1 ; then cargo install rustfmt-nightly ; fi
-      after_script:
-        # Check formatting
-        - cargo fmt -- --write-mode=diff
-      after_success:
-        - travis-cargo doc-upload
+rust:
+- nightly
+- beta
+- stable
 
 script:
   # Run tests
   - cargo test
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
-  # Generate docs
-  - cargo doc --no-deps
 
 after_success:
-  # generate kcov coverage data
-  - travis-cargo coverage --no-sudo
-  # upload to codecov.io
-  - codecov --file target/kcov/kcov-merged/cobertura.xml
+  - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
+  - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
+
+jobs:
+  allow_failures:
+  - rust: nightly
+  include:
+    - stage: docs
+      script: cargo doc --no-deps
+      install: skip
+      deploy:
+        provider:  pages
+        skip_cleanup: true
+        github_token: $GH_TOKEN
+        target_branch: gh-pages
+        local_dir: target/doc
+        on:
+          branch: master
+          repo: carllerche/h2
+          rust: nightly
+      after_success: skip
+    - stage: fmt
+      rust: nightly
+      install: if ! cargo fmt --help >/dev/null 2>&1 ; then cargo install rustfmt-nightly ; fi
+      script: cargo fmt -- --write-mode=diff
+      after_success: skip
 
 env:
   global:
