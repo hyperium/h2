@@ -672,6 +672,7 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
 
 #[test]
 fn connection_notified_on_released_capacity() {
+    use futures::sync::oneshot;
     use std::thread;
     use std::sync::mpsc;
 
@@ -684,9 +685,16 @@ fn connection_notified_on_released_capacity() {
 
     let (tx, rx) = mpsc::channel();
 
+    // Because threading is fun
+    let (settings_tx, settings_rx) = oneshot::channel();
+
     let th1 = thread::spawn(move || {
         srv.assert_client_handshake().unwrap()
             .recv_settings()
+            .map(move |v| {
+                settings_tx.send(()).unwrap();
+                v
+            })
             // Get the first request
             .recv_frame(
                 frames::headers(1)
@@ -715,7 +723,9 @@ fn connection_notified_on_released_capacity() {
 
 
     let th2 = thread::spawn(move || {
-        let mut h2 = Client::handshake(io).wait().unwrap();
+        let h2 = Client::handshake(io).wait().unwrap();
+
+        let (mut h2, _) = h2.drive(settings_rx).wait().unwrap();
 
         let request = Request::get("https://example.com/a")
             .body(())
