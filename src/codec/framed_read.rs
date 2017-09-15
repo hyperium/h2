@@ -39,7 +39,7 @@ enum Continuable {
     Headers(frame::Headers),
     // Decode the Continuation frame but ignore it...
     // Ignore(StreamId),
-    // PushPromise(frame::PushPromise),
+    PushPromise(frame::PushPromise),
 }
 
 impl<T> FramedRead<T> {
@@ -143,8 +143,38 @@ impl<T> FramedRead<T> {
                 res.map_err(|_| Connection(ProtocolError))?.into()
             },
             Kind::PushPromise => {
-                let res = frame::PushPromise::load(head, &bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                // Drop the frame header
+                // TODO: Change to drain: carllerche/bytes#130
+                let _ = bytes.split_to(frame::HEADER_LEN);
+
+                // Parse the frame w/o parsing the payload
+                let (mut push, payload) = frame::PushPromise::load(head, bytes)
+                    .map_err(|_| Connection(ProtocolError))?;
+
+                if push.is_end_headers() {
+                    // Load the HPACK encoded headers & return the frame
+                    match push.load_hpack(payload, &mut self.hpack) {
+                        Ok(_) => {},
+                        Err(frame::Error::MalformedMessage) => {
+                            return Err(Stream {
+                                id: head.stream_id(),
+                                reason: ProtocolError,
+                            });
+                        },
+                        Err(_) => return Err(Connection(ProtocolError)),
+                    }
+
+                    push.into()
+                } else {
+                    // Defer loading the frame
+                    self.partial = Some(Partial {
+                        frame: Continuable::PushPromise(push),
+                        buf: payload,
+                    });
+
+                    return Ok(None);
+                }
+
             },
             Kind::Priority => {
                 if head.stream_id() == 0 {
@@ -183,27 +213,23 @@ impl<T> FramedRead<T> {
                     return Ok(None);
                 }
 
-                match partial.frame {
-                    Continuable::Headers(mut frame) => {
-                        // The stream identifiers must match
-                        if frame.stream_id() != head.stream_id() {
-                            return Err(Connection(ProtocolError));
-                        }
-
-                        match frame.load_hpack(partial.buf, &mut self.hpack) {
-                            Ok(_) => {},
-                            Err(frame::Error::MalformedMessage) => {
-                                return Err(Stream {
-                                    id: head.stream_id(),
-                                    reason: ProtocolError,
-                                });
-                            },
-                            Err(_) => return Err(Connection(ProtocolError)),
-                        }
-
-                        frame.into()
-                    },
+                // The stream identifiers must match
+                if partial.frame.stream_id() != head.stream_id() {
+                    return Err(Connection(ProtocolError));
                 }
+
+                match partial.frame.load_hpack(partial.buf, &mut self.hpack) {
+                    Ok(_) => {},
+                    Err(frame::Error::MalformedMessage) => {
+                        return Err(Stream {
+                            id: head.stream_id(),
+                            reason: ProtocolError,
+                        });
+                    },
+                    Err(_) => return Err(Connection(ProtocolError)),
+                }
+
+                partial.frame.into()
             },
             Kind::Unknown => {
                 // Unknown frames are ignored
@@ -275,4 +301,31 @@ fn map_err(err: io::Error) -> RecvError {
         }
     }
     err.into()
+}
+
+// ===== impl Continuable =====
+
+impl Continuable {
+    fn stream_id(&self) -> frame::StreamId {
+        match *self {
+            Continuable::Headers(ref h) => h.stream_id(),
+            Continuable::PushPromise(ref p) => p.stream_id(),
+        }
+    }
+
+    fn load_hpack(&mut self, src: BytesMut, decoder: &mut hpack::Decoder) -> Result<(), frame::Error> {
+        match *self {
+            Continuable::Headers(ref mut h) => h.load_hpack(src, decoder),
+            Continuable::PushPromise(ref mut p) => p.load_hpack(src, decoder),
+        }
+    }
+}
+
+impl<T> From<Continuable> for Frame<T> {
+    fn from(cont: Continuable) -> Self {
+        match cont {
+            Continuable::Headers(headers) => headers.into(),
+            Continuable::PushPromise(push) => push.into(),
+        }
+    }
 }
