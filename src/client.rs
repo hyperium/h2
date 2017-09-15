@@ -170,6 +170,12 @@ impl Builder {
         self
     }
 
+    /// Set the max frame size of received frames.
+    pub fn max_frame_size(&mut self, max: u32) -> &mut Self {
+        self.settings.set_max_frame_size(Some(max));
+        self
+    }
+
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
@@ -202,6 +208,10 @@ where
 
         // Create the codec
         let mut codec = Codec::new(io);
+
+        if let Some(max) = self.settings.max_frame_size() {
+            codec.set_max_recv_frame_size(max as usize);
+        }
 
         // Send initial settings frame
         codec

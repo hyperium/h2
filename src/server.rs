@@ -93,6 +93,10 @@ where
         // Create the codec
         let mut codec = Codec::new(io);
 
+        if let Some(max) = settings.max_frame_size() {
+            codec.set_max_recv_frame_size(max as usize);
+        }
+
         // Send initial settings frame
         codec
             .buffer(settings.clone().into())
@@ -180,13 +184,20 @@ impl Builder {
         self
     }
 
+    /// Set the max frame size of received frames.
+    pub fn max_frame_size(&mut self, max: u32) -> &mut Self {
+        self.settings.set_max_frame_size(Some(max));
+        self
+    }
+
     /// Bind an H2 server connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
     /// handshake has been completed.
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
-        where T: AsyncRead + AsyncWrite + 'static,
-              B: IntoBuf + 'static
+    where
+        T: AsyncRead + AsyncWrite + 'static,
+        B: IntoBuf + 'static,
     {
         Server::handshake2(io, self.settings.clone())
     }

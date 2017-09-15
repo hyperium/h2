@@ -227,7 +227,7 @@ impl<T, B> FramedWrite<T, B> {
 
     /// Set the peer's max frame size.
     pub fn set_max_frame_size(&mut self, val: usize) {
-        assert!(val <= frame::MAX_MAX_FRAME_SIZE);
+        assert!(val <= frame::MAX_MAX_FRAME_SIZE as usize);
         self.max_frame_size = val as FrameSize;
     }
 

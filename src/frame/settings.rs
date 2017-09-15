@@ -46,7 +46,7 @@ pub const DEFAULT_MAX_FRAME_SIZE: FrameSize = 16_384;
 pub const MAX_INITIAL_WINDOW_SIZE: usize = (1 << 31) - 1;
 
 /// MAX_FRAME_SIZE upper bound
-pub const MAX_MAX_FRAME_SIZE: usize = (1 << 24) - 1;
+pub const MAX_MAX_FRAME_SIZE: FrameSize = (1 << 24) - 1;
 
 // ===== impl Settings =====
 
@@ -76,6 +76,13 @@ impl Settings {
 
     pub fn max_frame_size(&self) -> Option<u32> {
         self.max_frame_size
+    }
+
+    pub fn set_max_frame_size(&mut self, size: Option<u32>) {
+        if let Some(val) = size {
+            assert!(DEFAULT_MAX_FRAME_SIZE <= val && val <= MAX_MAX_FRAME_SIZE);
+        }
+        self.max_frame_size = size;
     }
 
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
@@ -131,7 +138,7 @@ impl Settings {
                     settings.initial_window_size = Some(val);
                 },
                 Some(MaxFrameSize(val)) => {
-                    if val < DEFAULT_MAX_FRAME_SIZE || val as usize > MAX_MAX_FRAME_SIZE {
+                    if val < DEFAULT_MAX_FRAME_SIZE || val > MAX_MAX_FRAME_SIZE {
                         return Err(Error::InvalidSettingValue);
                     } else {
                         settings.max_frame_size = Some(val);

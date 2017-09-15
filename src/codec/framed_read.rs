@@ -1,6 +1,6 @@
 use codec::RecvError;
-use frame::{self, Frame, Kind};
-use frame::DEFAULT_SETTINGS_HEADER_TABLE_SIZE;
+use frame::{self, Frame, Kind, Reason};
+use frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
 use frame::Reason::*;
 
 use hpack;
@@ -8,6 +8,8 @@ use hpack;
 use futures::*;
 
 use bytes::BytesMut;
+
+use std::io;
 
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
@@ -228,9 +230,12 @@ impl<T> FramedRead<T> {
     }
 
     /// Updates the max frame size setting.
+    ///
+    /// Must be within 16,384 and 16,777,215.
     #[cfg(feature = "unstable")]
     #[inline]
     pub fn set_max_frame_size(&mut self, val: usize) {
+        assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
         self.inner.set_max_frame_length(val)
     }
 }
@@ -245,7 +250,7 @@ where
     fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         loop {
             trace!("poll");
-            let bytes = match try_ready!(self.inner.poll()) {
+            let bytes = match try_ready!(self.inner.poll().map_err(map_err)) {
                 Some(bytes) => bytes,
                 None => return Ok(Async::Ready(None)),
             };
@@ -257,4 +262,18 @@ where
             }
         }
     }
+}
+
+fn map_err(err: io::Error) -> RecvError {
+    use std::error::Error;
+
+    if let io::ErrorKind::InvalidData = err.kind() {
+        // woah, brittle...
+        // TODO: with tokio-io v0.1.4, we can check
+        // err.get_ref().is::<tokio_io::length_delimited::FrameTooBig>()
+        if err.description() == "frame size too big" {
+            return RecvError::Connection(Reason::FrameSizeError);
+        }
+    }
+    err.into()
 }

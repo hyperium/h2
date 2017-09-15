@@ -146,6 +146,10 @@ impl Mock<frame::GoAway> {
     pub fn flow_control(self) -> Self {
         Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
     }
+
+    pub fn frame_size(self) -> Self {
+        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FrameSizeError))
+    }
 }
 
 impl From<Mock<frame::GoAway>> for SendFrame {

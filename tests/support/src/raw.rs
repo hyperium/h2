@@ -44,3 +44,9 @@ impl<'a> Chunk for &'a str {
         dst.extend(self.as_bytes())
     }
 }
+
+impl Chunk for Vec<u8> {
+    fn push(&self, dst: &mut Vec<u8>) {
+        dst.extend(self.iter())
+    }
+}
