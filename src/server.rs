@@ -21,7 +21,7 @@ pub struct Server<T, B: IntoBuf> {
 }
 
 /// Build a Server
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Builder {
     settings: Settings,
 }

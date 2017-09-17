@@ -36,7 +36,7 @@ pub struct Body<B: IntoBuf> {
 }
 
 /// Build a Client.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Builder {
     settings: Settings,
 }
