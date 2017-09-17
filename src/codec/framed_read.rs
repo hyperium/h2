@@ -232,7 +232,6 @@ impl<T> FramedRead<T> {
     /// Updates the max frame size setting.
     ///
     /// Must be within 16,384 and 16,777,215.
-    #[cfg(feature = "unstable")]
     #[inline]
     pub fn set_max_frame_size(&mut self, val: usize) {
         assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
