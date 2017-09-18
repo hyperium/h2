@@ -64,12 +64,13 @@ where
     ) -> Connection<T, P, B> {
         // TODO: Actually configure
         let streams = Streams::new(streams::Config {
-            max_remote_initiated: None,
-            init_remote_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            max_local_initiated: None,
-            init_local_window_sz: settings
+            local_init_window_sz: settings
                 .initial_window_size()
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
+            local_max_initiated: None,
+            local_push_enabled: settings.is_push_enabled(),
+            remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            remote_max_initiated: None,
         });
         Connection {
             state: State::Open,

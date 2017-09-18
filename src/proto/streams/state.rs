@@ -285,6 +285,7 @@ impl State {
                 ..
             } => true,
             HalfClosedLocal(AwaitingHeaders) => true,
+            ReservedRemote => true,
             _ => false,
         }
     }

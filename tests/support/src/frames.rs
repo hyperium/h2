@@ -28,6 +28,18 @@ pub fn data<T, B>(id: T, buf: B) -> Mock<frame::Data>
     Mock(frame::Data::new(id.into(), buf.into()))
 }
 
+pub fn push_promise<T1, T2>(id: T1, promised: T2) -> Mock<frame::PushPromise>
+where T1: Into<StreamId>,
+      T2: Into<StreamId>,
+{
+    Mock(frame::PushPromise::new(
+        id.into(),
+        promised.into(),
+        frame::Pseudo::default(),
+        HeaderMap::default(),
+    ))
+}
+
 pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
     where T: Into<StreamId>,
 {
@@ -140,9 +152,54 @@ impl From<Mock<frame::Data>> for SendFrame {
     }
 }
 
+
+// PushPromise helpers
+
+impl Mock<frame::PushPromise> {
+    pub fn request<M, U>(self, method: M, uri: U) -> Self
+    where M: HttpTryInto<http::Method>,
+          U: HttpTryInto<http::Uri>,
+    {
+        let method = method.try_into().unwrap();
+        let uri = uri.try_into().unwrap();
+        let (id, promised, _, fields) = self.into_parts();
+        let frame = frame::PushPromise::new(
+            id,
+            promised,
+            frame::Pseudo::request(method, uri),
+            fields
+        );
+        Mock(frame)
+    }
+
+    pub fn fields(self, fields: HeaderMap) -> Self {
+        let (id, promised, pseudo, _) = self.into_parts();
+        let frame = frame::PushPromise::new(id, promised, pseudo, fields);
+        Mock(frame)
+    }
+
+    fn into_parts(self) -> (StreamId, StreamId, frame::Pseudo, HeaderMap) {
+        assert!(self.0.is_end_headers(), "unset eoh will be lost");
+        let id = self.0.stream_id();
+        let promised = self.0.promised_id();
+        let parts = self.0.into_parts();
+        (id, promised, parts.0, parts.1)
+    }
+}
+
+impl From<Mock<frame::PushPromise>> for SendFrame {
+    fn from(src: Mock<frame::PushPromise>) -> Self {
+        Frame::PushPromise(src.0)
+    }
+}
+
 // GoAway helpers
 
 impl Mock<frame::GoAway> {
+    pub fn protocol_error(self) -> Self {
+        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::ProtocolError))
+    }
+
     pub fn flow_control(self) -> Self {
         Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
     }

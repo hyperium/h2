@@ -127,8 +127,9 @@ where
                 }
             },
             Frame::PushPromise(v) => {
-                debug!("unimplemented PUSH_PROMISE write; frame={:?}", v);
-                unimplemented!();
+                if let Some(continuation) = v.encode(&mut self.hpack, self.buf.get_mut()) {
+                    self.next = Some(Next::Continuation(continuation));
+                }
             },
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());

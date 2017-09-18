@@ -31,15 +31,18 @@ use http::{Request, Response};
 
 #[derive(Debug)]
 pub struct Config {
-    /// Maximum number of remote initiated streams
-    pub max_remote_initiated: Option<usize>,
-
-    /// Initial window size of remote initiated streams
-    pub init_remote_window_sz: WindowSize,
+    /// Initial window size of locally initiated streams
+    pub local_init_window_sz: WindowSize,
 
     /// Maximum number of locally initiated streams
-    pub max_local_initiated: Option<usize>,
+    pub local_max_initiated: Option<usize>,
 
-    /// Initial window size of locally initiated streams
-    pub init_local_window_sz: WindowSize,
+    /// If the local peer is willing to receive push promises
+    pub local_push_enabled: bool,
+
+    /// Initial window size of remote initiated streams
+    pub remote_init_window_sz: WindowSize,
+
+    /// Maximum number of remote initiated streams
+    pub remote_max_initiated: Option<usize>,
 }
