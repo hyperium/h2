@@ -176,6 +176,12 @@ impl Builder {
         self
     }
 
+    /// Enable or disable the server to send push promises.
+    pub fn enable_push(&mut self, enabled: bool) -> &mut Self {
+        self.settings.set_enable_push(enabled);
+        self
+    }
+
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
