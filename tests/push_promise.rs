@@ -28,7 +28,7 @@ fn recv_push_works() {
             .uri("https://http2.akamai.com/")
             .body(())
             .unwrap();
-        let req = h2.request(request, true)
+        let req = h2.send_request(request, true)
             .unwrap()
             .unwrap()
             .and_then(|resp| {
@@ -71,7 +71,7 @@ fn recv_push_when_push_disabled_is_conn_error() {
                 .uri("https://http2.akamai.com/")
                 .body(())
                 .unwrap();
-            let req = h2.request(request, true).unwrap().then(|res| {
+            let req = h2.send_request(request, true).unwrap().then(|res| {
                 let err = res.unwrap_err();
                 assert_eq!(
                     err.to_string(),
