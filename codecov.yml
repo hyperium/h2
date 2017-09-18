@@ -4,6 +4,9 @@ codecov:
 
 coverage:
   ignore:
+    - fixtures/.*
+    - examples/.*
+    - util/.*
     - tests/.*
   notify:
     slack:
