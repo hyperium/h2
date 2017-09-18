@@ -4,7 +4,11 @@ codecov:
 
 coverage:
   ignore:
+    - fixtures/.*
+    - examples/.*
+    - util/.*
     - tests/.*
+    - src/hpack/test/.*
   notify:
     slack:
       default:
