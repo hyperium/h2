@@ -29,7 +29,7 @@ fn send_recv_headers_only() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.request(request, true).unwrap();
+    let mut stream = h2.send_request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
@@ -71,7 +71,7 @@ fn send_recv_data() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.request(request, false).unwrap();
+    let mut stream = h2.send_request(request, false).unwrap();
 
     // Reserve send capacity
     stream.reserve_capacity(5);
@@ -128,7 +128,7 @@ fn send_headers_recv_data_single_frame() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.request(request, true).unwrap();
+    let mut stream = h2.send_request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -160,7 +160,7 @@ fn closed_streams_are_released() {
             let request = Request::get("https://example.com/").body(()).unwrap();
 
             // Send request
-            let stream = h2.request(request, true).unwrap();
+            let stream = h2.send_request(request, true).unwrap();
             h2.drive(stream)
         })
         .and_then(|(h2, response)| {
@@ -207,7 +207,7 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
             .body(())
             .unwrap();
 
-        let req = h2.request(request, true)
+        let req = h2.send_request(request, true)
             .unwrap()
             .unwrap()
             .and_then(|resp| {
@@ -265,7 +265,7 @@ fn configure_max_frame_size() {
                 .body(())
                 .unwrap();
 
-            let req = h2.request(request, true)
+            let req = h2.send_request(request, true)
                 .unwrap()
                 .expect("response")
                 .and_then(|resp| {

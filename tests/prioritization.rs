@@ -33,7 +33,7 @@ fn single_stream_send_large_body() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.request(request, false).unwrap();
+    let mut stream = h2.send_request(request, false).unwrap();
 
     // Reserve capacity to send the payload
     stream.reserve_capacity(payload.len());
@@ -87,7 +87,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.request(request, false).unwrap();
+    let mut stream = h2.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -152,7 +152,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.request(request, false).unwrap();
+    let mut stream = h2.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -185,7 +185,7 @@ fn send_data_receive_window_update() {
                 .unwrap();
 
             // Send request
-            let mut stream = h2.request(request, false).unwrap();
+            let mut stream = h2.send_request(request, false).unwrap();
 
             // Send data frame
             stream.send_data("hello".into(), false).unwrap();
