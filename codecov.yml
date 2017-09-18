@@ -8,6 +8,7 @@ coverage:
     - examples/.*
     - util/.*
     - tests/.*
+    - src/hpack/test/.*
   notify:
     slack:
       default:
