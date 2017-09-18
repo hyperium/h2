@@ -85,6 +85,14 @@ impl Settings {
         self.max_frame_size = size;
     }
 
+    pub fn is_push_enabled(&self) -> bool {
+        self.enable_push.unwrap_or(1) != 0
+    }
+
+    pub fn set_enable_push(&mut self, enable: bool) {
+        self.enable_push = Some(enable as u32);
+    }
+
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
         use self::Setting::*;
 

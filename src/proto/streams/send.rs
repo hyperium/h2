@@ -35,7 +35,7 @@ where
 
         Send {
             next_stream_id: next_stream_id.into(),
-            init_window_sz: config.init_local_window_sz,
+            init_window_sz: config.local_init_window_sz,
             prioritize: Prioritize::new(config),
         }
     }
