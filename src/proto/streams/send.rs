@@ -15,7 +15,7 @@ where
     P: Peer,
 {
     /// Stream identifier to use for next initialized stream.
-    next_stream_id: StreamId,
+    next_stream_id: Result<StreamId, StreamIdOverflow>,
 
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
@@ -31,11 +31,9 @@ where
 {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
-        let next_stream_id = if P::is_server() { 2 } else { 1 };
-
         Send {
-            next_stream_id: next_stream_id.into(),
             init_window_sz: config.local_init_window_sz,
+            next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
         }
     }
@@ -49,19 +47,17 @@ where
     ///
     /// Returns the stream state if successful. `None` if refused
     pub fn open(&mut self, counts: &mut Counts<P>) -> Result<StreamId, UserError> {
-        self.ensure_can_open()?;
-
         if !counts.can_inc_num_send_streams() {
             return Err(Rejected.into());
         }
 
-        let ret = self.next_stream_id;
-        self.next_stream_id.increment();
+        let stream_id = self.try_open()?;
 
         // Increment the number of locally initiated streams
         counts.inc_num_send_streams();
+        self.next_stream_id = stream_id.next_id();
 
-        Ok(ret)
+        Ok(stream_id)
     }
 
     pub fn send_headers(
@@ -293,22 +289,23 @@ where
     }
 
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
-        if id >= self.next_stream_id {
-            return Err(ProtocolError);
+        if let Ok(next) = self.next_stream_id {
+            if id >= next {
+                return Err(ProtocolError);
+            }
         }
+        // if next_stream_id is overflowed, that's ok.
 
         Ok(())
     }
 
-    /// Returns true if the local actor can initiate a stream with the given ID.
-    fn ensure_can_open(&self) -> Result<(), UserError> {
+    /// Returns a new StreamId if the local actor can initiate a new stream.
+    fn try_open(&self) -> Result<StreamId, UserError> {
         if P::is_server() {
             // Servers cannot open streams. PushPromise must first be reserved.
             return Err(UnexpectedFrameType);
         }
 
-        // TODO: Handle StreamId overflow
-
-        Ok(())
+        self.next_stream_id.map_err(|_| OverflowedStreamId)
     }
 }

@@ -58,6 +58,55 @@ fn recv_invalid_server_stream_id() {
 }
 
 #[test]
+fn request_stream_id_overflows() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+
+    let h2 = Client::builder()
+        .initial_stream_id(::std::u32::MAX >> 1)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|mut h2| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let req = h2.send_request(request, true)
+                .unwrap()
+                .unwrap();
+
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // second cant use the next stream id, it's over
+            let err = h2.send_request(request, true).unwrap_err();
+            assert_eq!(err.to_string(), "user error: stream ID overflowed");
+
+            h2.expect("h2").join(req)
+        });
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(::std::u32::MAX >> 1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(::std::u32::MAX >> 1).response(200))
+        .close();
+
+    h2.join(srv).wait().expect("wait");
+}
+
+#[test]
 #[ignore]
 fn request_without_scheme() {}
 

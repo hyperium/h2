@@ -23,7 +23,7 @@ use self::store::{Entry, Store};
 use self::stream::Stream;
 
 use error::Reason::*;
-use frame::StreamId;
+use frame::{StreamId, StreamIdOverflow};
 use proto::*;
 
 use bytes::Bytes;
@@ -36,6 +36,9 @@ pub struct Config {
 
     /// Maximum number of locally initiated streams
     pub local_max_initiated: Option<usize>,
+
+    /// The stream ID to start the next local stream with
+    pub local_next_stream_id: StreamId,
 
     /// If the local peer is willing to receive push promises
     pub local_push_enabled: bool,

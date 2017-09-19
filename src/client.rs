@@ -15,8 +15,8 @@ use std::marker::PhantomData;
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+    builder: Builder,
     inner: MapErr<WriteAll<T, &'static [u8]>, fn(io::Error) -> ::Error>,
-    settings: Settings,
     _marker: PhantomData<B>,
 }
 
@@ -36,9 +36,10 @@ pub struct Body<B: IntoBuf> {
 }
 
 /// Build a Client.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Builder {
     settings: Settings,
+    stream_id: StreamId,
 }
 
 #[derive(Debug)]
@@ -72,7 +73,7 @@ where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
+    fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         use tokio_io::io;
 
         debug!("binding client connection");
@@ -81,8 +82,8 @@ where
         let handshake = io::write_all(io, msg).map_err(::Error::from as _);
 
         Handshake {
+            builder,
             inner: handshake,
-            settings: settings,
             _marker: PhantomData,
         }
     }
@@ -182,6 +183,14 @@ impl Builder {
         self
     }
 
+    /// Set the first stream ID to something other than 1.
+    #[cfg(feature = "unstable")]
+    pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
+        self.stream_id = stream_id.into();
+        assert!(self.stream_id.is_client_initiated(), "stream id must be odd");
+        self
+    }
+
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
@@ -194,7 +203,16 @@ impl Builder {
         T: AsyncRead + AsyncWrite,
         B: IntoBuf,
     {
-        Client::handshake2(io, self.settings.clone())
+        Client::handshake2(io, self.clone())
+    }
+}
+
+impl Default for Builder {
+    fn default() -> Builder {
+        Builder {
+            settings: Default::default(),
+            stream_id: 1.into(),
+        }
     }
 }
 
@@ -215,16 +233,16 @@ where
         // Create the codec
         let mut codec = Codec::new(io);
 
-        if let Some(max) = self.settings.max_frame_size() {
+        if let Some(max) = self.builder.settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
         }
 
         // Send initial settings frame
         codec
-            .buffer(self.settings.clone().into())
+            .buffer(self.builder.settings.clone().into())
             .expect("invalid SETTINGS frame");
 
-        let connection = Connection::new(codec, &self.settings);
+        let connection = Connection::new(codec, &self.builder.settings, self.builder.stream_id);
         Ok(Async::Ready(Client {
             connection,
         }))
