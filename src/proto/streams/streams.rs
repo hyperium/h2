@@ -403,11 +403,13 @@ impl<B> Streams<B, client::Peer>
 where
     B: Buf,
 {
-    pub fn poll_send_request_ready(&mut self) -> Async<()> {
+    pub fn poll_send_request_ready(&mut self) -> Poll<(), ::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.counts.poll_open_ready()
+        me.actions.send.ensure_next_stream_id()?;
+
+        Ok(me.counts.poll_open_ready())
     }
 }
 

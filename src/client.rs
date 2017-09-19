@@ -91,7 +91,7 @@ where
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
-        Ok(self.connection.poll_send_request_ready())
+        self.connection.poll_send_request_ready()
     }
 
     /// Send a request on a new HTTP 2.0 stream
