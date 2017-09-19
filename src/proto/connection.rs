@@ -250,7 +250,7 @@ where
     B: IntoBuf,
 {
     /// Returns `Ready` when new the connection is able to support a new request stream.
-    pub fn poll_send_request_ready(&mut self) -> Async<()> {
+    pub fn poll_send_request_ready(&mut self) -> Poll<(), ::Error> {
         self.streams.poll_send_request_ready()
     }
 

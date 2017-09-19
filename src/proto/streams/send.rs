@@ -299,6 +299,10 @@ where
         Ok(())
     }
 
+    pub fn ensure_next_stream_id(&self) -> Result<StreamId, UserError> {
+        self.next_stream_id.map_err(|_| OverflowedStreamId)
+    }
+
     /// Returns a new StreamId if the local actor can initiate a new stream.
     fn try_open(&self) -> Result<StreamId, UserError> {
         if P::is_server() {
@@ -306,6 +310,6 @@ where
             return Err(UnexpectedFrameType);
         }
 
-        self.next_stream_id.map_err(|_| OverflowedStreamId)
+        self.ensure_next_stream_id()
     }
 }

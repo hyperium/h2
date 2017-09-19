@@ -85,7 +85,12 @@ fn request_stream_id_overflows() {
                 .body(())
                 .unwrap();
 
-            // second cant use the next stream id, it's over
+
+            // second cannot use the next stream id, it's over
+
+            let poll_err = h2.poll_ready().unwrap_err();
+            assert_eq!(poll_err.to_string(), "user error: stream ID overflowed");
+
             let err = h2.send_request(request, true).unwrap_err();
             assert_eq!(err.to_string(), "user error: stream ID overflowed");
 
