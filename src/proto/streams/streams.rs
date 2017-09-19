@@ -22,6 +22,7 @@ where
 #[derive(Debug)]
 pub(crate) struct StreamRef<B, P>
 where
+    B: Buf,
     P: Peer,
 {
     inner: Arc<Mutex<Inner<B, P>>>,
@@ -657,6 +658,7 @@ where
 
 impl<B, P> Clone for StreamRef<B, P>
 where
+    B: Buf,
     P: Peer,
 {
     fn clone(&self) -> Self {
@@ -672,6 +674,7 @@ where
 
 impl<B, P> Drop for StreamRef<B, P>
 where
+    B: Buf,
     P: Peer,
 {
     fn drop(&mut self) {
@@ -690,6 +693,17 @@ where
         let id = {
             let mut stream = me.store.resolve(self.key);
             stream.ref_dec();
+
+            if stream.ref_count == 0 {
+                // if this is the last reference to the stream,
+                // reset the stream.
+                let actions = &mut me.actions;
+                actions.send.send_reset(
+                    Reason::Cancel,
+                    &mut stream,
+                    &mut actions.task
+                );
+            }
 
             if !stream.is_released() {
                 return;
