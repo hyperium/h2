@@ -690,36 +690,25 @@ where
 
         let me = &mut *me;
 
-        if let Some(id) = {
-            let mut stream = me.store.resolve(self.key);
-            // decrement the stream's ref count by 1.
-            stream.ref_dec();
+        let mut stream = me.store.resolve(self.key);
+        // decrement the stream's ref count by 1.
+        stream.ref_dec();
+
+        let actions = &mut me.actions;
+        // the reset must be sent inside a `transition` block.
+        // `transition_after` will release the stream if it is
+        // released.
+        me.counts.transition(stream, |_, stream|
             // if this is the last reference to the stream,
             // reset the stream.
-            let actions = &mut me.actions;
-            // the reset must be sent inside a `transition` block.
-            // `transition_after` will release the stream if it is
-            // released.
-            me.counts.transition(stream, |_, stream|
-                if stream.ref_count == 0 {
-                    actions.send.send_reset(
-                        Reason::Cancel,
-                        stream,
-                        &mut actions.task
-                    );
-                    // since we have reset the stream, it will be removed.
-                    // pass the id to the assertion.
-                    Some(stream.id)
-                } else {
-                    None
-                }
-            )
-        } {
-            // if an id was returned from the closure in the transition block,
-            // the stream should have been removed by `transition_after`.
-            // TODO: is this assertion still necessary?
-            debug_assert!(!me.store.contains_id(&id));
-        }
+            if stream.ref_count == 0 {
+                actions.send.send_reset(
+                    Reason::Cancel,
+                    stream,
+                    &mut actions.task
+                );
+            }
+        );
     }
 }
 
