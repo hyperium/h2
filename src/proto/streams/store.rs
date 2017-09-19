@@ -103,10 +103,6 @@ where
         }
     }
 
-    pub fn contains_id(&self, id: &StreamId) -> bool {
-        self.ids.contains_key(id)
-    }
-
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<B, P>> {
         let key = match self.ids.get(id) {
             Some(key) => *key,
