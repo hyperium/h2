@@ -70,7 +70,7 @@ pub fn main() {
             let mut trailers = HeaderMap::new();
             trailers.insert("zomg", "hello".parse().unwrap());
 
-            let mut stream = client.request(request, false).unwrap();
+            let mut stream = client.send_request(request, false).unwrap();
 
             // send trailers
             stream.send_trailers(trailers).unwrap();

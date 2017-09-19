@@ -35,7 +35,7 @@ fn send_data_without_requesting_capacity() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.request(request, false).unwrap();
+    let mut stream = h2.send_request(request, false).unwrap();
 
     // The capacity should be immediately allocated
     assert_eq!(stream.capacity(), 0);
@@ -89,7 +89,7 @@ fn release_capacity_sends_window_update() {
             .body(())
             .unwrap();
 
-        let req = h2.request(request, true).unwrap()
+        let req = h2.send_request(request, true).unwrap()
                 .unwrap()
                 // Get the response
                 .and_then(|resp| {
@@ -152,7 +152,7 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
             .body(())
             .unwrap();
 
-        let req = h2.request(request, true).unwrap()
+        let req = h2.send_request(request, true).unwrap()
                 .unwrap()
                 // Get the response
                 .and_then(|resp| {
@@ -219,7 +219,7 @@ fn recv_data_overflows_connection_window() {
             .body(())
             .unwrap();
 
-        let req = h2.request(request, true)
+        let req = h2.send_request(request, true)
             .unwrap()
             .unwrap()
             .and_then(|resp| {
@@ -288,7 +288,7 @@ fn recv_data_overflows_stream_window() {
                 .body(())
                 .unwrap();
 
-            let req = h2.request(request, true)
+            let req = h2.send_request(request, true)
                 .unwrap()
                 .unwrap()
                 .and_then(|resp| {
@@ -341,7 +341,7 @@ fn stream_close_by_data_frame_releases_capacity() {
             .unwrap();
 
         // Send request
-        let mut s1 = h2.request(request, false).unwrap();
+        let mut s1 = h2.send_request(request, false).unwrap();
 
         // This effectively reserves the entire connection window
         s1.reserve_capacity(window_size);
@@ -357,7 +357,7 @@ fn stream_close_by_data_frame_releases_capacity() {
             .unwrap();
 
         // Create a second stream
-        let mut s2 = h2.request(request, false).unwrap();
+        let mut s2 = h2.send_request(request, false).unwrap();
 
         // Request capacity
         s2.reserve_capacity(5);
@@ -436,7 +436,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
             .unwrap();
 
         // Send request
-        let mut s1 = h2.request(request, false).unwrap();
+        let mut s1 = h2.send_request(request, false).unwrap();
 
         // This effectively reserves the entire connection window
         s1.reserve_capacity(window_size);
@@ -452,7 +452,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
             .unwrap();
 
         // Create a second stream
-        let mut s2 = h2.request(request, false).unwrap();
+        let mut s2 = h2.send_request(request, false).unwrap();
 
         // Request capacity
         s2.reserve_capacity(5);
@@ -558,7 +558,7 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
                 .body(())
                 .unwrap();
 
-            let stream = h2.request(request, false).unwrap();
+            let stream = h2.send_request(request, false).unwrap();
 
             // Wait for the response
             h2.drive(GetResponse {
@@ -603,7 +603,7 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
                 .body(())
                 .unwrap();
 
-            let mut stream = h2.request(request, false).unwrap();
+            let mut stream = h2.send_request(request, false).unwrap();
 
             // Consume the capacity
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
@@ -731,13 +731,13 @@ fn connection_notified_on_released_capacity() {
             .body(())
             .unwrap();
 
-        tx.send(h2.request(request, true).unwrap()).unwrap();
+        tx.send(h2.send_request(request, true).unwrap()).unwrap();
 
         let request = Request::get("https://example.com/b")
             .body(())
             .unwrap();
 
-        tx.send(h2.request(request, true).unwrap()).unwrap();
+        tx.send(h2.send_request(request, true).unwrap()).unwrap();
 
         // Run the connection to completion
         h2.wait().unwrap();

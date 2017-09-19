@@ -94,7 +94,7 @@ where
     }
 
     /// Send a request on a new HTTP 2.0 stream
-    pub fn request(
+    pub fn send_request(
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
