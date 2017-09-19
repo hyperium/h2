@@ -58,6 +58,10 @@ pub fn reset<T>(id: T) -> Mock<frame::Reset>
     Mock(frame::Reset::new(id.into(), frame::Reason::NoError))
 }
 
+pub fn settings() -> Mock<frame::Settings> {
+    Mock(frame::Settings::default())
+}
+
 // === Generic helpers of all frame types
 
 pub struct Mock<T>(T);
@@ -227,6 +231,27 @@ impl Mock<frame::Reset> {
 impl From<Mock<frame::Reset>> for SendFrame {
     fn from(src: Mock<frame::Reset>) -> Self {
         Frame::Reset(src.0)
+    }
+}
+
+// ==== Settings helpers
+
+impl Mock<frame::Settings> {
+    pub fn max_concurrent_streams(mut self, max: u32) -> Self {
+        self.0.set_max_concurrent_streams(Some(max));
+        self
+    }
+}
+
+impl From<Mock<frame::Settings>> for frame::Settings {
+    fn from(src: Mock<frame::Settings>) -> Self {
+        src.0
+    }
+}
+
+impl From<Mock<frame::Settings>> for SendFrame {
+    fn from(src: Mock<frame::Settings>) -> Self {
+        Frame::Settings(src.0)
     }
 }
 

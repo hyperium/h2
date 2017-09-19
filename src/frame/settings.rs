@@ -74,6 +74,10 @@ impl Settings {
         self.max_concurrent_streams
     }
 
+    pub fn set_max_concurrent_streams(&mut self, max: Option<u32>) {
+        self.max_concurrent_streams = max;
+    }
+
     pub fn max_frame_size(&self) -> Option<u32> {
         self.max_frame_size
     }

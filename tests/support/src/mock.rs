@@ -113,9 +113,11 @@ impl Handle {
     }
 
     /// Perform the H2 handshake
-    pub fn assert_client_handshake_with_settings(mut self, settings: frame::Settings)
+    pub fn assert_client_handshake_with_settings<T>(mut self, settings: T)
         -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    where T: Into<frame::Settings>,
     {
+        let settings = settings.into();
         // Send a settings frame
         self.send(settings.into()).unwrap();
 
