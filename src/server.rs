@@ -106,7 +106,7 @@ where
         let handshake = Flush::new(codec)
             .and_then(ReadPreface::new)
             .map(move |codec| {
-                let connection = Connection::new(codec, &settings);
+                let connection = Connection::new(codec, &settings, 2.into());
                 Server {
                     connection,
                 }

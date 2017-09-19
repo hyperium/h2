@@ -21,7 +21,7 @@ where
     flow: FlowControl,
 
     /// The lowest stream ID that is still idle
-    next_stream_id: StreamId,
+    next_stream_id: Result<StreamId, StreamIdOverflow>,
 
     /// The stream ID of the last processed stream
     last_processed_id: StreamId,
@@ -76,7 +76,7 @@ where
         Recv {
             init_window_sz: config.local_init_window_sz,
             flow: flow,
-            next_stream_id: next_stream_id.into(),
+            next_stream_id: Ok(next_stream_id.into()),
             pending_window_updates: store::Queue::new(),
             last_processed_id: StreamId::zero(),
             pending_accept: store::Queue::new(),
@@ -109,12 +109,12 @@ where
 
         self.ensure_can_open(id)?;
 
-        if id < self.next_stream_id {
+        let next_id = self.next_stream_id()?;
+        if id < next_id {
             return Err(RecvError::Connection(ProtocolError));
         }
 
-        self.next_stream_id = id;
-        self.next_stream_id.increment();
+        self.next_stream_id = id.next_id();
 
         if !counts.can_inc_num_recv_streams() {
             self.refused = Some(id);
@@ -137,6 +137,13 @@ where
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
         if is_initial {
+            let next_id = self.next_stream_id()?;
+            if frame.stream_id() >= next_id {
+                self.next_stream_id = frame.stream_id().next_id();
+            } else {
+                return Err(RecvError::Connection(ProtocolError));
+            }
+
             // TODO: be smarter about this logic
             if frame.stream_id() > self.last_processed_id {
                 self.last_processed_id = frame.stream_id();
@@ -383,9 +390,12 @@ where
 
     /// Ensures that `id` is not in the `Idle` state.
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
-        if id >= self.next_stream_id {
-            return Err(ProtocolError);
+        if let Ok(next) = self.next_stream_id {
+            if id >= next {
+                return Err(ProtocolError);
+            }
         }
+        // if next_stream_id is overflowed, that's ok.
 
         Ok(())
     }
@@ -426,6 +436,14 @@ where
         }
 
         Ok(())
+    }
+
+    fn next_stream_id(&self) -> Result<StreamId, RecvError> {
+        if let Ok(id) = self.next_stream_id {
+            Ok(id)
+        } else {
+            Err(RecvError::Connection(ProtocolError))
+        }
     }
 
     /// Returns true if the remote peer can reserve a stream with the given ID.

@@ -4,9 +4,16 @@ use std::u32;
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StreamId(u32);
 
+#[derive(Debug, Copy, Clone)]
+pub struct StreamIdOverflow;
+
 const STREAM_ID_MASK: u32 = 1 << 31;
 
 impl StreamId {
+    pub const ZERO: StreamId = StreamId(0);
+
+    pub const MAX: StreamId = StreamId(u32::MAX >> 1);
+
     /// Parse the stream ID
     #[inline]
     pub fn parse(buf: &[u8]) -> (StreamId, bool) {
@@ -30,20 +37,20 @@ impl StreamId {
 
     #[inline]
     pub fn zero() -> StreamId {
-        StreamId(0)
-    }
-
-    #[inline]
-    pub fn max() -> StreamId {
-        StreamId(u32::MAX >> 1)
+        StreamId::ZERO
     }
 
     pub fn is_zero(&self) -> bool {
         self.0 == 0
     }
 
-    pub fn increment(&mut self) {
-        self.0 += 2;
+    pub fn next_id(&self) -> Result<StreamId, StreamIdOverflow> {
+        let next = self.0 + 2;
+        if next > StreamId::MAX.0 {
+            Err(StreamIdOverflow)
+        } else {
+            Ok(StreamId(next))
+        }
     }
 }
 

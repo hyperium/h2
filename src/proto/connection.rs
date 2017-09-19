@@ -61,13 +61,14 @@ where
     pub fn new(
         codec: Codec<T, Prioritized<B::Buf>>,
         settings: &frame::Settings,
+        next_stream_id: frame::StreamId
     ) -> Connection<T, P, B> {
-        // TODO: Actually configure
         let streams = Streams::new(streams::Config {
             local_init_window_sz: settings
                 .initial_window_size()
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
             local_max_initiated: None,
+            local_next_stream_id: next_stream_id,
             local_push_enabled: settings.is_push_enabled(),
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             remote_max_initiated: None,

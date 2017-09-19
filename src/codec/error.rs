@@ -37,6 +37,10 @@ pub enum UserError {
 
     /// The released capacity is larger than claimed capacity.
     ReleaseCapacityTooBig,
+    /// The stream ID space is overflowed.
+    ///
+    /// A new connection is needed.
+    OverflowedStreamId,
 }
 
 // ===== impl RecvError =====
@@ -112,6 +116,7 @@ impl error::Error for UserError {
             PayloadTooBig => "payload too big",
             Rejected => "rejected",
             ReleaseCapacityTooBig => "release capacity too big",
+            OverflowedStreamId => "stream ID overflowed",
         }
     }
 }
