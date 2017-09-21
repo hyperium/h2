@@ -329,11 +329,11 @@ fn recv_window_update_causes_overflow() {
 #[test]
 fn stream_close_by_data_frame_releases_capacity() {
     let _ = ::env_logger::init();
-    let (m, mock) = mock::new();
+    let (io, srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(m).unwrap().and_then(|mut h2| {
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
         let request = Request::builder()
             .method(Method::POST)
             .uri("https://http2.akamai.com/")
@@ -380,55 +380,33 @@ fn stream_close_by_data_frame_releases_capacity() {
         h2.unwrap()
     });
 
-    let mock = mock.assert_client_handshake().unwrap()
-        // Get the first frame
-        .and_then(|(_, mock)| mock.into_future().unwrap())
-        .and_then(|(frame, mock)| {
-            let request = assert_headers!(frame.unwrap());
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(frames::headers(1).response(200))
+        .recv_frame(
+            frames::headers(3)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(frames::headers(3).response(200))
+        .recv_frame(frames::data(1, &b""[..]).eos())
+        .recv_frame(frames::data(3, &b"hello"[..]).eos())
+        .close();
 
-            assert_eq!(request.stream_id(), 1);
-            assert!(!request.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, mock)| {
-            let request = assert_headers!(frame.unwrap());
-
-            assert_eq!(request.stream_id(), 3);
-            assert!(!request.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, mock)| {
-            let data = assert_data!(frame.unwrap());
-
-            assert_eq!(data.stream_id(), 1);
-            assert_eq!(data.payload().len(), 0);
-            assert!(data.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, _)| {
-            let data = assert_data!(frame.unwrap());
-
-            assert_eq!(data.stream_id(), 3);
-            assert_eq!(data.payload(), "hello");
-            assert!(data.is_end_stream());
-
-            Ok(())
-        });
-
-    let _ = h2.join(mock).wait().unwrap();
+    let _ = h2.join(srv).wait().unwrap();
 }
 
 #[test]
 fn stream_close_by_trailers_frame_releases_capacity() {
     let _ = ::env_logger::init();
-    let (m, mock) = mock::new();
+    let (io, srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(m).unwrap().and_then(|mut h2| {
+    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
         let request = Request::builder()
             .method(Method::POST)
             .uri("https://http2.akamai.com/")
@@ -475,44 +453,24 @@ fn stream_close_by_trailers_frame_releases_capacity() {
         h2.unwrap()
     });
 
-    let mock = mock.assert_client_handshake().unwrap()
+    let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
-        .and_then(|(_, mock)| mock.into_future().unwrap())
-        .and_then(|(frame, mock)| {
-            let request = assert_headers!(frame.unwrap());
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(frames::headers(1).response(200))
+        .recv_frame(
+            frames::headers(3)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(frames::headers(3).response(200))
+        .recv_frame(frames::headers(1).eos())
+        .recv_frame(frames::data(3, &b"hello"[..]).eos())
+        .close();
 
-            assert_eq!(request.stream_id(), 1);
-            assert!(!request.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, mock)| {
-            let request = assert_headers!(frame.unwrap());
-
-            assert_eq!(request.stream_id(), 3);
-            assert!(!request.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, mock)| {
-            let trailers = assert_headers!(frame.unwrap());
-
-            assert_eq!(trailers.stream_id(), 1);
-            assert!(trailers.is_end_stream());
-
-            mock.into_future().unwrap()
-        })
-        .and_then(|(frame, _)| {
-            let data = assert_data!(frame.unwrap());
-
-            assert_eq!(data.stream_id(), 3);
-            assert_eq!(data.payload(), "hello");
-            assert!(data.is_end_stream());
-
-            Ok(())
-        });
-
-    let _ = h2.join(mock).wait().unwrap();
+    let _ = h2.join(srv).wait().unwrap();
 }
 
 #[test]
