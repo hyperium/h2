@@ -378,9 +378,12 @@ fn stream_close_by_data_frame_releases_capacity() {
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
 
-        // Wait for the connection to close
-        h2.unwrap()
-    });
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -446,9 +449,12 @@ fn stream_close_by_trailers_frame_releases_capacity() {
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
 
-        // Wait for the connection to close
-        h2.unwrap()
-    });
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
