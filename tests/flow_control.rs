@@ -257,7 +257,7 @@ fn recv_data_overflows_stream_window() {
     let (io, srv) = mock::new();
 
     let mock = srv.assert_client_handshake().unwrap()
-        .ignore_settings()
+        .recv_settings()
         .recv_frame(
             frames::headers(1)
                 .request("GET", "https://http2.akamai.com/")
@@ -381,19 +381,21 @@ fn stream_close_by_data_frame_releases_capacity() {
     });
 
     let srv = srv.assert_client_handshake().unwrap()
-        .ignore_settings()
+        .recv_settings()
         .recv_frame(
-            frames::headers(1).request("POST", "https://http2.akamai.com/")
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
         )
         .send_frame(frames::headers(1).response(200))
         .recv_frame(
-            frames::headers(3).request("POST", "https://http2.akamai.com/")
+            frames::headers(3)
+                .request("POST", "https://http2.akamai.com/")
         )
         .send_frame(frames::headers(3).response(200))
         .recv_frame(frames::data(1, &b""[..]).eos())
         .recv_frame(frames::data(3, &b"hello"[..]).eos())
-        .close()
-        ;
+        .close();
+
     let _ = h2.join(srv).wait().unwrap();
 }
 
@@ -453,7 +455,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
 
     let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
-        .ignore_settings()
+        .recv_settings()
         .recv_frame(
             frames::headers(1)
                 .request("POST", "https://http2.akamai.com/")
@@ -465,9 +467,8 @@ fn stream_close_by_trailers_frame_releases_capacity() {
         )
         .send_frame(frames::headers(3).response(200))
         .recv_frame(frames::headers(1).eos())
-        .recv(frames::data(3, b"hello"[..]).eos())
-        .close()
-        ;
+        .recv_frame(frames::data(3, b"hello"[..]).eos())
+        .close();
 
     let _ = h2.join(srv).wait().unwrap();
 }
