@@ -533,7 +533,16 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
             stream.send_data("hello".into(), true).unwrap();
 
             // Wait for the connection to close
-            h2.unwrap()
+            h2.map(|h2| {
+                // keep `stream` from being dropped in order to prevent
+                // it from sending an RST_STREAM frame.
+                std::mem::forget(stream);
+                // i know this is kind of evil, but it's necessary to
+                // ensure that the stream is closed by the EOS frame,
+                // and not by the RST_STREAM.
+                h2
+            })
+                .unwrap()
         });
 
     let srv = srv.assert_client_handshake()
