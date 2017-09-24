@@ -137,13 +137,6 @@ where
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
         if is_initial {
-            let next_id = self.next_stream_id()?;
-            if frame.stream_id() >= next_id {
-                self.next_stream_id = frame.stream_id().next_id();
-            } else {
-                return Err(RecvError::Connection(ProtocolError));
-            }
-
             // TODO: be smarter about this logic
             if frame.stream_id() > self.last_processed_id {
                 self.last_processed_id = frame.stream_id();

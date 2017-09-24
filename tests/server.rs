@@ -33,7 +33,7 @@ fn serve_request() {
         .recv_settings()
         .send_frame(
             frames::headers(1)
-                .request("POST", "https://example.com/")
+                .request("GET", "https://example.com/")
                 .eos(),
         )
         .recv_frame(frames::headers(1).response(200).eos())
