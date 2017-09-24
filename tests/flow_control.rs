@@ -380,17 +380,12 @@ fn stream_close_by_data_frame_releases_capacity() {
         h2.unwrap()
     });
 
-    let srv = srv.assert_client_handshake().unwrap()
+    let srv = srv.assert_client_handshake()
+        .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1)
-                .request("POST", "https://http2.akamai.com/")
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(1).response(200))
-        .recv_frame(
-            frames::headers(3)
-                .request("POST", "https://http2.akamai.com/")
-        )
+        .recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(3).response(200))
         .recv_frame(frames::data(1, &b""[..]).eos())
         .recv_frame(frames::data(3, &b"hello"[..]).eos())
@@ -536,9 +531,7 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1).request("POST", "https://http2.akamai.com/"),
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))
@@ -631,8 +624,8 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
 #[test]
 fn connection_notified_on_released_capacity() {
     use futures::sync::oneshot;
-    use std::thread;
     use std::sync::mpsc;
+    use std::thread;
 
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
@@ -685,15 +678,11 @@ fn connection_notified_on_released_capacity() {
 
         let (mut h2, _) = h2.drive(settings_rx).wait().unwrap();
 
-        let request = Request::get("https://example.com/a")
-            .body(())
-            .unwrap();
+        let request = Request::get("https://example.com/a").body(()).unwrap();
 
         tx.send(h2.send_request(request, true).unwrap()).unwrap();
 
-        let request = Request::get("https://example.com/b")
-            .body(())
-            .unwrap();
+        let request = Request::get("https://example.com/b").body(()).unwrap();
 
         tx.send(h2.send_request(request, true).unwrap()).unwrap();
 

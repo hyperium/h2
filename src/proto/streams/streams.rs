@@ -324,8 +324,8 @@ where
         request: Request<()>,
         end_of_stream: bool,
     ) -> Result<StreamRef<B, P>, SendError> {
-        use http::Method;
         use super::stream::ContentLength;
+        use http::Method;
 
         // TODO: There is a hazard with assigning a stream ID before the
         // prioritize layer. If prioritization reorders new streams, this

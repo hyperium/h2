@@ -28,8 +28,8 @@ after_success:
   - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
 
 jobs:
-  allow_failures:
-  - rust: nightly
+  # allow_failures:
+  # - rust: nightly
   include:
     - stage: docs
       script: cargo doc --no-deps
@@ -47,7 +47,7 @@ jobs:
       after_success: skip
     - stage: fmt
       rust: nightly
-      install: if ! cargo fmt --help >/dev/null 2>&1 ; then cargo install rustfmt-nightly ; fi
+      install: cargo install --force rustfmt-nightly
       script: cargo fmt -- --write-mode=diff
       after_success: skip
 

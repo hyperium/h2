@@ -148,8 +148,8 @@ impl<T> FramedRead<T> {
                 let _ = bytes.split_to(frame::HEADER_LEN);
 
                 // Parse the frame w/o parsing the payload
-                let (mut push, payload) = frame::PushPromise::load(head, bytes)
-                    .map_err(|_| Connection(ProtocolError))?;
+                let (mut push, payload) =
+                    frame::PushPromise::load(head, bytes).map_err(|_| Connection(ProtocolError))?;
 
                 if push.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
@@ -174,7 +174,6 @@ impl<T> FramedRead<T> {
 
                     return Ok(None);
                 }
-
             },
             Kind::Priority => {
                 if head.stream_id() == 0 {
@@ -313,7 +312,11 @@ impl Continuable {
         }
     }
 
-    fn load_hpack(&mut self, src: BytesMut, decoder: &mut hpack::Decoder) -> Result<(), frame::Error> {
+    fn load_hpack(
+        &mut self,
+        src: BytesMut,
+        decoder: &mut hpack::Decoder,
+    ) -> Result<(), frame::Error> {
         match *self {
             Continuable::Headers(ref mut h) => h.load_hpack(src, decoder),
             Continuable::PushPromise(ref mut p) => p.load_hpack(src, decoder),
