@@ -116,10 +116,9 @@ impl State {
         return Ok(());
     }
 
-    /// Open the receive have of the stream, this action is taken when a HEADERS
-    /// frame is received.
+    /// Opens the receive-half of the stream when a HEADERS frame is received.
     ///
-    /// Returns true if this transitions the state to Open
+    /// Returns true if this transitions the state to Open.
     pub fn recv_open(&mut self, eos: bool) -> Result<bool, RecvError> {
         let remote = Peer::Streaming;
         let mut initial = false;
