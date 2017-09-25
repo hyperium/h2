@@ -6,7 +6,7 @@ use http::{uri, HeaderMap, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
 use byteorder::{BigEndian, ByteOrder};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use string::String;
 
 use std::fmt;
@@ -262,23 +262,6 @@ impl fmt::Debug for Headers {
 // ===== impl PushPromise =====
 
 impl PushPromise {
-    pub fn new(
-        stream_id: StreamId,
-        promised_id: StreamId,
-        pseudo: Pseudo,
-        fields: HeaderMap,
-    ) -> Self {
-        PushPromise {
-            flags: PushPromiseFlag::default(),
-            header_block: HeaderBlock {
-                fields,
-                pseudo,
-            },
-            promised_id,
-            stream_id,
-        }
-    }
-
     /// Loads the push promise frame but doesn't actually do HPACK decoding.
     ///
     /// HPACK decoding is done in the `load_hpack` step.
@@ -336,19 +319,9 @@ impl PushPromise {
         self.flags.is_end_headers()
     }
 
-    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
-        (self.header_block.pseudo, self.header_block.fields)
-    }
-
-    pub fn fields(&self) -> &HeaderMap {
-        &self.header_block.fields
-    }
-
-    pub fn into_fields(self) -> HeaderMap {
-        self.header_block.fields
-    }
-
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
+        use bytes::BufMut;
+
         let head = self.head();
         let pos = dst.len();
 
@@ -369,6 +342,38 @@ impl PushPromise {
 
     fn head(&self) -> Head {
         Head::new(Kind::PushPromise, self.flags.into(), self.stream_id)
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl PushPromise {
+    pub fn new(
+        stream_id: StreamId,
+        promised_id: StreamId,
+        pseudo: Pseudo,
+        fields: HeaderMap,
+    ) -> Self {
+        PushPromise {
+            flags: PushPromiseFlag::default(),
+            header_block: HeaderBlock {
+                fields,
+                pseudo,
+            },
+            promised_id,
+            stream_id,
+        }
+    }
+
+    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
+        (self.header_block.pseudo, self.header_block.fields)
+    }
+
+    pub fn fields(&self) -> &HeaderMap {
+        &self.header_block.fields
+    }
+
+    pub fn into_fields(self) -> HeaderMap {
+        self.header_block.fields
     }
 }
 
