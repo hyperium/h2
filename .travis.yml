@@ -17,7 +17,7 @@ rust:
 - beta
 - stable
 
-before_script:
+install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
 
 script:
