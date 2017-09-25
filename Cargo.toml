@@ -36,14 +36,7 @@ string = { git = "https://github.com/carllerche/string" }
 ordermap = "0.2"
 
 [dev-dependencies]
-
-# Support code for tests. Ideally this wouldn't be released to crates.io, but
-# until rust-lang/cargo#4466 is resolved, we just have to publish this junk crate.
-#
-# The dependency is set on a fixed version as the `h2-test-support` offers no
-# guarantees of backwards compatibility across minor versions. The version of
-# `h2-test-support` should always match the current version of `h2`.
-h2-test-support = { version = "= 0.1.0", path = "tests/support" }
+mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
 
 # Fuzzing
 quickcheck = "0.4.1"

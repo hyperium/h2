@@ -1,5 +1,5 @@
-extern crate h2_test_support;
-use h2_test_support::prelude::*;
+pub mod support;
+use support::prelude::*;
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];

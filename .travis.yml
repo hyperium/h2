@@ -18,6 +18,9 @@ rust:
 - stable
 
 script:
+  # Check with and without unstable flag
+  - cargo check
+  - cargo check -features unstable
   # Run tests
   - cargo test
   # Test examples in readme
