@@ -261,7 +261,7 @@ impl fmt::Debug for Headers {
 
 // ===== impl PushPromise =====
 
-#[allow(dead_code)]
+#[cfg(feature = "unstable")]
 impl PushPromise {
     pub fn new(
         stream_id: StreamId,
