@@ -21,12 +21,15 @@ install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
 
 script:
-  # Run tests, uploading results to codecov.
-  - cargo tarpaulin --out Xml
+ # Test examples in README.
+  - cargo build --test && rustdoc --test README.md -L target/debug/deps
 
-  # Test examples in readme
-  - rustdoc --test README.md -L target/debug/deps
+  # Run tests, uploading results to codecov..
+  # hpack tests are _super_ slow in coverage, so skip them here.
+  - cargo tarpaulin --out Xml -- --skip hpack
 
+  # Test _only_ hpack.
+  - cargo test -- hpack
 
 after_success:
   - bash <(curl -Ls https://codecov.io/bash)
