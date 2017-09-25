@@ -187,7 +187,10 @@ impl Builder {
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
         self.stream_id = stream_id.into();
-        assert!(self.stream_id.is_client_initiated(), "stream id must be odd");
+        assert!(
+            self.stream_id.is_client_initiated(),
+            "stream id must be odd"
+        );
         self
     }
 

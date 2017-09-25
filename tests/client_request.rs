@@ -75,9 +75,7 @@ fn request_stream_id_overflows() {
                 .unwrap();
 
             // first request is allowed
-            let req = h2.send_request(request, true)
-                .unwrap()
-                .unwrap();
+            let req = h2.send_request(request, true).unwrap().unwrap();
 
             let request = Request::builder()
                 .method(Method::GET)
@@ -117,17 +115,12 @@ fn request_over_max_concurrent_streams_errors() {
     let (io, srv) = mock::new();
 
 
-    let srv = srv.assert_client_handshake_with_settings(
-            frames::settings()
+    let srv = srv.assert_client_handshake_with_settings(frames::settings()
                 // super tiny server
-                .max_concurrent_streams(1)
-        )
+                .max_concurrent_streams(1))
         .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1)
-                .request("POST", "https://example.com/")
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://example.com/"))
         .send_frame(frames::headers(1).response(200))
         .close();
 
@@ -141,15 +134,12 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let req = h2.send_request(request, false)
-                .unwrap()
-                .unwrap();
+            let req = h2.send_request(request, false).unwrap().unwrap();
 
             // drive the connection some so we can receive the server settings
             h2.drive(req)
         })
         .and_then(|(mut h2, _)| {
-
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")

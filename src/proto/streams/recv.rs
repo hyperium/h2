@@ -154,8 +154,8 @@ where
         }
 
         if !stream.content_length.is_head() {
-            use http::header;
             use super::stream::ContentLength;
+            use http::header;
 
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match parse_u64(content_length.as_bytes()) {

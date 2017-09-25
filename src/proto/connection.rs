@@ -61,7 +61,7 @@ where
     pub fn new(
         codec: Codec<T, Prioritized<B::Buf>>,
         settings: &frame::Settings,
-        next_stream_id: frame::StreamId
+        next_stream_id: frame::StreamId,
     ) -> Connection<T, P, B> {
         let streams = Streams::new(streams::Config {
             local_init_window_sz: settings
