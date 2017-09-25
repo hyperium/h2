@@ -51,8 +51,7 @@ jobs:
       install:
         - curl -Lhttps://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_darwin_amd64.tar.gz
       script: |
-        cargo run --example server & &&
-        ./h2spec -p 5928
+        cargo run --example server & ./h2spec -p 5928
     - stage: docs
       script: cargo doc --no-deps
       install: skip
