@@ -3,8 +3,8 @@ use std::fmt;
 use bytes::{Bytes, IntoBuf};
 use http::{self, HeaderMap, HttpTryFrom};
 
-use h2::frame::{self, Frame, StreamId};
 use super::SendFrame;
+use h2::frame::{self, Frame, StreamId};
 
 pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
@@ -12,7 +12,8 @@ pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 // ==== helper functions to easily construct h2 Frames ====
 
 pub fn headers<T>(id: T) -> Mock<frame::Headers>
-    where T: Into<StreamId>,
+where
+    T: Into<StreamId>,
 {
     Mock(frame::Headers::new(
         id.into(),
@@ -22,15 +23,17 @@ pub fn headers<T>(id: T) -> Mock<frame::Headers>
 }
 
 pub fn data<T, B>(id: T, buf: B) -> Mock<frame::Data>
-    where T: Into<StreamId>,
-          B: Into<Bytes>,
+where
+    T: Into<StreamId>,
+    B: Into<Bytes>,
 {
     Mock(frame::Data::new(id.into(), buf.into()))
 }
 
 pub fn push_promise<T1, T2>(id: T1, promised: T2) -> Mock<frame::PushPromise>
-where T1: Into<StreamId>,
-      T2: Into<StreamId>,
+where
+    T1: Into<StreamId>,
+    T2: Into<StreamId>,
 {
     Mock(frame::PushPromise::new(
         id.into(),
@@ -41,19 +44,22 @@ where T1: Into<StreamId>,
 }
 
 pub fn window_update<T>(id: T, sz: u32) -> frame::WindowUpdate
-    where T: Into<StreamId>,
+where
+    T: Into<StreamId>,
 {
     frame::WindowUpdate::new(id.into(), sz)
 }
 
 pub fn go_away<T>(id: T) -> Mock<frame::GoAway>
-    where T: Into<StreamId>,
+where
+    T: Into<StreamId>,
 {
     Mock(frame::GoAway::new(id.into(), frame::Reason::NoError))
 }
 
 pub fn reset<T>(id: T) -> Mock<frame::Reset>
-    where T: Into<StreamId>,
+where
+    T: Into<StreamId>,
 {
     Mock(frame::Reset::new(id.into(), frame::Reason::NoError))
 }
@@ -73,7 +79,9 @@ impl<T: fmt::Debug> fmt::Debug for Mock<T> {
 }
 
 impl<T> From<Mock<T>> for Frame
-where T: Into<Frame> {
+where
+    T: Into<Frame>,
+{
     fn from(src: Mock<T>) -> Self {
         src.0.into()
     }
@@ -83,30 +91,24 @@ where T: Into<Frame> {
 
 impl Mock<frame::Headers> {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
-        where M: HttpTryInto<http::Method>,
-              U: HttpTryInto<http::Uri>,
+    where
+        M: HttpTryInto<http::Method>,
+        U: HttpTryInto<http::Uri>,
     {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
-        let frame = frame::Headers::new(
-            id,
-            frame::Pseudo::request(method, uri),
-            fields
-        );
+        let frame = frame::Headers::new(id, frame::Pseudo::request(method, uri), fields);
         Mock(frame)
     }
 
     pub fn response<S>(self, status: S) -> Self
-        where S: HttpTryInto<http::StatusCode>,
+    where
+        S: HttpTryInto<http::StatusCode>,
     {
         let status = status.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
-        let frame = frame::Headers::new(
-            id,
-            frame::Pseudo::response(status),
-            fields
-        );
+        let frame = frame::Headers::new(id, frame::Pseudo::response(status), fields);
         Mock(frame)
     }
 
@@ -161,18 +163,15 @@ impl From<Mock<frame::Data>> for SendFrame {
 
 impl Mock<frame::PushPromise> {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
-    where M: HttpTryInto<http::Method>,
-          U: HttpTryInto<http::Uri>,
+    where
+        M: HttpTryInto<http::Method>,
+        U: HttpTryInto<http::Uri>,
     {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
         let (id, promised, _, fields) = self.into_parts();
-        let frame = frame::PushPromise::new(
-            id,
-            promised,
-            frame::Pseudo::request(method, uri),
-            fields
-        );
+        let frame =
+            frame::PushPromise::new(id, promised, frame::Pseudo::request(method, uri), fields);
         Mock(frame)
     }
 
@@ -201,15 +200,24 @@ impl From<Mock<frame::PushPromise>> for SendFrame {
 
 impl Mock<frame::GoAway> {
     pub fn protocol_error(self) -> Self {
-        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::ProtocolError))
+        Mock(frame::GoAway::new(
+            self.0.last_stream_id(),
+            frame::Reason::ProtocolError,
+        ))
     }
 
     pub fn flow_control(self) -> Self {
-        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FlowControlError))
+        Mock(frame::GoAway::new(
+            self.0.last_stream_id(),
+            frame::Reason::FlowControlError,
+        ))
     }
 
     pub fn frame_size(self) -> Self {
-        Mock(frame::GoAway::new(self.0.last_stream_id(), frame::Reason::FrameSizeError))
+        Mock(frame::GoAway::new(
+            self.0.last_stream_id(),
+            frame::Reason::FrameSizeError,
+        ))
     }
 }
 
@@ -264,8 +272,9 @@ pub trait HttpTryInto<T> {
 }
 
 impl<T, U> HttpTryInto<T> for U
-    where T: HttpTryFrom<U>,
-          T::Error: fmt::Debug,
+where
+    T: HttpTryFrom<U>,
+    T::Error: fmt::Debug,
 {
     type Error = T::Error;
 
