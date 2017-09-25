@@ -22,7 +22,7 @@ install:
 
 script:
   # Run tests, uploading results to codecov.
-  - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
+  - cargo tarpaulin --out Xml -- --skip hpack
 
   # Run hpack tests outside of codecov. idk why.
   - cargo test -- hpack
@@ -30,6 +30,8 @@ script:
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
 
+after_success:
+  - bash <(curl -Ls https://codecov.io/bash)
 
 jobs:
   # allow_failures:
