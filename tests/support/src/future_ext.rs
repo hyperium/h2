@@ -1,4 +1,4 @@
-use futures::{Future, Async, Poll};
+use futures::{Async, Future, Poll};
 
 use std::fmt;
 
@@ -6,17 +6,21 @@ use std::fmt;
 pub trait FutureExt: Future {
     /// Panic on error
     fn unwrap(self) -> Unwrap<Self>
-        where Self: Sized,
-              Self::Error: fmt::Debug,
+    where
+        Self: Sized,
+        Self::Error: fmt::Debug,
     {
-        Unwrap { inner: self }
+        Unwrap {
+            inner: self,
+        }
     }
 
     /// Panic on error, with a message.
     fn expect<T>(self, msg: T) -> Expect<Self>
-        where Self: Sized,
-              Self::Error: fmt::Debug,
-              T: fmt::Display,
+    where
+        Self: Sized,
+        Self::Error: fmt::Debug,
+        T: fmt::Display,
     {
         Expect {
             inner: self,
@@ -28,10 +32,11 @@ pub trait FutureExt: Future {
     ///
     /// `self` must not resolve before `other` does.
     fn drive<T>(self, other: T) -> Drive<Self, T>
-        where T: Future,
-              T::Error: fmt::Debug,
-              Self: Future<Item = ()> + Sized,
-              Self::Error: fmt::Debug,
+    where
+        T: Future,
+        T::Error: fmt::Debug,
+        Self: Future<Item = ()> + Sized,
+        Self::Error: fmt::Debug,
     {
         Drive {
             driver: Some(self),
@@ -40,8 +45,7 @@ pub trait FutureExt: Future {
     }
 }
 
-impl<T: Future> FutureExt for T {
-}
+impl<T: Future> FutureExt for T {}
 
 // ===== Unwrap ======
 
@@ -51,9 +55,10 @@ pub struct Unwrap<T> {
 }
 
 impl<T> Future for Unwrap<T>
-    where T: Future,
-          T::Item: fmt::Debug,
-          T::Error: fmt::Debug,
+where
+    T: Future,
+    T::Item: fmt::Debug,
+    T::Error: fmt::Debug,
 {
     type Item = T::Item;
     type Error = ();
@@ -73,9 +78,10 @@ pub struct Expect<T> {
 }
 
 impl<T> Future for Expect<T>
-    where T: Future,
-          T::Item: fmt::Debug,
-          T::Error: fmt::Debug,
+where
+    T: Future,
+    T::Item: fmt::Debug,
+    T::Error: fmt::Debug,
 {
     type Item = T::Item;
     type Error = ();
@@ -96,10 +102,11 @@ pub struct Drive<T, U> {
 }
 
 impl<T, U> Future for Drive<T, U>
-    where T: Future<Item = ()>,
-          U: Future,
-          T::Error: fmt::Debug,
-          U::Error: fmt::Debug,
+where
+    T: Future<Item = ()>,
+    U: Future,
+    T::Error: fmt::Debug,
+    U::Error: fmt::Debug,
 {
     type Item = (T, U::Item);
     type Error = ();
@@ -113,9 +120,9 @@ impl<T, U> Future for Drive<T, U>
                     // Get the driver
                     let driver = self.driver.take().unwrap();
 
-                    return Ok((driver, val).into())
-                }
-                Ok(_) => {}
+                    return Ok((driver, val).into());
+                },
+                Ok(_) => {},
                 Err(e) => panic!("unexpected error; {:?}", e),
             }
 
@@ -128,8 +135,8 @@ impl<T, U> Future for Drive<T, U>
                         looped = true;
                         continue;
                     }
-                }
-                Ok(Async::NotReady) => {}
+                },
+                Ok(Async::NotReady) => {},
                 Err(e) => panic!("unexpected error; {:?}", e),
             }
 

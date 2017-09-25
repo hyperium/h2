@@ -1,12 +1,9 @@
 use h2::client;
 
-use futures::{Poll, Async, Future};
 use bytes::Bytes;
+use futures::{Async, Future, Poll};
 
-pub fn wait_for_capacity(stream: client::Stream<Bytes>,
-                         target: usize)
-    -> WaitForCapacity
-{
+pub fn wait_for_capacity(stream: client::Stream<Bytes>, target: usize) -> WaitForCapacity {
     WaitForCapacity {
         stream: Some(stream),
         target: target,
@@ -36,7 +33,7 @@ impl Future for WaitForCapacity {
         println!("CAP={:?}", act);
 
         if act >= self.target {
-            return Ok(self.stream.take().unwrap().into())
+            return Ok(self.stream.take().unwrap().into());
         }
 
         Ok(Async::NotReady)
