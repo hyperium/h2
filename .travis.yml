@@ -39,6 +39,8 @@ script:
   # Test _only_ hpack.
   - cargo test --lib -- hpack
 
+  # Test _only_ hpack.
+  - cargo test -- hpack
 
 after_success:
   - bash <(curl -Ls https://codecov.io/bash)
