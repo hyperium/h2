@@ -17,15 +17,19 @@ rust:
 - beta
 - stable
 
+before_script:
+  - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
+
 script:
-  # Run tests
-  - cargo test
+  # Run tests, uploading results to codecov.
+  - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
+
+  # Run hpack tests outside of codecov. idk why.
+  - cargo test -- hpack
+
   # Test examples in readme
   - rustdoc --test README.md -L target/debug/deps
 
-after_success:
-  - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
-  - cargo tarpaulin --out Xml -- --skip hpack && bash <(curl -s https://codecov.io/bash)
 
 jobs:
   # allow_failures:
@@ -45,6 +49,7 @@ jobs:
           repo: carllerche/h2
           rust: nightly
       after_success: skip
+
     - stage: fmt
       rust: nightly
       install: cargo install --force rustfmt-nightly
