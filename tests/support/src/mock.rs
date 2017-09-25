@@ -1,11 +1,11 @@
 use {FutureExt, SendFrame};
 
-use h2::{self, SendError, RecvError};
+use h2::{self, RecvError, SendError};
 use h2::frame::{self, Frame};
 
-use futures::{Async, Future, Stream, Poll};
-use futures::task::{self, Task};
+use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot;
+use futures::task::{self, Task};
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::read_exact;
@@ -58,7 +58,9 @@ pub fn new() -> (Mock, Handle) {
     };
 
     let handle = Handle {
-        codec: h2::Codec::new(Pipe { inner }),
+        codec: h2::Codec::new(Pipe {
+            inner,
+        }),
     };
 
     (mock, handle)
@@ -92,36 +94,37 @@ impl Handle {
     }
 
     /// Read the client preface
-    pub fn read_preface(self)
-        -> Box<Future<Item = Self, Error = io::Error>>
-    {
+    pub fn read_preface(self) -> Box<Future<Item = Self, Error = io::Error>> {
         let buf = vec![0; PREFACE.len()];
-        let ret = read_exact(self, buf)
-            .and_then(|(me, buf)| {
-                assert_eq!(buf, PREFACE);
-                Ok(me)
-            });
+        let ret = read_exact(self, buf).and_then(|(me, buf)| {
+            assert_eq!(buf, PREFACE);
+            Ok(me)
+        });
 
         Box::new(ret)
     }
 
     /// Perform the H2 handshake
-    pub fn assert_client_handshake(self)
-        -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
-    {
+    pub fn assert_client_handshake(
+        self,
+    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>> {
         self.assert_client_handshake_with_settings(frame::Settings::default())
     }
 
     /// Perform the H2 handshake
-    pub fn assert_client_handshake_with_settings<T>(mut self, settings: T)
-        -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
-    where T: Into<frame::Settings>,
+    pub fn assert_client_handshake_with_settings<T>(
+        mut self,
+        settings: T,
+    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    where
+        T: Into<frame::Settings>,
     {
         let settings = settings.into();
         // Send a settings frame
         self.send(settings.into()).unwrap();
 
-        let ret = self.read_preface().unwrap()
+        let ret = self.read_preface()
+            .unwrap()
             .and_then(|me| me.into_future().unwrap())
             .map(|(frame, mut me)| {
                 match frame {
@@ -133,13 +136,13 @@ impl Handle {
                         me.send(ack.into()).unwrap();
 
                         (settings, me)
-                    }
+                    },
                     Some(frame) => {
                         panic!("unexpected frame; frame={:?}", frame);
-                    }
+                    },
                     None => {
                         panic!("unexpected EOF");
-                    }
+                    },
                 }
             })
             .then(|res| {
@@ -155,8 +158,7 @@ impl Handle {
 
                         (settings, me)
                     })
-            })
-            ;
+            });
 
         Box::new(ret)
     }
@@ -177,8 +179,7 @@ impl io::Read for Handle {
     }
 }
 
-impl AsyncRead for Handle {
-}
+impl AsyncRead for Handle {}
 
 impl io::Write for Handle {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -215,7 +216,10 @@ impl Drop for Handle {
 
 impl io::Read for Mock {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        assert!(buf.len() > 0, "attempted read with zero length buffer... wut?");
+        assert!(
+            buf.len() > 0,
+            "attempted read with zero length buffer... wut?"
+        );
 
         let mut me = self.pipe.inner.lock().unwrap();
 
@@ -236,8 +240,7 @@ impl io::Read for Mock {
     }
 }
 
-impl AsyncRead for Mock {
-}
+impl AsyncRead for Mock {}
 
 impl io::Write for Mock {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -273,7 +276,10 @@ impl AsyncWrite for Mock {
 
 impl io::Read for Pipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        assert!(buf.len() > 0, "attempted read with zero length buffer... wut?");
+        assert!(
+            buf.len() > 0,
+            "attempted read with zero length buffer... wut?"
+        );
 
         let mut me = self.inner.lock().unwrap();
 
@@ -290,8 +296,7 @@ impl io::Read for Pipe {
     }
 }
 
-impl AsyncRead for Pipe {
-}
+impl AsyncRead for Pipe {}
 
 impl io::Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -319,38 +324,43 @@ impl AsyncWrite for Pipe {
 }
 
 pub trait HandleFutureExt {
-    fn recv_settings(self) -> RecvFrame<Box<Future<Item=(Option<Frame>, Handle), Error=()>>>
-        where Self: Sized + 'static,
-              Self: Future<Item=(frame::Settings, Handle)>,
-              Self::Error: fmt::Debug,
+    fn recv_settings(self) -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
+    where
+        Self: Sized + 'static,
+        Self: Future<Item = (frame::Settings, Handle)>,
+        Self::Error: fmt::Debug,
     {
-        let map = self.map(|(settings, handle)| (Some(settings.into()), handle)).unwrap();
+        let map = self.map(|(settings, handle)| (Some(settings.into()), handle))
+            .unwrap();
 
-        let boxed: Box<Future<Item=(Option<Frame>, Handle), Error=()>> = Box::new(map);
+        let boxed: Box<Future<Item = (Option<Frame>, Handle), Error = ()>> = Box::new(map);
         RecvFrame {
             inner: boxed,
             frame: frame::Settings::default().into(),
         }
     }
 
-    fn ignore_settings(self) -> Box<Future<Item=Handle, Error=()>>
-        where Self: Sized + 'static,
-              Self: Future<Item=(frame::Settings, Handle)>,
-              Self::Error: fmt::Debug,
+    fn ignore_settings(self) -> Box<Future<Item = Handle, Error = ()>>
+    where
+        Self: Sized + 'static,
+        Self: Future<Item = (frame::Settings, Handle)>,
+        Self::Error: fmt::Debug,
     {
         Box::new(self.map(|(_settings, handle)| handle).unwrap())
     }
 
     fn recv_frame<T>(self, frame: T) -> RecvFrame<<Self as IntoRecvFrame>::Future>
-        where Self: IntoRecvFrame + Sized,
-              T: Into<Frame>,
+    where
+        Self: IntoRecvFrame + Sized,
+        T: Into<Frame>,
     {
         self.into_recv_frame(frame.into())
     }
 
     fn send_frame<T>(self, frame: T) -> SendFrameFut<Self>
-        where Self: Sized,
-              T: Into<SendFrame>,
+    where
+        Self: Sized,
+        T: Into<SendFrame>,
     {
         SendFrameFut {
             inner: self,
@@ -358,10 +368,11 @@ pub trait HandleFutureExt {
         }
     }
 
-    fn idle_ms(self, ms: usize) -> Box<Future<Item=Handle, Error=Self::Error>>
-        where Self: Sized + 'static,
-              Self: Future<Item=Handle>,
-              Self::Error: fmt::Debug,
+    fn idle_ms(self, ms: usize) -> Box<Future<Item = Handle, Error = Self::Error>>
+    where
+        Self: Sized + 'static,
+        Self: Future<Item = Handle>,
+        Self::Error: fmt::Debug,
     {
         use std::thread;
         use std::time::Duration;
@@ -383,8 +394,9 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn close(self) -> Box<Future<Item=(), Error=()>>
-        where Self: Future<Error = ()> + Sized + 'static,
+    fn close(self) -> Box<Future<Item = (), Error = ()>>
+    where
+        Self: Future<Error = ()> + Sized + 'static,
     {
         Box::new(self.map(drop))
     }
@@ -396,8 +408,9 @@ pub struct RecvFrame<T> {
 }
 
 impl<T> Future for RecvFrame<T>
-    where T: Future<Item=(Option<Frame>, Handle)>,
-          T::Error: fmt::Debug,
+where
+    T: Future<Item = (Option<Frame>, Handle)>,
+    T::Error: fmt::Debug,
 {
     type Item = Handle;
     type Error = ();
@@ -418,8 +431,9 @@ pub struct SendFrameFut<T> {
 }
 
 impl<T> Future for SendFrameFut<T>
-    where T: Future<Item=Handle>,
-          T::Error: fmt::Debug,
+where
+    T: Future<Item = Handle>,
+    T::Error: fmt::Debug,
 {
     type Item = Handle;
     type Error = ();
@@ -452,13 +466,14 @@ impl Future for Idle {
             Ok(Async::NotReady) => Ok(Async::NotReady),
             res => {
                 panic!("Received unexpected frame on handle; frame={:?}", res);
-            }
+            },
         }
     }
 }
 
 impl<T> HandleFutureExt for T
-    where T: Future + 'static,
+where
+    T: Future + 'static,
 {
 }
 
@@ -479,14 +494,16 @@ impl IntoRecvFrame for Handle {
 }
 
 impl<T> IntoRecvFrame for T
-    where T: Future<Item=Handle> + 'static,
-          T::Error: fmt::Debug,
+where
+    T: Future<Item = Handle> + 'static,
+    T::Error: fmt::Debug,
 {
-    type Future = Box<Future<Item=(Option<Frame>, Handle), Error=()>>;
+    type Future = Box<Future<Item = (Option<Frame>, Handle), Error = ()>>;
 
     fn into_recv_frame(self, frame: Frame) -> RecvFrame<Self::Future> {
-        let into_fut = Box::new(self.unwrap()
-            .and_then(|handle| handle.into_future().unwrap())
+        let into_fut = Box::new(
+            self.unwrap()
+                .and_then(|handle| handle.into_future().unwrap()),
         );
         RecvFrame {
             inner: into_fut,

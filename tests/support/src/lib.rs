@@ -7,10 +7,10 @@ pub extern crate http;
 #[macro_use]
 pub extern crate tokio_io;
 
+pub extern crate env_logger;
 #[macro_use]
 pub extern crate futures;
 pub extern crate mock_io;
-pub extern crate env_logger;
 
 #[macro_use]
 mod assert;
