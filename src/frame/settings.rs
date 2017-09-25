@@ -74,6 +74,7 @@ impl Settings {
         self.max_concurrent_streams
     }
 
+    #[cfg(feature = "unstable")]
     pub fn set_max_concurrent_streams(&mut self, max: Option<u32>) {
         self.max_concurrent_streams = max;
     }
