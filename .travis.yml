@@ -20,6 +20,9 @@ rust:
 install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
 
+before_script:
+  - cargo clean
+
 script:
  # Test examples in README.
   - cargo build --tests && rustdoc --test README.md -L target/debug/deps
