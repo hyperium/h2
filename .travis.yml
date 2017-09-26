@@ -40,7 +40,7 @@ script:
 
   # Run tests, uploading results to codecov..
   # hpack tests are _super_ slow in coverage, so skip them here.
-  - cargo tarpaulin --features unstable --out Xml -- --skip hpack
+  - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml -- --skip hpack
 
   # Test _only_ hpack.
   - cargo test --lib -- hpack
