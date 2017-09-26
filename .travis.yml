@@ -4,6 +4,7 @@ dist: trusty
 sudo: false
 
 cache:
+  cargo: true
   apt: true
 
 addons:
@@ -13,7 +14,6 @@ addons:
 
 rust:
 - nightly
-- beta
 - stable
 
 install:
