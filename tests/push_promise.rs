@@ -16,9 +16,7 @@ fn recv_push_works() {
                 .request("GET", "https://http2.akamai.com/")
                 .eos(),
         )
-        .send_frame(
-            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
-        )
+        .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
         .send_frame(frames::headers(1).response(200).eos())
         .send_frame(frames::headers(2).response(200).eos());
 
@@ -55,9 +53,7 @@ fn recv_push_when_push_disabled_is_conn_error() {
                 .request("GET", "https://http2.akamai.com/")
                 .eos(),
         )
-        .send_frame(
-            frames::push_promise(1, 3).request("GET", "https://http2.akamai.com/style.css"),
-        )
+        .send_frame(frames::push_promise(1, 3).request("GET", "https://http2.akamai.com/style.css"))
         .send_frame(frames::headers(1).response(200).eos())
         .recv_frame(frames::go_away(0).protocol_error());
 

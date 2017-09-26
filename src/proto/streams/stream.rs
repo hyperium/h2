@@ -199,8 +199,8 @@ where
             // There are no more outstanding references to the stream
             self.ref_count == 0 &&
             // The stream is not in any queue
-            !self.is_pending_send && !self.is_pending_send_capacity &&
-            !self.is_pending_accept && !self.is_pending_window_update
+            !self.is_pending_send && !self.is_pending_send_capacity
+            && !self.is_pending_accept && !self.is_pending_window_update
     }
 
     pub fn assign_capacity(&mut self, capacity: WindowSize) {
