@@ -162,6 +162,66 @@ impl Handle {
 
         Box::new(ret)
     }
+
+
+    /// Perform the H2 handshake
+    pub fn assert_server_handshake(
+        self,
+    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>> {
+        self.assert_server_handshake_with_settings(frame::Settings::default())
+    }
+
+    /// Perform the H2 handshake
+    pub fn assert_server_handshake_with_settings<T>(
+        mut self,
+        settings: T,
+    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    where
+        T: Into<frame::Settings>,
+    {
+        self.write_preface();
+
+        let settings = settings.into();
+        self.send(settings.into()).unwrap();
+
+        let ret = self.into_future()
+            .unwrap()
+            .map(|(frame, mut me)| {
+                match frame {
+                    Some(Frame::Settings(settings)) => {
+                        // Send the ACK
+                        let ack = frame::Settings::ack();
+
+                        // TODO: Don't unwrap?
+                        me.send(ack.into()).unwrap();
+
+                        (settings, me)
+                    },
+                    Some(frame) => {
+                        panic!("unexpected frame; frame={:?}", frame);
+                    },
+                    None => {
+                        panic!("unexpected EOF");
+                    },
+                }
+            })
+            .then(|res| {
+                let (settings, me) = res.unwrap();
+
+                me.into_future()
+                    .map_err(|e| panic!("error: {:?}", e))
+                    .map(|(frame, me)| {
+                        let f = assert_settings!(frame.unwrap());
+
+                        // Is ACK
+                        assert!(f.is_ack());
+
+                        (settings, me)
+                    })
+            });
+
+        Box::new(ret)
+    }
 }
 
 impl Stream for Handle {
