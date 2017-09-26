@@ -184,38 +184,41 @@ impl Handle {
         let settings = settings.into();
         self.send(settings.into()).unwrap();
 
-        let ret = self.into_future().unwrap().map(|(frame, mut me)| {
-            match frame {
-                Some(Frame::Settings(settings)) => {
-                    // Send the ACK
-                    let ack = frame::Settings::ack();
+        let ret = self.into_future()
+            .unwrap()
+            .map(|(frame, mut me)| {
+                match frame {
+                    Some(Frame::Settings(settings)) => {
+                        // Send the ACK
+                        let ack = frame::Settings::ack();
 
-                    // TODO: Don't unwrap?
-                    me.send(ack.into()).unwrap();
+                        // TODO: Don't unwrap?
+                        me.send(ack.into()).unwrap();
 
-                    (settings, me)
-                },
-                Some(frame) => {
-                    panic!("unexpected frame; frame={:?}", frame);
-                },
-                None => {
-                    panic!("unexpected EOF");
-                },
-            }
-        }).then(|res| {
-            let (settings, me) = res.unwrap();
+                        (settings, me)
+                    },
+                    Some(frame) => {
+                        panic!("unexpected frame; frame={:?}", frame);
+                    },
+                    None => {
+                        panic!("unexpected EOF");
+                    },
+                }
+            })
+            .then(|res| {
+                let (settings, me) = res.unwrap();
 
-            me.into_future()
-                .map_err(|e| panic!("error: {:?}", e))
-                .map(|(frame, me)| {
-                    let f = assert_settings!(frame.unwrap());
+                me.into_future()
+                    .map_err(|e| panic!("error: {:?}", e))
+                    .map(|(frame, me)| {
+                        let f = assert_settings!(frame.unwrap());
 
-                    // Is ACK
-                    assert!(f.is_ack());
+                        // Is ACK
+                        assert!(f.is_ack());
 
-                    (settings, me)
-                })
-        });
+                        (settings, me)
+                    })
+            });
 
         Box::new(ret)
     }
