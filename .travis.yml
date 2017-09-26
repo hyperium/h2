@@ -53,7 +53,10 @@ jobs:
         tar xf h2spec_linux_amd64.tar.gz
       script:
         - cargo build --example server
-        - cargo run --example server & ./h2spec -p 5928
+        - |
+        exec 3< <(cargo run --example server) &&
+        sed '/listening on Ok(V4(127.0.0.1:5928))$/q' <&3 ; cat <&3 &&
+        ./h2spec -p 5928
     - stage: docs
       script: cargo doc --no-deps
       install: skip
