@@ -1,6 +1,6 @@
 #[macro_use]
-extern crate h2_test_support;
-use h2_test_support::prelude::*;
+pub mod support;
+use support::prelude::*;
 
 use std::error::Error;
 

@@ -14,7 +14,6 @@ addons:
 
 rust:
 - nightly
-- beta
 - stable
 
 install:
@@ -24,15 +23,17 @@ before_script:
   - cargo clean
 
 script:
- # Test examples in README.
-  - cargo build --tests && rustdoc --test README.md -L target/debug/deps
+  # Build without unstable flag
+  - cargo build
 
-  # Run tests, uploading results to codecov..
-  # hpack tests are _super_ slow in coverage, so skip them here.
-  - cargo tarpaulin --out Xml -- --skip hpack
+  # Test examples in README.
+  - rustdoc --test README.md -L target/debug -L target/debug/deps
 
-  # Test _only_ hpack.
-  - cargo test -- hpack
+  # Check with unstable flag
+  - cargo check --features unstable
+
+  # Run tests, uploading results to codecov.
+  - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml
 
 after_success:
   - bash <(curl -Ls https://codecov.io/bash)
