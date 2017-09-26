@@ -26,7 +26,7 @@ pub use super::{bytes, env_logger, futures, http, mock_io, tokio_io};
 pub use self::futures::{Future, Sink, Stream};
 
 // And our Future extensions
-pub use future_ext::{FutureExt, Unwrap};
+pub use super::future_ext::{FutureExt, Unwrap};
 
 // Re-export HTTP types
 pub use self::http::{HeaderMap, Method, Request, Response, StatusCode};
