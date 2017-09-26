@@ -29,7 +29,7 @@ script:
   - cargo check --features unstable
 
   # Test examples in README.
-  - cargo build --tests && rustdoc --test README.md -L target/debug/deps
+  - cargo build --tests --features unstable && rustdoc --test README.md -L target/debug/deps
 
   # Run tests, uploading results to codecov..
   # hpack tests are _super_ slow in coverage, so skip them here.
