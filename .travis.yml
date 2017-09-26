@@ -32,12 +32,8 @@ script:
   # Check with unstable flag
   - cargo check --features unstable
 
-  # Run tests, uploading results to codecov..
-  # hpack tests are _super_ slow in coverage, so skip them here.
-  - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml -- --skip hpack
-
-  # Test _only_ hpack.
-  - cargo test --lib -- hpack
+  # Run tests, uploading results to codecov.
+  - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml
 
 after_success:
   - bash <(curl -Ls https://codecov.io/bash)
