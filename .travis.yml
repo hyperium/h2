@@ -18,9 +18,6 @@ matrix:
     before_script: cargo install --force rustfmt-nightly
     before_deploy: cargo doc --no-deps
   - rust: stable
-    before_script: |
-        wget https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz &&
-        tar xf h2spec_linux_amd64.tar.gz
 
 install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
@@ -49,6 +46,8 @@ script:
     if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then
       cargo fmt -- --write-mode=diff
     else
+      wget https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz &&
+      tar xf h2spec_linux_amd64.tar.gz
       cargo build --example server
       exec 3< <(./target/debug/examples/server);
       sed '/listening on Ok(V4(127.0.0.1:5928))/q' <&3 ; cat <&3 &
