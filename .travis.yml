@@ -54,8 +54,8 @@ jobs:
       script:
         - cargo build --example server
         - |
-          exec 3< <(cargo run --example server) &&
-          sed '/listening on Ok(V4(127.0.0.1:5928))$/q' <&3 ; cat <&3 &&
+          exec 3< <(./target/debug/examples/server);
+          sed '/listening on Ok(V4(127.0.0.1:5928))/q' <&3 ; cat <&3 &
           ./h2spec -p 5928
     - stage: docs
       script: cargo doc --no-deps
