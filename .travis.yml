@@ -51,8 +51,9 @@ jobs:
       install: |
         wget -L https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz &&
         tar xf h2spec_linux_amd64.tar.gz
-      script: |
-        cargo run --example server & ./h2spec -p 5928
+      script:
+        - cargo build --example server
+        - cargo run --example server & ./h2spec -p 5928
     - stage: docs
       script: cargo doc --no-deps
       install: skip
