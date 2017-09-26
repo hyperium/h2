@@ -15,12 +15,12 @@ addons:
 matrix:
   include:
   - rust: nightly
-    before_script: cargo install --force rustfmt-nightly
     before_deploy: cargo doc --no-deps
   - rust: stable
 
 install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
+  - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then cargo install --force rustfmt-nightly; fi
 
 before_script:
   - cargo clean
@@ -42,6 +42,7 @@ script:
   # Test _only_ hpack.
   - cargo test --lib -- hpack
   # run rustfmt on nightly & h2spec on stable
+  # TODO: move installation of h2spec out of the `script` and into `install`?
   - |
     if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then
       cargo fmt -- --write-mode=diff
