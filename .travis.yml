@@ -46,6 +46,17 @@ jobs:
   # allow_failures:
   # - rust: nightly
   include:
+    - stage: h2spec
+      rust: nightly
+      install: |
+        wget https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz &&
+        tar xf h2spec_linux_amd64.tar.gz
+      script:
+        - cargo build --example server
+        - |
+          exec 3< <(./target/debug/examples/server);
+          sed '/listening on Ok(V4(127.0.0.1:5928))/q' <&3 ; cat <&3 &
+          ./h2spec -p 5928
     - stage: docs
       script: cargo doc --no-deps
       install: skip
