@@ -41,19 +41,12 @@ script:
 
   # Test _only_ hpack.
   - cargo test --lib -- hpack
-  # run rustfmt on nightly & h2spec on stable
-  # TODO: move installation of h2spec out of the `script` and into `install`?
-  - |
-    if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then
-      cargo fmt -- --write-mode=diff
-    else
-      wget https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz &&
-      tar xf h2spec_linux_amd64.tar.gz
-      cargo build --example server
-      exec 3< <(./target/debug/examples/server);
-      sed '/listening on Ok(V4(127.0.0.1:5928))/q' <&3 ; cat <&3 &
-      ./h2spec -p 5928
-    fi
+
+  # Run rustfmt on nightly
+  - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then cargo fmt -- --write-mode=diff; fi
+
+  # Run h2spec on stable
+  - if [ "${TRAVIS_RUST_VERSION}" = "stable" ]; then ./ci/h2spec.sh; fi
 
 after_success:
   - bash <(curl -Ls https://codecov.io/bash)
