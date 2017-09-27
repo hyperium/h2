@@ -6,6 +6,8 @@ sudo: false
 cache:
   cargo: true
   apt: true
+  directories:
+    - h2spec
 
 addons:
   apt:
