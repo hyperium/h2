@@ -480,7 +480,7 @@ where
             Async::Ready((frame, handle)) => (frame, handle),
             Async::NotReady => return Ok(Async::NotReady),
         };
-        assert_eq!(frame.unwrap(), self.frame);
+        assert_eq!(frame.unwrap(), self.frame, "recv_frame");
         Ok(Async::Ready(handle))
     }
 }

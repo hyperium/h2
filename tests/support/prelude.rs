@@ -60,7 +60,7 @@ pub trait ClientExt {
     fn run<F: Future>(&mut self, f: F) -> Result<F::Item, F::Error>;
 }
 
-impl<T, B> ClientExt for Client<T, B>
+impl<T, B> ClientExt for client::Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,

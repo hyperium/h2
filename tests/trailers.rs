@@ -23,7 +23,7 @@ fn recv_trailers_only() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -32,7 +32,7 @@ fn recv_trailers_only() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.send_request(request, true).unwrap();
+    let mut stream = client.send_request(request, true).unwrap();
 
     let response = h2.run(poll_fn(|| stream.poll_response())).unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -71,7 +71,7 @@ fn send_trailers_immediately() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -80,7 +80,7 @@ fn send_trailers_immediately() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.send_request(request, false).unwrap();
+    let mut stream = client.send_request(request, false).unwrap();
 
     let mut trailers = HeaderMap::new();
     trailers.insert("zomg", "hello".parse().unwrap());

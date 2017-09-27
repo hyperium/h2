@@ -323,6 +323,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
+        pending: Option<&store::Key>,
     ) -> Result<StreamRef<B, P>, SendError> {
         use super::stream::ContentLength;
         use http::Method;
@@ -336,8 +337,21 @@ where
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
-            // Initialize a new stream. This fails if the connection is at capacity.
-            let stream_id = me.actions.send.open(&mut me.counts)?;
+            me.actions.send.ensure_next_stream_id()?;
+
+            // The `pending` argument is provided by the `Client`, and holds
+            // a store `Key` of a `Stream` that may have been not been opened
+            // yet.
+            //
+            // If that stream is still pending, the Client isn't allowed to
+            // queue up another pending stream. They should use `poll_ready`.
+            if let Some(key) = pending {
+                if me.store.resolve(*key).is_pending_open {
+                    return Err(UserError::Rejected.into());
+                }
+            }
+
+            let stream_id = me.actions.send.open()?;
 
             let mut stream = Stream::new(
                 stream_id,
@@ -354,9 +368,12 @@ where
 
             let mut stream = me.store.insert(stream.id, stream);
 
-            me.actions
-                .send
-                .send_headers(headers, &mut stream, &mut me.actions.task)?;
+            me.actions.send.send_headers(
+                headers,
+                &mut stream,
+                &mut me.counts,
+                &mut me.actions.task,
+            )?;
 
             // Given that the stream has been initialized, it should not be in the
             // closed state.
@@ -403,13 +420,21 @@ impl<B> Streams<B, client::Peer>
 where
     B: Buf,
 {
-    pub fn poll_send_request_ready(&mut self) -> Poll<(), ::Error> {
+    pub fn poll_pending_open(&mut self, key: Option<&store::Key>) -> Poll<(), ::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         me.actions.send.ensure_next_stream_id()?;
 
-        Ok(me.counts.poll_open_ready())
+        if let Some(key) = key {
+            let mut stream = me.store.resolve(*key);
+            trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
+            if stream.is_pending_open {
+                stream.send_task = Some(task::current());
+                return Ok(Async::NotReady);
+            }
+        }
+        Ok(().into())
     }
 }
 
@@ -427,6 +452,19 @@ where
     pub fn num_wired_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_wired_streams()
+    }
+}
+
+// no derive because we don't need B and P to be Clone.
+impl<B, P> Clone for Streams<B, P>
+where
+    B: Buf,
+    P: Peer,
+{
+    fn clone(&self) -> Self {
+        Streams {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -493,10 +531,12 @@ where
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
 
-        me.counts.transition(stream, |_, stream| {
+        me.counts.transition(stream, |counts, stream| {
             let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
 
-            actions.send.send_headers(frame, stream, &mut actions.task)
+            actions
+                .send
+                .send_headers(frame, stream, counts, &mut actions.task)
         })
     }
 
@@ -569,6 +609,10 @@ where
 
         me.actions.send.poll_capacity(&mut stream)
     }
+
+    pub(crate) fn key(&self) -> store::Key {
+        self.key
+    }
 }
 
 impl<B> StreamRef<B, server::Peer>
@@ -603,6 +647,12 @@ where
 
         me.actions.recv.poll_response(&mut stream)
     }
+
+
+    pub fn is_pending_open(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        me.store.resolve(self.key).is_pending_open
+    }
 }
 
 impl<B, P> Clone for StreamRef<B, P>
@@ -625,7 +675,15 @@ where
     P: Peer,
 {
     fn drop(&mut self) {
-        let mut me = self.inner.lock().unwrap();
+        let mut me = match self.inner.lock() {
+            Ok(inner) => inner,
+            Err(_) => if ::std::thread::panicking() {
+                trace!("StreamRef::drop; mutex poisoned");
+                return;
+            } else {
+                panic!("StreamRef::drop; mutex poisoned");
+            },
+        };
 
         let me = &mut *me;
 

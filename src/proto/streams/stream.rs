@@ -60,6 +60,15 @@ where
     /// Set to true when the send capacity has been incremented
     pub send_capacity_inc: bool,
 
+    /// Next node in the open linked list
+    pub next_open: Option<store::Key>,
+
+    /// Set to true when the stream is pending to be opened
+    pub is_pending_open: bool,
+
+    /// Task tracking when stream can be "opened", or initially sent to socket.
+    pub open_task: Option<task::Task>,
+
     // ===== Fields related to receiving =====
     /// Next node in the accept linked list
     pub next_pending_accept: Option<store::Key>,
@@ -111,6 +120,9 @@ pub(super) struct NextSendCapacity;
 #[derive(Debug)]
 pub(super) struct NextWindowUpdate;
 
+#[derive(Debug)]
+pub(super) struct NextOpen;
+
 impl<B, P> Stream<B, P>
 where
     P: Peer,
@@ -150,6 +162,9 @@ where
             is_pending_send_capacity: false,
             next_pending_send_capacity: None,
             send_capacity_inc: false,
+            is_pending_open: false,
+            next_open: None,
+            open_task: None,
 
             // ===== Fields related to receiving =====
             next_pending_accept: None,
@@ -175,6 +190,12 @@ where
     pub fn ref_dec(&mut self) {
         assert!(self.ref_count > 0);
         self.ref_count -= 1;
+    }
+
+    /// Returns true if a stream with the current state counts against the
+    /// concurrency limit.
+    pub fn is_counted(&self) -> bool {
+        !self.is_pending_open && self.state.is_at_least_half_open()
     }
 
     /// Returns true if the stream is closed
@@ -334,6 +355,28 @@ impl store::Next for NextWindowUpdate {
 
     fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
         stream.is_pending_window_update = val;
+    }
+}
+
+impl store::Next for NextOpen {
+    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+        stream.next_open
+    }
+
+    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+        stream.next_open = key;
+    }
+
+    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+        stream.next_open.take()
+    }
+
+    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+        stream.is_pending_open
+    }
+
+    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+        stream.is_pending_open = val;
     }
 }
 

@@ -22,6 +22,9 @@ where
     /// Queue of streams waiting for window capacity to produce data.
     pending_capacity: store::Queue<B, stream::NextSendCapacity, P>,
 
+    /// Streams waiting for capacity due to max concurrency
+    pending_open: store::Queue<B, stream::NextOpen, P>,
+
     /// Connection level flow control governing sent data
     flow: FlowControl,
 
@@ -60,6 +63,7 @@ where
         Prioritize {
             pending_send: store::Queue::new(),
             pending_capacity: store::Queue::new(),
+            pending_open: store::Queue::new(),
             flow: flow,
             buffer: Buffer::new(),
         }
@@ -75,13 +79,20 @@ where
         // Queue the frame in the buffer
         stream.pending_send.push_back(&mut self.buffer, frame);
 
-        // Queue the stream
-        self.pending_send.push(stream);
+        // If the stream is waiting to be opened, nothing more to do.
+        if !stream.is_pending_open {
+            // Queue the stream
+            self.pending_send.push(stream);
 
-        // Notify the connection.
-        if let Some(task) = task.take() {
-            task.notify();
+            // Notify the connection.
+            if let Some(task) = task.take() {
+                task.notify();
+            }
         }
+    }
+
+    pub fn queue_open(&mut self, stream: &mut store::Ptr<B, P>) {
+        self.pending_open.push(stream);
     }
 
     /// Send a data frame
@@ -371,6 +382,7 @@ where
         trace!("poll_complete");
 
         loop {
+            self.schedule_pending_open(store, counts);
             match self.pop_frame(store, max_frame_len, counts) {
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
@@ -482,7 +494,7 @@ where
                     trace!("pop_frame; stream={:?}", stream.id);
                     debug_assert!(!stream.pending_send.is_empty());
 
-                    let is_counted = stream.state.is_counted();
+                    let is_counted = stream.is_counted();
 
                     let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
                         Frame::Data(mut frame) => {
@@ -591,6 +603,23 @@ where
                     return Some(frame);
                 },
                 None => return None,
+            }
+        }
+    }
+
+    fn schedule_pending_open(&mut self, store: &mut Store<B, P>, counts: &mut Counts<P>) {
+        trace!("schedule_pending_open");
+        // check for any pending open streams
+        while counts.can_inc_num_send_streams() {
+            if let Some(mut stream) = self.pending_open.pop(store) {
+                trace!("schedule_pending_open; stream={:?}", stream.id);
+                counts.inc_num_send_streams();
+                self.pending_send.push(&mut stream);
+                if let Some(task) = stream.open_task.take() {
+                    task.notify();
+                }
+            } else {
+                return;
             }
         }
     }

@@ -43,20 +43,9 @@ where
         self.init_window_sz
     }
 
-    /// Update state reflecting a new, locally opened stream
-    ///
-    /// Returns the stream state if successful. `None` if refused
-    pub fn open(&mut self, counts: &mut Counts<P>) -> Result<StreamId, UserError> {
-        if !counts.can_inc_num_send_streams() {
-            return Err(Rejected.into());
-        }
-
+    pub fn open(&mut self) -> Result<StreamId, UserError> {
         let stream_id = self.try_open()?;
-
-        // Increment the number of locally initiated streams
-        counts.inc_num_send_streams();
         self.next_stream_id = stream_id.next_id();
-
         Ok(stream_id)
     }
 
@@ -64,6 +53,7 @@ where
         &mut self,
         frame: frame::Headers,
         stream: &mut store::Ptr<B, P>,
+        counts: &mut Counts<P>,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
         trace!(
@@ -76,6 +66,14 @@ where
 
         // Update the state
         stream.state.send_open(end_stream)?;
+
+        if P::is_local_init(frame.stream_id()) {
+            if counts.can_inc_num_send_streams() {
+                counts.inc_num_send_streams();
+            } else {
+                self.prioritize.queue_open(stream);
+            }
+        }
 
         // Queue the frame for sending
         self.prioritize.queue_frame(frame.into(), stream, task);

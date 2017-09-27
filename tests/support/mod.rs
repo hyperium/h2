@@ -1,5 +1,11 @@
 //! Utilities to support tests.
 
+#[cfg(not(feature = "unstable"))]
+compile_error!(
+    "Tests depend on the 'unstable' feature on h2. \
+    Retry with `cargo test --features unstable`"
+);
+
 pub extern crate bytes;
 pub extern crate env_logger;
 pub extern crate futures;

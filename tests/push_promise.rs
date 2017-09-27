@@ -20,13 +20,14 @@ fn recv_push_works() {
         .send_frame(frames::headers(1).response(200).eos())
         .send_frame(frames::headers(2).response(200).eos());
 
-    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")
             .body(())
             .unwrap();
-        let req = h2.send_request(request, true)
+        let req = client
+            .send_request(request, true)
             .unwrap()
             .unwrap()
             .and_then(|resp| {
@@ -61,13 +62,13 @@ fn recv_push_when_push_disabled_is_conn_error() {
         .enable_push(false)
         .handshake::<_, Bytes>(io)
         .unwrap()
-        .and_then(|mut h2| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://http2.akamai.com/")
                 .body(())
                 .unwrap();
-            let req = h2.send_request(request, true).unwrap().then(|res| {
+            let req = client.send_request(request, true).unwrap().then(|res| {
                 let err = res.unwrap_err();
                 assert_eq!(
                     err.to_string(),

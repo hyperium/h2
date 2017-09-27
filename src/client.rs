@@ -1,7 +1,7 @@
 use codec::{Codec, RecvError};
 use frame::{Headers, Pseudo, Settings, StreamId};
 use frame::Reason::*;
-use proto::{self, Connection, WindowSize};
+use proto::{self, WindowSize};
 
 use bytes::{Bytes, IntoBuf};
 use futures::{Async, Future, MapErr, Poll};
@@ -21,8 +21,13 @@ pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
 }
 
 /// Marker type indicating a client peer
-pub struct Client<T, B: IntoBuf> {
-    connection: Connection<T, Peer, B>,
+pub struct Client<B: IntoBuf> {
+    inner: proto::Streams<B::Buf, Peer>,
+    pending: Option<proto::StreamKey>,
+}
+
+pub struct Connection<T, B: IntoBuf> {
+    inner: proto::Connection<T, Peer, B>,
 }
 
 #[derive(Debug)]
@@ -45,10 +50,9 @@ pub struct Builder {
 #[derive(Debug)]
 pub(crate) struct Peer;
 
-impl<T> Client<T, Bytes>
-where
-    T: AsyncRead + AsyncWrite,
-{
+// ===== impl Client =====
+
+impl Client<Bytes> {
     /// Bind an H2 client connection.
     ///
     /// Returns a future which resolves to the connection value once the H2
@@ -56,24 +60,29 @@ where
     ///
     /// It's important to note that this does not **flush** the outbound
     /// settings to the wire.
-    pub fn handshake(io: T) -> Handshake<T, Bytes> {
+    pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+    where
+        T: AsyncRead + AsyncWrite,
+    {
         Builder::default().handshake(io)
     }
 }
 
-impl Client<(), Bytes> {
+impl Client<Bytes> {
     /// Creates a Client Builder to customize a Client before binding.
     pub fn builder() -> Builder {
         Builder::default()
     }
 }
 
-impl<T, B> Client<T, B>
+impl<B> Client<B>
 where
-    T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
+    fn handshake2<T>(io: T, builder: Builder) -> Handshake<T, B>
+    where
+        T: AsyncRead + AsyncWrite,
+    {
         use tokio_io::io;
 
         debug!("binding client connection");
@@ -91,7 +100,9 @@ where
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
-        self.connection.poll_send_request_ready()
+        try_ready!(self.inner.poll_pending_open(self.pending.as_ref()));
+        self.pending = None;
+        Ok(().into())
     }
 
     /// Send a request on a new HTTP 2.0 stream
@@ -100,10 +111,13 @@ where
         request: Request<()>,
         end_of_stream: bool,
     ) -> Result<Stream<B>, ::Error> {
-        self.connection
-            .send_request(request, end_of_stream)
+        self.inner
+            .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
             .map(|stream| {
+                if stream.is_pending_open() {
+                    self.pending = Some(stream.key());
+                }
                 Stream {
                     inner: stream,
                 }
@@ -111,37 +125,30 @@ where
     }
 }
 
-impl<T, B> Future for Client<T, B>
+impl<B> fmt::Debug for Client<B>
 where
-    T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    type Item = ();
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<(), ::Error> {
-        self.connection.poll().map_err(Into::into)
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Client").finish()
     }
 }
 
-impl<T, B> fmt::Debug for Client<T, B>
+impl<B> Clone for Client<B>
 where
-    T: AsyncRead + AsyncWrite,
-    T: fmt::Debug,
-    B: fmt::Debug + IntoBuf,
-    B::Buf: fmt::Debug,
+    B: IntoBuf,
 {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Client")
-            .field("connection", &self.connection)
-            .finish()
+    fn clone(&self) -> Self {
+        Client {
+            inner: self.inner.clone(),
+            pending: None,
+        }
     }
 }
 
 #[cfg(feature = "unstable")]
-impl<T, B> Client<T, B>
+impl<B> Client<B>
 where
-    T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
     /// Returns the number of active streams.
@@ -149,7 +156,7 @@ where
     /// An active stream is a stream that has not yet transitioned to a closed
     /// state.
     pub fn num_active_streams(&self) -> usize {
-        self.connection.num_active_streams()
+        self.inner.num_active_streams()
     }
 
     /// Returns the number of streams that are held in memory.
@@ -158,7 +165,7 @@ where
     /// stay in memory for some reason. For example, there are still outstanding
     /// userspace handles pointing to the slot.
     pub fn num_wired_streams(&self) -> usize {
-        self.connection.num_wired_streams()
+        self.inner.num_wired_streams()
     }
 }
 
@@ -219,13 +226,40 @@ impl Default for Builder {
     }
 }
 
+// ===== impl Connection =====
+
+impl<T, B> Future for Connection<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+{
+    type Item = ();
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<(), ::Error> {
+        self.inner.poll().map_err(Into::into)
+    }
+}
+
+impl<T, B> fmt::Debug for Connection<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    T: fmt::Debug,
+    B: fmt::Debug + IntoBuf,
+    B::Buf: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.inner, fmt)
+    }
+}
+
 // ===== impl Handshake =====
 
 impl<T, B: IntoBuf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite,
 {
-    type Item = Client<T, B>;
+    type Item = (Client<B>, Connection<T, B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -245,10 +279,16 @@ where
             .buffer(self.builder.settings.clone().into())
             .expect("invalid SETTINGS frame");
 
-        let connection = Connection::new(codec, &self.builder.settings, self.builder.stream_id);
-        Ok(Async::Ready(Client {
-            connection,
-        }))
+        let connection =
+            proto::Connection::new(codec, &self.builder.settings, self.builder.stream_id);
+        let client = Client {
+            inner: connection.streams().clone(),
+            pending: None,
+        };
+        let conn = Connection {
+            inner: connection,
+        };
+        Ok(Async::Ready((client, conn)))
     }
 }
 

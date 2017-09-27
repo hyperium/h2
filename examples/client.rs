@@ -58,7 +58,7 @@ pub fn main() {
         let tcp = io_dump::Dump::to_stdout(res.unwrap());
         Client::handshake(tcp)
     }).then(|res| {
-            let mut client = res.unwrap();
+            let (mut client, h2) = res.unwrap();
 
             println!("sending request");
 
@@ -75,8 +75,8 @@ pub fn main() {
             // send trailers
             stream.send_trailers(trailers).unwrap();
 
-            // Spawn a task to run the client...
-            handle.spawn(client.map_err(|e| println!("GOT ERR={:?}", e)));
+            // Spawn a task to run the conn...
+            handle.spawn(h2.map_err(|e| println!("GOT ERR={:?}", e)));
 
             stream
                 .and_then(|response| {

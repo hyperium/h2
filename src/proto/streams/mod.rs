@@ -10,6 +10,7 @@ mod stream;
 mod streams;
 
 pub(crate) use self::prioritize::Prioritized;
+pub(crate) use self::store::Key;
 pub(crate) use self::streams::{StreamRef, Streams};
 
 use self::buffer::Buffer;

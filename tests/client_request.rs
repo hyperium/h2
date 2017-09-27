@@ -13,12 +13,49 @@ fn handshake() {
         .write(SETTINGS_ACK)
         .build();
 
-    let h2 = Client::handshake(mock).wait().unwrap();
+    let (_, h2) = Client::handshake(mock).wait().unwrap();
 
     trace!("hands have been shook");
 
     // At this point, the connection should be closed
     h2.wait().unwrap();
+}
+
+#[test]
+fn client_other_thread() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let h2 = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            ::std::thread::spawn(move || {
+                let request = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .body(())
+                    .unwrap();
+                let res = client
+                    .send_request(request, true)
+                    .unwrap()
+                    .wait()
+                    .expect("request");
+                assert_eq!(res.status(), StatusCode::OK);
+            });
+
+            h2.expect("h2")
+        });
+    h2.join(srv).wait().expect("wait");
 }
 
 #[test]
@@ -39,7 +76,7 @@ fn recv_invalid_server_stream_id() {
         .write(&[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, h2) = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -48,7 +85,7 @@ fn recv_invalid_server_stream_id() {
         .unwrap();
 
     info!("sending request");
-    let stream = h2.send_request(request, true).unwrap();
+    let stream = client.send_request(request, true).unwrap();
 
     // The connection errors
     assert!(h2.wait().is_err());
@@ -67,7 +104,7 @@ fn request_stream_id_overflows() {
         .initial_stream_id(::std::u32::MAX >> 1)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
-        .and_then(|mut h2| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -75,24 +112,26 @@ fn request_stream_id_overflows() {
                 .unwrap();
 
             // first request is allowed
-            let req = h2.send_request(request, true).unwrap().unwrap();
+            let req = client.send_request(request, true).unwrap().unwrap();
 
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
+            h2.drive(req).and_then(move |(h2, _)| {
+                let request = Request::builder()
+                    .method(Method::GET)
+                    .uri("https://example.com/")
+                    .body(())
+                    .unwrap();
 
 
-            // second cannot use the next stream id, it's over
+                // second cannot use the next stream id, it's over
 
-            let poll_err = h2.poll_ready().unwrap_err();
-            assert_eq!(poll_err.to_string(), "user error: stream ID overflowed");
+                let poll_err = client.poll_ready().unwrap_err();
+                assert_eq!(poll_err.to_string(), "user error: stream ID overflowed");
 
-            let err = h2.send_request(request, true).unwrap_err();
-            assert_eq!(err.to_string(), "user error: stream ID overflowed");
+                let err = client.send_request(request, true).unwrap_err();
+                assert_eq!(err.to_string(), "user error: stream ID overflowed");
 
-            h2.expect("h2").join(req)
+                h2.expect("h2")
+            })
         });
 
     let srv = srv.assert_client_handshake()
@@ -120,13 +159,27 @@ fn request_over_max_concurrent_streams_errors() {
                 .max_concurrent_streams(1))
         .unwrap()
         .recv_settings()
-        .recv_frame(frames::headers(1).request("POST", "https://example.com/"))
-        .send_frame(frames::headers(1).response(200))
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .recv_frame(frames::headers(3).request("POST", "https://example.com/"))
+        .send_frame(frames::headers(3).response(200))
+        .recv_frame(frames::data(3, "hello").eos())
+        .send_frame(frames::data(3, "").eos())
+        .recv_frame(frames::headers(5).request("POST", "https://example.com/"))
+        .send_frame(frames::headers(5).response(200))
+        .recv_frame(frames::data(5, "hello").eos())
+        .send_frame(frames::data(5, "").eos())
         .close();
 
     let h2 = Client::handshake(io)
         .expect("handshake")
-        .and_then(|mut h2| {
+        .and_then(|(mut client, h2)| {
+            // we send a simple req here just to drive the connection so we can
+            // receive the server settings.
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://example.com/")
@@ -134,27 +187,47 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let req = h2.send_request(request, false).unwrap().unwrap();
-
-            // drive the connection some so we can receive the server settings
-            h2.drive(req)
+            let req = client.send_request(request, true).unwrap().unwrap();
+            h2.drive(req).map(move |(h2, _)| (client, h2))
         })
-        .and_then(|(mut h2, _)| {
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let mut req = client.send_request(request, false).unwrap();
+
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // second request is put into pending_open
+            let mut req2 = client.send_request(request, false).unwrap();
+
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();
 
-            // second stream is over max concurrent
-            assert!(h2.poll_ready().expect("poll_ready").is_not_ready());
+            // third stream is over max concurrent
+            assert!(client.poll_ready().expect("poll_ready").is_not_ready());
 
-            let err = h2.send_request(request, true).unwrap_err();
+            let err = client.send_request(request, true).unwrap_err();
             assert_eq!(err.to_string(), "user error: rejected");
 
-            h2.expect("h2")
+            req.send_data("hello".into(), true).expect("req send_data");
+            h2.drive(req.expect("req")).and_then(move |(h2, _)| {
+                req2.send_data("hello".into(), true)
+                    .expect("req2 send_data");
+                h2.expect("h2").join(req2.expect("req2"))
+            })
         });
-
 
     h2.join(srv).wait().expect("wait");
 }

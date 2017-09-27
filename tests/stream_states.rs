@@ -20,7 +20,7 @@ fn send_recv_headers_only() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -29,7 +29,7 @@ fn send_recv_headers_only() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.send_request(request, true).unwrap();
+    let mut stream = client.send_request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
@@ -62,7 +62,7 @@ fn send_recv_data() {
         ])
         .build();
 
-    let mut h2 = Client::builder().handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::builder().handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -71,7 +71,7 @@ fn send_recv_data() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.send_request(request, false).unwrap();
+    let mut stream = client.send_request(request, false).unwrap();
 
     // Reserve send capacity
     stream.reserve_capacity(5);
@@ -119,7 +119,7 @@ fn send_headers_recv_data_single_frame() {
         ])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -128,7 +128,7 @@ fn send_headers_recv_data_single_frame() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = h2.send_request(request, true).unwrap();
+    let mut stream = client.send_request(request, true).unwrap();
 
     let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -154,32 +154,29 @@ fn closed_streams_are_released() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io)
-        .unwrap()
-        .and_then(|mut h2| {
-            let request = Request::get("https://example.com/").body(()).unwrap();
+    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+        let request = Request::get("https://example.com/").body(()).unwrap();
 
-            // Send request
-            let stream = h2.send_request(request, true).unwrap();
-            h2.drive(stream)
-        })
-        .and_then(|(h2, response)| {
+        // Send request
+        let stream = client.send_request(request, true).unwrap();
+        h2.drive(stream).and_then(move |(_, response)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // There are no active streams
-            assert_eq!(0, h2.num_active_streams());
+            assert_eq!(0, client.num_active_streams());
 
             // The response contains a handle for the body. This keeps the
             // stream wired.
-            assert_eq!(1, h2.num_wired_streams());
+            assert_eq!(1, client.num_wired_streams());
 
             drop(response);
 
             // The stream state is now free
-            assert_eq!(0, h2.num_wired_streams());
+            assert_eq!(0, client.num_wired_streams());
 
             Ok(())
-        });
+        })
+    });
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -200,14 +197,15 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
     let _ = ::env_logger::init();
     let (io, mut srv) = mock::new();
 
-    let h2 = Client::handshake(io).unwrap().and_then(|mut h2| {
+    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://example.com/")
             .body(())
             .unwrap();
 
-        let req = h2.send_request(request, true)
+        let req = client
+            .send_request(request, true)
             .unwrap()
             .unwrap()
             .and_then(|resp| {
@@ -258,14 +256,15 @@ fn configure_max_frame_size() {
         .max_frame_size(16_384 * 2)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
-        .and_then(|mut h2| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();
 
-            let req = h2.send_request(request, true)
+            let req = client
+                .send_request(request, true)
                 .unwrap()
                 .expect("response")
                 .and_then(|resp| {
