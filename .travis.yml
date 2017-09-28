@@ -15,12 +15,11 @@ addons:
 matrix:
   include:
   - rust: nightly
-    before_deploy: cargo doc --no-deps
   - rust: stable
+    before_deploy: cargo doc --no-deps
 
 install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
-  - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then cargo install --force rustfmt-nightly; fi
 
 before_script:
   - cargo clean
@@ -42,9 +41,6 @@ script:
   # Test _only_ hpack.
   - cargo test --lib -- hpack
 
-  # Run rustfmt on nightly
-  - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then cargo fmt -- --write-mode=diff; fi
-
   # Run h2spec on stable
   - if [ "${TRAVIS_RUST_VERSION}" = "stable" ]; then ./ci/h2spec.sh; fi
 
@@ -60,7 +56,7 @@ deploy:
   on:
     branch: master
     repo: carllerche/h2
-    rust: nightly
+    rust: stable
 env:
   global:
   - secure: LkjG3IYPu7GY7zuMdYyLtdvjR4a6elX6or1Du7LTBz4JSlQXYAaj6DxhfZfm4d1kECIlnJJ2T21BqDoJDnld5lLu6VcXQ2ZEo/2f2k77GQ/9w3erwcDtqxK02rPoslFNzSd2SCdafjGKdbcvGW2HVBEu5gYEfOdu1Cdy6Av3+vLPk5To50khBQY90Kk+cmSd7J0+CHw/wSXnVgIVoO4742+aj5pxZQLx3lsi3ZPzIh1VL4QOUlaI98ybrCVNxADQCeXRRDzj0d8NzeKlkm8eXpgpiMVRJWURMa3rU2sHU9wh+YjMyoqGZWv2LlzG5LBqde3RWPQ99ebxVhlly6RgEom8yvZbavcGJ4BA0OjviLYAMb1Wjlu1paLZikEqlvTojhpzz3PVuIBZHl+rUgnUfkuhfmMzTBJTPHPMP0GtqpIAGpyRwbv56DquuEiubl70FZmz52sXGDseoABv9jQ4SNJrDrA+bfIWkPpWwqnKaWIgGPl0n3GKeceQM3RshpaE59awYUDS4ybjtacb2Fr99fx25mTO2W4x5hcDqAvBohxRPXgRB2y0ZmrcJyCV3rfkiGFUK7H8ZBqNQ6GG/GYilgj40q6TgcnXxUxyKkykDiS9VU0QAjAwz0pkCNipJ+ImS1j0LHEOcKMKZ7OsGOuSqBmF24ewBs+XzXY7dTnM/Xc=
