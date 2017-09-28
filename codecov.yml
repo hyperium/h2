@@ -3,6 +3,10 @@ codecov:
     require_ci_to_pass: true
 
 coverage:
+  status:
+    project:
+      default:
+        threshold: 5%
   ignore:
     - fixtures/.*
     - examples/.*
@@ -13,7 +17,7 @@ coverage:
     slack:
       default:
         url: "https://hooks.slack.com/services/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"
-        threshold: 1%
+        threshold: 5%
         only_pulls: false
         branches: null
         flags: null
