@@ -25,7 +25,7 @@ fn single_stream_send_large_body() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -33,7 +33,7 @@ fn single_stream_send_large_body() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.send_request(request, false).unwrap();
+    let mut stream = client.send_request(request, false).unwrap();
 
     // Reserve capacity to send the payload
     stream.reserve_capacity(payload.len());
@@ -79,7 +79,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -87,7 +87,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.send_request(request, false).unwrap();
+    let mut stream = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -144,7 +144,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let mut h2 = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -152,7 +152,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = h2.send_request(request, false).unwrap();
+    let mut stream = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -177,7 +177,7 @@ fn send_data_receive_window_update() {
 
     let h2 = Client::handshake(m)
         .unwrap()
-        .and_then(|mut h2| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -185,7 +185,7 @@ fn send_data_receive_window_update() {
                 .unwrap();
 
             // Send request
-            let mut stream = h2.send_request(request, false).unwrap();
+            let mut stream = client.send_request(request, false).unwrap();
 
             // Send data frame
             stream.send_data("hello".into(), false).unwrap();

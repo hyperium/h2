@@ -1,5 +1,5 @@
 use {client, frame, proto, server};
-use codec::{RecvError, SendError};
+use codec::RecvError;
 use frame::Reason;
 
 use frame::DEFAULT_INITIAL_WINDOW_SIZE;
@@ -7,7 +7,6 @@ use proto::*;
 
 use bytes::{Bytes, IntoBuf};
 use futures::Stream;
-use http::Request;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use std::marker::PhantomData;
@@ -249,18 +248,8 @@ where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    /// Returns `Ready` when new the connection is able to support a new request stream.
-    pub fn poll_send_request_ready(&mut self) -> Poll<(), ::Error> {
-        self.streams.poll_send_request_ready()
-    }
-
-    /// Initialize a new HTTP/2.0 stream and send the message.
-    pub fn send_request(
-        &mut self,
-        request: Request<()>,
-        end_of_stream: bool,
-    ) -> Result<StreamRef<B::Buf, client::Peer>, SendError> {
-        self.streams.send_request(request, end_of_stream)
+    pub(crate) fn streams(&self) -> &Streams<B::Buf, client::Peer> {
+        &self.streams
     }
 }
 
@@ -271,21 +260,5 @@ where
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf, server::Peer>> {
         self.streams.next_incoming()
-    }
-}
-
-#[cfg(feature = "unstable")]
-impl<T, P, B> Connection<T, P, B>
-where
-    T: AsyncRead + AsyncWrite,
-    P: Peer,
-    B: IntoBuf,
-{
-    pub fn num_active_streams(&self) -> usize {
-        self.streams.num_active_streams()
-    }
-
-    pub fn num_wired_streams(&self) -> usize {
-        self.streams.num_wired_streams()
     }
 }

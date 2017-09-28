@@ -67,7 +67,7 @@ pub fn main() {
                 Client::handshake(tls)
             })
             .then(|res| {
-                let mut h2 = res.unwrap();
+                let (mut client, h2) = res.unwrap();
 
                 let request = Request::builder()
                     .method(Method::GET)
@@ -75,7 +75,7 @@ pub fn main() {
                     .body(())
                     .unwrap();
 
-                let stream = h2.send_request(request, true).unwrap();
+                let stream = client.send_request(request, true).unwrap();
 
                 let stream = stream.and_then(|response| {
                     let (_, body) = response.into_parts();

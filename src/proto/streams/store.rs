@@ -13,8 +13,9 @@ pub(super) struct Store<B, P>
 where
     P: Peer,
 {
-    slab: slab::Slab<Stream<B, P>>,
-    ids: OrderMap<StreamId, usize>,
+    slab: slab::Slab<(StoreId, Stream<B, P>)>,
+    ids: OrderMap<StreamId, (usize, StoreId)>,
+    counter: StoreId,
 }
 
 /// "Pointer" to an entry in the store
@@ -28,7 +29,12 @@ where
 
 /// References an entry in the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Key(usize);
+pub(crate) struct Key {
+    index: usize,
+    store_id: StoreId,
+}
+
+type StoreId = usize;
 
 #[derive(Debug)]
 pub(super) struct Queue<B, N, P>
@@ -64,15 +70,16 @@ pub(super) enum Entry<'a, B: 'a, P: Peer + 'a> {
 }
 
 pub(super) struct OccupiedEntry<'a> {
-    ids: ordermap::OccupiedEntry<'a, StreamId, usize>,
+    ids: ordermap::OccupiedEntry<'a, StreamId, (usize, StoreId)>,
 }
 
 pub(super) struct VacantEntry<'a, B: 'a, P>
 where
     P: Peer + 'a,
 {
-    ids: ordermap::VacantEntry<'a, StreamId, usize>,
-    slab: &'a mut slab::Slab<Stream<B, P>>,
+    ids: ordermap::VacantEntry<'a, StreamId, (usize, StoreId)>,
+    slab: &'a mut slab::Slab<(StoreId, Stream<B, P>)>,
+    counter: &'a mut usize,
 }
 
 pub(super) trait Resolve<B, P>
@@ -92,6 +99,7 @@ where
         Store {
             slab: slab::Slab::new(),
             ids: OrderMap::new(),
+            counter: 0,
         }
     }
 
@@ -106,17 +114,25 @@ where
         };
 
         Some(Ptr {
-            key: Key(key),
+            key: Key {
+                index: key.0,
+                store_id: key.1,
+            },
             store: self,
         })
     }
 
     pub fn insert(&mut self, id: StreamId, val: Stream<B, P>) -> Ptr<B, P> {
-        let key = self.slab.insert(val);
-        assert!(self.ids.insert(id, key).is_none());
+        let store_id = self.counter;
+        self.counter = self.counter.wrapping_add(1);
+        let key = self.slab.insert((store_id, val));
+        assert!(self.ids.insert(id, (key, store_id)).is_none());
 
         Ptr {
-            key: Key(key),
+            key: Key {
+                index: key,
+                store_id,
+            },
             store: self,
         }
     }
@@ -131,6 +147,7 @@ where
             Vacant(e) => Entry::Vacant(VacantEntry {
                 ids: e,
                 slab: &mut self.slab,
+                counter: &mut self.counter,
             }),
         }
     }
@@ -147,7 +164,10 @@ where
             let key = *self.ids.get_index(i).unwrap().1;
 
             f(Ptr {
-                key: Key(key),
+                key: Key {
+                    index: key.0,
+                    store_id: key.1,
+                },
                 store: self,
             })?;
 
@@ -185,7 +205,9 @@ where
     type Output = Stream<B, P>;
 
     fn index(&self, key: Key) -> &Self::Output {
-        self.slab.index(key.0)
+        let slot = self.slab.index(key.index);
+        assert_eq!(slot.0, key.store_id);
+        &slot.1
     }
 }
 
@@ -194,7 +216,9 @@ where
     P: Peer,
 {
     fn index_mut(&mut self, key: Key) -> &mut Self::Output {
-        self.slab.index_mut(key.0)
+        let slot = self.slab.index_mut(key.index);
+        assert_eq!(slot.0, key.store_id);
+        &mut slot.1
     }
 }
 
@@ -319,7 +343,7 @@ where
         debug_assert!(!self.store.ids.contains_key(&self.id));
 
         // Remove the stream state
-        self.store.slab.remove(self.key.0).id
+        self.store.slab.remove(self.key.index).1.id
     }
 
     /// Remove the StreamId -> stream state association.
@@ -351,7 +375,7 @@ where
     type Target = Stream<B, P>;
 
     fn deref(&self) -> &Stream<B, P> {
-        &self.store.slab[self.key.0]
+        &self.store.slab[self.key.index].1
     }
 }
 
@@ -360,7 +384,7 @@ where
     P: Peer,
 {
     fn deref_mut(&mut self) -> &mut Stream<B, P> {
-        &mut self.store.slab[self.key.0]
+        &mut self.store.slab[self.key.index].1
     }
 }
 
@@ -368,7 +392,11 @@ where
 
 impl<'a> OccupiedEntry<'a> {
     pub fn key(&self) -> Key {
-        Key(*self.ids.get())
+        let tup = self.ids.get();
+        Key {
+            index: tup.0,
+            store_id: tup.1,
+        }
     }
 }
 
@@ -380,11 +408,16 @@ where
 {
     pub fn insert(self, value: Stream<B, P>) -> Key {
         // Insert the value in the slab
-        let key = self.slab.insert(value);
+        let store_id = *self.counter;
+        *self.counter = store_id.wrapping_add(1);
+        let index = self.slab.insert((store_id, value));
 
         // Insert the handle in the ID map
-        self.ids.insert(key);
+        self.ids.insert((index, store_id));
 
-        Key(key)
+        Key {
+            index,
+            store_id,
+        }
     }
 }

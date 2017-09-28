@@ -251,9 +251,8 @@ impl State {
         }
     }
 
-    /// Returns true if a stream with the current state counts against the
-    /// concurrency limit.
-    pub fn is_counted(&self) -> bool {
+    /// Returns true if a stream is open or half-closed.
+    pub fn is_at_least_half_open(&self) -> bool {
         match self.inner {
             Open {
                 ..
