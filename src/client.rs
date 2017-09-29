@@ -1,5 +1,5 @@
 use codec::{Codec, RecvError};
-use frame::{Headers, Pseudo, Settings, StreamId};
+use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use frame::Reason::*;
 use proto::{self, WindowSize};
 
@@ -344,6 +344,10 @@ impl<B: IntoBuf> Stream<B> {
     /// Send trailers
     pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
         self.inner.send_trailers(trailers).map_err(Into::into)
+    }
+
+    pub fn send_reset(mut self, reason: Reason) {
+        self.inner.send_reset(reason)
     }
 }
 
