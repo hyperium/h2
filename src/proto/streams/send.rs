@@ -92,7 +92,7 @@ where
         reason: Reason,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
-        clear_queue: bool
+        clear_queue: bool,
     ) {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();

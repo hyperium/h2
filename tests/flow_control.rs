@@ -345,52 +345,55 @@ fn stream_close_by_data_frame_releases_capacity() {
         // Send request
         let mut s1 = client.send_request(request, false).unwrap();
 
-        // This effectively reserves the entire connection window
-        s1.reserve_capacity(window_size);
+            // This effectively reserves the entire connection window
+            s1.reserve_capacity(window_size);
 
-        // The capacity should be immediately available as nothing else is
-        // happening on the stream.
-        assert_eq!(s1.capacity(), window_size);
+            // The capacity should be immediately available as nothing else is
+            // happening on the stream.
+            assert_eq!(s1.capacity(), window_size);
 
-        let request = Request::builder()
-            .method(Method::POST)
-            .uri("https://http2.akamai.com/")
-            .body(())
-            .unwrap();
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
 
         // Create a second stream
         let mut s2 = client.send_request(request, false).unwrap();
 
-        // Request capacity
-        s2.reserve_capacity(5);
+            // Request capacity
+            s2.reserve_capacity(5);
 
-        // There should be no available capacity (as it is being held up by
-        // the previous stream
-        assert_eq!(s2.capacity(), 0);
+            // There should be no available capacity (as it is being held up by
+            // the previous stream
+            assert_eq!(s2.capacity(), 0);
 
-        // Closing the previous stream by sending an empty data frame will
-        // release the capacity to s2
-        s1.send_data("".into(), true).unwrap();
+            // Closing the previous stream by sending an empty data frame will
+            // release the capacity to s2
+            s1.send_data("".into(), true).unwrap();
 
-        // The capacity should be available
-        assert_eq!(s2.capacity(), 5);
+            // The capacity should be available
+            assert_eq!(s2.capacity(), 5);
 
-        // Send the frame
-        s2.send_data("hello".into(), true).unwrap();
+            // Send the frame
+            s2.send_data("hello".into(), true).unwrap();
 
-        // Drive both streams to prevent the handles from being dropped
-        // (which will send a RST_STREAM) before the connection is closed.
-        h2.drive(s1)
-          .and_then(move |(h2, _)| h2.drive(s2))
-    })
-    .unwrap();
+            // Drive both streams to prevent the handles from being dropped
+            // (which will send a RST_STREAM) before the connection is closed.
+            h2.drive(s1).and_then(move |(h2, _)| h2.drive(s2))
+        })
+        .unwrap();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+        .recv_frame(
+            frames::headers(1).request("POST", "https://http2.akamai.com/"),
+        )
         .send_frame(frames::headers(1).response(200))
-        .recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
+        .recv_frame(
+            frames::headers(3).request("POST", "https://http2.akamai.com/"),
+        )
         .send_frame(frames::headers(3).response(200))
         .recv_frame(frames::data(1, &b""[..]).eos())
         .recv_frame(frames::data(3, &b"hello"[..]).eos())
@@ -416,45 +419,44 @@ fn stream_close_by_trailers_frame_releases_capacity() {
         // Send request
         let mut s1 = client.send_request(request, false).unwrap();
 
-        // This effectively reserves the entire connection window
-        s1.reserve_capacity(window_size);
+            // This effectively reserves the entire connection window
+            s1.reserve_capacity(window_size);
 
-        // The capacity should be immediately available as nothing else is
-        // happening on the stream.
-        assert_eq!(s1.capacity(), window_size);
+            // The capacity should be immediately available as nothing else is
+            // happening on the stream.
+            assert_eq!(s1.capacity(), window_size);
 
-        let request = Request::builder()
-            .method(Method::POST)
-            .uri("https://http2.akamai.com/")
-            .body(())
-            .unwrap();
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
 
         // Create a second stream
         let mut s2 = client.send_request(request, false).unwrap();
 
-        // Request capacity
-        s2.reserve_capacity(5);
+            // Request capacity
+            s2.reserve_capacity(5);
 
-        // There should be no available capacity (as it is being held up by
-        // the previous stream
-        assert_eq!(s2.capacity(), 0);
+            // There should be no available capacity (as it is being held up by
+            // the previous stream
+            assert_eq!(s2.capacity(), 0);
 
-        // Closing the previous stream by sending a trailers frame will
-        // release the capacity to s2
-        s1.send_trailers(Default::default()).unwrap();
+            // Closing the previous stream by sending a trailers frame will
+            // release the capacity to s2
+            s1.send_trailers(Default::default()).unwrap();
 
-        // The capacity should be available
-        assert_eq!(s2.capacity(), 5);
+            // The capacity should be available
+            assert_eq!(s2.capacity(), 5);
 
-        // Send the frame
-        s2.send_data("hello".into(), true).unwrap();
+            // Send the frame
+            s2.send_data("hello".into(), true).unwrap();
 
-        // Drive both streams to prevent the handles from being dropped
-        // (which will send a RST_STREAM) before the connection is closed.
-        h2.drive(s1)
-          .and_then(move |(h2, _)| h2.drive(s2))
-    })
-    .unwrap();
+            // Drive both streams to prevent the handles from being dropped
+            // (which will send a RST_STREAM) before the connection is closed.
+            h2.drive(s1).and_then(move |(h2, _)| h2.drive(s2))
+        })
+        .unwrap();
 
     let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
@@ -541,14 +543,15 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
                 // ensure that the stream is closed by the EOS frame,
                 // and not by the RST_STREAM.
                 h2
-            })
-                .unwrap()
+            }).unwrap()
         });
 
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+        .recv_frame(
+            frames::headers(1).request("POST", "https://http2.akamai.com/"),
+        )
         .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))

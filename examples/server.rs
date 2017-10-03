@@ -55,9 +55,7 @@ pub fn main() {
                 })
             })
             .and_then(|_| {
-                println!(
-                    "~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~"
-                );
+                println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
                 Ok(())
             })
             .then(|res| {

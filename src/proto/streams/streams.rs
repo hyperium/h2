@@ -411,7 +411,9 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task, true)
+            actions
+                .send
+                .send_reset(reason, stream, &mut actions.task, true)
         })
     }
 }
@@ -516,7 +518,9 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task, true)
+            actions
+                .send
+                .send_reset(reason, stream, &mut actions.task, true)
         })
     }
 
@@ -679,8 +683,7 @@ where
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let me = self.inner.lock().unwrap();
         let stream = &me.store[self.key];
-        fmt
-            .debug_struct("StreamRef")
+        fmt.debug_struct("StreamRef")
             .field("stream_id", &stream.id)
             .field("ref_count", &stream.ref_count)
             .finish()
@@ -728,8 +731,7 @@ where
                     &mut actions.task,
                     false
                 );
-            }
-        );
+            });
     }
 }
 
