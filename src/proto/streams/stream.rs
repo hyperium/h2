@@ -268,18 +268,6 @@ where
             task.notify();
         }
     }
-
-    /// Returns true if the stream should be reset on a dereference.
-    pub fn should_reset(&self) -> bool {
-        trace!(
-            "should_reset: id={:?}; ref_count={:?}; \
-             pending_send.is_empty={:?}",
-            self.id,
-            self.ref_count,
-            self.pending_send.is_empty()
-        );
-        self.ref_count == 0 && self.is_closed()
-    }
 }
 
 impl store::Next for NextAccept {

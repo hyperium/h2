@@ -81,11 +81,18 @@ where
         Ok(())
     }
 
+    /// Send an RST_STREAM frame
+    ///
+    /// # Arguments
+    /// + `clear_queue`: if true, all pending outbound frames will be cleared,
+    ///    if false, the RST_STREAM frame will be appended to the end of the
+    ///    send queue.
     pub fn send_reset(
         &mut self,
         reason: Reason,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
+        clear_queue: bool
     ) {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
@@ -114,7 +121,9 @@ where
         stream.state.set_reset(reason);
 
         // Clear all pending outbound frames
-        self.prioritize.clear_queue(stream);
+        if clear_queue {
+            self.prioritize.clear_queue(stream);
+        }
 
         // Reclaim all capacity assigned to the stream and re-assign it to the
         // connection
@@ -225,7 +234,7 @@ where
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.send_reset(FlowControlError.into(), stream, task);
+            self.send_reset(FlowControlError.into(), stream, task, true);
 
             return Err(e);
         }

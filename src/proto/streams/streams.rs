@@ -302,29 +302,6 @@ where
             dst
         ));
 
-        // Reset any unreferenced frames that are ready to be reset.
-        {
-            let actions = &mut me.actions;
-            let counts = &mut me.counts;
-            me.store
-                .for_each(|stream| {
-                    counts.transition(stream, |_, stream| {
-                        if stream.should_reset() {
-                            trace!(
-                                "reset_unreferenced: trying to reset {:?}",
-                                stream.id
-                            );
-                            actions.send.send_reset(
-                                Reason::Cancel,
-                                stream,
-                                &mut actions.task
-                            );
-                        }
-                        Ok::<_, ()>(())
-                    })
-                })
-                .unwrap();
-        }
         // Nothing else to do, track the task
         me.actions.task = Some(task::current());
 
@@ -434,7 +411,7 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
+            actions.send.send_reset(reason, stream, &mut actions.task, true)
         })
     }
 }
@@ -539,7 +516,7 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
+            actions.send.send_reset(reason, stream, &mut actions.task, true)
         })
     }
 
@@ -732,21 +709,29 @@ where
         let mut stream = me.store.resolve(self.key);
         // decrement the stream's ref count by 1.
         stream.ref_dec();
-        //
-        //let actions = &mut me.actions;
-        //// the reset must be sent inside a `transition` block.
-        //// `transition_after` will release the stream if it is
-        //// released.
-        //me.counts.transition(stream, |_, stream|
-        //    // if this is the last reference to the stream, reset the stream.
-        //    if stream.ref_count == 0 {
-        //        actions.send.send_reset(
-        //            Reason::Cancel,
-        //            stream,
-        //            &mut actions.task
-        //        );
-        //    }
-        //);
+
+        let actions = &mut me.actions;
+        // the reset must be sent inside a `transition` block.
+        // `transition_after` will release the stream if it is
+        // released.
+        let is_recv_closed = stream.state.is_recv_closed();
+        me.counts.transition(stream, |_, stream|
+            // if this is the last reference to the stream, reset the stream.
+            if stream.ref_count == 0 {
+                trace!(
+                    " -> last reference to {:?} was dropped, trying to reset \
+                    is_recv_closed={:?}",
+                    stream.id,
+                    is_recv_closed
+                );
+                actions.send.send_reset(
+                    Reason::Cancel,
+                    stream,
+                    &mut actions.task,
+                    !is_recv_closed
+                );
+            }
+        );
     }
 }
 
@@ -767,7 +752,7 @@ where
         }) = res
         {
             // Reset the stream.
-            self.send.send_reset(reason, stream, &mut self.task);
+            self.send.send_reset(reason, stream, &mut self.task, true);
             Ok(())
         } else {
             res
