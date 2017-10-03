@@ -87,6 +87,18 @@ where
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
     ) {
+        let is_reset = stream.state.is_reset();
+        let is_closed = stream.state.is_closed();
+        let is_empty = stream.pending_send.is_empty();
+        trace!(
+            "send_reset; id={:?}; is_reset={:?}; is_closed={:?}; \
+             pending_send.is_empty={:?}\
+            ",
+            stream.id,
+            is_reset,
+            is_closed,
+            is_empty,
+        );
         if stream.state.is_reset() {
             // Don't double reset
             return;
@@ -94,7 +106,7 @@ where
 
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset either
-        if stream.state.is_closed() && stream.pending_send.is_empty() {
+        if is_closed && is_empty {
             return;
         }
 
