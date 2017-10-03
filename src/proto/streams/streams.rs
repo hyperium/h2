@@ -7,7 +7,7 @@ use proto::*;
 
 use http::HeaderMap;
 
-use std::io;
+use std::{fmt, io};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -19,7 +19,6 @@ where
 }
 
 /// Reference to the stream state
-#[derive(Debug)]
 pub(crate) struct StreamRef<B, P>
 where
     B: Buf,
@@ -672,12 +671,29 @@ where
     }
 }
 
+impl<B, P> fmt::Debug for StreamRef<B, P>
+where
+    B: Buf,
+    P: Peer,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let me = self.inner.lock().unwrap();
+        let stream = &me.store[self.key];
+        fmt
+            .debug_struct("StreamRef")
+            .field("stream_id", &stream.id)
+            .field("ref_count", &stream.ref_count)
+            .finish()
+    }
+}
+
 impl<B, P> Drop for StreamRef<B, P>
 where
     B: Buf,
     P: Peer,
 {
     fn drop(&mut self) {
+        trace!("dropping {:?}", self);
         let mut me = match self.inner.lock() {
             Ok(inner) => inner,
             Err(_) => if ::std::thread::panicking() {
@@ -699,9 +715,12 @@ where
         // `transition_after` will release the stream if it is
         // released.
         me.counts.transition(stream, |_, stream|
-            // if this is the last reference to the stream,
-            // reset the stream.
+            // if this is the last reference to the stream, reset the stream.
             if stream.ref_count == 0 {
+                trace!(
+                    " -> last ref to {:?} was dropped, trying to reset stream",
+                     stream.id
+                 );
                 actions.send.send_reset(
                     Reason::Cancel,
                     stream,
