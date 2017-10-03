@@ -714,21 +714,19 @@ where
         // the reset must be sent inside a `transition` block.
         // `transition_after` will release the stream if it is
         // released.
-        let is_recv_closed = stream.state.is_recv_closed();
+        let recv_closed = stream.state.is_recv_closed();
         me.counts.transition(stream, |_, stream|
             // if this is the last reference to the stream, reset the stream.
-            if stream.ref_count == 0 {
+            if stream.ref_count == 0 && recv_closed {
                 trace!(
-                    " -> last reference to {:?} was dropped, trying to reset \
-                    is_recv_closed={:?}",
+                    " -> last reference to {:?} was dropped, trying to reset",
                     stream.id,
-                    is_recv_closed
                 );
                 actions.send.send_reset(
                     Reason::Cancel,
                     stream,
                     &mut actions.task,
-                    !is_recv_closed
+                    false
                 );
             }
         );
