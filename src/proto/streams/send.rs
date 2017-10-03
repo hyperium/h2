@@ -98,22 +98,34 @@ where
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
         trace!(
-            "send_reset; id={:?}; is_reset={:?}; is_closed={:?}; \
-             pending_send.is_empty={:?}\
+            "send_reset(..., stream={:?}, ..., clear_queue={:?}); \
+             is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
+             state={:?} \
             ",
             stream.id,
+            clear_queue,
             is_reset,
             is_closed,
             is_empty,
+            stream.state
         );
         if stream.state.is_reset() {
             // Don't double reset
+            trace!(
+                " -> not sending RST_STREAM ({:?} is already reset)",
+                stream.id
+            );
             return;
         }
 
         // If closed AND the send queue is flushed, then the stream cannot be
-        // reset either
-        if is_closed && is_empty {
+        // reset explicitly, either. Implicit resets can still be queued.
+        if is_closed && (is_empty || !clear_queue) {
+            trace!(
+                " -> not sending explicit RST_STREAM ({:?} was closed \
+                     and send queue was flushed)",
+                stream.id
+            );
             return;
         }
 
