@@ -16,6 +16,9 @@ pub enum SendError {
     /// User error
     User(UserError),
 
+    /// Connection error prevents sending.
+    Connection(Reason),
+
     /// I/O error
     Io(io::Error),
 }
@@ -80,6 +83,7 @@ impl error::Error for SendError {
 
         match *self {
             User(ref e) => e.description(),
+            Connection(ref reason) => reason.description(),
             Io(ref e) => e.description(),
         }
     }

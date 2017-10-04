@@ -337,10 +337,7 @@ where
         self.ensure_can_reserve(frame.promised_id())?;
 
         // Make sure that the stream state is valid
-        store[stream]
-            .state
-            .ensure_recv_open()
-            .map_err(|e| e.into_connection_recv_error())?;
+        store[stream].state.ensure_recv_open()?;
 
         // TODO: Streams in the reserved states do not count towards the concurrency
         // limit. However, it seems like there should be a cap otherwise this

@@ -62,6 +62,7 @@ impl From<SendError> for Error {
     fn from(src: SendError) -> Error {
         match src {
             SendError::User(e) => e.into(),
+            SendError::Connection(reason) => reason.into(),
             SendError::Io(e) => e.into(),
         }
     }
