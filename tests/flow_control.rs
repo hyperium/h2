@@ -380,20 +380,17 @@ fn stream_close_by_data_frame_releases_capacity() {
 
         // Drive both streams to prevent the handles from being dropped
         // (which will send a RST_STREAM) before the connection is closed.
-        h2.drive(s1).and_then(move |(h2, _)| h2.drive(s2))
-        })
-        .unwrap();
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1).request("POST", "https://http2.akamai.com/"),
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(1).response(200))
-        .recv_frame(
-            frames::headers(3).request("POST", "https://http2.akamai.com/"),
-        )
+        .recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(3).response(200))
         .recv_frame(frames::data(1, &b""[..]).eos())
         .recv_frame(frames::data(3, &b"hello"[..]).eos())
@@ -454,9 +451,10 @@ fn stream_close_by_trailers_frame_releases_capacity() {
 
         // Drive both streams to prevent the handles from being dropped
         // (which will send a RST_STREAM) before the connection is closed.
-        h2.drive(s1).and_then(move |(h2, _)| h2.drive(s2))
-        })
-        .unwrap();
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
@@ -543,15 +541,14 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
                 // ensure that the stream is closed by the EOS frame,
                 // and not by the RST_STREAM.
                 h2
-            }).unwrap()
+            })
+                .unwrap()
         });
 
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
-        .recv_frame(
-            frames::headers(1).request("POST", "https://http2.akamai.com/"),
-        )
+        .recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
         .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::data(1, "hello").eos())
         .send_frame(frames::window_update(1, 5))
