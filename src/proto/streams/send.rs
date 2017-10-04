@@ -26,7 +26,6 @@ where
 
 impl<B, P> Send<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     /// Create a new `Send`
@@ -157,7 +156,10 @@ where
         frame: frame::Data<B>,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
-    ) -> Result<(), UserError> {
+    ) -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         self.prioritize.send_data(frame, stream, task)
     }
 
@@ -191,6 +193,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         self.prioritize.poll_complete(store, counts, dst)
     }

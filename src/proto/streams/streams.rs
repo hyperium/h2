@@ -21,7 +21,6 @@ where
 /// Reference to the stream state
 pub(crate) struct StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     inner: Arc<Mutex<Inner<B, P>>>,
@@ -443,7 +442,6 @@ where
 #[cfg(feature = "unstable")]
 impl<B, P> Streams<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     pub fn num_active_streams(&self) -> usize {
@@ -460,7 +458,6 @@ where
 // no derive because we don't need B and P to be Clone.
 impl<B, P> Clone for Streams<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     fn clone(&self) -> Self {
@@ -474,10 +471,13 @@ where
 
 impl<B, P> StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
-    pub fn send_data(&mut self, data: B, end_stream: bool) -> Result<(), UserError> {
+    pub fn send_data(&mut self, data: B, end_stream: bool)
+        -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -544,7 +544,10 @@ where
         })
     }
 
-    pub fn body_is_empty(&self) -> bool {
+    pub fn body_is_empty(&self) -> bool
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -553,7 +556,10 @@ where
         me.actions.recv.body_is_empty(&stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -562,7 +568,10 @@ where
         me.actions.recv.poll_data(&mut stream)
     }
 
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -573,7 +582,13 @@ where
 
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
-    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {
+    pub fn release_capacity(
+            &mut self,
+            capacity: WindowSize
+    ) -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -661,7 +676,6 @@ where
 
 impl<B, P> Clone for StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     fn clone(&self) -> Self {
@@ -677,7 +691,6 @@ where
 
 impl<B, P> fmt::Debug for StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -692,7 +705,6 @@ where
 
 impl<B, P> Drop for StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     fn drop(&mut self) {

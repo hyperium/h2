@@ -46,7 +46,6 @@ pub(crate) struct Prioritized<B> {
 
 impl<B, P> Prioritize<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     pub fn new(config: &Config) -> Prioritize<B, P> {
@@ -101,7 +100,10 @@ where
         frame: frame::Data<B>,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
-    ) -> Result<(), UserError> {
+    ) -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         let sz = frame.payload().remaining();
 
         if sz > MAX_WINDOW_SIZE as usize {
@@ -369,6 +371,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         // Ensure codec is ready
         try_ready!(dst.poll_ready());
@@ -422,7 +425,10 @@ where
         &mut self,
         store: &mut Store<B, P>,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> bool {
+    ) -> bool
+    where
+        B: Buf,
+    {
         trace!("try reclaim frame");
 
         // First check if there are any data chunks to take back
@@ -485,7 +491,10 @@ where
         store: &mut Store<B, P>,
         max_len: usize,
         counts: &mut Counts<P>,
-    ) -> Option<Frame<Prioritized<B>>> {
+    ) -> Option<Frame<Prioritized<B>>>
+    where
+        B: Buf,
+    {
         trace!("pop_frame");
 
         loop {
