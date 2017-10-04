@@ -732,7 +732,7 @@ where
         let recv_closed = stream.state.is_recv_closed();
         me.counts.transition(stream, |_, stream|
             // if this is the last reference to the stream, reset the stream.
-            if stream.ref_count == 0 && recv_closed {
+            if stream.ref_count == 0 && recv_closed == false {
                 trace!(
                     " -> last reference to {:?} was dropped, trying to reset",
                     stream.id,
