@@ -16,7 +16,6 @@ impl GoAway {
         }
     }
 
-    #[cfg(feature = "unstable")]
     pub fn last_stream_id(&self) -> StreamId {
         self.last_stream_id
     }
@@ -27,9 +26,7 @@ impl GoAway {
 
     pub fn load(payload: &[u8]) -> Result<GoAway, Error> {
         if payload.len() < 8 {
-            // Invalid payload len
-            // TODO: Handle error
-            unimplemented!();
+            return Err(Error::BadFrameSize);
         }
 
         let (last_stream_id, _) = StreamId::parse(&payload[..4]);
