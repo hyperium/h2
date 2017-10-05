@@ -134,6 +134,9 @@ where
         // Transition the state
         stream.state.set_reset(reason);
 
+        // TODO: this could be a call to `recv_err`, but that will always
+        //       clear the send queue. could we pass whether or not to clear
+        //       the send queue to that method?
         if clear_queue {
             // Clear all pending outbound frames
             self.prioritize.clear_queue(stream);
@@ -149,9 +152,7 @@ where
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
 
-        // Re-assign all capacity to the connection
-        self.prioritize
-            .assign_connection_capacity(available, stream);
+
     }
 
     pub fn send_data(
@@ -258,6 +259,19 @@ where
         }
 
         Ok(())
+    }
+
+    pub fn recv_err(&mut self, stream: &mut store::Ptr<B, P>) {
+        // Clear all pending outbound frames
+        self.prioritize.clear_queue(stream);
+
+        // Reclaim all capacity assigned to the stream and re-assign it to the
+        // connection
+        let available = stream.send_flow.available();
+        stream.send_flow.claim_capacity(available);
+        // Re-assign all capacity to the connection
+        self.prioritize
+            .assign_connection_capacity(available, stream);
     }
 
     pub fn apply_remote_settings(

@@ -218,7 +218,6 @@ where
     }
 }
 
-#[cfg(feature = "unstable")]
 impl<B, P> Store<B, P>
 where
     P: Peer,
@@ -227,6 +226,7 @@ where
         self.ids.len()
     }
 
+    #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
         self.slab.len()
     }
