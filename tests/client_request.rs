@@ -242,8 +242,66 @@ fn request_with_h1_version() {}
 
 
 #[test]
-#[ignore]
-fn sending_request_on_closed_soket() {}
+fn sending_request_on_closed_connection() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        // a bad frame!
+        .send_frame(frames::headers(0).response(200).eos())
+        .close();
+
+    let h2 = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            // first request works
+            let req = client
+                .send_request(request, true)
+                .expect("send_request1")
+                .expect("response1")
+                .map(|_| ());
+            // after finish request1, there should be a conn error
+            let h2 = h2.then(|res| {
+                res.expect_err("h2 error");
+                Ok::<(), ()>(())
+            });
+
+            h2.select(req)
+                .then(|res| match res {
+                    Ok((_, next)) => next,
+                    Err(_) => unreachable!("both selected futures cannot error"),
+                })
+                .map(move |_| client)
+        })
+        .and_then(|mut client| {
+            let poll_err = client.poll_ready().unwrap_err();
+            let msg = "protocol error: unspecific protocol error detected";
+            assert_eq!(poll_err.to_string(), msg);
+
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let send_err = client.send_request(request, true).unwrap_err();
+            assert_eq!(send_err.to_string(), msg);
+
+            Ok(())
+        });
+
+    h2.join(srv).wait().expect("wait");
+}
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
