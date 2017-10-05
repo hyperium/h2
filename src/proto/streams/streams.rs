@@ -55,6 +55,9 @@ where
 
     /// Task that calls `poll_complete`.
     task: Option<task::Task>,
+
+    /// If the connection errors, a copy is kept for any StreamRefs.
+    conn_error: Option<proto::Error>,
 }
 
 impl<B, P> Streams<B, P>
@@ -70,6 +73,7 @@ where
                     recv: Recv::new(&config),
                     send: Send::new(&config),
                     task: None,
+                    conn_error: None,
                 },
                 store: Store::new(),
             })),
@@ -191,6 +195,8 @@ where
                 })
             })
             .unwrap();
+
+        actions.conn_error = Some(err.shallow_clone());
 
         last_processed_id
     }
@@ -336,6 +342,7 @@ where
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
 
+            me.actions.ensure_no_conn_error()?;
             me.actions.send.ensure_next_stream_id()?;
 
             // The `pending` argument is provided by the `Client`, and holds
@@ -425,6 +432,7 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        me.actions.ensure_no_conn_error()?;
         me.actions.send.ensure_next_stream_id()?;
 
         if let Some(key) = key {
@@ -776,6 +784,14 @@ where
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
+        }
+    }
+
+    fn ensure_no_conn_error(&self) -> Result<(), proto::Error> {
+        if let Some(ref err) = self.conn_error {
+            Err(err.shallow_clone())
+        } else {
+            Ok(())
         }
     }
 }
