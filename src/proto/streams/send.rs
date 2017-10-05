@@ -26,7 +26,6 @@ where
 
 impl<B, P> Send<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     /// Create a new `Send`
@@ -81,27 +80,72 @@ where
         Ok(())
     }
 
+    /// Send an RST_STREAM frame
+    ///
+    /// # Arguments
+    /// + `reason`: the error code for the RST_STREAM frame
+    /// + `clear_queue`: if true, all pending outbound frames will be cleared,
+    ///    if false, the RST_STREAM frame will be appended to the end of the
+    ///    send queue.
     pub fn send_reset(
         &mut self,
         reason: Reason,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
+        clear_queue: bool,
     ) {
-        if stream.state.is_reset() {
+        let is_reset = stream.state.is_reset();
+        let is_closed = stream.state.is_closed();
+        let is_empty = stream.pending_send.is_empty();
+        trace!(
+            "send_reset(..., reason={:?}, stream={:?}, ..., \
+             clear_queue={:?});\n\
+             is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
+             state={:?} \
+            ",
+            stream.id,
+            reason,
+            clear_queue,
+            is_reset,
+            is_closed,
+            is_empty,
+            stream.state
+        );
+        if is_reset {
             // Don't double reset
+            trace!(
+                " -> not sending RST_STREAM ({:?} is already reset)",
+                stream.id
+            );
             return;
         }
 
         // If closed AND the send queue is flushed, then the stream cannot be
-        // reset either
-        if stream.state.is_closed() && stream.pending_send.is_empty() {
+        // reset explicitly, either. Implicit resets can still be queued.
+        if is_closed && (is_empty || !clear_queue) {
+            trace!(
+                " -> not sending explicit RST_STREAM ({:?} was closed \
+                     and send queue was flushed)",
+                stream.id
+            );
             return;
         }
 
         // Transition the state
         stream.state.set_reset(reason);
 
-        self.recv_err(stream);
+        // TODO: this could be a call to `recv_err`, but that will always
+        //       clear the send queue. could we pass whether or not to clear
+        //       the send queue to that method?
+        if clear_queue {
+            // Clear all pending outbound frames
+            self.prioritize.clear_queue(stream);
+        }
+
+        // Reclaim all capacity assigned to the stream and re-assign it to the
+        // connection
+        let available = stream.send_flow.available();
+        stream.send_flow.claim_capacity(available);
 
         let frame = frame::Reset::new(stream.id, reason);
 
@@ -116,7 +160,10 @@ where
         frame: frame::Data<B>,
         stream: &mut store::Ptr<B, P>,
         task: &mut Option<Task>,
-    ) -> Result<(), UserError> {
+    ) -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         self.prioritize.send_data(frame, stream, task)
     }
 
@@ -150,6 +197,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         self.prioritize.poll_complete(store, counts, dst)
     }
@@ -205,7 +253,7 @@ where
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.send_reset(FlowControlError.into(), stream, task);
+            self.send_reset(FlowControlError.into(), stream, task, true);
 
             return Err(e);
         }

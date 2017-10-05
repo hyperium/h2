@@ -7,7 +7,7 @@ use proto::*;
 
 use http::HeaderMap;
 
-use std::io;
+use std::{fmt, io};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -19,7 +19,6 @@ where
 }
 
 /// Reference to the stream state
-#[derive(Debug)]
 pub(crate) struct StreamRef<B, P>
 where
     P: Peer,
@@ -450,7 +449,9 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
+            actions
+                .send
+                .send_reset(reason, stream, &mut actions.task, true)
         })
     }
 }
@@ -480,7 +481,6 @@ where
 
 impl<B, P> Streams<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     pub fn num_active_streams(&self) -> usize {
@@ -498,7 +498,6 @@ where
 // no derive because we don't need B and P to be Clone.
 impl<B, P> Clone for Streams<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     fn clone(&self) -> Self {
@@ -512,10 +511,13 @@ where
 
 impl<B, P> StreamRef<B, P>
 where
-    B: Buf,
     P: Peer,
 {
-    pub fn send_data(&mut self, data: B, end_stream: bool) -> Result<(), UserError> {
+    pub fn send_data(&mut self, data: B, end_stream: bool)
+        -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -556,7 +558,9 @@ where
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.send.send_reset(reason, stream, &mut actions.task)
+            actions
+                .send
+                .send_reset(reason, stream, &mut actions.task, true)
         })
     }
 
@@ -580,7 +584,10 @@ where
         })
     }
 
-    pub fn body_is_empty(&self) -> bool {
+    pub fn body_is_empty(&self) -> bool
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -589,7 +596,10 @@ where
         me.actions.recv.body_is_empty(&stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -598,7 +608,10 @@ where
         me.actions.recv.poll_data(&mut stream)
     }
 
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -609,7 +622,13 @@ where
 
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
-    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {
+    pub fn release_capacity(
+            &mut self,
+            capacity: WindowSize
+    ) -> Result<(), UserError>
+    where
+        B: Buf,
+    {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -710,11 +729,26 @@ where
     }
 }
 
+impl<B, P> fmt::Debug for StreamRef<B, P>
+where
+    P: Peer,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let me = self.inner.lock().unwrap();
+        let stream = &me.store[self.key];
+        fmt.debug_struct("StreamRef")
+            .field("stream_id", &stream.id)
+            .field("ref_count", &stream.ref_count)
+            .finish()
+    }
+}
+
 impl<B, P> Drop for StreamRef<B, P>
 where
     P: Peer,
 {
     fn drop(&mut self) {
+        trace!("StreamRef::drop({:?})", self);
         let mut me = match self.inner.lock() {
             Ok(inner) => inner,
             Err(_) => if ::std::thread::panicking() {
@@ -727,18 +761,29 @@ where
 
         let me = &mut *me;
 
-        let id = {
-            let mut stream = me.store.resolve(self.key);
-            stream.ref_dec();
+        let mut stream = me.store.resolve(self.key);
+        // decrement the stream's ref count by 1.
+        stream.ref_dec();
 
-            if !stream.is_released() {
-                return;
-            }
-
-            stream.remove()
-        };
-
-        debug_assert!(!me.store.contains_id(&id));
+        let actions = &mut me.actions;
+        // the reset must be sent inside a `transition` block.
+        // `transition_after` will release the stream if it is
+        // released.
+        let recv_closed = stream.state.is_recv_closed();
+        me.counts.transition(stream, |_, stream|
+            // if this is the last reference to the stream, reset the stream.
+            if stream.ref_count == 0 && !recv_closed {
+                trace!(
+                    " -> last reference to {:?} was dropped, trying to reset",
+                    stream.id,
+                );
+                actions.send.send_reset(
+                    Reason::Cancel,
+                    stream,
+                    &mut actions.task,
+                    false
+                );
+            });
     }
 }
 
@@ -759,7 +804,7 @@ where
         }) = res
         {
             // Reset the stream.
-            self.send.send_reset(reason, stream, &mut self.task);
+            self.send.send_reset(reason, stream, &mut self.task, true);
             Ok(())
         } else {
             res

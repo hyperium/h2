@@ -59,7 +59,6 @@ struct Indices {
 
 impl<B, P> Recv<B, P>
 where
-    B: Buf,
     P: Peer,
 {
     pub fn new(config: &Config) -> Self {
@@ -468,6 +467,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         if let Some(stream_id) = self.refused {
             try_ready!(dst.poll_ready());
@@ -493,6 +493,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         // Send any pending connection level window updates
         try_ready!(self.send_connection_window_update(dst));
@@ -510,6 +511,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         if let Some(incr) = self.flow.unclaimed_capacity() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
@@ -541,6 +543,7 @@ where
     ) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         loop {
             // Ensure the codec has capacity

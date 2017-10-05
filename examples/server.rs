@@ -27,13 +27,13 @@ pub fn main() {
     let server = listener.incoming().for_each(move |(socket, _)| {
         // let socket = io_dump::Dump::to_stdout(socket);
 
-
         let connection = Server::handshake(socket)
             .and_then(|conn| {
                 println!("H2 connection bound");
 
                 conn.for_each(|(request, mut stream)| {
                     println!("GOT request: {:?}", request);
+
 
                     let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
@@ -47,12 +47,11 @@ pub fn main() {
                     }
 
                     Ok(())
-                }).and_then(|_| {
-                        println!(
-                            "~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~"
-                        );
-                        Ok(())
-                    })
+                })
+            })
+            .and_then(|_| {
+                println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
+                Ok(())
             })
             .then(|res| {
                 if let Err(e) = res {

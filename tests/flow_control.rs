@@ -378,9 +378,12 @@ fn stream_close_by_data_frame_releases_capacity() {
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
 
-        // Wait for the connection to close
-        h2.unwrap()
-    });
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -446,9 +449,12 @@ fn stream_close_by_trailers_frame_releases_capacity() {
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
 
-        // Wait for the connection to close
-        h2.unwrap()
-    });
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(s1)
+          .and_then(move |(h2, _)| h2.drive(s2))
+    })
+    .unwrap();
 
     let srv = srv.assert_client_handshake().unwrap()
         // Get the first frame
@@ -527,7 +533,16 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
             stream.send_data("hello".into(), true).unwrap();
 
             // Wait for the connection to close
-            h2.unwrap()
+            h2.map(|h2| {
+                // keep `stream` from being dropped in order to prevent
+                // it from sending an RST_STREAM frame.
+                std::mem::forget(stream);
+                // i know this is kind of evil, but it's necessary to
+                // ensure that the stream is closed by the EOS frame,
+                // and not by the RST_STREAM.
+                h2
+            })
+                .unwrap()
         });
 
     let srv = srv.assert_client_handshake()
