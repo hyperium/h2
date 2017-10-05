@@ -46,12 +46,7 @@ pub fn main() {
                         println!("  -> err={:?}", e);
                     }
 
-                    let (_, body) = request.into_parts();
-                    body.concat2().and_then(move |concat| {
-                        let _ = stream;
-                        println!("received body: {:?}", concat);
-                        Ok(())
-                    })
+                    Ok(())
                 })
             })
             .and_then(|_| {
