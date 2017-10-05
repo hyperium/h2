@@ -83,6 +83,7 @@ where
     /// Send an RST_STREAM frame
     ///
     /// # Arguments
+    /// + `reason`: the error code for the RST_STREAM frame
     /// + `clear_queue`: if true, all pending outbound frames will be cleared,
     ///    if false, the RST_STREAM frame will be appended to the end of the
     ///    send queue.
@@ -97,18 +98,20 @@ where
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
         trace!(
-            "send_reset(..., stream={:?}, ..., clear_queue={:?}); \
+            "send_reset(..., reason={:?}, stream={:?}, ..., \
+             clear_queue={:?});\n\
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
             ",
             stream.id,
+            reason,
             clear_queue,
             is_reset,
             is_closed,
             is_empty,
             stream.state
         );
-        if stream.state.is_reset() {
+        if is_reset {
             // Don't double reset
             trace!(
                 " -> not sending RST_STREAM ({:?} is already reset)",
@@ -131,8 +134,8 @@ where
         // Transition the state
         stream.state.set_reset(reason);
 
-        // Clear all pending outbound frames
         if clear_queue {
+            // Clear all pending outbound frames
             self.prioritize.clear_queue(stream);
         }
 

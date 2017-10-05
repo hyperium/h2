@@ -708,7 +708,7 @@ where
     P: Peer,
 {
     fn drop(&mut self) {
-        trace!("dropping {:?}", self);
+        trace!("StreamRef::drop({:?})", self);
         let mut me = match self.inner.lock() {
             Ok(inner) => inner,
             Err(_) => if ::std::thread::panicking() {
