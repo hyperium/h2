@@ -30,7 +30,7 @@ where
     codec: Codec<T, Prioritized<B::Buf>>,
 
     /// Ping/pong handler
-    ping_pong: PingPong<Prioritized<B::Buf>>,
+    ping_pong: PingPong,
 
     /// Connection settings
     settings: Settings,

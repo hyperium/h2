@@ -13,10 +13,10 @@ pub struct Ping {
 
 impl Ping {
     #[cfg(feature = "unstable")]
-    pub fn new() -> Ping {
+    pub fn new(payload: Payload) -> Ping {
         Ping {
             ack: false,
-            payload: Payload::default(),
+            payload,
         }
     }
 
