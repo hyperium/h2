@@ -20,6 +20,12 @@ where
     /// Tracks the connection level state transitions.
     state: State,
 
+    /// An error to report back once complete.
+    ///
+    /// This exists separately from State in order to support
+    /// graceful shutdown.
+    error: Option<Reason>,
+
     /// Read / write frame values
     codec: Codec<T, Prioritized<B::Buf>>,
 
@@ -41,14 +47,14 @@ enum State {
     /// Currently open in a sane state
     Open,
 
-    /// Waiting to send a GO_AWAY frame
+    /// Waiting to send a GOAWAY frame
     GoAway(frame::GoAway),
 
     /// The codec must be flushed
     Flush(Reason),
 
-    /// In an errored state
-    Error(Reason),
+    /// In a closed state
+    Closed(Reason),
 }
 
 impl<T, P, B> Connection<T, P, B>
@@ -74,6 +80,7 @@ where
         });
         Connection {
             state: State::Open,
+            error: None,
             codec: codec,
             ping_pong: PingPong::new(),
             settings: Settings::new(),
@@ -118,10 +125,19 @@ where
                             // This will also handle flushing `self.codec`
                             try_ready!(self.streams.poll_complete(&mut self.codec));
 
+                            if self.error.is_some() {
+                                if self.streams.num_active_streams() == 0 {
+                                    let id = self.streams.last_processed_id();
+                                    let goaway = frame::GoAway::new(id, Reason::NoError);
+                                    self.state = State::GoAway(goaway);
+                                    continue;
+                                }
+                            }
+
                             return Ok(Async::NotReady);
                         },
                         // Attempting to read a frame resulted in a connection level
-                        // error. This is handled by setting a GO_AWAY frame followed by
+                        // error. This is handled by setting a GOAWAY frame followed by
                         // terminating the connection.
                         Err(Connection(e)) => {
                             debug!("Connection::poll; err={:?}", e);
@@ -164,24 +180,45 @@ where
                     // Ensure the codec is ready to accept the frame
                     try_ready!(self.codec.poll_ready());
 
-                    // Buffer the GO_AWAY frame
+                    // Buffer the GOAWAY frame
                     self.codec
                         .buffer(frame.into())
                         .ok()
                         .expect("invalid GO_AWAY frame");
 
-                    // GO_AWAY sent, transition the connection to an errored state
-                    self.state = State::Flush(frame.reason());
+                    // GOAWAY sent, transition the connection to a closed state
+                    // Determine what error code should be returned to user.
+                    let reason = if let Some(theirs) = self.error.take() {
+                        let ours = frame.reason();
+                        match (ours, theirs) {
+                            // If either side reported an error, return that
+                            // to the user.
+                            (Reason::NoError, err) |
+                            (err, Reason::NoError) => err,
+                            // If both sides reported an error, give their
+                            // error back to th user. We assume our error
+                            // was a consequence of their error, and less
+                            // important.
+                            (_, theirs) => theirs,
+                        }
+                    } else {
+                        frame.reason()
+                    };
+                    self.state = State::Flush(reason);
                 },
                 State::Flush(reason) => {
                     // Flush the codec
                     try_ready!(self.codec.flush());
 
                     // Transition the state to error
-                    self.state = State::Error(reason);
+                    self.state = State::Closed(reason);
                 },
-                State::Error(reason) => {
-                    return Err(reason.into());
+                State::Closed(reason) => {
+                    if let Reason::NoError = reason {
+                        return Ok(Async::Ready(()));
+                    } else {
+                        return Err(reason.into());
+                    }
                 },
             }
         }
@@ -215,11 +252,14 @@ where
                     trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
                 },
-                Some(GoAway(_)) => {
-                    // TODO: handle the last_processed_id. Also, should this be
-                    // handled as an error?
-                    // let _ = RecvError::Proto(frame.reason());
-                    return Ok(().into());
+                Some(GoAway(frame)) => {
+                    trace!("recv GOAWAY; frame={:?}", frame);
+                    // This should prevent starting new streams,
+                    // but should allow continuing to process current streams
+                    // until they are all EOS. Once they are, State should
+                    // transition to GoAway.
+                    self.streams.recv_goaway(&frame);
+                    self.error = Some(frame.reason());
                 },
                 Some(Ping(frame)) => {
                     trace!("recv PING; frame={:?}", frame);

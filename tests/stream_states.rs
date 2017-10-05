@@ -298,6 +298,75 @@ fn configure_max_frame_size() {
     let _ = h2.join(srv).wait().expect("wait");
 }
 
+#[test]
+fn recv_goaway_finishes_processed_streams() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::go_away(1))
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        // expecting a goaway of 0, since server never initiated a stream
+        .recv_frame(frames::go_away(0));
+        //.close();
+
+    let h2 = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req1 = client.send_request(request, true)
+                .unwrap()
+                .expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_parts().1;
+                    body.concat2().expect("body")
+                })
+                .and_then(|buf| {
+                    assert_eq!(buf.len(), 16_384);
+                    Ok(())
+                });
+
+
+            // this request will trigger a goaway
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let req2 = client.send_request(request, true)
+                .unwrap()
+                .then(|res| {
+                    let err = res.unwrap_err();
+                    assert_eq!(err.to_string(), "protocol error: not a result of an error");
+                    Ok::<(), ()>(())
+                });
+
+            h2.expect("client").join3(req1, req2)
+        });
+
+
+    h2.join(srv).wait().expect("wait");
+}
+
 /*
 #[test]
 fn send_data_after_headers_eos() {

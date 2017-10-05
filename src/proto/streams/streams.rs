@@ -192,6 +192,7 @@ where
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_err(err, &mut *stream);
+                    actions.send.recv_err(stream);
                     Ok::<_, ()>(())
                 })
             })
@@ -200,6 +201,37 @@ where
         actions.conn_error = Some(err.shallow_clone());
 
         last_processed_id
+    }
+
+    pub fn recv_goaway(&mut self, frame: &frame::GoAway) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let actions = &mut me.actions;
+        let counts = &mut me.counts;
+
+        let last_stream_id = frame.last_stream_id();
+        let err = frame.reason().into();
+
+        me.store
+            .for_each(|stream| {
+                if stream.id > last_stream_id {
+                    counts.transition(stream, |_, stream| {
+                        actions.recv.recv_err(&err, &mut *stream);
+                        actions.send.recv_err(stream);
+                        Ok::<_, ()>(())
+                    })
+                } else {
+                    Ok::<_, ()>(())
+                }
+            })
+            .unwrap();
+
+        actions.conn_error = Some(err);
+    }
+
+    pub fn last_processed_id(&self) -> StreamId {
+        self.inner.lock().unwrap().actions.recv.last_processed_id()
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) -> Result<(), RecvError> {
@@ -446,7 +478,6 @@ where
     }
 }
 
-#[cfg(feature = "unstable")]
 impl<B, P> Streams<B, P>
 where
     B: Buf,
@@ -457,6 +488,7 @@ where
         me.store.num_active_streams()
     }
 
+    #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_wired_streams()

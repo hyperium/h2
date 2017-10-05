@@ -101,22 +101,14 @@ where
         // Transition the state
         stream.state.set_reset(reason);
 
-        // Clear all pending outbound frames
-        self.prioritize.clear_queue(stream);
-
-        // Reclaim all capacity assigned to the stream and re-assign it to the
-        // connection
-        let available = stream.send_flow.available();
-        stream.send_flow.claim_capacity(available);
+        self.recv_err(stream);
 
         let frame = frame::Reset::new(stream.id, reason);
 
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
 
-        // Re-assign all capacity to the connection
-        self.prioritize
-            .assign_connection_capacity(available, stream);
+
     }
 
     pub fn send_data(
@@ -219,6 +211,19 @@ where
         }
 
         Ok(())
+    }
+
+    pub fn recv_err(&mut self, stream: &mut store::Ptr<B, P>) {
+        // Clear all pending outbound frames
+        self.prioritize.clear_queue(stream);
+
+        // Reclaim all capacity assigned to the stream and re-assign it to the
+        // connection
+        let available = stream.send_flow.available();
+        stream.send_flow.claim_capacity(available);
+        // Re-assign all capacity to the connection
+        self.prioritize
+            .assign_connection_capacity(available, stream);
     }
 
     pub fn apply_remote_settings(
