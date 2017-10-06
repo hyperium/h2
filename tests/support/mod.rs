@@ -12,6 +12,7 @@ pub extern crate futures;
 pub extern crate h2;
 pub extern crate http;
 pub extern crate mock_io;
+pub extern crate string;
 pub extern crate tokio_io;
 
 // Kind of annoying, but we can't use macros from crates that aren't specified

@@ -1,7 +1,12 @@
 use h2::client;
 
+use super::string::{String, TryFrom};
 use bytes::Bytes;
 use futures::{Async, Future, Poll};
+
+pub fn byte_str(s: &str) -> String<Bytes> {
+    String::try_from(Bytes::from(s)).unwrap()
+}
 
 pub fn wait_for_capacity(stream: client::Stream<Bytes>, target: usize) -> WaitForCapacity {
     WaitForCapacity {

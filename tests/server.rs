@@ -58,3 +58,30 @@ fn serve_request() {
 #[test]
 #[ignore]
 fn accept_with_pending_connections_after_socket_close() {}
+
+#[test]
+fn sent_invalid_authority() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let bad_auth = util::byte_str("not:a/good authority");
+    let mut bad_headers: frame::Headers = frames::headers(1)
+        .request("GET", "https://example.com/")
+        .eos()
+        .into();
+    bad_headers.pseudo_mut().authority = Some(bad_auth);
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(bad_headers)
+        .recv_frame(frames::reset(1).protocol_error())
+        .close();
+
+    let srv = Server::handshake(io)
+        .expect("handshake")
+        .and_then(|srv| srv.into_future().unwrap());
+
+    srv.join(client).wait().expect("wait");
+}

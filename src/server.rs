@@ -513,15 +513,15 @@ impl proto::Peer for Peer {
         let mut parts = uri::Parts::default();
 
         if let Some(scheme) = pseudo.scheme {
-            // TODO: Don't unwrap
-            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner()).unwrap());
+            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner())
+                .or_else(|_| malformed!())?);
         } else {
             malformed!();
         }
 
         if let Some(authority) = pseudo.authority {
-            // TODO: Don't unwrap
-            parts.authority = Some(uri::Authority::from_shared(authority.into_inner()).unwrap());
+            parts.authority = Some(uri::Authority::from_shared(authority.into_inner())
+                .or_else(|_| malformed!())?);
         }
 
         if let Some(path) = pseudo.path {
@@ -530,8 +530,8 @@ impl proto::Peer for Peer {
                 malformed!();
             }
 
-            // TODO: Don't unwrap
-            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner()).unwrap());
+            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner())
+                .or_else(|_| malformed!())?);
         }
 
         b.uri(parts);
