@@ -532,17 +532,16 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
             // Send a data frame, this will also close the connection
             stream.send_data("hello".into(), true).unwrap();
 
+            // keep `stream` from being dropped in order to prevent
+            // it from sending an RST_STREAM frame.
+            //
+            // i know this is kind of evil, but it's necessary to
+            // ensure that the stream is closed by the EOS frame,
+            // and not by the RST_STREAM.
+            std::mem::forget(stream);
+
             // Wait for the connection to close
-            h2.map(|h2| {
-                // keep `stream` from being dropped in order to prevent
-                // it from sending an RST_STREAM frame.
-                std::mem::forget(stream);
-                // i know this is kind of evil, but it's necessary to
-                // ensure that the stream is closed by the EOS frame,
-                // and not by the RST_STREAM.
-                h2
-            })
-                .unwrap()
+            h2.unwrap()
         });
 
     let srv = srv.assert_client_handshake()
@@ -743,4 +742,61 @@ fn connection_notified_on_released_capacity() {
     // Explicitly drop this after the joins so that the capacity doesn't get
     // implicitly released before.
     drop(b);
+}
+
+#[test]
+fn recv_settings_removes_available_capacity() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_initial_window_size(Some(0));
+
+    let srv = srv.assert_client_handshake_with_settings(settings).unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .idle_ms(100)
+        .send_frame(frames::window_update(0, 11))
+        .send_frame(frames::window_update(1, 11))
+        .recv_frame(frames::data(1, "hello world").eos())
+        .send_frame(
+            frames::headers(1)
+                .response(204)
+                .eos()
+        )
+        .close();
+
+
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let mut stream = client.send_request(request, false).unwrap();
+
+            stream.reserve_capacity(11);
+
+            h2.drive(util::wait_for_capacity(stream, 11))
+        })
+        .and_then(|(h2, mut stream)| {
+            assert_eq!(stream.capacity(), 11);
+
+            stream.send_data("hello world".into(), true).unwrap();
+
+            h2.drive(GetResponse { stream: Some(stream) })
+        })
+        .and_then(|(h2, (response, _))| {
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            // Wait for the connection to close
+            h2.unwrap()
+        });
+
+    let _ = h2.join(srv)
+        .wait().unwrap();
 }
