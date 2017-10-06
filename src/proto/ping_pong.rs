@@ -1,27 +1,22 @@
+use codec::Codec;
 use frame::Ping;
-use proto::*;
+use proto::PingPayload;
 
+use bytes::Buf;
+use futures::{Async, Poll};
 use std::io;
+use tokio_io::AsyncWrite;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
-pub struct PingPong<B> {
-    // TODO: this doesn't need to save the entire frame
-    sending_pong: Option<Frame<B>>,
-    received_pong: Option<PingPayload>,
-    // TODO: factor this out
-    blocked_ping: Option<task::Task>,
+pub struct PingPong {
+    sending_pong: Option<PingPayload>,
 }
 
-impl<B> PingPong<B>
-where
-    B: Buf,
-{
+impl PingPong {
     pub fn new() -> Self {
         PingPong {
             sending_pong: None,
-            received_pong: None,
-            blocked_ping: None,
         }
     }
 
@@ -31,24 +26,17 @@ where
         // calling `recv_ping`.
         assert!(self.sending_pong.is_none());
 
-        if ping.is_ack() {
-            // Save acknowledgements to be returned from take_pong().
-            self.received_pong = Some(ping.into_payload());
-
-            if let Some(task) = self.blocked_ping.take() {
-                task.notify();
-            }
-        } else {
+        if !ping.is_ack() {
             // Save the ping's payload to be sent as an acknowledgement.
-            let pong = Ping::pong(ping.into_payload());
-            self.sending_pong = Some(pong.into());
+            self.sending_pong = Some(ping.into_payload());
         }
     }
 
     /// Send any pending pongs.
-    pub fn send_pending_pong<T>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
+    pub fn send_pending_pong<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
     where
         T: AsyncWrite,
+        B: Buf,
     {
         if let Some(pong) = self.sending_pong.take() {
             if !dst.poll_ready()?.is_ready() {
@@ -56,7 +44,7 @@ where
                 return Ok(Async::NotReady);
             }
 
-            dst.buffer(pong).ok().expect("invalid pong frame");
+            dst.buffer(Ping::pong(pong).into()).ok().expect("invalid pong frame");
         }
 
         Ok(Async::Ready(()))

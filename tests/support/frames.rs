@@ -68,6 +68,10 @@ pub fn settings() -> Mock<frame::Settings> {
     Mock(frame::Settings::default())
 }
 
+pub fn ping(payload: [u8; 8]) -> Mock<frame::Ping> {
+    Mock(frame::Ping::new(payload))
+}
+
 // === Generic helpers of all frame types
 
 pub struct Mock<T>(T);
@@ -260,6 +264,21 @@ impl From<Mock<frame::Settings>> for frame::Settings {
 impl From<Mock<frame::Settings>> for SendFrame {
     fn from(src: Mock<frame::Settings>) -> Self {
         Frame::Settings(src.0)
+    }
+}
+
+// ==== Ping helpers
+
+impl Mock<frame::Ping> {
+    pub fn pong(self) -> Self {
+        let payload = self.0.into_payload();
+        Mock(frame::Ping::pong(payload))
+    }
+}
+
+impl From<Mock<frame::Ping>> for SendFrame {
+    fn from(src: Mock<frame::Ping>) -> Self {
+        Frame::Ping(src.0)
     }
 }
 
