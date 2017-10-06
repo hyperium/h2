@@ -211,6 +211,11 @@ impl Headers {
         (self.header_block.pseudo, self.header_block.fields)
     }
 
+    #[cfg(feature = "unstable")]
+    pub fn pseudo_mut(&mut self) -> &mut Pseudo {
+        &mut self.header_block.pseudo
+    }
+
     pub fn fields(&self) -> &HeaderMap {
         &self.header_block.fields
     }

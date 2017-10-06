@@ -136,6 +136,12 @@ impl Mock<frame::Headers> {
     }
 }
 
+impl From<Mock<frame::Headers>> for frame::Headers {
+    fn from(src: Mock<frame::Headers>) -> Self {
+        src.0
+    }
+}
+
 impl From<Mock<frame::Headers>> for SendFrame {
     fn from(src: Mock<frame::Headers>) -> Self {
         Frame::Headers(src.0)
@@ -234,6 +240,11 @@ impl From<Mock<frame::GoAway>> for SendFrame {
 // ==== Reset helpers
 
 impl Mock<frame::Reset> {
+    pub fn protocol_error(self) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, frame::Reason::ProtocolError))
+    }
+
     pub fn flow_control(self) -> Self {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::FlowControlError))
