@@ -149,7 +149,7 @@ impl Handle {
                 let (settings, me) = res.unwrap();
 
                 me.into_future()
-                    .map_err(|_| unimplemented!())
+                    .map_err(|_| unreachable!("all previous futures unwrapped"))
                     .map(|(frame, me)| {
                         let f = assert_settings!(frame.unwrap());
 
