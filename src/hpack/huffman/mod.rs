@@ -93,7 +93,7 @@ impl Decoder {
 
         if flags & ERROR == ERROR {
             // Data followed the EOS marker
-            unimplemented!();
+            return Err(DecoderError::InvalidHuffmanCode);
         }
 
         let mut ret = None;
