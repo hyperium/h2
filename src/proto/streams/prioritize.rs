@@ -107,8 +107,7 @@ where
         let sz = frame.payload().remaining();
 
         if sz > MAX_WINDOW_SIZE as usize {
-            // TODO: handle overflow
-            unimplemented!();
+            return Err(UserError::PayloadTooBig);
         }
 
         let sz = sz as WindowSize;
