@@ -263,9 +263,9 @@ where
     ) -> Result<(), RecvError> {
         let sz = frame.payload().len();
 
-        if sz > MAX_WINDOW_SIZE as usize {
-            unimplemented!();
-        }
+        // This should have been enforced at the codec::FramedRead layer, so
+        // this is just a sanity check.
+        assert!(sz <= MAX_WINDOW_SIZE as usize);
 
         let sz = sz as WindowSize;
 
@@ -611,7 +611,7 @@ where
                 // TODO: This is a user error. `poll_trailers` was called before
                 // the entire set of data frames have been consumed. What should
                 // we do?
-                unimplemented!();
+                panic!("poll_trailers called before data has been consumed");
             },
             None => self.schedule_recv(stream),
         }
@@ -654,7 +654,7 @@ where
         // frame or the user violated the contract.
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Headers(response)) => Ok(response.into()),
-            Some(_) => unimplemented!(),
+            Some(_) => panic!("poll_response called after response returned"),
             None => {
                 stream.state.ensure_recv_open()?;
 
