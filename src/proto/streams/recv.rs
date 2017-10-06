@@ -152,9 +152,10 @@ where
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(_) => {
-                        unimplemented!();
-                    },
+                    Err(_) => return Err(RecvError::Stream {
+                        id: stream.id,
+                        reason: Reason::ProtocolError,
+                    }),
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
