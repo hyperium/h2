@@ -1,7 +1,6 @@
 use codec::{RecvError, UserError};
 use codec::UserError::*;
 use frame::Reason;
-use frame::Reason::*;
 use proto;
 
 use self::Inner::*;
@@ -166,7 +165,7 @@ impl State {
             },
             _ => {
                 // All other transitions result in a protocol error
-                return Err(RecvError::Connection(ProtocolError));
+                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             },
         };
 
@@ -180,7 +179,7 @@ impl State {
                 self.inner = ReservedRemote;
                 Ok(())
             },
-            _ => Err(RecvError::Connection(ProtocolError)),
+            _ => Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         }
     }
 
@@ -200,7 +199,7 @@ impl State {
                 self.inner = Closed(None);
                 Ok(())
             },
-            _ => Err(RecvError::Connection(ProtocolError)),
+            _ => Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         }
     }
 

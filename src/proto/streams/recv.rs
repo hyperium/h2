@@ -110,7 +110,7 @@ where
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         self.next_stream_id = id.next_id();
@@ -152,10 +152,12 @@ where
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(_) => return Err(RecvError::Stream {
-                        id: stream.id,
-                        reason: Reason::ProtocolError,
-                    }),
+                    Err(_) => {
+                        return Err(RecvError::Stream {
+                            id: stream.id,
+                            reason: Reason::PROTOCOL_ERROR,
+                        })
+                    },
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
@@ -191,7 +193,7 @@ where
         if stream.ensure_content_length_zero().is_err() {
             return Err(RecvError::Stream {
                 id: stream.id,
-                reason: ProtocolError,
+                reason: Reason::PROTOCOL_ERROR,
             });
         }
 
@@ -272,7 +274,7 @@ where
         if !stream.state.is_recv_streaming() {
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         trace!(
@@ -285,7 +287,7 @@ where
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
         if self.flow.window_size() < sz || stream.recv_flow.window_size() < sz {
-            return Err(RecvError::Connection(FlowControlError));
+            return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
         }
 
         // Update connection level flow control
@@ -300,7 +302,7 @@ where
         if stream.dec_content_length(frame.payload().len()).is_err() {
             return Err(RecvError::Stream {
                 id: stream.id,
-                reason: ProtocolError,
+                reason: Reason::PROTOCOL_ERROR,
             });
         }
 
@@ -308,12 +310,12 @@ where
             if stream.ensure_content_length_zero().is_err() {
                 return Err(RecvError::Stream {
                     id: stream.id,
-                    reason: ProtocolError,
+                    reason: Reason::PROTOCOL_ERROR,
                 });
             }
 
             if stream.state.recv_close().is_err() {
-                return Err(RecvError::Connection(ProtocolError));
+                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
 
@@ -382,7 +384,7 @@ where
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                return Err(ProtocolError);
+                return Err(Reason::PROTOCOL_ERROR);
             }
         }
         // if next_stream_id is overflowed, that's ok.
@@ -417,12 +419,12 @@ where
         if !P::is_server() {
             // Remote is a server and cannot open streams. PushPromise is
             // registered by reserving, so does not go through this path.
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         // Ensure that the ID is a valid server initiated ID
         if !id.is_client_initiated() {
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         Ok(())
@@ -432,7 +434,7 @@ where
         if let Ok(id) = self.next_stream_id {
             Ok(id)
         } else {
-            Err(RecvError::Connection(ProtocolError))
+            Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
         }
     }
 
@@ -442,7 +444,7 @@ where
         if P::is_server() {
             // The remote is a client and cannot reserve
             trace!("recv_push_promise; error remote is client");
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         if !promised_id.is_server_initiated() {
@@ -450,12 +452,12 @@ where
                 "recv_push_promise; error promised id is invalid {:?}",
                 promised_id
             );
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         if !self.is_push_enabled {
             trace!("recv_push_promise; error push is disabled");
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         Ok(())
@@ -474,7 +476,7 @@ where
             try_ready!(dst.poll_ready());
 
             // Create the RST_STREAM frame
-            let frame = frame::Reset::new(stream_id, RefusedStream);
+            let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
 
             // Buffer the frame
             dst.buffer(frame.into())

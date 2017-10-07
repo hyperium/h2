@@ -128,7 +128,7 @@ where
                             if self.error.is_some() {
                                 if self.streams.num_active_streams() == 0 {
                                     let id = self.streams.last_processed_id();
-                                    let goaway = frame::GoAway::new(id, Reason::NoError);
+                                    let goaway = frame::GoAway::new(id, Reason::NO_ERROR);
                                     self.state = State::GoAway(goaway);
                                     continue;
                                 }
@@ -193,8 +193,7 @@ where
                         match (ours, theirs) {
                             // If either side reported an error, return that
                             // to the user.
-                            (Reason::NoError, err) |
-                            (err, Reason::NoError) => err,
+                            (Reason::NO_ERROR, err) | (err, Reason::NO_ERROR) => err,
                             // If both sides reported an error, give their
                             // error back to th user. We assume our error
                             // was a consequence of their error, and less
@@ -213,12 +212,10 @@ where
                     // Transition the state to error
                     self.state = State::Closed(reason);
                 },
-                State::Closed(reason) => {
-                    if let Reason::NoError = reason {
-                        return Ok(Async::Ready(()));
-                    } else {
-                        return Err(reason.into());
-                    }
+                State::Closed(reason) => if let Reason::NO_ERROR = reason {
+                    return Ok(Async::Ready(()));
+                } else {
+                    return Err(reason.into());
                 },
             }
         }
