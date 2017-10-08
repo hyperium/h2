@@ -1,7 +1,6 @@
 use codec::RecvError;
 use frame::{self, Frame, Kind, Reason};
 use frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
-use frame::Reason::*;
 
 use hpack;
 
@@ -60,7 +59,7 @@ impl<T> FramedRead<T> {
         let head = frame::Head::parse(&bytes);
 
         if self.partial.is_some() && head.kind() != Kind::Continuation {
-            return Err(Connection(ProtocolError));
+            return Err(Connection(Reason::PROTOCOL_ERROR));
         }
 
         let kind = head.kind();
@@ -71,24 +70,24 @@ impl<T> FramedRead<T> {
             Kind::Settings => {
                 let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::Ping => {
                 let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::WindowUpdate => {
                 let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
                 let res = frame::Data::load(head, bytes.freeze());
 
                 // TODO: Should this always be connection level? Probably not...
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::Headers => {
                 // Drop the frame header
@@ -104,10 +103,10 @@ impl<T> FramedRead<T> {
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
                             id: head.stream_id(),
-                            reason: ProtocolError,
+                            reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    _ => return Err(Connection(ProtocolError)),
+                    _ => return Err(Connection(Reason::PROTOCOL_ERROR)),
                 };
 
                 if headers.is_end_headers() {
@@ -117,10 +116,10 @@ impl<T> FramedRead<T> {
                         Err(frame::Error::MalformedMessage) => {
                             return Err(Stream {
                                 id: head.stream_id(),
-                                reason: ProtocolError,
+                                reason: Reason::PROTOCOL_ERROR,
                             });
                         },
-                        Err(_) => return Err(Connection(ProtocolError)),
+                        Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
                     }
 
                     headers.into()
@@ -136,11 +135,11 @@ impl<T> FramedRead<T> {
             },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::GoAway => {
                 let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(ProtocolError))?.into()
+                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::PushPromise => {
                 // Drop the frame header
@@ -148,8 +147,8 @@ impl<T> FramedRead<T> {
                 let _ = bytes.split_to(frame::HEADER_LEN);
 
                 // Parse the frame w/o parsing the payload
-                let (mut push, payload) =
-                    frame::PushPromise::load(head, bytes).map_err(|_| Connection(ProtocolError))?;
+                let (mut push, payload) = frame::PushPromise::load(head, bytes)
+                    .map_err(|_| Connection(Reason::PROTOCOL_ERROR))?;
 
                 if push.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
@@ -158,10 +157,10 @@ impl<T> FramedRead<T> {
                         Err(frame::Error::MalformedMessage) => {
                             return Err(Stream {
                                 id: head.stream_id(),
-                                reason: ProtocolError,
+                                reason: Reason::PROTOCOL_ERROR,
                             });
                         },
-                        Err(_) => return Err(Connection(ProtocolError)),
+                        Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
                     }
 
                     push.into()
@@ -178,7 +177,7 @@ impl<T> FramedRead<T> {
             Kind::Priority => {
                 if head.stream_id() == 0 {
                     // Invalid stream identifier
-                    return Err(Connection(ProtocolError));
+                    return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
                 match frame::Priority::load(head, &bytes[frame::HEADER_LEN..]) {
@@ -189,10 +188,10 @@ impl<T> FramedRead<T> {
                         // `PROTOCOL_ERROR`.
                         return Err(Stream {
                             id: head.stream_id(),
-                            reason: ProtocolError,
+                            reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    Err(_) => return Err(Connection(ProtocolError)),
+                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
                 }
             },
             Kind::Continuation => {
@@ -201,7 +200,7 @@ impl<T> FramedRead<T> {
 
                 let mut partial = match self.partial.take() {
                     Some(partial) => partial,
-                    None => return Err(Connection(ProtocolError)),
+                    None => return Err(Connection(Reason::PROTOCOL_ERROR)),
                 };
 
                 // Extend the buf
@@ -214,7 +213,7 @@ impl<T> FramedRead<T> {
 
                 // The stream identifiers must match
                 if partial.frame.stream_id() != head.stream_id() {
-                    return Err(Connection(ProtocolError));
+                    return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
                 match partial.frame.load_hpack(partial.buf, &mut self.hpack) {
@@ -222,10 +221,10 @@ impl<T> FramedRead<T> {
                     Err(frame::Error::MalformedMessage) => {
                         return Err(Stream {
                             id: head.stream_id(),
-                            reason: ProtocolError,
+                            reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    Err(_) => return Err(Connection(ProtocolError)),
+                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
                 }
 
                 partial.frame.into()
@@ -296,7 +295,7 @@ fn map_err(err: io::Error) -> RecvError {
         // TODO: with tokio-io v0.1.4, we can check
         // err.get_ref().is::<tokio_io::length_delimited::FrameTooBig>()
         if err.description() == "frame size too big" {
-            return RecvError::Connection(Reason::FrameSizeError);
+            return RecvError::Connection(Reason::FRAME_SIZE_ERROR);
         }
     }
     err.into()

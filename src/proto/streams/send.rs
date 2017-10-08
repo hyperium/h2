@@ -151,8 +151,6 @@ where
 
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), stream, task);
-
-
     }
 
     pub fn send_data(
@@ -253,7 +251,7 @@ where
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.send_reset(FlowControlError.into(), stream, task, true);
+            self.send_reset(Reason::FLOW_CONTROL_ERROR.into(), stream, task, true);
 
             return Err(e);
         }
@@ -342,7 +340,7 @@ where
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                return Err(ProtocolError);
+                return Err(Reason::PROTOCOL_ERROR);
             }
         }
         // if next_stream_id is overflowed, that's ok.

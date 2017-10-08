@@ -117,7 +117,7 @@ where
             } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
-                    return Err(RecvError::Connection(ProtocolError));
+                    return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
                 }
 
                 actions.recv.recv_trailers(frame, stream)
@@ -135,7 +135,7 @@ where
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
-            None => return Err(RecvError::Connection(ProtocolError)),
+            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
         let actions = &mut me.actions;
@@ -153,7 +153,7 @@ where
         let id = frame.stream_id();
 
         if id.is_zero() {
-            return Err(RecvError::Connection(ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         let stream = match me.store.find_mut(&id) {
@@ -213,16 +213,14 @@ where
         let err = frame.reason().into();
 
         me.store
-            .for_each(|stream| {
-                if stream.id > last_stream_id {
-                    counts.transition(stream, |_, stream| {
-                        actions.recv.recv_err(&err, &mut *stream);
-                        actions.send.recv_err(stream);
-                        Ok::<_, ()>(())
-                    })
-                } else {
+            .for_each(|stream| if stream.id > last_stream_id {
+                counts.transition(stream, |_, stream| {
+                    actions.recv.recv_err(&err, &mut *stream);
+                    actions.send.recv_err(stream);
                     Ok::<_, ()>(())
-                }
+                })
+            } else {
+                Ok::<_, ()>(())
             })
             .unwrap();
 
@@ -274,7 +272,7 @@ where
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream.key(),
-            None => return Err(RecvError::Connection(ProtocolError)),
+            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
         me.actions
@@ -513,8 +511,7 @@ impl<B, P> StreamRef<B, P>
 where
     P: Peer,
 {
-    pub fn send_data(&mut self, data: B, end_stream: bool)
-        -> Result<(), UserError>
+    pub fn send_data(&mut self, data: B, end_stream: bool) -> Result<(), UserError>
     where
         B: Buf,
     {
@@ -622,10 +619,7 @@ where
 
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
-    pub fn release_capacity(
-            &mut self,
-            capacity: WindowSize
-    ) -> Result<(), UserError>
+    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError>
     where
         B: Buf,
     {
@@ -742,11 +736,9 @@ where
                     .field("ref_count", &stream.ref_count)
                     .finish()
             },
-            Err(_poisoned) => {
-                fmt.debug_struct("StreamRef")
-                    .field("inner", &"<Poisoned>")
-                    .finish()
-            }
+            Err(_poisoned) => fmt.debug_struct("StreamRef")
+                .field("inner", &"<Poisoned>")
+                .finish(),
         }
     }
 }
@@ -786,7 +778,7 @@ where
                     stream.id,
                 );
                 actions.send.send_reset(
-                    Reason::Cancel,
+                    Reason::CANCEL,
                     stream,
                     &mut actions.task,
                     false

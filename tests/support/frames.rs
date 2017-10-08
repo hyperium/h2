@@ -54,14 +54,14 @@ pub fn go_away<T>(id: T) -> Mock<frame::GoAway>
 where
     T: Into<StreamId>,
 {
-    Mock(frame::GoAway::new(id.into(), frame::Reason::NoError))
+    Mock(frame::GoAway::new(id.into(), frame::Reason::NO_ERROR))
 }
 
 pub fn reset<T>(id: T) -> Mock<frame::Reset>
 where
     T: Into<StreamId>,
 {
-    Mock(frame::Reset::new(id.into(), frame::Reason::NoError))
+    Mock(frame::Reset::new(id.into(), frame::Reason::NO_ERROR))
 }
 
 pub fn settings() -> Mock<frame::Settings> {
@@ -212,21 +212,21 @@ impl Mock<frame::GoAway> {
     pub fn protocol_error(self) -> Self {
         Mock(frame::GoAway::new(
             self.0.last_stream_id(),
-            frame::Reason::ProtocolError,
+            frame::Reason::PROTOCOL_ERROR,
         ))
     }
 
     pub fn flow_control(self) -> Self {
         Mock(frame::GoAway::new(
             self.0.last_stream_id(),
-            frame::Reason::FlowControlError,
+            frame::Reason::FLOW_CONTROL_ERROR,
         ))
     }
 
     pub fn frame_size(self) -> Self {
         Mock(frame::GoAway::new(
             self.0.last_stream_id(),
-            frame::Reason::FrameSizeError,
+            frame::Reason::FRAME_SIZE_ERROR,
         ))
     }
 }
@@ -242,12 +242,12 @@ impl From<Mock<frame::GoAway>> for SendFrame {
 impl Mock<frame::Reset> {
     pub fn protocol_error(self) -> Self {
         let id = self.0.stream_id();
-        Mock(frame::Reset::new(id, frame::Reason::ProtocolError))
+        Mock(frame::Reset::new(id, frame::Reason::PROTOCOL_ERROR))
     }
 
     pub fn flow_control(self) -> Self {
         let id = self.0.stream_id();
-        Mock(frame::Reset::new(id, frame::Reason::FlowControlError))
+        Mock(frame::Reset::new(id, frame::Reason::FLOW_CONTROL_ERROR))
     }
 }
 
