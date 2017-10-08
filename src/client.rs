@@ -188,6 +188,12 @@ impl Builder {
     }
 
     /// Set the maximum number of concurrent streams.
+    ///
+    /// Clients can only limit the maximum number of streams that that the
+    /// server can initiate. See [Section 5.1.2] in the HTTP/2 spec for more
+    /// details.
+    ///
+    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
     pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_concurrent_streams(Some(max));
         self
