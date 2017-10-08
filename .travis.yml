@@ -34,7 +34,11 @@ script:
   # Check with unstable flag
   - cargo check --features unstable
 
-  # Run tests, uploading results to codecov..
+  # Build the test executables in a separate step, since Tarpaulin
+  # will not fail on test compile errors.
+  - cargo build --tests --features unstable
+
+  # Run tests, uploading results to codecov.
   # hpack tests are _super_ slow in coverage, so skip them here.
   - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml -- --skip hpack
 
