@@ -187,6 +187,12 @@ impl Builder {
         self
     }
 
+    /// Set the maximum number of concurrent streams.
+    pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
+        self.settings.set_max_concurrent_streams(Some(max));
+        self
+    }
+
     /// Enable or disable the server to send push promises.
     pub fn enable_push(&mut self, enabled: bool) -> &mut Self {
         self.settings.set_enable_push(enabled);
