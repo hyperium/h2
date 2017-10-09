@@ -14,7 +14,7 @@ shouldn't be using it yet!).
 
 More information about this crate can be found in the [crate documentation][dox]
 
-[dox]: https://carllerche.github.io/h2
+[dox]: https://carllerche.github.io/h2/h2
 
 ## Features
 

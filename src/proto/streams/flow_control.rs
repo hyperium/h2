@@ -103,11 +103,11 @@ impl FlowControl {
         let (val, overflow) = self.window_size.overflowing_add(sz as i32);
 
         if overflow {
-            return Err(Reason::FlowControlError);
+            return Err(Reason::FLOW_CONTROL_ERROR);
         }
 
         if val > MAX_WINDOW_SIZE as i32 {
-            return Err(Reason::FlowControlError);
+            return Err(Reason::FLOW_CONTROL_ERROR);
         }
 
         trace!(
@@ -126,7 +126,12 @@ impl FlowControl {
     /// This is called after receiving a SETTINGS frame with a lower
     /// INITIAL_WINDOW_SIZE value.
     pub fn dec_window(&mut self, sz: WindowSize) {
-        trace!("dec_window; sz={}; window={}, available={}", sz, self.window_size, self.available);
+        trace!(
+            "dec_window; sz={}; window={}, available={}",
+            sz,
+            self.window_size,
+            self.available
+        );
         // This should not be able to overflow `window_size` from the bottom.
         self.window_size -= sz as i32;
         self.available = self.available.saturating_sub(sz);

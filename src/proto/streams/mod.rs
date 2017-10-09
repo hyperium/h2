@@ -23,7 +23,6 @@ use self::state::State;
 use self::store::{Entry, Store};
 use self::stream::Stream;
 
-use error::Reason::*;
 use frame::{StreamId, StreamIdOverflow};
 use proto::*;
 

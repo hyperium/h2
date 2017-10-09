@@ -1,6 +1,5 @@
 use codec::{Codec, RecvError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
-use frame::Reason::*;
 use proto::{self, WindowSize};
 
 use bytes::{Bytes, IntoBuf};
@@ -445,7 +444,7 @@ impl proto::Peer for Peer {
                 // kinds of errors
                 return Err(RecvError::Stream {
                     id: stream_id,
-                    reason: ProtocolError,
+                    reason: Reason::PROTOCOL_ERROR,
                 });
             },
         };

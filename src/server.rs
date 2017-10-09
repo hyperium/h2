@@ -408,7 +408,7 @@ where
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {
                 // TODO: Should this just write the GO_AWAY frame directly?
-                return Err(Reason::ProtocolError.into());
+                return Err(Reason::PROTOCOL_ERROR.into());
             }
 
             self.pos += n;
@@ -491,7 +491,7 @@ impl proto::Peer for Peer {
             () => {
                 return Err(RecvError::Stream {
                     id: stream_id,
-                    reason: Reason::ProtocolError,
+                    reason: Reason::PROTOCOL_ERROR,
                 });
             }
         };
@@ -506,7 +506,7 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
-            return Err(RecvError::Connection(Reason::ProtocolError));
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         // Convert the URI
@@ -543,7 +543,7 @@ impl proto::Peer for Peer {
                 // kinds of errors
                 return Err(RecvError::Stream {
                     id: stream_id,
-                    reason: Reason::ProtocolError,
+                    reason: Reason::PROTOCOL_ERROR,
                 });
             },
         };
