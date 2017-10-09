@@ -51,11 +51,11 @@ where
     pub fn new(config: &Config) -> Prioritize<B, P> {
         let mut flow = FlowControl::new();
 
-        flow.inc_window(config.local_init_window_sz)
+        flow.inc_window(config.remote_init_window_sz)
             .ok()
             .expect("invalid initial window size");
 
-        flow.assign_capacity(config.local_init_window_sz);
+        flow.assign_capacity(config.remote_init_window_sz);
 
         trace!("Prioritize::new; flow={:?}", flow);
 
