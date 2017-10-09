@@ -38,7 +38,7 @@ pub struct Body<B: IntoBuf> {
     inner: ReleaseCapacity<B>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ReleaseCapacity<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf, Peer>,
 }
@@ -410,6 +410,13 @@ impl<B: IntoBuf> ReleaseCapacity<B> {
         self.inner
             .release_capacity(sz as proto::WindowSize)
             .map_err(Into::into)
+    }
+}
+
+impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
+    fn clone(&self) -> Self {
+        let inner = self.inner.clone();
+        ReleaseCapacity { inner }
     }
 }
 
