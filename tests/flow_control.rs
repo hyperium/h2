@@ -110,7 +110,7 @@ fn release_capacity_sends_window_update() {
                 .and_then(|(buf, mut body)| {
                     let buf = buf.unwrap();
                     assert_eq!(buf.len(), payload.len());
-                    body.release_capacity(buf.len() * 2).unwrap();
+                    body.release_capacity().release_capacity(buf.len() * 2).unwrap();
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, _)| {
@@ -164,7 +164,7 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
                 .and_then(|(buf, mut body)| {
                     let buf = buf.unwrap();
                     assert_eq!(buf.len(), 16);
-                    body.release_capacity(buf.len()).unwrap();
+                    body.release_capacity().release_capacity(buf.len()).unwrap();
                     body.into_future().unwrap()
                 })
                 .and_then(|(buf, _)| {
@@ -734,7 +734,7 @@ fn connection_notified_on_released_capacity() {
     thread::sleep(Duration::from_millis(100));
 
     // Release the capacity
-    a.release_capacity(16_384).unwrap();
+    a.release_capacity().release_capacity(16_384).unwrap();
 
     th1.join().unwrap();
     th2.join().unwrap();
