@@ -6,7 +6,7 @@ const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 #[test]
 fn read_preface_in_multiple_frames() {
-    let _ = ::env_logger::init().unwrap();
+    let _ = ::env_logger::init();
 
     let mock = mock_io::Builder::new()
         .read(b"PRI * HTTP/2.0")
