@@ -31,8 +31,12 @@ pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf, Peer>,
 }
 
-#[derive(Debug)]
 pub struct Body<B: IntoBuf> {
+    inner: ReleaseCapacity<B>,
+}
+
+#[derive(Debug)]
+pub struct ReleaseCapacity<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf, Peer>,
 }
 
@@ -147,7 +151,7 @@ where
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
             let body = Body {
-                inner: inner.clone(),
+                inner: ReleaseCapacity { inner: inner.clone() },
             };
 
             let request = Request::from_parts(head, body);
@@ -271,20 +275,18 @@ impl Stream<Bytes> {
 impl<B: IntoBuf> Body<B> {
     pub fn is_empty(&self) -> bool {
         // If the recv side is closed and the receive queue is empty, the body is empty.
-        self.inner.body_is_empty()
+        self.inner.inner.body_is_empty()
     }
 
-    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
-        self.inner
-            .release_capacity(sz as proto::WindowSize)
-            .map_err(Into::into)
+    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity<B> {
+        &mut self.inner
     }
 
     /// Poll trailers
     ///
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
-        self.inner.poll_trailers().map_err(Into::into)
+        self.inner.inner.poll_trailers().map_err(Into::into)
     }
 }
 
@@ -293,7 +295,36 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.poll_data().map_err(Into::into)
+        self.inner.inner.poll_data().map_err(Into::into)
+    }
+}
+
+
+impl<B: IntoBuf> fmt::Debug for Body<B>
+where B: fmt::Debug,
+      B::Buf: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Body")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+// ===== impl ReleaseCapacity =====
+
+impl<B: IntoBuf> ReleaseCapacity<B> {
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
+        self.inner
+            .release_capacity(sz as proto::WindowSize)
+            .map_err(Into::into)
+    }
+}
+
+impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
+    fn clone(&self) -> Self {
+        let inner = self.inner.clone();
+        ReleaseCapacity { inner }
     }
 }
 
