@@ -202,12 +202,10 @@ fn send_data_receive_window_update() {
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
             stream.send_data(payload.into(), true).unwrap();
 
-            h2.map(|h2| {
-                // keep `stream` from being dropped in order to prevent
-                // it from sending an RST_STREAM frame.
-                std::mem::forget(stream);
-                h2
-            }).unwrap()
+            // keep `stream` from being dropped in order to prevent
+            // it from sending an RST_STREAM frame.
+            std::mem::forget(stream);
+            h2.unwrap()
         });
 
     let mock = mock.assert_client_handshake().unwrap()
