@@ -23,6 +23,56 @@ fn read_preface_in_multiple_frames() {
 }
 
 #[test]
+fn server_builder_set_max_concurrent_streams() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_max_concurrent_streams(Some(1));
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_custom_settings(settings)
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/"),
+        )
+        .send_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/"),
+        )
+        .send_frame(frames::data(1, &b"hello"[..]).eos(),)
+        .recv_frame(frames::reset(3).refused())
+        .recv_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let mut builder = Server::builder();
+    builder.max_concurrent_streams(1);
+
+    let h2 = builder
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+                let (req, mut stream) = reqstream.unwrap();
+
+                assert_eq!(req.method(), &http::Method::GET);
+
+                let rsp =
+                    http::Response::builder()
+                        .status(200).body(())
+                        .unwrap();
+                stream.send_response(rsp, true).unwrap();
+
+                srv.into_future().unwrap()
+            })
+        });
+
+    h2.join(client).wait().expect("wait");
+}
+
+#[test]
 fn serve_request() {
     let _ = ::env_logger::init();
     let (io, client) = mock::new();

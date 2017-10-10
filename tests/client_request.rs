@@ -149,6 +149,45 @@ fn request_stream_id_overflows() {
 }
 
 #[test]
+fn client_builder_max_concurrent_streams() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_max_concurrent_streams(Some(1));
+
+    let srv = srv
+        .assert_client_handshake()
+        .unwrap()
+        .recv_custom_settings(settings)
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let mut builder = Client::builder();
+    builder.max_concurrent_streams(1);
+
+    let h2 = builder
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let req = client.send_request(request, true).unwrap().unwrap();
+            h2.drive(req).map(move |(h2, _)| (client, h2))
+        });
+
+    h2.join(srv).wait().expect("wait");
+}
+
+#[test]
 fn request_over_max_concurrent_streams_errors() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();

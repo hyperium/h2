@@ -384,19 +384,32 @@ impl AsyncWrite for Pipe {
 }
 
 pub trait HandleFutureExt {
-    fn recv_settings(self) -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
+    fn recv_settings(self)
+        -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
     where
         Self: Sized + 'static,
         Self: Future<Item = (frame::Settings, Handle)>,
         Self::Error: fmt::Debug,
     {
-        let map = self.map(|(settings, handle)| (Some(settings.into()), handle))
+        self.recv_custom_settings(frame::Settings::default())
+    }
+
+    fn recv_custom_settings(self, settings: frame::Settings)
+        -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
+    where
+        Self: Sized + 'static,
+        Self: Future<Item = (frame::Settings, Handle)>,
+        Self::Error: fmt::Debug,
+    {
+        let map = self
+            .map(|(settings, handle)| (Some(settings.into()), handle))
             .unwrap();
 
-        let boxed: Box<Future<Item = (Option<Frame>, Handle), Error = ()>> = Box::new(map);
+        let boxed: Box<Future<Item = (Option<Frame>, Handle), Error = ()>> =
+            Box::new(map);
         RecvFrame {
             inner: boxed,
-            frame: frame::Settings::default().into(),
+            frame: settings.into(),
         }
     }
 
