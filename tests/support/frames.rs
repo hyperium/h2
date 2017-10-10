@@ -249,10 +249,10 @@ impl Mock<frame::Reset> {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::FLOW_CONTROL_ERROR))
     }
-    
+
     pub fn refused(self) -> Self {
         let id = self.0.stream_id();
-        Mock(frame::Reset::new(id, frame::Reason::RefusedStream))
+        Mock(frame::Reset::new(id, frame::Reason::REFUSED_STREAM))
     }
 }
 
