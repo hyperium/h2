@@ -36,9 +36,14 @@ fn server_builder_set_max_concurrent_streams() {
         .recv_custom_settings(settings)
         .send_frame(
             frames::headers(1)
-                .request("GET", "https://example.com/")
-                .eos(),
+                .request("GET", "https://example.com/"),
         )
+        .send_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/"),
+        )
+        .send_frame(frames::data(1, &b"hello"[..]).eos(),)
+        .recv_frame(frames::reset(3).refused())
         .recv_frame(frames::headers(1).response(200).eos())
         .close();
 
@@ -54,7 +59,10 @@ fn server_builder_set_max_concurrent_streams() {
 
                 assert_eq!(req.method(), &http::Method::GET);
 
-                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                let rsp =
+                    http::Response::builder()
+                        .status(200).body(())
+                        .unwrap();
                 stream.send_response(rsp, true).unwrap();
 
                 srv.into_future().unwrap()
