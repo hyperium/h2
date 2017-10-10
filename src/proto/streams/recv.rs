@@ -20,6 +20,9 @@ where
     /// Connection level flow control governing received data
     flow: FlowControl,
 
+    /// Amount of connection window capacity currently used by outstanding streams.
+    in_flight_data: WindowSize,
+
     /// The lowest stream ID that is still idle
     next_stream_id: Result<StreamId, StreamIdOverflow>,
 
@@ -75,6 +78,7 @@ where
         Recv {
             init_window_sz: config.local_init_window_sz,
             flow: flow,
+            in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),
             pending_window_updates: store::Queue::new(),
             last_processed_id: StreamId::zero(),
@@ -223,6 +227,7 @@ where
 
         // Decrement in-flight data
         stream.in_flight_recv_data -= capacity;
+        self.in_flight_data -= capacity;
 
         // Assign capacity to connection & stream
         self.flow.assign_capacity(capacity);
@@ -244,6 +249,48 @@ where
         }
 
         Ok(())
+    }
+
+    /// Set the "target" connection window size.
+    ///
+    /// By default, all new connections start with 64kb of window size. As
+    /// streams used and release capacity, we will send WINDOW_UPDATEs for the
+    /// connection to bring it back up to the initial "target".
+    ///
+    /// Setting a target means that we will try to tell the peer about
+    /// WINDOW_UPDATEs so the peer knows it has about `target` window to use
+    /// for the whole conection.
+    ///
+    /// The `task` is an optional parked task for the `Connection` that might
+    /// be blocked on needing more window capacity.
+    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Task>) {
+        trace!(
+            "set_target_connection_window; target={}; available={}, reserved={}",
+            target,
+            self.flow.available(),
+            self.in_flight_data,
+        );
+
+        // The current target connection window is our `available` plus any
+        // in-flight data reserved by streams.
+        //
+        // Update the flow controller with the difference between the new
+        // target and the current target.
+        let current = (self.flow.available() + self.in_flight_data).checked_size();
+        if target > current {
+            self.flow.assign_capacity(target - current);
+        } else {
+            self.flow.claim_capacity(current - target);
+        }
+
+        // If changing the target capacity means we gained a bunch of capacity,
+        // enough that we went over the update threshold, then schedule sending
+        // a connection WINDOW_UPDATE.
+        if self.flow.unclaimed_capacity().is_some() {
+            if let Some(task) = task.take() {
+                task.notify();
+            }
+        }
     }
 
     pub fn body_is_empty(&self, stream: &store::Ptr<B, P>) -> bool {
@@ -298,6 +345,7 @@ where
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
+        self.in_flight_data += sz;
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
             return Err(RecvError::Stream {

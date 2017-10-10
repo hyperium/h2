@@ -243,6 +243,21 @@ impl Default for Builder {
 
 // ===== impl Connection =====
 
+
+impl<T, B> Connection<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+{
+    /// Sets the target window size for the whole connection.
+    ///
+    /// Default in HTTP2 is 65_535.
+    pub fn set_target_window_size(&mut self, size: u32) {
+        assert!(size <= proto::MAX_WINDOW_SIZE);
+        self.inner.set_target_window_size(size);
+    }
+}
+
 impl<T, B> Future for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,

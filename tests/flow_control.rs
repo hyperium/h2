@@ -800,3 +800,132 @@ fn recv_settings_removes_available_capacity() {
     let _ = h2.join(srv)
         .wait().unwrap();
 }
+
+#[test]
+fn client_increase_target_window_size() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
+        .close();
+
+
+    let client = Client::handshake(io).unwrap()
+        .and_then(|(_client, mut conn)| {
+            conn.set_target_window_size(2 << 20);
+
+            conn.unwrap()
+        });
+
+    srv.join(client).wait().unwrap();
+}
+
+#[test]
+fn increase_target_window_size_after_using_some() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
+        .close();
+
+    let client = Client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let res = client.send_request(request, true).unwrap()
+                .and_then(|res| {
+                    // "leak" the capacity for now
+                    res.into_parts().1.concat2()
+                });
+
+            conn.drive(res)
+                .and_then(|(mut conn, _bytes)| {
+                    conn.set_target_window_size(2 << 20);
+                    conn.unwrap()
+                })
+        });
+
+    srv.join(client).wait().unwrap();
+}
+
+#[test]
+fn decrease_target_window_size() {
+     let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_383]).eos())
+        .recv_frame(frames::window_update(0, 16_384))
+        .close();
+
+    let client = Client::handshake(io).unwrap()
+        .and_then(|(mut client, mut conn)| {
+            conn.set_target_window_size(16_384 * 2);
+
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+            let res = client.send_request(request, true).unwrap();
+            conn.drive(res.expect("response"))
+        })
+        .and_then(|(mut conn, res)| {
+            conn.set_target_window_size(16_384);
+            let mut body = res.into_parts().1;
+            let mut cap = body.release_capacity().clone();
+
+            conn.drive(body.concat2().expect("concat"))
+                .and_then(move |(conn, bytes)| {
+                    assert_eq!(bytes.len(), 65_535);
+                    cap.release_capacity(bytes.len()).unwrap();
+                    conn.expect("conn")
+                })
+        });
+
+    srv.join(client).wait().unwrap();
+}
+
+#[test]
+fn server_target_window_size() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client.assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
+        .close();
+
+    let srv = Server::handshake(io).unwrap()
+        .and_then(|mut conn| {
+            conn.set_target_window_size(2 << 20);
+            conn.into_future().unwrap()
+        });
+
+    srv.join(client).wait().unwrap();
+}

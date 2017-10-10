@@ -1,6 +1,8 @@
 use frame::Reason;
 use proto::{WindowSize, MAX_WINDOW_SIZE};
 
+use std::fmt;
+
 // We don't want to send WINDOW_UPDATE frames for tiny changes, but instead
 // aggregate them when the changes are significant. Many implementations do
 // this by keeping a "ratio" of the update version the allowed window size.
@@ -25,32 +27,41 @@ fn sanity_unclaimed_ratio() {
 
 #[derive(Copy, Clone, Debug)]
 pub struct FlowControl {
-    /// Window size as indicated by the peer. This can go negative.
-    window_size: i32,
+    /// Window the peer knows about.
+    ///
+    /// This can go negative if a SETTINGS_INITIAL_WINDOW_SIZE is received.
+    ///
+    /// For example, say the peer sends a request and uses 32kb of the window.
+    /// We send a SETTINGS_INITIAL_WINDOW_SIZE of 16kb. The peer has to adjust
+    /// its understanding of the capacity of the window, and that would be:
+    ///
+    /// ```notrust
+    /// default (64kb) - used (32kb) - settings_diff (64kb - 16kb): -16kb
+    /// ```
+    window_size: Window,
 
-    /// The amount of the window that is currently available to consume.
-    available: WindowSize,
+    /// Window that we know about.
+    ///
+    /// This can go negative if a user declares a smaller target window than
+    /// the peer knows about.
+    available: Window,
 }
 
 impl FlowControl {
     pub fn new() -> FlowControl {
         FlowControl {
-            window_size: 0,
-            available: 0,
+            window_size: Window(0),
+            available: Window(0),
         }
     }
 
     /// Returns the window size as known by the peer
     pub fn window_size(&self) -> WindowSize {
-        if self.window_size < 0 {
-            0
-        } else {
-            self.window_size as WindowSize
-        }
+        self.window_size.as_size()
     }
 
     /// Returns the window size available to the consumer
-    pub fn available(&self) -> WindowSize {
+    pub fn available(&self) -> Window {
         self.available
     }
 
@@ -60,11 +71,10 @@ impl FlowControl {
             return false;
         }
 
-        self.window_size as WindowSize > self.available
+        self.window_size > self.available
     }
 
     pub fn claim_capacity(&mut self, capacity: WindowSize) {
-        assert!(self.available >= capacity);
         self.available -= capacity;
     }
 
@@ -80,14 +90,14 @@ impl FlowControl {
     ///
     /// This represents pending outbound WINDOW_UPDATE frames.
     pub fn unclaimed_capacity(&self) -> Option<WindowSize> {
-        let available = self.available as i32;
+        let available = self.available;
 
         if self.window_size >= available {
             return None;
         }
 
-        let unclaimed = available - self.window_size;
-        let threshold = self.window_size / UNCLAIMED_DENOMINATOR * UNCLAIMED_NUMERATOR;
+        let unclaimed = available.0 - self.window_size.0;
+        let threshold = self.window_size.0 / UNCLAIMED_DENOMINATOR * UNCLAIMED_NUMERATOR;
 
         if unclaimed < threshold {
             None
@@ -100,7 +110,7 @@ impl FlowControl {
     ///
     /// This is called after receiving a WINDOW_UPDATE frame
     pub fn inc_window(&mut self, sz: WindowSize) -> Result<(), Reason> {
-        let (val, overflow) = self.window_size.overflowing_add(sz as i32);
+        let (val, overflow) = self.window_size.0.overflowing_add(sz as i32);
 
         if overflow {
             return Err(Reason::FLOW_CONTROL_ERROR);
@@ -117,7 +127,7 @@ impl FlowControl {
             val
         );
 
-        self.window_size = val;
+        self.window_size = Window(val);
         Ok(())
     }
 
@@ -133,8 +143,7 @@ impl FlowControl {
             self.available
         );
         // This should not be able to overflow `window_size` from the bottom.
-        self.window_size -= sz as i32;
-        self.available = self.available.saturating_sub(sz);
+        self.window_size -= sz;
     }
 
     /// Decrements the window reflecting data has actually been sent. The caller
@@ -148,10 +157,98 @@ impl FlowControl {
         );
 
         // Ensure that the argument is correct
-        assert!(sz <= self.window_size as WindowSize);
+        assert!(sz <= self.window_size);
 
         // Update values
-        self.window_size -= sz as i32;
+        self.window_size -= sz;
         self.available -= sz;
+    }
+}
+
+/// The current capacity of a flow-controlled Window.
+///
+/// This number can go negative when either side has used a certain amount
+/// of capacity when the other side advertises a reduction in size.
+///
+/// This type tries to centralize the knowledge of addition and subtraction
+/// to this capacity, instead of having integer casts throughout the source.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Window(i32);
+
+impl Window {
+    pub fn as_size(&self) -> WindowSize {
+        if self.0 < 0 {
+            0
+        } else {
+            self.0 as WindowSize
+        }
+    }
+
+    pub fn checked_size(&self) -> WindowSize {
+        assert!(self.0 >= 0, "negative Window");
+        self.0 as WindowSize
+    }
+}
+
+impl PartialEq<WindowSize> for Window {
+    fn eq(&self, other: &WindowSize) -> bool {
+        if self.0 < 0 {
+            false
+        } else {
+            (self.0 as WindowSize).eq(other)
+        }
+    }
+}
+
+
+impl PartialEq<Window> for WindowSize {
+    fn eq(&self, other: &Window) -> bool {
+        other.eq(self)
+    }
+}
+
+impl PartialOrd<WindowSize> for Window {
+    fn partial_cmp(&self, other: &WindowSize) -> Option<::std::cmp::Ordering> {
+        if self.0 < 0 {
+            Some(::std::cmp::Ordering::Less)
+        } else {
+            (self.0 as WindowSize).partial_cmp(other)
+        }
+    }
+}
+
+impl PartialOrd<Window> for WindowSize {
+    fn partial_cmp(&self, other: &Window) -> Option<::std::cmp::Ordering> {
+        if other.0 < 0 {
+            Some(::std::cmp::Ordering::Greater)
+        } else {
+            self.partial_cmp(&(other.0 as WindowSize))
+        }
+    }
+}
+
+
+impl ::std::ops::SubAssign<WindowSize> for Window {
+    fn sub_assign(&mut self, other: WindowSize) {
+        self.0 -= other as i32;
+    }
+}
+
+impl ::std::ops::Add<WindowSize> for Window {
+    type Output = Self;
+    fn add(self, other: WindowSize) -> Self::Output {
+        Window(self.0 + other as i32)
+    }
+}
+
+impl ::std::ops::AddAssign<WindowSize> for Window {
+    fn add_assign(&mut self, other: WindowSize) {
+        self.0 += other as i32;
+    }
+}
+
+impl fmt::Display for Window {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
     }
 }

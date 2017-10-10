@@ -91,6 +91,10 @@ where
         }
     }
 
+    pub fn set_target_window_size(&mut self, size: WindowSize) {
+        self.streams.set_target_connection_window_size(size);
+    }
+
     /// Returns `Ready` when the connection is ready to receive a frame.
     ///
     /// Returns `RecvError` as this may raise errors that are caused by delayed

@@ -538,7 +538,7 @@ impl Future for Idle {
         match self.handle.as_mut().unwrap().poll() {
             Ok(Async::NotReady) => Ok(Async::NotReady),
             res => {
-                panic!("Received unexpected frame on handle; frame={:?}", res);
+                panic!("Idle received unexpected frame on handle; frame={:?}", res);
             },
         }
     }

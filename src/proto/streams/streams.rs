@@ -80,6 +80,15 @@ where
         }
     }
 
+    pub fn set_target_connection_window_size(&mut self, size: WindowSize) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions
+            .recv
+            .set_target_connection_window(size, &mut me.actions.task)
+    }
+
     /// Process inbound headers
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), RecvError> {
         let id = frame.stream_id();

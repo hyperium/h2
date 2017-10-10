@@ -6,7 +6,7 @@ use proto::*;
 
 use bytes::Buf;
 
-use std::io;
+use std::{cmp, io};
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
@@ -144,7 +144,7 @@ where
 
         // Reclaim all capacity assigned to the stream and re-assign it to the
         // connection
-        let available = stream.send_flow.available();
+        let available = stream.send_flow.available().as_size();
         stream.send_flow.claim_capacity(available);
 
         let frame = frame::Reset::new(stream.id, reason);
@@ -224,7 +224,7 @@ where
 
     /// Current available stream send capacity
     pub fn capacity(&self, stream: &mut store::Ptr<B, P>) -> WindowSize {
-        let available = stream.send_flow.available();
+        let available = stream.send_flow.available().as_size();
         let buffered = stream.buffered_send_data;
 
         if available <= buffered {
@@ -265,7 +265,7 @@ where
 
         // Reclaim all capacity assigned to the stream and re-assign it to the
         // connection
-        let available = stream.send_flow.available();
+        let available = stream.send_flow.available().as_size();
         stream.send_flow.claim_capacity(available);
         // Re-assign all capacity to the connection
         self.prioritize
@@ -308,6 +308,10 @@ where
                     let stream = &mut *stream;
 
                     stream.send_flow.dec_window(dec);
+
+                    let available = stream.send_flow.available().as_size();
+                    stream.send_flow.claim_capacity(cmp::min(dec, available));
+
                     trace!(
                         "decremented stream window; id={:?}; decr={}; flow={:?}",
                         stream.id,
