@@ -76,7 +76,9 @@ where
             local_next_stream_id: next_stream_id,
             local_push_enabled: settings.is_push_enabled(),
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            remote_max_initiated: None,
+            remote_max_initiated: settings
+                .max_concurrent_streams()
+                .map(|max| max as usize),
         });
         Connection {
             state: State::Open,
