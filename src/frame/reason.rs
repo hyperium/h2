@@ -1,7 +1,7 @@
 use std::fmt;
 
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Reason(u32);
 
 impl Reason {
@@ -53,6 +53,39 @@ impl From<u32> for Reason {
 impl From<Reason> for u32 {
     fn from(src: Reason) -> u32 {
         src.0
+    }
+}
+
+impl fmt::Debug for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self.0 {
+            0 => "NO_ERROR",
+            1 => "PROTOCOL_ERROR",
+            2 => "INTERNAL_ERROR",
+            3 => "FLOW_CONTROL_ERROR",
+            4 => "SETTINGS_TIMEOUT",
+            5 => "STREAM_CLOSED",
+            6 => "FRAME_SIZE_ERROR",
+            7 => "REFUSED_STREAM",
+            8 => "CANCEL",
+            9 => "COMPRESSION_ERROR",
+            10 => "CONNECT_ERROR",
+            11 => "ENHANCE_YOUR_CALM",
+            12 => "INADEQUATE_SECURITY",
+            13 => "HTTP_1_1_REQUIRED",
+            other => return f.debug_tuple("Reason")
+                .field(&Hex(other))
+                .finish(),
+        };
+        f.write_str(name)
+    }
+}
+
+struct Hex(u32);
+
+impl fmt::Debug for Hex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
     }
 }
 
