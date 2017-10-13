@@ -68,6 +68,10 @@ pub fn settings() -> Mock<frame::Settings> {
     Mock(frame::Settings::default())
 }
 
+pub fn settings_ack() -> Mock<frame::Settings> {
+    Mock(frame::Settings::ack())
+}
+
 pub fn ping(payload: [u8; 8]) -> Mock<frame::Ping> {
     Mock(frame::Ping::new(payload))
 }
@@ -267,6 +271,11 @@ impl From<Mock<frame::Reset>> for SendFrame {
 impl Mock<frame::Settings> {
     pub fn max_concurrent_streams(mut self, max: u32) -> Self {
         self.0.set_max_concurrent_streams(Some(max));
+        self
+    }
+
+    pub fn initial_window_size(mut self, val: u32) -> Self {
+        self.0.set_initial_window_size(Some(val));
         self
     }
 }
