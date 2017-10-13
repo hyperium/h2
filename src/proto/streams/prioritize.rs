@@ -248,6 +248,8 @@ where
     where
         R: Resolve<B, P>,
     {
+        trace!("assign_connection_capacity; inc={}", inc);
+
         self.flow.assign_capacity(inc);
 
         // Assign newly acquired capacity to streams pending capacity.
@@ -314,6 +316,8 @@ where
             // The amount of capacity to assign to the stream
             // TODO: Should prioritization factor into this?
             let assign = cmp::min(conn_available, additional);
+
+            trace!("  assigning; num={}", assign);
 
             // Assign the capacity to the stream
             stream.assign_capacity(assign);

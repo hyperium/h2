@@ -863,7 +863,6 @@ fn recv_no_init_window_then_receive_some_init_window() {
 }
 
 #[test]
-#[ignore]
 fn settings_lowered_capacity_returns_capacity_to_connection() {
     use std::thread;
 
