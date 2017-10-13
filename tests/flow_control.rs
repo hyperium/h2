@@ -802,6 +802,170 @@ fn recv_settings_removes_available_capacity() {
 }
 
 #[test]
+fn recv_no_init_window_then_receive_some_init_window() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_initial_window_size(Some(0));
+
+    let srv = srv.assert_client_handshake_with_settings(settings).unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .idle_ms(100)
+        .send_frame(frames::settings().initial_window_size(10))
+        .recv_frame(frames::settings_ack())
+        .recv_frame(frames::data(1, "hello worl"))
+        .idle_ms(100)
+        .send_frame(frames::settings().initial_window_size(11))
+        .recv_frame(frames::settings_ack())
+        .recv_frame(frames::data(1, "d").eos())
+        .send_frame(
+            frames::headers(1)
+                .response(204)
+                .eos()
+        )
+        .close();
+
+
+    let h2 = Client::handshake(io).unwrap()
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let mut stream = client.send_request(request, false).unwrap();
+
+            stream.reserve_capacity(11);
+
+            h2.drive(util::wait_for_capacity(stream, 11))
+        })
+        .and_then(|(h2, mut stream)| {
+            assert_eq!(stream.capacity(), 11);
+
+            stream.send_data("hello world".into(), true).unwrap();
+
+            h2.drive(GetResponse { stream: Some(stream) })
+        })
+        .and_then(|(h2, (response, _))| {
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            // Wait for the connection to close
+            h2.unwrap()
+        });
+
+    let _ = h2.join(srv)
+        .wait().unwrap();
+}
+
+#[test]
+fn settings_lowered_capacity_returns_capacity_to_connection() {
+    use std::thread;
+
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    // Spawn the server on a thread
+    let th1 = thread::spawn(move || {
+        srv.assert_client_handshake().unwrap()
+            .recv_settings()
+            .recv_frame(
+                frames::headers(1)
+                    .request("POST", "https://example.com/one")
+            )
+            .recv_frame(
+                frames::headers(3)
+                    .request("POST", "https://example.com/two")
+            )
+            .idle_ms(200)
+            // Remove all capacity from streams
+            .send_frame(frames::settings().initial_window_size(0))
+            .recv_frame(frames::settings_ack())
+
+            // Let stream 3 make progress
+            .send_frame(frames::window_update(3, 11))
+            .recv_frame(frames::data(3, "hello world").eos())
+
+            // Wait a bit
+            //
+            // TODO: Receive signal from main thread
+            .idle_ms(200)
+
+            // Reset initial window size
+            .send_frame(frames::settings().initial_window_size(window_size as u32))
+            .recv_frame(frames::settings_ack())
+
+            // Get data from first stream
+            .recv_frame(frames::data(1, "hello world").eos())
+
+            // Send responses
+            .send_frame(
+                frames::headers(1)
+                    .response(204)
+                    .eos()
+            )
+            .send_frame(
+                frames::headers(3)
+                    .response(204)
+                    .eos()
+            )
+            .close()
+            .wait().unwrap();
+    });
+
+    let (mut client, h2) = Client::handshake(io).unwrap()
+        .wait().unwrap();
+
+    // Drive client connection
+    let th2 = thread::spawn(move || {
+        h2.wait().unwrap();
+    });
+
+    let request = Request::post("https://example.com/one")
+        .body(()).unwrap();
+
+    let mut stream1 = client.send_request(request, false).unwrap();
+
+    let request = Request::post("https://example.com/two")
+        .body(()).unwrap();
+
+    let mut stream2 = client.send_request(request, false).unwrap();
+
+    // Reserve capacity for stream one, this will consume all connection level
+    // capacity
+    stream1.reserve_capacity(window_size);
+    let stream1 = util::wait_for_capacity(stream1, window_size).wait().unwrap();
+
+    // Now, wait for capacity on the other stream
+    stream2.reserve_capacity(11);
+    let mut stream2 = util::wait_for_capacity(stream2, 11).wait().unwrap();
+
+    // Send data on stream 2
+    stream2.send_data("hello world".into(), true).unwrap();
+
+    // Wait for capacity on stream 1
+    let mut stream1 = util::wait_for_capacity(stream1, 11).wait().unwrap();
+
+    stream1.send_data("hello world".into(), true).unwrap();
+
+    // Wait for responses..
+    let resp = stream1.wait().unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = stream2.wait().unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    th1.join().unwrap();
+    th2.join().unwrap();
+}
+
+#[test]
 fn client_increase_target_window_size() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();

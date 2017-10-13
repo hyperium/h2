@@ -229,8 +229,12 @@ where
         self.send_capacity_inc = true;
         self.send_flow.assign_capacity(capacity);
 
+        trace!("  assigned capacity to stream; available={}; buffered={}; id={:?}",
+               self.send_flow.available(), self.buffered_send_data, self.id);
+
         // Only notify if the capacity exceeds the amount of buffered data
         if self.send_flow.available() > self.buffered_send_data {
+            trace!("  notifying task");
             self.notify_send();
         }
     }
@@ -261,6 +265,10 @@ where
         if let Some(task) = self.send_task.take() {
             task.notify();
         }
+    }
+
+    pub fn wait_send(&mut self) {
+        self.send_task = Some(task::current());
     }
 
     pub fn notify_recv(&mut self) {

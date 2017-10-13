@@ -214,6 +214,7 @@ where
         }
 
         if !stream.send_capacity_inc {
+            stream.wait_send();
             return Ok(Async::NotReady);
         }
 
@@ -304,13 +305,16 @@ where
 
                 trace!("decrementing all windows; dec={}", dec);
 
+                let mut total_reclaimed = 0;
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
                     stream.send_flow.dec_window(dec);
 
                     let available = stream.send_flow.available().as_size();
-                    stream.send_flow.claim_capacity(cmp::min(dec, available));
+                    let reclaim = cmp::min(dec, available);
+                    stream.send_flow.claim_capacity(reclaim);
+                    total_reclaimed += reclaim;
 
                     trace!(
                         "decremented stream window; id={:?}; decr={}; flow={:?}",
@@ -319,15 +323,15 @@ where
                         stream.send_flow
                     );
 
-                    // TODO: Probably try to assign capacity?
-
-                    // TODO: Handle reclaiming connection level window
-                    // capacity.
-
-                    // TODO: Should this notify the producer?
+                    // TODO: Should this notify the producer when the capacity
+                    // of a stream is reduced? Maybe it should if the capacity
+                    // is reduced to zero, allowing the producer to stop work.
 
                     Ok::<_, RecvError>(())
                 })?;
+
+                self.prioritize
+                    .assign_connection_capacity(total_reclaimed, store);
             } else if val > old_val {
                 let inc = val - old_val;
 

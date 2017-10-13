@@ -35,8 +35,6 @@ impl Future for WaitForCapacity {
 
         let act = self.stream().capacity();
 
-        println!("CAP={:?}", act);
-
         if act >= self.target {
             return Ok(self.stream.take().unwrap().into());
         }
