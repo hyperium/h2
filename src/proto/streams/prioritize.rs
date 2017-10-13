@@ -187,7 +187,7 @@ where
             stream.requested_send_capacity = capacity;
 
             // Currently available capacity assigned to the stream
-            let available = stream.send_flow.available();
+            let available = stream.send_flow.available().as_size();
 
             // If the stream has more assigned capacity than requested, reclaim
             // some for the connection
@@ -275,9 +275,9 @@ where
         // The amount of additional capacity that the stream requests.
         // Don't assign more than the window has available!
         let additional = cmp::min(
-            total_requested - stream.send_flow.available(),
+            total_requested - stream.send_flow.available().as_size(),
             // Can't assign more than what is available
-            stream.send_flow.window_size() - stream.send_flow.available(),
+            stream.send_flow.window_size() - stream.send_flow.available().as_size(),
         );
 
         trace!(
@@ -304,7 +304,7 @@ where
         );
 
         // The amount of currently available capacity on the connection
-        let conn_available = self.flow.available();
+        let conn_available = self.flow.available().as_size();
 
         // First check if capacity is immediately available
         if conn_available > 0 {
@@ -550,7 +550,7 @@ where
                             let len = cmp::min(sz, max_len);
 
                             // Only send up to the stream's window capacity
-                            let len = cmp::min(len, stream_capacity as usize) as WindowSize;
+                            let len = cmp::min(len, stream_capacity.as_size() as usize) as WindowSize;
 
                             // There *must* be be enough connection level
                             // capacity at this point.
