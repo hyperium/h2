@@ -121,6 +121,14 @@ where
         }
     }
 
+    /// Sets the target window size for the whole connection.
+    ///
+    /// Default in HTTP2 is 65_535.
+    pub fn set_target_window_size(&mut self, size: u32) {
+        assert!(size <= proto::MAX_WINDOW_SIZE);
+        self.connection.set_target_window_size(size);
+    }
+
     /// Returns `Ready` when the underlying connection has closed.
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll().map_err(Into::into)
