@@ -70,7 +70,7 @@ pub fn main() {
             let mut trailers = HeaderMap::new();
             trailers.insert("zomg", "hello".parse().unwrap());
 
-            let mut stream = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             // send trailers
             stream.send_trailers(trailers).unwrap();
@@ -78,7 +78,7 @@ pub fn main() {
             // Spawn a task to run the conn...
             handle.spawn(h2.map_err(|e| println!("GOT ERR={:?}", e)));
 
-            stream
+            response
                 .and_then(|response| {
                     println!("GOT RESPONSE: {:?}", response);
 

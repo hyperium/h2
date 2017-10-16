@@ -32,9 +32,9 @@ fn recv_trailers_only() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
-    let response = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let response = h2.run(response).unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     let (_, mut body) = response.into_parts();
@@ -80,14 +80,14 @@ fn send_trailers_immediately() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     let mut trailers = HeaderMap::new();
     trailers.insert("zomg", "hello".parse().unwrap());
 
     stream.send_trailers(trailers).unwrap();
 
-    let response = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let response = h2.run(response).unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     let (_, mut body) = response.into_parts();

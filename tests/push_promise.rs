@@ -29,7 +29,7 @@ fn recv_push_works() {
         let req = client
             .send_request(request, true)
             .unwrap()
-            .unwrap()
+            .0.unwrap()
             .and_then(|resp| {
                 assert_eq!(resp.status(), StatusCode::OK);
                 Ok(())
@@ -68,7 +68,8 @@ fn recv_push_when_push_disabled_is_conn_error() {
                 .uri("https://http2.akamai.com/")
                 .body(())
                 .unwrap();
-            let req = client.send_request(request, true).unwrap().then(|res| {
+
+            let req = client.send_request(request, true).unwrap().0.then(|res| {
                 let err = res.unwrap_err();
                 assert_eq!(
                     err.to_string(),

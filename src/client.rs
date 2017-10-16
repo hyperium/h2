@@ -30,6 +30,11 @@ pub struct Connection<T, B: IntoBuf> {
 }
 
 #[derive(Debug)]
+pub struct ResponseFuture<B: IntoBuf> {
+    inner: proto::StreamRef<B::Buf, Peer>,
+}
+
+#[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf, Peer>,
 }
@@ -113,7 +118,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<Stream<B>, ::Error> {
+    ) -> Result<(ResponseFuture<B>, Stream<B>), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -121,9 +126,16 @@ where
                 if stream.is_pending_open() {
                     self.pending = Some(stream.key());
                 }
-                Stream {
+
+                let response = ResponseFuture {
+                    inner: stream.clone(),
+                };
+
+                let stream = Stream {
                     inner: stream,
-                }
+                };
+
+                (response, stream)
             })
     }
 }
@@ -334,19 +346,26 @@ where
     }
 }
 
-// ===== impl Stream =====
+// ===== impl ResponseFuture =====
 
-impl<B: IntoBuf> Stream<B> {
-    /// Receive the HTTP/2.0 response, if it is ready.
-    pub fn poll_response(&mut self) -> Poll<Response<Body<B>>, ::Error> {
+impl<B: IntoBuf> Future for ResponseFuture<B> {
+    type Item = Response<Body<B>>;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
+
         let body = Body {
             inner: ReleaseCapacity { inner: self.inner.clone() },
         };
 
         Ok(Response::from_parts(parts, body).into())
     }
+}
 
+// ===== impl Stream =====
+
+impl<B: IntoBuf> Stream<B> {
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
@@ -378,15 +397,6 @@ impl<B: IntoBuf> Stream<B> {
 
     pub fn send_reset(mut self, reason: Reason) {
         self.inner.send_reset(reason)
-    }
-}
-
-impl<B: IntoBuf> Future for Stream<B> {
-    type Item = Response<Body<B>>;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.poll_response()
     }
 }
 

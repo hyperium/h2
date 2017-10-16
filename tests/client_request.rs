@@ -47,7 +47,7 @@ fn client_other_thread() {
                     .unwrap();
                 let res = client
                     .send_request(request, true)
-                    .unwrap()
+                    .unwrap().0
                     .wait()
                     .expect("request");
                 assert_eq!(res.status(), StatusCode::OK);
@@ -85,13 +85,13 @@ fn recv_invalid_server_stream_id() {
         .unwrap();
 
     info!("sending request");
-    let stream = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
     // The connection errors
     assert!(h2.wait().is_err());
 
     // The stream errors
-    assert!(stream.wait().is_err());
+    assert!(response.wait().is_err());
 }
 
 #[test]
@@ -112,9 +112,9 @@ fn request_stream_id_overflows() {
                 .unwrap();
 
             // first request is allowed
-            let req = client.send_request(request, true).unwrap().unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
 
-            h2.drive(req).and_then(move |(h2, _)| {
+            h2.drive(response).and_then(move |(h2, _)| {
                 let request = Request::builder()
                     .method(Method::GET)
                     .uri("https://example.com/")
@@ -180,8 +180,9 @@ fn client_builder_max_concurrent_streams() {
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();
-            let req = client.send_request(request, true).unwrap().unwrap();
-            h2.drive(req).map(move |(h2, _)| (client, h2))
+
+            let (response, _) = client.send_request(request, true).unwrap();
+            h2.drive(response).map(move |(h2, _)| (client, h2))
         });
 
     h2.join(srv).wait().expect("wait");
@@ -226,8 +227,8 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let req = client.send_request(request, true).unwrap().unwrap();
-            h2.drive(req).map(move |(h2, _)| (client, h2))
+            let (response, _) = client.send_request(request, true).unwrap();
+            h2.drive(response).map(move |(h2, _)| (client, h2))
         })
         .and_then(|(mut client, h2)| {
             let request = Request::builder()
@@ -237,7 +238,7 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let mut req = client.send_request(request, false).unwrap();
+            let (resp1, mut stream1) = client.send_request(request, false).unwrap();
 
             let request = Request::builder()
                 .method(Method::POST)
@@ -246,7 +247,7 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // second request is put into pending_open
-            let mut req2 = client.send_request(request, false).unwrap();
+            let (resp2, mut stream2) = client.send_request(request, false).unwrap();
 
             let request = Request::builder()
                 .method(Method::GET)
@@ -260,11 +261,12 @@ fn request_over_max_concurrent_streams_errors() {
             let err = client.send_request(request, true).unwrap_err();
             assert_eq!(err.to_string(), "user error: rejected");
 
-            req.send_data("hello".into(), true).expect("req send_data");
-            h2.drive(req.expect("req")).and_then(move |(h2, _)| {
-                req2.send_data("hello".into(), true)
+            stream1.send_data("hello".into(), true).expect("req send_data");
+
+            h2.drive(resp1.expect("req")).and_then(move |(h2, _)| {
+                stream2.send_data("hello".into(), true)
                     .expect("req2 send_data");
-                h2.expect("h2").join(req2.expect("req2"))
+                h2.expect("h2").join(resp2.expect("req2"))
             })
         });
 
@@ -305,12 +307,15 @@ fn sending_request_on_closed_connection() {
                 .uri("https://http2.akamai.com/")
                 .body(())
                 .unwrap();
+
             // first request works
             let req = client
                 .send_request(request, true)
                 .expect("send_request1")
+                .0
                 .expect("response1")
                 .map(|_| ());
+
             // after finish request1, there should be a conn error
             let h2 = h2.then(|res| {
                 res.expect_err("h2 error");
