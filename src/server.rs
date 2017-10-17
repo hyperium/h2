@@ -115,7 +115,7 @@ where
 
         let to_server: fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B> =
             |codec| {
-                let connection = Connection::new(codec);
+                let connection = Connection::new(codec, &settings, 2.into());
                 Server { connection }
             };
 
