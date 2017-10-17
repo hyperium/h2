@@ -6,20 +6,12 @@ use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
-use std::fmt;
+use std::{convert, fmt};
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
-    inner:
-        futures::Map<
-            futures::AndThen<
-                Flush<T, Prioritized<B::Buf>>,
-                ReadPreface<T, Prioritized<B::Buf>>,
-                fn(Codec<T, Prioritized<B::Buf>>)
-                   -> ReadPreface<T, Prioritized<B::Buf>>
-            >,
-            fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B>
-        >
+    settings: Settings,
+    state: Handshaking<T, B>
 }
 
 /// Marker type indicating a client peer
@@ -68,6 +60,13 @@ struct ReadPreface<T, B> {
     pos: usize,
 }
 
+/// Stages of an in-progress handshake.
+enum Handshaking<T, B: IntoBuf> {
+    Flushing(Option<Flush<T, Prioritized<B::Buf>>>),
+    ReadingPreface(Option<ReadPreface<T, Prioritized<B::Buf>>>),
+    Done,
+}
+
 #[derive(Debug)]
 pub(crate) struct Peer;
 
@@ -101,35 +100,22 @@ where
     B: IntoBuf + 'static,
 {
     fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
-        // Create the codec
+        // Create the codec.
         let mut codec = Codec::new(io);
 
         if let Some(max) = settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
         }
 
-        // Send initial settings frame
+        // Send initial settings frame.
         codec
             .buffer(settings.clone().into())
             .expect("invalid SETTINGS frame");
 
-        let to_server: fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B> =
-            |codec| {
-                let connection = Connection::new(codec, &settings, 2.into());
-                Server { connection }
-            };
+        // Create the handshake future.
+        let state = Handshaking::from(codec);
 
-        // Flush pending settings frame and then wait for the client preface
-        let handshake = Flush::new(codec)
-            .and_then(ReadPreface::new
-                as fn (Codec<T, Prioritized<B::Buf>>)
-                    -> ReadPreface<T, Prioritized<B::Buf>>
-            )
-            .map(to_server
-                as fn(Codec<T, Prioritized<B::Buf>>) -> Server<T, B>
-            );
-
-        Handshake { inner: handshake }
+        Handshake { settings, state }
     }
 
     /// Returns `Ready` when the underlying connection has closed.
@@ -483,7 +469,58 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
+        use server::Handshaking::*;
+        let result;
+        self.state = match self.state {
+            Flushing(ref mut flush_option) => {
+                let mut flushing = flush_option
+                    .take()
+                    .expect("flush_option already taken!");
+                match flushing.poll() {
+                    Ok(Async::Ready(codec)) => {
+                        let reading = ReadPreface::new(codec);
+                        result = Ok(Async::NotReady);
+                        Handshaking::from(reading)
+                    },
+                    Ok(Async::NotReady) => {
+                        result = Ok(Async::NotReady);
+                        Handshaking::from(flushing)
+                    }
+                    Err(e) => {
+                        result = Err(e);
+                        Done
+                    }
+                }
+            },
+            ReadingPreface(ref mut read_option) => {
+                let mut reading = read_option
+                    .take()
+                    .expect("read_option already taken!");
+                match reading.poll() {
+                    Ok(Async::Ready(codec)) => {
+                        let connection =
+                            Connection::new(codec, &self.settings, 2.into());
+                        result = Ok(Async::Ready(Server { connection }));
+                        Done
+
+                    },
+                    Ok(Async::NotReady) => {
+                        result = Ok(Async::NotReady);
+                        Handshaking::from(reading)
+                    }
+                    Err(e) => {
+                        result = Err(e);
+                        Done
+                    }
+                }
+            },
+
+            Done =>
+                panic!(
+                    "server::Handshake::poll() called on completed handshake!"
+                )
+            };
+        result
     }
 }
 
@@ -607,5 +644,39 @@ impl proto::Peer for Peer {
         *request.headers_mut() = fields;
 
         Ok(request)
+    }
+}
+
+
+
+// ===== impl Handshaking =====
+impl<T, B> convert::From<Flush<T, Prioritized<B::Buf>>> for Handshaking<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+{
+    #[inline] fn from(flush: Flush<T, Prioritized<B::Buf>>) -> Self {
+        Handshaking::Flushing(Some(flush))
+    }
+}
+
+impl<T, B> convert::From<ReadPreface<T, Prioritized<B::Buf>>> for
+    Handshaking<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+{
+    #[inline] fn from(read: ReadPreface<T, Prioritized<B::Buf>>) -> Self {
+        Handshaking::ReadingPreface(Some(read))
+    }
+}
+
+impl<T, B> convert::From<Codec<T, Prioritized<B::Buf>>> for Handshaking<T, B>
+where
+    T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+{
+    #[inline] fn from(codec: Codec<T, Prioritized<B::Buf>>) -> Self {
+        Handshaking::from(Flush::new(codec))
     }
 }
