@@ -479,50 +479,38 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         use server::Handshaking::*;
         let result;
+        macro_rules! poll {
+            (|$option:ident, $codec:ident| $body:block) => {{
+                let mut state = $option
+                    .take()
+                    .expect("Handshaking::poll: state option already taken!");
+                match state.poll() {
+                    Ok(Async::Ready($codec)) => { $body },
+                    Ok(Async::NotReady) => {
+                        result = Ok(Async::NotReady);
+                        Handshaking::from(state)
+                    }
+                    Err(e) => {
+                        result = Err(e);
+                        Done
+                    }
+                }
+            }}
+        }
         self.state = match self.state {
-            Flushing(ref mut flush_option) => {
-                let mut flushing = flush_option
-                    .take()
-                    .expect("flush_option already taken!");
-                match flushing.poll() {
-                    Ok(Async::Ready(codec)) => {
-                        let reading = ReadPreface::new(codec);
-                        result = Ok(Async::NotReady);
-                        Handshaking::from(reading)
-                    },
-                    Ok(Async::NotReady) => {
-                        result = Ok(Async::NotReady);
-                        Handshaking::from(flushing)
-                    }
-                    Err(e) => {
-                        result = Err(e);
-                        Done
-                    }
-                }
-            },
-            ReadingPreface(ref mut read_option) => {
-                let mut reading = read_option
-                    .take()
-                    .expect("read_option already taken!");
-                match reading.poll() {
-                    Ok(Async::Ready(codec)) => {
-                        let connection =
-                            Connection::new(codec, &self.settings, 2.into());
-                        result = Ok(Async::Ready(Server { connection }));
-                        Done
-
-                    },
-                    Ok(Async::NotReady) => {
-                        result = Ok(Async::NotReady);
-                        Handshaking::from(reading)
-                    }
-                    Err(e) => {
-                        result = Err(e);
-                        Done
-                    }
-                }
-            },
-
+            Flushing(ref mut flush_option) =>
+                poll!(|flush_option, codec| {
+                    let reading = ReadPreface::new(codec);
+                    result = Ok(Async::NotReady);
+                    Handshaking::from(reading)
+                }),
+            ReadingPreface(ref mut read_option) =>
+                poll!(|read_option, codec| {
+                    let connection =
+                        Connection::new(codec, &self.settings, 2.into());
+                    result = Ok(Async::Ready(Server { connection }));
+                    Done
+                }),
             Done =>
                 panic!(
                     "server::Handshake::poll() called on completed handshake!"
@@ -658,6 +646,7 @@ impl proto::Peer for Peer {
 
 
 // ===== impl Handshaking =====
+
 impl<T, B> convert::From<Flush<T, Prioritized<B::Buf>>> for Handshaking<T, B>
 where
     T: AsyncRead + AsyncWrite,
