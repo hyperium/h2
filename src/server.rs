@@ -482,11 +482,11 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             (|$option:ident, $codec:ident| $body:block) => {{
                 let mut state = $option
                     .take()
-                    .expect("Handshaking::poll: state option already taken!");
+                    .expect("Handshake::poll(): state option already taken!");
                 match state.poll() {
                     Ok(Async::Ready($codec)) => {
                         trace!(
-                            "    --> {}.poll(); Ok(Async::Ready({}))",
+                            "Handshake::poll(); {}.poll()=Ok(Async::Ready({}))",
                             stringify!($option),
                             stringify!($codec)
                         );
@@ -494,14 +494,14 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
                     },
                     Ok(Async::NotReady) => {
                         trace!(
-                            "     --> {}.poll(); Ok(Async::NotReady)",
+                            "Handshake::poll(); {}.poll()=Ok(Async::NotReady)",
                             stringify!($option)
                         );
                         Handshaking::from(state)
                     }
                     Err(e) => {
                         warn!(
-                            "    --> {}.poll(); Err({})",
+                            "Handshake::poll(); {}.poll()=Err({})",
                             stringify!($option),
                             e
                         );
