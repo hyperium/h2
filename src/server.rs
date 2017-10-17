@@ -6,7 +6,6 @@ use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
-use bytes::{Bytes, Buf, IntoBuf};
 use std::fmt;
 
 /// In progress H2 connection binding
