@@ -64,7 +64,6 @@ struct ReadPreface<T, B> {
 enum Handshaking<T, B: IntoBuf> {
     Flushing(Option<Flush<T, Prioritized<B::Buf>>>),
     ReadingPreface(Option<ReadPreface<T, Prioritized<B::Buf>>>),
-    Done,
 }
 
 #[derive(Debug)]
@@ -477,46 +476,54 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("Handshake::poll()");
         use server::Handshaking::*;
-        let result;
         macro_rules! poll {
             (|$option:ident, $codec:ident| $body:block) => {{
                 let mut state = $option
                     .take()
                     .expect("Handshaking::poll: state option already taken!");
                 match state.poll() {
-                    Ok(Async::Ready($codec)) => { $body },
+                    Ok(Async::Ready($codec)) => {
+                        trace!(
+                            "    --> {}.poll(); Ok(Async::Ready({}))",
+                            stringify!($option),
+                            stringify!($codec)
+                        );
+                        $body
+                    },
                     Ok(Async::NotReady) => {
-                        result = Ok(Async::NotReady);
+                        trace!(
+                            "     --> {}.poll(); Ok(Async::NotReady)",
+                            stringify!($option)
+                        );
                         Handshaking::from(state)
                     }
                     Err(e) => {
-                        result = Err(e);
-                        Done
+                        warn!(
+                            "    --> {}.poll(); Err({})",
+                            stringify!($option),
+                            e
+                        );
+                        return Err(e);
                     }
                 }
             }}
         }
         self.state = match self.state {
-            Flushing(ref mut flush_option) =>
-                poll!(|flush_option, codec| {
+            Flushing(ref mut flush) =>
+                poll!(|flush, codec| {
                     let reading = ReadPreface::new(codec);
-                    result = Ok(Async::NotReady);
                     Handshaking::from(reading)
                 }),
-            ReadingPreface(ref mut read_option) =>
-                poll!(|read_option, codec| {
+            ReadingPreface(ref mut read_preface) =>
+                poll!(|read_preface, codec| {
                     let connection =
                         Connection::new(codec, &self.settings, 2.into());
-                    result = Ok(Async::Ready(Server { connection }));
-                    Done
+                    return Ok(Async::Ready(Server { connection }));
                 }),
-            Done =>
-                panic!(
-                    "server::Handshake::poll() called on completed handshake!"
-                )
-            };
-        result
+        };
+        self.poll()
     }
 }
 
