@@ -33,7 +33,7 @@ fn single_stream_send_large_body() {
         .body(())
         .unwrap();
 
-    let mut stream = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // Reserve capacity to send the payload
     stream.reserve_capacity(payload.len());
@@ -45,7 +45,7 @@ fn single_stream_send_large_body() {
     stream.send_data(payload[..].into(), true).unwrap();
 
     // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
@@ -87,7 +87,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -98,7 +98,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
     stream.send_data(payload.into(), true).unwrap();
 
     // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
@@ -152,7 +152,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .body(())
         .unwrap();
 
-    let mut stream = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -163,7 +163,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
     stream.send_data(payload.into(), true).unwrap();
 
     // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
 
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
@@ -185,7 +185,7 @@ fn send_data_receive_window_update() {
                 .unwrap();
 
             // Send request
-            let mut stream = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             // Send data frame
             stream.send_data("hello".into(), false).unwrap();
@@ -196,9 +196,9 @@ fn send_data_receive_window_update() {
             h2.drive(util::wait_for_capacity(
                 stream,
                 frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
-            ))
+            ).map(|s| (response, s)))
         })
-        .and_then(|(h2, mut stream)| {
+        .and_then(|(h2, (_r, mut stream))| {
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
             stream.send_data(payload.into(), true).unwrap();
 

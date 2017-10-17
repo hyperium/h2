@@ -75,9 +75,9 @@ pub fn main() {
                     .body(())
                     .unwrap();
 
-                let stream = client.send_request(request, true).unwrap();
+                let (response, _) = client.send_request(request, true).unwrap();
 
-                let stream = stream.and_then(|response| {
+                let stream = response.and_then(|response| {
                     let (_, body) = response.into_parts();
 
                     body.for_each(|chunk| {

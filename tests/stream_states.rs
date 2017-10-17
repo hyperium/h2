@@ -29,9 +29,9 @@ fn send_recv_headers_only() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
@@ -71,7 +71,7 @@ fn send_recv_data() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // Reserve send capacity
     stream.reserve_capacity(5);
@@ -82,7 +82,7 @@ fn send_recv_data() {
     stream.send_data("hello", true).unwrap();
 
     // Get the response
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Take the body
@@ -128,9 +128,9 @@ fn send_headers_recv_data_single_frame() {
         .unwrap();
 
     info!("sending request");
-    let mut stream = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
-    let resp = h2.run(poll_fn(|| stream.poll_response())).unwrap();
+    let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Take the body
@@ -158,8 +158,8 @@ fn closed_streams_are_released() {
         let request = Request::get("https://example.com/").body(()).unwrap();
 
         // Send request
-        let stream = client.send_request(request, true).unwrap();
-        h2.drive(stream).and_then(move |(_, response)| {
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).and_then(move |(_, response)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // There are no active streams
@@ -207,7 +207,7 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
         let req = client
             .send_request(request, true)
             .unwrap()
-            .unwrap()
+            .0.unwrap()
             .and_then(|resp| {
                 assert_eq!(resp.status(), StatusCode::OK);
                 let body = resp.into_parts().1;
@@ -266,7 +266,7 @@ fn configure_max_frame_size() {
             let req = client
                 .send_request(request, true)
                 .unwrap()
-                .expect("response")
+                .0.expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     let body = resp.into_parts().1;
@@ -334,7 +334,7 @@ fn recv_goaway_finishes_processed_streams() {
 
             let req1 = client.send_request(request, true)
                 .unwrap()
-                .expect("response")
+                .0.expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     let body = resp.into_parts().1;
@@ -354,7 +354,7 @@ fn recv_goaway_finishes_processed_streams() {
                 .unwrap();
             let req2 = client.send_request(request, true)
                 .unwrap()
-                .then(|res| {
+                .0.then(|res| {
                     let err = res.unwrap_err();
                     assert_eq!(err.to_string(), "protocol error: not a result of an error");
                     Ok::<(), ()>(())
