@@ -849,7 +849,8 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
 
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
-    let (tx, rx) = mpsc::channel();
+    let (tx1, rx1) = mpsc::channel();
+    let (tx2, rx2) = mpsc::channel();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
@@ -857,6 +858,11 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
     let th1 = thread::spawn(move || {
         let srv = srv.assert_client_handshake().unwrap()
             .recv_settings()
+            .wait().unwrap();
+
+        tx1.send(()).unwrap();
+
+        let srv = Ok::<_, ()>(srv).into_future()
             .recv_frame(
                 frames::headers(1)
                     .request("POST", "https://example.com/one")
@@ -876,7 +882,10 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
             .wait().unwrap();
 
         // Wait to get notified
-        let _ = rx.recv().unwrap();
+        //
+        // A timeout is used here to avoid blocking forever if there is a
+        // failure
+        let _ = rx2.recv_timeout(Duration::from_secs(5)).unwrap();
 
         thread::sleep(Duration::from_millis(500));
 
@@ -911,6 +920,9 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
         h2.wait().unwrap();
     });
 
+    // Wait for server handshake to complete.
+    rx1.recv_timeout(Duration::from_secs(5)).unwrap();
+
     let request = Request::post("https://example.com/one")
         .body(()).unwrap();
 
@@ -933,7 +945,7 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
     // Send data on stream 2
     stream2.send_data("hello world".into(), true).unwrap();
 
-    tx.send(()).unwrap();
+    tx2.send(()).unwrap();
 
     // Wait for capacity on stream 1
     let mut stream1 = util::wait_for_capacity(stream1, 11).wait().unwrap();
