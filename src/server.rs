@@ -49,16 +49,6 @@ pub struct ReleaseCapacity<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-#[derive(Debug)]
-pub struct Send<T> {
-    src: T,
-    dst: Option<Stream<Bytes>>,
-    // Pending data
-    buf: Option<Bytes>,
-    // True when this is the end of the stream
-    eos: bool,
-}
-
 /// Flush a Sink
 struct Flush<T, B> {
     codec: Option<Codec<T, B>>,
@@ -290,21 +280,6 @@ impl<B: IntoBuf> Stream<B> {
     }
 }
 
-impl Stream<Bytes> {
-    /// Send the body
-    pub fn send<T>(self, src: T, end_of_stream: bool) -> Send<T>
-    where
-        T: futures::Stream<Item = Bytes, Error = ::Error>,
-    {
-        Send {
-            src: src,
-            dst: Some(self),
-            buf: None,
-            eos: end_of_stream,
-        }
-    }
-}
-
 // ===== impl Body =====
 
 impl<B: IntoBuf> Body<B> {
@@ -360,60 +335,6 @@ impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
     fn clone(&self) -> Self {
         let inner = self.inner.clone();
         ReleaseCapacity { inner }
-    }
-}
-
-// ===== impl Send =====
-
-impl<T> Future for Send<T>
-where
-    T: futures::Stream<Item = Bytes, Error = ::Error>,
-{
-    type Item = Stream<Bytes>;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            if self.buf.is_none() {
-                // Get a chunk to send to the H2 stream
-                self.buf = try_ready!(self.src.poll());
-            }
-
-            match self.buf.take() {
-                Some(mut buf) => {
-                    let dst = self.dst.as_mut().unwrap();
-
-                    // Ask for the amount of capacity needed
-                    dst.reserve_capacity(buf.len());
-
-                    let cap = dst.capacity();
-
-                    if cap == 0 {
-                        self.buf = Some(buf);
-                        // TODO: This seems kind of lame :(
-                        try_ready!(dst.poll_capacity());
-                        continue;
-                    }
-
-                    let chunk = buf.split_to(cap);
-
-                    if !buf.is_empty() {
-                        self.buf = Some(buf);
-                    }
-
-                    dst.send_data(chunk, false)?;
-                },
-                None => {
-                    // TODO: It would be nice to not have to send an extra
-                    // frame...
-                    if self.eos {
-                        self.dst.as_mut().unwrap().send_data(Bytes::new(), true)?;
-                    }
-
-                    return Ok(Async::Ready(self.dst.take().unwrap()));
-                },
-            }
-        }
     }
 }
 
