@@ -10,10 +10,7 @@ use std::{cmp, io};
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
-pub(super) struct Send<B, P>
-where
-    P: Peer,
-{
+pub(super) struct Send<B> {
     /// Stream identifier to use for next initialized stream.
     next_stream_id: Result<StreamId, StreamIdOverflow>,
 
@@ -21,13 +18,10 @@ where
     init_window_sz: WindowSize,
 
     /// Prioritization layer
-    prioritize: Prioritize<B, P>,
+    prioritize: Prioritize<B>,
 }
 
-impl<B, P> Send<B, P>
-where
-    P: Peer,
-{
+impl<B> Send<B> {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
         Send {
@@ -43,7 +37,7 @@ where
     }
 
     pub fn open(&mut self) -> Result<StreamId, UserError> {
-        let stream_id = self.try_open()?;
+        let stream_id = self.ensure_next_stream_id()?;
         self.next_stream_id = stream_id.next_id();
         Ok(stream_id)
     }
@@ -51,8 +45,8 @@ where
     pub fn send_headers(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B, P>,
-        counts: &mut Counts<P>,
+        stream: &mut store::Ptr<B>,
+        counts: &mut Counts,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
         trace!(
@@ -66,7 +60,7 @@ where
         // Update the state
         stream.state.send_open(end_stream)?;
 
-        if P::is_local_init(frame.stream_id()) {
+        if counts.peer().is_local_init(frame.stream_id()) {
             if counts.can_inc_num_send_streams() {
                 counts.inc_num_send_streams();
             } else {
@@ -90,7 +84,7 @@ where
     pub fn send_reset(
         &mut self,
         reason: Reason,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
         task: &mut Option<Task>,
         clear_queue: bool,
     ) {
@@ -156,7 +150,7 @@ where
     pub fn send_data(
         &mut self,
         frame: frame::Data<B>,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
         task: &mut Option<Task>,
     ) -> Result<(), UserError>
     where
@@ -168,7 +162,7 @@ where
     pub fn send_trailers(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
         // TODO: Should this logic be moved into state.rs?
@@ -189,8 +183,8 @@ where
 
     pub fn poll_complete<T>(
         &mut self,
-        store: &mut Store<B, P>,
-        counts: &mut Counts<P>,
+        store: &mut Store<B>,
+        counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -201,13 +195,13 @@ where
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
         self.prioritize.reserve_capacity(capacity, stream)
     }
 
     pub fn poll_capacity(
         &mut self,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
     ) -> Poll<Option<WindowSize>, UserError> {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
@@ -224,7 +218,7 @@ where
     }
 
     /// Current available stream send capacity
-    pub fn capacity(&self, stream: &mut store::Ptr<B, P>) -> WindowSize {
+    pub fn capacity(&self, stream: &mut store::Ptr<B>) -> WindowSize {
         let available = stream.send_flow.available().as_size();
         let buffered = stream.buffered_send_data;
 
@@ -238,7 +232,7 @@ where
     pub fn recv_connection_window_update(
         &mut self,
         frame: frame::WindowUpdate,
-        store: &mut Store<B, P>,
+        store: &mut Store<B>,
     ) -> Result<(), Reason> {
         self.prioritize
             .recv_connection_window_update(frame.size_increment(), store)
@@ -247,7 +241,7 @@ where
     pub fn recv_stream_window_update(
         &mut self,
         sz: WindowSize,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
         task: &mut Option<Task>,
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
@@ -260,7 +254,7 @@ where
         Ok(())
     }
 
-    pub fn recv_err(&mut self, stream: &mut store::Ptr<B, P>) {
+    pub fn recv_err(&mut self, stream: &mut store::Ptr<B>) {
         // Clear all pending outbound frames
         self.prioritize.clear_queue(stream);
 
@@ -276,7 +270,7 @@ where
     pub fn apply_remote_settings(
         &mut self,
         settings: &frame::Settings,
-        store: &mut Store<B, P>,
+        store: &mut Store<B>,
         task: &mut Option<Task>,
     ) -> Result<(), RecvError> {
         // Applies an update to the remote endpoint's initial window size.
@@ -358,15 +352,5 @@ where
 
     pub fn ensure_next_stream_id(&self) -> Result<StreamId, UserError> {
         self.next_stream_id.map_err(|_| OverflowedStreamId)
-    }
-
-    /// Returns a new StreamId if the local actor can initiate a new stream.
-    fn try_open(&self) -> Result<StreamId, UserError> {
-        if P::is_server() {
-            // Servers cannot open streams. PushPromise must first be reserved.
-            return Err(UnexpectedFrameType);
-        }
-
-        self.ensure_next_stream_id()
     }
 }

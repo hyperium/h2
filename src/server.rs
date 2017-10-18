@@ -28,7 +28,7 @@ pub struct Builder {
 
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 pub struct Body<B: IntoBuf> {
@@ -37,7 +37,7 @@ pub struct Body<B: IntoBuf> {
 
 #[derive(Debug)]
 pub struct ReleaseCapacity<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 #[derive(Debug)]
@@ -498,6 +498,10 @@ impl proto::Peer for Peer {
 
     fn is_server() -> bool {
         true
+    }
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Server
     }
 
     fn convert_send_message(

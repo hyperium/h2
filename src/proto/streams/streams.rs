@@ -15,15 +15,13 @@ pub(crate) struct Streams<B, P>
 where
     P: Peer,
 {
-    inner: Arc<Mutex<Inner<B, P>>>,
+    inner: Arc<Mutex<Inner<B>>>,
+    _p: ::std::marker::PhantomData<P>,
 }
 
 /// Reference to the stream state
-pub(crate) struct StreamRef<B, P>
-where
-    P: Peer,
-{
-    inner: Arc<Mutex<Inner<B, P>>>,
+pub(crate) struct StreamRef<B> {
+    inner: Arc<Mutex<Inner<B>>>,
     key: store::Key,
 }
 
@@ -32,26 +30,20 @@ where
 ///
 /// TODO: better name
 #[derive(Debug)]
-struct Inner<B, P>
-where
-    P: Peer,
-{
+struct Inner<B> {
     /// Tracks send & recv stream concurrency.
-    counts: Counts<P>,
-    actions: Actions<B, P>,
-    store: Store<B, P>,
+    counts: Counts,
+    actions: Actions<B>,
+    store: Store<B>,
 }
 
 #[derive(Debug)]
-struct Actions<B, P>
-where
-    P: Peer,
-{
+struct Actions<B> {
     /// Manages state transitions initiated by receiving frames
-    recv: Recv<B, P>,
+    recv: Recv<B>,
 
     /// Manages state transitions initiated by sending frames
-    send: Send<B, P>,
+    send: Send<B>,
 
     /// Task that calls `poll_complete`.
     task: Option<task::Task>,
@@ -66,17 +58,20 @@ where
     P: Peer,
 {
     pub fn new(config: Config) -> Self {
+        let peer = P::dyn();
+
         Streams {
             inner: Arc::new(Mutex::new(Inner {
-                counts: Counts::new(&config),
+                counts: Counts::new(peer, &config),
                 actions: Actions {
-                    recv: Recv::new(&config),
+                    recv: Recv::new(peer, &config),
                     send: Send::new(&config),
                     task: None,
                     conn_error: None,
                 },
                 store: Store::new(),
             })),
+            _p: ::std::marker::PhantomData,
         }
     }
 
@@ -170,7 +165,7 @@ where
             None => {
                 // TODO: Are there other error cases?
                 me.actions
-                    .ensure_not_idle(id)
+                    .ensure_not_idle(me.counts.peer(), id)
                     .map_err(RecvError::Connection)?;
 
                 return Ok(());
@@ -284,12 +279,19 @@ where
             None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
-        me.actions
-            .recv
-            .recv_push_promise(frame, &me.actions.send, stream, &mut me.store)
+        if me.counts.peer().is_server() {
+            // The remote is a client and cannot reserve
+            trace!("recv_push_promise; error remote is client");
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
+
+        me.actions.recv.recv_push_promise(frame,
+                                          &me.actions.send,
+                                          stream,
+                                          &mut me.store)
     }
 
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B, P>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
@@ -368,7 +370,7 @@ where
         request: Request<()>,
         end_of_stream: bool,
         pending: Option<&store::Key>,
-    ) -> Result<StreamRef<B, P>, SendError> {
+    ) -> Result<StreamRef<B>, SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -394,6 +396,11 @@ where
                 if me.store.resolve(*key).is_pending_open {
                     return Err(UserError::Rejected.into());
                 }
+            }
+
+            if me.counts.peer().is_server() {
+                // Servers cannot open streams. PushPromise must first be reserved.
+                return Err(UserError::UnexpectedFrameType.into());
             }
 
             let stream_id = me.actions.send.open()?;
@@ -510,16 +517,14 @@ where
     fn clone(&self) -> Self {
         Streams {
             inner: self.inner.clone(),
+            _p: ::std::marker::PhantomData,
         }
     }
 }
 
 // ===== impl StreamRef =====
 
-impl<B, P> StreamRef<B, P>
-where
-    P: Peer,
-{
+impl<B> StreamRef<B> {
     pub fn send_data(&mut self, data: B, end_stream: bool) -> Result<(), UserError>
     where
         B: Buf,
@@ -588,6 +593,37 @@ where
                 .send
                 .send_headers(frame, stream, counts, &mut actions.task)
         })
+    }
+
+    /// Called by the server after the stream is accepted. Given that clients
+    /// initialize streams by sending HEADERS, the request will always be
+    /// available.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the request isn't present.
+    pub fn take_request(&self) -> Request<()> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+        me.actions.recv.take_request(&mut stream)
+    }
+
+    /// Called by a client to check for a received response.
+    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_response(&mut stream)
+    }
+
+    /// Called by a client to see if the current stream is pending open
+    pub fn is_pending_open(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        me.store.resolve(self.key).is_pending_open
     }
 
     pub fn body_is_empty(&self) -> bool
@@ -677,50 +713,7 @@ where
     }
 }
 
-impl<B> StreamRef<B, server::Peer>
-where
-    B: Buf,
-{
-    /// Called by the server after the stream is accepted. Given that clients
-    /// initialize streams by sending HEADERS, the request will always be
-    /// available.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Request<()> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-        me.actions.recv.take_request(&mut stream)
-    }
-}
-
-impl<B> StreamRef<B, client::Peer>
-where
-    B: Buf,
-{
-    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_response(&mut stream)
-    }
-
-
-    pub fn is_pending_open(&self) -> bool {
-        let mut me = self.inner.lock().unwrap();
-        me.store.resolve(self.key).is_pending_open
-    }
-}
-
-impl<B, P> Clone for StreamRef<B, P>
-where
-    P: Peer,
-{
+impl<B> Clone for StreamRef<B> {
     fn clone(&self) -> Self {
         // Increment the ref count
         self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
@@ -732,10 +725,7 @@ where
     }
 }
 
-impl<B, P> fmt::Debug for StreamRef<B, P>
-where
-    P: Peer,
-{
+impl<B> fmt::Debug for StreamRef<B> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.inner.lock() {
             Ok(me) => {
@@ -752,10 +742,7 @@ where
     }
 }
 
-impl<B, P> Drop for StreamRef<B, P>
-where
-    P: Peer,
-{
+impl<B> Drop for StreamRef<B> {
     fn drop(&mut self) {
         trace!("StreamRef::drop({:?})", self);
         let mut me = match self.inner.lock() {
@@ -798,14 +785,13 @@ where
 
 // ===== impl Actions =====
 
-impl<B, P> Actions<B, P>
+impl<B> Actions<B>
 where
     B: Buf,
-    P: Peer,
 {
     fn reset_on_recv_stream_err(
         &mut self,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr<B>,
         res: Result<(), RecvError>,
     ) -> Result<(), RecvError> {
         if let Err(RecvError::Stream {
@@ -820,8 +806,8 @@ where
         }
     }
 
-    fn ensure_not_idle(&mut self, id: StreamId) -> Result<(), Reason> {
-        if P::is_local_init(id) {
+    fn ensure_not_idle(&mut self, peer: peer::Dyn, id: StreamId) -> Result<(), Reason> {
+        if peer.is_local_init(id) {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)

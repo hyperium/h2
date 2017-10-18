@@ -31,12 +31,12 @@ pub struct Connection<T, B: IntoBuf> {
 
 #[derive(Debug)]
 pub struct ResponseFuture<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 pub struct Body<B: IntoBuf> {
@@ -45,7 +45,7 @@ pub struct Body<B: IntoBuf> {
 
 #[derive(Debug)]
 pub struct ReleaseCapacity<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
+    inner: proto::StreamRef<B::Buf>,
 }
 
 /// Build a Client.
@@ -463,6 +463,11 @@ impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
 impl proto::Peer for Peer {
     type Send = Request<()>;
     type Poll = Response<()>;
+
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Client
+    }
 
     fn is_server() -> bool {
         false
