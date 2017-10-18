@@ -23,7 +23,7 @@ pub use super::{Codec, SendFrame};
 pub use super::{bytes, env_logger, futures, http, mock_io, tokio_io};
 
 // Re-export primary future types
-pub use self::futures::{Future, Sink, Stream};
+pub use self::futures::{Future, IntoFuture, Sink, Stream};
 
 // And our Future extensions
 pub use super::future_ext::{FutureExt, Unwrap};

@@ -38,12 +38,8 @@ script:
   # will not fail on test compile errors.
   - cargo build --tests --features unstable
 
-  # Run tests, uploading results to codecov.
-  # hpack tests are _super_ slow in coverage, so skip them here.
-  - cargo tarpaulin --features unstable --skip-clean --no-count --out Xml -- --skip hpack
-
-  # Test _only_ hpack.
-  - cargo test --lib -- hpack
+  # Run tests
+  - RUST_TEST_THREADS=1 cargo test --features unstable
 
   # Run h2spec on stable
   - if [ "${TRAVIS_RUST_VERSION}" = "stable" ]; then ./ci/h2spec.sh; fi

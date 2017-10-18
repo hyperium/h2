@@ -845,16 +845,24 @@ fn recv_no_init_window_then_receive_some_init_window() {
 #[test]
 fn settings_lowered_capacity_returns_capacity_to_connection() {
     use std::thread;
+    use std::sync::mpsc;
 
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
+    let (tx1, rx1) = mpsc::channel();
+    let (tx2, rx2) = mpsc::channel();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
     // Spawn the server on a thread
     let th1 = thread::spawn(move || {
-        srv.assert_client_handshake().unwrap()
+        let srv = srv.assert_client_handshake().unwrap()
             .recv_settings()
+            .wait().unwrap();
+
+        tx1.send(()).unwrap();
+
+        let srv = Ok::<_, ()>(srv).into_future()
             .recv_frame(
                 frames::headers(1)
                     .request("POST", "https://example.com/one")
@@ -871,13 +879,18 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
             // Let stream 3 make progress
             .send_frame(frames::window_update(3, 11))
             .recv_frame(frames::data(3, "hello world").eos())
+            .wait().unwrap();
 
-            // Wait a bit
-            //
-            // TODO: Receive signal from main thread
-            .idle_ms(200)
+        // Wait to get notified
+        //
+        // A timeout is used here to avoid blocking forever if there is a
+        // failure
+        let _ = rx2.recv_timeout(Duration::from_secs(5)).unwrap();
 
-            // Reset initial window size
+        thread::sleep(Duration::from_millis(500));
+
+        // Reset initial window size
+        Ok::<_, ()>(srv).into_future()
             .send_frame(frames::settings().initial_window_size(window_size as u32))
             .recv_frame(frames::settings_ack())
 
@@ -907,6 +920,9 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
         h2.wait().unwrap();
     });
 
+    // Wait for server handshake to complete.
+    rx1.recv_timeout(Duration::from_secs(5)).unwrap();
+
     let request = Request::post("https://example.com/one")
         .body(()).unwrap();
 
@@ -928,6 +944,8 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
 
     // Send data on stream 2
     stream2.send_data("hello world".into(), true).unwrap();
+
+    tx2.send(()).unwrap();
 
     // Wait for capacity on stream 1
     let mut stream1 = util::wait_for_capacity(stream1, 11).wait().unwrap();
