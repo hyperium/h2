@@ -32,17 +32,21 @@ pub fn main() {
             .and_then(|conn| {
                 println!("H2 connection bound");
 
-                conn.for_each(|(request, mut stream)| {
+                conn.for_each(|(request, mut respond)| {
                     println!("GOT request: {:?}", request);
 
                     let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
-                    if let Err(e) = stream.send_response(response, false) {
-                        println!(" error responding; err={:?}", e);
-                    }
+                    let mut send = match respond.send_response(response, false) {
+                        Ok(send) => send,
+                        Err(e) => {
+                            println!(" error respond; err={:?}", e);
+                            return Ok(());
+                        }
+                    };
 
                     println!(">>>> sending data");
-                    if let Err(e) = stream.send_data(Bytes::from_static(b"hello world"), false) {
+                    if let Err(e) = send.send_data(Bytes::from_static(b"hello world"), false) {
                         println!("  -> err={:?}", e);
                     }
 
@@ -50,7 +54,7 @@ pub fn main() {
                     hdrs.insert("status", "ok".parse().unwrap());
 
                     println!(">>>> sending trailers");
-                    if let Err(e) = stream.send_trailers(hdrs) {
+                    if let Err(e) = send.send_trailers(hdrs) {
                         println!("  -> err={:?}", e);
                     }
 

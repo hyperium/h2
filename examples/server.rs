@@ -31,18 +31,21 @@ pub fn main() {
             .and_then(|conn| {
                 println!("H2 connection bound");
 
-                conn.for_each(|(request, mut stream)| {
+                conn.for_each(|(request, mut respond)| {
                     println!("GOT request: {:?}", request);
-
 
                     let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
-                    if let Err(e) = stream.send_response(response, false) {
-                        println!(" error responding; err={:?}", e);
-                    }
+                    let mut send = match respond.send_response(response, false) {
+                        Ok(send) => send,
+                        Err(e) => {
+                            println!(" error respond; err={:?}", e);
+                            return Ok(());
+                        }
+                    };
 
                     println!(">>>> sending data");
-                    if let Err(e) = stream.send_data(Bytes::from_static(b"hello world"), true) {
+                    if let Err(e) = send.send_data(Bytes::from_static(b"hello world"), true) {
                         println!("  -> err={:?}", e);
                     }
 

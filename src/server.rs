@@ -26,6 +26,15 @@ pub struct Builder {
     settings: Settings,
 }
 
+/// Respond to a request
+///
+///
+/// Instances of `Respond` are used to send a respond or reserve push promises.
+#[derive(Debug)]
+pub struct Respond<B: IntoBuf> {
+    inner: proto::StreamRef<B::Buf>,
+}
+
 #[derive(Debug)]
 pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
@@ -140,7 +149,7 @@ where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,
 {
-    type Item = (Request<Body<B>>, Stream<B>);
+    type Item = (Request<Body<B>>, Respond<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -163,11 +172,9 @@ where
             };
 
             let request = Request::from_parts(head, body);
-            let incoming = Stream {
-                inner,
-            };
+            let respond = Respond { inner };
 
-            return Ok(Some((request, incoming)).into());
+            return Ok(Some((request, respond)).into());
         }
 
         Ok(Async::NotReady)
@@ -227,20 +234,27 @@ impl Builder {
     }
 }
 
-// ===== impl Stream =====
+// ===== impl Respond =====
 
-impl<B: IntoBuf> Stream<B> {
+impl<B: IntoBuf> Respond<B> {
     /// Send a response
     pub fn send_response(
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<(), ::Error> {
+    ) -> Result<Stream<B>, ::Error> {
         self.inner
             .send_response(response, end_of_stream)
+            .map(|_| Stream { inner: self.inner.clone() })
             .map_err(Into::into)
     }
 
+    // TODO: Support reserving push promises.
+}
+
+// ===== impl Stream =====
+
+impl<B: IntoBuf> Stream<B> {
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
