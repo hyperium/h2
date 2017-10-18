@@ -395,7 +395,8 @@ impl<B: IntoBuf> Stream<B> {
         self.inner.send_trailers(trailers).map_err(Into::into)
     }
 
-    pub fn send_reset(mut self, reason: Reason) {
+    /// Reset the stream
+    pub fn send_reset(&mut self, reason: Reason) {
         self.inner.send_reset(reason)
     }
 }
