@@ -11,10 +11,22 @@ use bytes::buf::Take;
 use std::{cmp, fmt};
 use std::io;
 
+/// # Warning
+///
+/// Queued streans are ordered by stream ID, as we need to ensure that
+/// lower-numbered streams are sent headers before higher-numbered ones.
+/// This is because "idle" stream IDs – those which have been initiated but
+/// have yet to receive frames – will be implicitly closed on receipt of a
+/// frame on a higher stream ID. If these queues was not ordered by stream
+/// IDs, some mechanism would be necessary to ensure that the lowest-numbered
+/// idle stream is opened first.
 #[derive(Debug)]
-pub(super) struct Prioritize {
-    /// Queue of streams waiting for socket capacity to send a frame
-    pending_send: store::Queue<stream::NextSend>,
+pub(super) struct Prioritize<B, P>
+where
+    P: Peer,
+{
+    /// Queue of streams waiting for socket capacity to send a frame.
+    pending_send: store::Queue<B, stream::NextSend, P>,
 
     /// Queue of streams waiting for window capacity to produce data.
     pending_capacity: store::Queue<stream::NextSendCapacity>,
