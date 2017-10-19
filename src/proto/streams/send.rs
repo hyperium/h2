@@ -75,7 +75,7 @@ impl Send {
         Ok(())
     }
 
-    /// Send an RST_STREAM frame
+    /// Send an explicit RST_STREAM frame
     ///
     /// # Arguments
     /// + `reason`: the error code for the RST_STREAM frame
@@ -88,7 +88,6 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         task: &mut Option<Task>,
-        clear_queue: bool,
     ) {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
@@ -96,13 +95,11 @@ impl Send {
 
         trace!(
             "send_reset(..., reason={:?}, stream={:?}, ..., \
-             clear_queue={:?});\n\
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
             ",
             stream.id,
             reason,
-            clear_queue,
             is_reset,
             is_closed,
             is_empty,
@@ -120,7 +117,7 @@ impl Send {
 
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
-        if is_closed && (is_empty || !clear_queue) {
+        if is_closed && is_empty {
             trace!(
                 " -> not sending explicit RST_STREAM ({:?} was closed \
                      and send queue was flushed)",
@@ -132,18 +129,7 @@ impl Send {
         // Transition the state
         stream.state.set_reset(reason);
 
-        // TODO: this could be a call to `recv_err`, but that will always
-        //       clear the send queue. could we pass whether or not to clear
-        //       the send queue to that method?
-        if clear_queue {
-            // Clear all pending outbound frames
-            self.prioritize.clear_queue(buffer, stream);
-        }
-
-        // Reclaim all capacity assigned to the stream and re-assign it to the
-        // connection
-        let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
+        self.recv_err(buffer, stream);
 
         let frame = frame::Reset::new(stream.id, reason);
 
@@ -159,11 +145,7 @@ impl Send {
 
         stream.state.set_canceled();
 
-        // Reclaim all capacity assigned to the stream and re-assign it to the
-        // connection
-        let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
-
+        self.reclaim_capacity(stream);
         self.prioritize.schedule_send(stream, task);
     }
 
@@ -271,7 +253,7 @@ impl Send {
 
             self.send_reset(
                 Reason::FLOW_CONTROL_ERROR.into(),
-                buffer, stream, task, true);
+                buffer, stream, task);
 
             return Err(e);
         }
@@ -286,7 +268,10 @@ impl Send {
     ) {
         // Clear all pending outbound frames
         self.prioritize.clear_queue(buffer, stream);
+        self.reclaim_capacity(stream);
+    }
 
+    fn reclaim_capacity(&mut self, stream: &mut store::Ptr) {
         // Reclaim all capacity assigned to the stream and re-assign it to the
         // connection
         let available = stream.send_flow.available().as_size();

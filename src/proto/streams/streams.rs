@@ -527,7 +527,7 @@ where
 
         me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(
-                reason, send_buffer, stream, &mut actions.task, true)
+                reason, send_buffer, stream, &mut actions.task)
         })
     }
 }
@@ -640,7 +640,7 @@ impl<B> StreamRef<B> {
 
         me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(
-                reason, send_buffer, stream, &mut actions.task, true)
+                reason, send_buffer, stream, &mut actions.task)
         })
     }
 
@@ -877,7 +877,7 @@ impl Actions {
         }) = res
         {
             // Reset the stream.
-            self.send.send_reset(reason, buffer, stream, &mut self.task, true);
+            self.send.send_reset(reason, buffer, stream, &mut self.task);
             Ok(())
         } else {
             res
