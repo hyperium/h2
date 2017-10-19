@@ -228,6 +228,11 @@ impl<B: IntoBuf> Respond<B> {
             .map_err(Into::into)
     }
 
+    /// Reset the stream
+    pub fn send_reset(&mut self, reason: Reason) {
+        self.inner.send_reset(reason)
+    }
+
     // TODO: Support reserving push promises.
 }
 
