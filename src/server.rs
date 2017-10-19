@@ -489,18 +489,17 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             // We're currently flushing a pending SETTINGS frame. Poll the
             // flush future, and, if it's completed, advance our state to wait
             // for the client preface.
-            let codec = match flush.poll() {
-                Ok(Async::NotReady) => {
+            let codec = match flush.poll()? {
+                Async::NotReady => {
                     trace!("Handshake::poll(); flush.poll()=NotReady");
                     return Ok(Async::NotReady);
                 },
-                Ok(Async::Ready(t)) => {
+                Async::Ready(flushed) => {
                     trace!("Handshake::poll(); flush.poll()=Ready");
-                    Ok(t)
-                },
-                Err(e) => Err(e),
+                    flushed
+                }
             };
-            Handshaking::from(ReadPreface::new(codec?))
+            Handshaking::from(ReadPreface::new(codec))
         } else {
             // Otherwise, we haven't actually advanced the state, but we have
             // to replace it with itself, because we have to return a value.
@@ -520,12 +519,13 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
         } else {
             unreachable!("Handshake::poll() state was not advanced completely!")
         };
-        poll.map(|poll| poll.map(|codec| {
+        let server = poll?.map(|codec| {
             let connection =
                 Connection::new(codec, &self.settings, 2.into());
             trace!("Handshake::poll(); connection established!");
             Server { connection }
-        }))
+        });
+        Ok(server)
     }
 }
 
