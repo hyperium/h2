@@ -15,13 +15,27 @@ pub(crate) struct Streams<B, P>
 where
     P: Peer,
 {
-    inner: Arc<Mutex<Inner<B>>>,
+    /// Holds most of the connection and stream related state for processing
+    /// HTTP/2.0 frames associated with streams.
+    inner: Arc<Mutex<Inner>>,
+
+    /// This is the queue of frames to be written to the wire. This is split out
+    /// to avoid requiring a `B` generic on all public API types even if `B` is
+    /// not technically required.
+    ///
+    /// Currently, splitting this out requires a second `Arc` + `Mutex`.
+    /// However, it should be possible to avoid this duplication with a little
+    /// bit of unsafe code. This optimization has been postponed until it has
+    /// been shown to be necessary.
+    send_buffer: Arc<SendBuffer<B>>,
+
     _p: ::std::marker::PhantomData<P>,
 }
 
 /// Reference to the stream state
 pub(crate) struct StreamRef<B> {
-    inner: Arc<Mutex<Inner<B>>>,
+    inner: Arc<Mutex<Inner>>,
+    send_buffer: Arc<SendBuffer<B>>,
     key: store::Key,
 }
 
@@ -30,7 +44,7 @@ pub(crate) struct StreamRef<B> {
 ///
 /// TODO: better name
 #[derive(Debug)]
-struct Inner<B> {
+struct Inner {
     /// Tracks send & recv stream concurrency.
     counts: Counts,
 
@@ -39,12 +53,6 @@ struct Inner<B> {
 
     /// Stores stream state
     store: Store,
-
-    /// Holds frames that are waiting to be written to the socket
-    ///
-    /// This buffer is kept here to avoid the `B` generic making its way into
-    /// inner types.
-    send_buffer: Buffer<Frame<B>>,
 }
 
 #[derive(Debug)]
@@ -61,6 +69,14 @@ struct Actions {
     /// If the connection errors, a copy is kept for any StreamRefs.
     conn_error: Option<proto::Error>,
 }
+
+/// Contains the buffer of frames to be written to the wire.
+#[derive(Debug)]
+struct SendBuffer<B> {
+    inner: Mutex<Buffer<Frame<B>>>,
+}
+
+// ===== impl Streams =====
 
 impl<B, P> Streams<B, P>
 where
@@ -80,8 +96,8 @@ where
                     conn_error: None,
                 },
                 store: Store::new(),
-                send_buffer: Buffer::new(),
             })),
+            send_buffer: Arc::new(SendBuffer::new()),
             _p: ::std::marker::PhantomData,
         }
     }
@@ -119,7 +135,8 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             trace!(
@@ -155,7 +172,8 @@ where
         };
 
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             let res = actions.recv.recv_data(frame, stream);
@@ -201,7 +219,8 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         let last_processed_id = actions.recv.last_processed_id();
 
@@ -226,7 +245,8 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
@@ -255,6 +275,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         if id.is_zero() {
             me.actions
                 .send
@@ -269,7 +292,7 @@ where
                 // the error is informational.
                 let _ = me.actions.send.recv_stream_window_update(
                     frame.size_increment(),
-                    &mut me.send_buffer,
+                    send_buffer,
                     &mut stream,
                     &mut me.actions.task,
                 );
@@ -327,6 +350,7 @@ where
         key.map(|key| {
             StreamRef {
                 inner: self.inner.clone(),
+                send_buffer: self.send_buffer.clone(),
                 key,
             }
         })
@@ -351,6 +375,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         // Send WINDOW_UPDATE frames first
         //
         // TODO: It would probably be better to interleave updates w/ data
@@ -359,7 +386,7 @@ where
 
         // Send any other pending frames
         try_ready!(me.actions.send.poll_complete(
-            &mut me.send_buffer,
+            send_buffer,
             &mut me.store,
             &mut me.counts,
             dst
@@ -375,10 +402,13 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         me.counts.apply_remote_settings(frame);
 
         me.actions.send.apply_remote_settings(
-            frame, &mut me.send_buffer, &mut me.store, &mut me.actions.task)
+            frame, send_buffer, &mut me.store, &mut me.actions.task)
     }
 
     pub fn send_request(
@@ -398,6 +428,9 @@ where
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
+
+            let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+            let send_buffer = &mut *send_buffer;
 
             me.actions.ensure_no_conn_error()?;
             me.actions.send.ensure_next_stream_id()?;
@@ -438,7 +471,7 @@ where
 
             me.actions.send.send_headers(
                 headers,
-                &mut me.send_buffer,
+                send_buffer,
                 &mut stream,
                 &mut me.counts,
                 &mut me.actions.task,
@@ -456,6 +489,7 @@ where
 
         Ok(StreamRef {
             inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
             key: key,
         })
     }
@@ -478,7 +512,8 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(
@@ -534,6 +569,7 @@ where
     fn clone(&self) -> Self {
         Streams {
             inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
             _p: ::std::marker::PhantomData,
         }
     }
@@ -551,7 +587,8 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the data frame
@@ -569,7 +606,8 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the trailers frame
@@ -587,7 +625,8 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             actions.send.send_reset(
@@ -605,7 +644,8 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
@@ -740,6 +780,7 @@ impl<B> Clone for StreamRef<B> {
 
         StreamRef {
             inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
             key: self.key.clone(),
         }
     }
@@ -782,7 +823,8 @@ impl<B> Drop for StreamRef<B> {
         stream.ref_dec();
 
         let actions = &mut me.actions;
-        let send_buffer = &mut me.send_buffer;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         // the reset must be sent inside a `transition` block.
         // `transition_after` will release the stream if it is
@@ -803,6 +845,15 @@ impl<B> Drop for StreamRef<B> {
                     false
                 );
             });
+    }
+}
+
+// ===== impl SendBuffer =====
+
+impl<B> SendBuffer<B> {
+    fn new() -> Self {
+        let inner = Mutex::new(Buffer::new());
+        SendBuffer { inner }
     }
 }
 
