@@ -32,8 +32,8 @@ pub struct Connection<T, B: IntoBuf> {
 }
 
 #[derive(Debug)]
-pub struct ResponseFuture<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
+pub struct ResponseFuture {
+    inner: proto::OpaqueStreamRef,
 }
 
 /// Build a Client.
@@ -107,7 +107,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture<B>, Stream<B>), ::Error> {
+    ) -> Result<(ResponseFuture, Stream<B>), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -117,7 +117,7 @@ where
                 }
 
                 let response = ResponseFuture {
-                    inner: stream.clone(),
+                    inner: stream.clone_to_opaque(),
                 };
 
                 let stream = Stream::new(stream);
@@ -338,16 +338,13 @@ where
 
 // ===== impl ResponseFuture =====
 
-impl<B> Future for ResponseFuture<B>
-where B: IntoBuf,
-      B::Buf: 'static,
-{
+impl Future for ResponseFuture {
     type Item = Response<Body>;
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
-        let body = Body::new(ReleaseCapacity::new(self.inner.clone_to_opaque()));
+        let body = Body::new(ReleaseCapacity::new(self.inner.clone()));
 
         Ok(Response::from_parts(parts, body).into())
     }

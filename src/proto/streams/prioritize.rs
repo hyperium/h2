@@ -68,7 +68,10 @@ impl Prioritize {
     ) {
         // Queue the frame in the buffer
         stream.pending_send.push_back(buffer, frame);
+        self.schedule_send(stream, task);
+    }
 
+    pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
         // If the stream is waiting to be opened, nothing more to do.
         if !stream.is_pending_open {
             // Queue the stream
@@ -508,8 +511,8 @@ impl Prioritize {
 
                     let is_counted = stream.is_counted();
 
-                    let frame = match stream.pending_send.pop_front(buffer).unwrap() {
-                        Frame::Data(mut frame) => {
+                    let frame = match stream.pending_send.pop_front(buffer) {
+                        Some(Frame::Data(mut frame)) => {
                             // Get the amount of capacity remaining for stream's
                             // window.
                             let stream_capacity = stream.send_flow.available();
@@ -547,6 +550,7 @@ impl Prioritize {
                                 stream
                                     .pending_send
                                     .push_front(buffer, frame.into());
+
                                 continue;
                             }
 
@@ -597,12 +601,19 @@ impl Prioritize {
                                 }
                             }))
                         },
-                        frame => frame.map(|_| unreachable!()),
+                        Some(frame) => frame.map(|_| unreachable!()),
+                        None => {
+                            assert!(stream.state.is_canceled());
+                            stream.state.set_reset(Reason::CANCEL);
+
+                            let frame = frame::Reset::new(stream.id, Reason::CANCEL);
+                            Frame::Reset(frame)
+                        }
                     };
 
                     trace!("pop_frame; frame={:?}", frame);
 
-                    if !stream.pending_send.is_empty() {
+                    if !stream.pending_send.is_empty() || stream.state.is_canceled() {
                         // TODO: Only requeue the sender IF it is ready to send
                         // the next frame. i.e. don't requeue it if the next
                         // frame is a data frame and the stream does not have

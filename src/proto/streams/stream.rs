@@ -218,6 +218,15 @@ impl Stream {
             !self.is_pending_accept && !self.is_pending_window_update
     }
 
+    /// Returns true when the consumer of the stream has dropped all handles
+    /// (indicating no further interest in the stream) and the stream state is
+    /// not actually closed.
+    ///
+    /// In this case, a reset should be sent.
+    pub fn is_canceled_interest(&self) -> bool {
+        self.ref_count == 0 && !self.state.is_recv_closed()
+    }
+
     pub fn assign_capacity(&mut self, capacity: WindowSize) {
         debug_assert!(capacity > 0);
         self.send_capacity_inc = true;

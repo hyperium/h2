@@ -93,6 +93,7 @@ impl Send {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
+
         trace!(
             "send_reset(..., reason={:?}, stream={:?}, ..., \
              clear_queue={:?});\n\
@@ -107,6 +108,7 @@ impl Send {
             is_empty,
             stream.state
         );
+
         if is_reset {
             // Don't double reset
             trace!(
@@ -147,6 +149,22 @@ impl Send {
 
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+    }
+
+    pub fn schedule_cancel(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
+        if stream.state.is_closed() {
+            // Stream is already closed, nothing more to do
+            return;
+        }
+
+        stream.state.set_canceled();
+
+        // Reclaim all capacity assigned to the stream and re-assign it to the
+        // connection
+        let available = stream.send_flow.available().as_size();
+        stream.send_flow.claim_capacity(available);
+
+        self.prioritize.schedule_send(stream, task);
     }
 
     pub fn send_data<B>(
