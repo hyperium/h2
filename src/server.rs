@@ -6,7 +6,7 @@ use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{HeaderMap, Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
-use std::{convert, fmt};
+use std::{convert, fmt, mem};
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
@@ -62,8 +62,9 @@ struct ReadPreface<T, B> {
 
 /// Stages of an in-progress handshake.
 enum Handshaking<T, B: IntoBuf> {
-    Flushing(Option<Flush<T, Prioritized<B::Buf>>>),
-    ReadingPreface(Option<ReadPreface<T, Prioritized<B::Buf>>>),
+    Flushing(Flush<T, Prioritized<B::Buf>>),
+    ReadingPreface(ReadPreface<T, Prioritized<B::Buf>>),
+    Empty,
 }
 
 #[derive(Debug)]
@@ -478,52 +479,58 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         trace!("Handshake::poll()");
         use server::Handshaking::*;
-        macro_rules! poll {
-            (|$option:ident, $codec:ident| $body:block) => {{
-                let mut state = $option
-                    .take()
-                    .expect("Handshake::poll(): state option already taken!");
-                match state.poll() {
-                    Ok(Async::Ready($codec)) => {
-                        trace!(
-                            "Handshake::poll(); {}.poll()=Ok(Async::Ready({}))",
-                            stringify!($option),
-                            stringify!($codec)
-                        );
-                        $body
-                    },
-                    Ok(Async::NotReady) => {
-                        trace!(
-                            "Handshake::poll(); {}.poll()=Ok(Async::NotReady)",
-                            stringify!($option)
-                        );
-                        Handshaking::from(state)
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Handshake::poll(); {}.poll()=Err({})",
-                            stringify!($option),
-                            e
-                        );
-                        return Err(e);
-                    }
-                }
-            }}
-        }
-        self.state = match self.state {
-            Flushing(ref mut flush) =>
-                poll!(|flush, codec| {
-                    let reading = ReadPreface::new(codec);
-                    Handshaking::from(reading)
-                }),
-            ReadingPreface(ref mut read_preface) =>
-                poll!(|read_preface, codec| {
-                    let connection =
-                        Connection::new(codec, &self.settings, 2.into());
-                    return Ok(Async::Ready(Server { connection }));
-                }),
+        //macro_rules! poll {
+        //    (|$option:ident, $codec:ident| $body:block) => {{
+        //        let mut state = $option
+        //            .take()
+        //            .expect("Handshake::poll(): state option already taken!");
+        //        match state.poll() {
+        //            Ok(Async::Ready($codec)) => {
+        //                trace!(
+        //                    "Handshake::poll(); {}.poll()=Ok(Async::Ready({}))",
+        //                    stringify!($option),
+        //                    stringify!($codec)
+        //                );
+        //                $body
+        //            },
+        //            Ok(Async::NotReady) => {
+        //                trace!(
+        //                    "Handshake::poll(); {}.poll()=Ok(Async::NotReady)",
+        //                    stringify!($option)
+        //                );
+        //                return Ok(Async::NotReady);
+        //            }
+        //            Err(e) => {
+        //                warn!(
+        //                    "Handshake::poll(); {}.poll()=Err({})",
+        //                    stringify!($option),
+        //                    e
+        //                );
+        //                return Err(e);
+        //            }
+        //        }
+        //    }}
+        //}
+        self.state = if let Flushing(ref mut flush) = self.state {
+            let codec = match flush.poll() {
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::Ready(t)) => Ok(t),
+                Err(e) => Err(e),
+            };
+            Handshaking::from(ReadPreface::new(codec?))
+        } else {
+            mem::replace(&mut self.state, Handshaking::Empty)
         };
-        self.poll()
+        let poll = if let ReadingPreface(ref mut read) = self.state {
+            read.poll()
+        } else {
+            unreachable!()
+        };
+        poll.map(|poll| poll.map(|codec| {
+            let connection =
+                Connection::new(codec, &self.settings, 2.into());
+            Server { connection }
+        }))
     }
 }
 
@@ -660,7 +667,7 @@ where
     B: IntoBuf,
 {
     #[inline] fn from(flush: Flush<T, Prioritized<B::Buf>>) -> Self {
-        Handshaking::Flushing(Some(flush))
+        Handshaking::Flushing(flush)
     }
 }
 
@@ -671,7 +678,7 @@ where
     B: IntoBuf,
 {
     #[inline] fn from(read: ReadPreface<T, Prioritized<B::Buf>>) -> Self {
-        Handshaking::ReadingPreface(Some(read))
+        Handshaking::ReadingPreface(read)
     }
 }
 
