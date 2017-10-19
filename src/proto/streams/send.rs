@@ -58,6 +58,11 @@ impl Send {
 
         let end_stream = frame.is_end_stream();
 
+        assert!(frame.stream_id() >=
+            self.next_stream_id
+                .map_err(|_| OverflowedStreamId)?
+        );
+
         // Update the state
         stream.state.send_open(end_stream)?;
 
