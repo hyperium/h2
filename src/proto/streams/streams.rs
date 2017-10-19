@@ -39,6 +39,13 @@ pub(crate) struct StreamRef<B> {
     key: store::Key,
 }
 
+/// Reference to the stream state that hides the send data chunk generic
+pub(crate) struct OpaqueStreamRef {
+    inner: Arc<Mutex<Inner>>,
+    send_buffer: Arc<SendBufferObj>,
+    key: store::Key,
+}
+
 /// Fields needed to manage state related to managing the set of streams. This
 /// is mostly split out to make ownership happy.
 ///
@@ -74,6 +81,24 @@ struct Actions {
 #[derive(Debug)]
 struct SendBuffer<B> {
     inner: Mutex<Buffer<Frame<B>>>,
+}
+
+/// This trait is used to hide the `B` generic from public API types that do not
+/// operate on outbound data chunks.
+trait SendBufferObj {
+
+    /// Send a reset.
+    ///
+    /// This indirection allows the opaque stream ref handle to send a reset
+    /// without having the `B` generic.
+    fn send_reset(
+        &self,
+        send: &mut Send,
+        reason: Reason,
+        stream: &mut store::Ptr,
+        task: &mut Option<Task>,
+        clear_queue: bool,
+    );
 }
 
 // ===== impl Streams =====
@@ -686,58 +711,6 @@ impl<B> StreamRef<B> {
         me.store.resolve(self.key).is_pending_open
     }
 
-    pub fn body_is_empty(&self) -> bool
-    where
-        B: Buf,
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let stream = me.store.resolve(self.key);
-
-        me.actions.recv.body_is_empty(&stream)
-    }
-
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error>
-    where
-        B: Buf,
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_data(&mut stream)
-    }
-
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error>
-    where
-        B: Buf,
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_trailers(&mut stream)
-    }
-
-    /// Releases recv capacity back to the peer. This may result in sending
-    /// WINDOW_UPDATE frames on both the stream and connection.
-    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError>
-    where
-        B: Buf,
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions
-            .recv
-            .release_capacity(capacity, &mut stream, &mut me.actions.task)
-    }
-
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: WindowSize) {
         let mut me = self.inner.lock().unwrap();
@@ -770,6 +743,19 @@ impl<B> StreamRef<B> {
 
     pub(crate) fn key(&self) -> store::Key {
         self.key
+    }
+
+    pub fn clone_to_opaque(&self) -> OpaqueStreamRef
+        where B: 'static,
+    {
+        // Increment the ref count
+        self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
+
+        OpaqueStreamRef {
+            inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
+            key: self.key.clone(),
+        }
     }
 }
 
@@ -805,47 +791,133 @@ impl<B> fmt::Debug for StreamRef<B> {
 
 impl<B> Drop for StreamRef<B> {
     fn drop(&mut self) {
-        trace!("StreamRef::drop({:?})", self);
-        let mut me = match self.inner.lock() {
-            Ok(inner) => inner,
-            Err(_) => if ::std::thread::panicking() {
-                trace!("StreamRef::drop; mutex poisoned");
-                return;
-            } else {
-                panic!("StreamRef::drop; mutex poisoned");
-            },
-        };
+        drop_stream_ref(&self.inner, &*self.send_buffer, self.key);
+    }
+}
 
+// ===== impl OpaqueStreamRef =====
+
+impl OpaqueStreamRef {
+    pub fn body_is_empty(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        me.actions.recv.body_is_empty(&stream)
+    }
+
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.key);
-        // decrement the stream's ref count by 1.
-        stream.ref_dec();
 
-        let actions = &mut me.actions;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        // the reset must be sent inside a `transition` block.
-        // `transition_after` will release the stream if it is
-        // released.
-        let recv_closed = stream.state.is_recv_closed();
-        me.counts.transition(stream, |_, stream|
-            // if this is the last reference to the stream, reset the stream.
-            if stream.ref_count == 0 && !recv_closed {
-                trace!(
-                    " -> last reference to {:?} was dropped, trying to reset",
-                    stream.id,
-                );
-                actions.send.send_reset(
-                    Reason::CANCEL,
-                    send_buffer,
-                    stream,
-                    &mut actions.task,
-                    false
-                );
-            });
+        me.actions.recv.poll_data(&mut stream)
     }
+
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_trailers(&mut stream)
+    }
+
+    /// Releases recv capacity back to the peer. This may result in sending
+    /// WINDOW_UPDATE frames on both the stream and connection.
+    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions
+            .recv
+            .release_capacity(capacity, &mut stream, &mut me.actions.task)
+    }
+}
+
+impl fmt::Debug for OpaqueStreamRef {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self.inner.lock() {
+            Ok(me) => {
+                let stream = &me.store[self.key];
+                fmt.debug_struct("OpaqueStreamRef")
+                    .field("stream_id", &stream.id)
+                    .field("ref_count", &stream.ref_count)
+                    .finish()
+            },
+            Err(_poisoned) => fmt.debug_struct("OpaqueStreamRef")
+                .field("inner", &"<Poisoned>")
+                .finish(),
+        }
+    }
+}
+
+impl Clone for OpaqueStreamRef {
+    fn clone(&self) -> Self {
+        // Increment the ref count
+        self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
+
+        OpaqueStreamRef {
+            inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
+            key: self.key.clone(),
+        }
+    }
+}
+
+impl Drop for OpaqueStreamRef {
+    fn drop(&mut self) {
+        drop_stream_ref(&self.inner, &self.send_buffer, self.key);
+    }
+}
+
+// Shared across stream ref types
+fn drop_stream_ref<T: SendBufferObj>(
+    inner: &Mutex<Inner>,
+    send_buffer: &T,
+    key: store::Key,
+) {
+    let mut me = match inner.lock() {
+        Ok(inner) => inner,
+        Err(_) => if ::std::thread::panicking() {
+            trace!("StreamRef::drop; mutex poisoned");
+            return;
+        } else {
+            panic!("StreamRef::drop; mutex poisoned");
+        },
+    };
+
+    let me = &mut *me;
+
+    let mut stream = me.store.resolve(key);
+    // decrement the stream's ref count by 1.
+    stream.ref_dec();
+
+    let actions = &mut me.actions;
+
+    // the reset must be sent inside a `transition` block.
+    // `transition_after` will release the stream if it is
+    // released.
+    let recv_closed = stream.state.is_recv_closed();
+    me.counts.transition(stream, |_, stream|
+        // if this is the last reference to the stream, reset the stream.
+        if stream.ref_count == 0 && !recv_closed {
+            trace!(
+                " -> last reference to {:?} was dropped, trying to reset",
+                stream.id,
+            );
+            send_buffer.send_reset(
+                &mut actions.send,
+                Reason::CANCEL,
+                stream,
+                &mut actions.task,
+                false,
+            );
+        });
 }
 
 // ===== impl SendBuffer =====
@@ -854,6 +926,42 @@ impl<B> SendBuffer<B> {
     fn new() -> Self {
         let inner = Mutex::new(Buffer::new());
         SendBuffer { inner }
+    }
+}
+
+impl<B> SendBufferObj for SendBuffer<B> {
+    fn send_reset(
+        &self,
+        send: &mut Send,
+        reason: Reason,
+        stream: &mut store::Ptr,
+        task: &mut Option<Task>,
+        clear_queue: bool,
+    ) {
+        let mut send_buffer = self.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
+        send.send_reset(
+            reason,
+            send_buffer,
+            stream,
+            task,
+            clear_queue);
+    }
+}
+
+// ===== impl SendBufferObj =====
+
+impl SendBufferObj for Arc<SendBufferObj> {
+    fn send_reset(
+        &self,
+        send: &mut Send,
+        reason: Reason,
+        stream: &mut store::Ptr,
+        task: &mut Option<Task>,
+        clear_queue: bool,
+    ) {
+        (**self).send_reset(send, reason, stream, task, clear_queue);
     }
 }
 

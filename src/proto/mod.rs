@@ -8,7 +8,7 @@ mod streams;
 pub(crate) use self::connection::Connection;
 pub(crate) use self::error::Error;
 pub(crate) use self::peer::{Peer, Dyn as DynPeer};
-pub(crate) use self::streams::{Key as StreamKey, StreamRef, Streams};
+pub(crate) use self::streams::{Key as StreamKey, StreamRef, OpaqueStreamRef, Streams};
 
 use codec::Codec;
 

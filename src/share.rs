@@ -12,13 +12,13 @@ pub struct Stream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-pub struct Body<B: IntoBuf> {
-    inner: ReleaseCapacity<B>,
+pub struct Body {
+    inner: ReleaseCapacity,
 }
 
 #[derive(Debug)]
-pub struct ReleaseCapacity<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
+pub struct ReleaseCapacity {
+    inner: proto::OpaqueStreamRef,
 }
 
 // ===== impl Stream =====
@@ -65,8 +65,8 @@ impl<B: IntoBuf> Stream<B> {
 
 // ===== impl Body =====
 
-impl<B: IntoBuf> Body<B> {
-    pub(crate) fn new(inner: ReleaseCapacity<B>) -> Self {
+impl Body {
+    pub(crate) fn new(inner: ReleaseCapacity) -> Self {
         Body { inner }
     }
 
@@ -75,7 +75,7 @@ impl<B: IntoBuf> Body<B> {
         self.inner.inner.body_is_empty()
     }
 
-    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity<B> {
+    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity {
         &mut self.inner
     }
 
@@ -87,7 +87,7 @@ impl<B: IntoBuf> Body<B> {
     }
 }
 
-impl<B: IntoBuf> futures::Stream for Body<B> {
+impl futures::Stream for Body {
     type Item = Bytes;
     type Error = ::Error;
 
@@ -96,10 +96,7 @@ impl<B: IntoBuf> futures::Stream for Body<B> {
     }
 }
 
-impl<B: IntoBuf> fmt::Debug for Body<B>
-where B: fmt::Debug,
-      B::Buf: fmt::Debug,
-{
+impl fmt::Debug for Body {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Body")
             .field("inner", &self.inner)
@@ -109,8 +106,8 @@ where B: fmt::Debug,
 
 // ===== impl ReleaseCapacity =====
 
-impl<B: IntoBuf> ReleaseCapacity<B> {
-    pub(crate) fn new(inner: proto::StreamRef<B::Buf>) -> Self {
+impl ReleaseCapacity {
+    pub(crate) fn new(inner: proto::OpaqueStreamRef) -> Self {
         ReleaseCapacity { inner }
     }
 
@@ -121,7 +118,7 @@ impl<B: IntoBuf> ReleaseCapacity<B> {
     }
 }
 
-impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
+impl Clone for ReleaseCapacity {
     fn clone(&self) -> Self {
         let inner = self.inner.clone();
         ReleaseCapacity { inner }

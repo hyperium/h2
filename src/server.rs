@@ -79,6 +79,7 @@ impl<T, B> Server<T, B>
 where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,
+    B::Buf: 'static,
 {
     fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
         // Create the codec
@@ -126,8 +127,9 @@ impl<T, B> futures::Stream for Server<T, B>
 where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,
+    B::Buf: 'static,
 {
-    type Item = (Request<Body<B>>, Respond<B>);
+    type Item = (Request<Body>, Respond<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -145,7 +147,7 @@ where
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
-            let body = Body::new(ReleaseCapacity::new(inner.clone()));
+            let body = Body::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
             let request = Request::from_parts(head, body);
             let respond = Respond { inner };

@@ -1,4 +1,3 @@
-extern crate bytes;
 extern crate env_logger;
 extern crate futures;
 extern crate h2;
@@ -8,7 +7,6 @@ extern crate tokio_core;
 
 use h2::client::{Body, Client};
 
-use bytes::*;
 use futures::*;
 use http::*;
 
@@ -16,7 +14,7 @@ use tokio_core::net::TcpStream;
 use tokio_core::reactor;
 
 struct Process {
-    body: Body<Bytes>,
+    body: Body,
     trailers: bool,
 }
 

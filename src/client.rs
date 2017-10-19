@@ -74,6 +74,7 @@ impl Client<Bytes> {
 impl<B> Client<B>
 where
     B: IntoBuf,
+    B::Buf: 'static,
 {
     fn handshake2<T>(io: T, builder: Builder) -> Handshake<T, B>
     where
@@ -225,6 +226,7 @@ impl Builder {
     where
         T: AsyncRead + AsyncWrite,
         B: IntoBuf,
+        B::Buf: 'static,
     {
         Client::handshake2(io, self.clone())
     }
@@ -283,9 +285,11 @@ where
 
 // ===== impl Handshake =====
 
-impl<T, B: IntoBuf> Future for Handshake<T, B>
+impl<T, B> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite,
+    B: IntoBuf,
+    B::Buf: 'static,
 {
     type Item = (Client<B>, Connection<T, B>);
     type Error = ::Error;
@@ -334,13 +338,16 @@ where
 
 // ===== impl ResponseFuture =====
 
-impl<B: IntoBuf> Future for ResponseFuture<B> {
-    type Item = Response<Body<B>>;
+impl<B> Future for ResponseFuture<B>
+where B: IntoBuf,
+      B::Buf: 'static,
+{
+    type Item = Response<Body>;
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
-        let body = Body::new(ReleaseCapacity::new(self.inner.clone()));
+        let body = Body::new(ReleaseCapacity::new(self.inner.clone_to_opaque()));
 
         Ok(Response::from_parts(parts, body).into())
     }
