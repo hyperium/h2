@@ -8,7 +8,7 @@ pub fn byte_str(s: &str) -> String<Bytes> {
     String::try_from(Bytes::from(s)).unwrap()
 }
 
-pub fn wait_for_capacity(stream: h2::Stream<Bytes>, target: usize) -> WaitForCapacity {
+pub fn wait_for_capacity(stream: h2::SendStream<Bytes>, target: usize) -> WaitForCapacity {
     WaitForCapacity {
         stream: Some(stream),
         target: target,
@@ -16,18 +16,18 @@ pub fn wait_for_capacity(stream: h2::Stream<Bytes>, target: usize) -> WaitForCap
 }
 
 pub struct WaitForCapacity {
-    stream: Option<h2::Stream<Bytes>>,
+    stream: Option<h2::SendStream<Bytes>>,
     target: usize,
 }
 
 impl WaitForCapacity {
-    fn stream(&mut self) -> &mut h2::Stream<Bytes> {
+    fn stream(&mut self) -> &mut h2::SendStream<Bytes> {
         self.stream.as_mut().unwrap()
     }
 }
 
 impl Future for WaitForCapacity {
-    type Item = h2::Stream<Bytes>;
+    type Item = h2::SendStream<Bytes>;
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, ()> {

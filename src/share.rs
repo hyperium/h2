@@ -8,11 +8,11 @@ use http::{HeaderMap};
 use std::fmt;
 
 #[derive(Debug)]
-pub struct Stream<B: IntoBuf> {
+pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-pub struct Body {
+pub struct RecvStream {
     inner: ReleaseCapacity,
 }
 
@@ -23,9 +23,9 @@ pub struct ReleaseCapacity {
 
 // ===== impl Stream =====
 
-impl<B: IntoBuf> Stream<B> {
+impl<B: IntoBuf> SendStream<B> {
     pub(crate) fn new(inner: proto::StreamRef<B::Buf>) -> Self {
-        Stream { inner }
+        SendStream { inner }
     }
 
     /// Request capacity to send data
@@ -65,11 +65,12 @@ impl<B: IntoBuf> Stream<B> {
 
 // ===== impl Body =====
 
-impl Body {
+impl RecvStream {
     pub(crate) fn new(inner: ReleaseCapacity) -> Self {
-        Body { inner }
+        RecvStream { inner }
     }
 
+    // TODO: Rename to "is_end_stream"
     pub fn is_empty(&self) -> bool {
         // If the recv side is closed and the receive queue is empty, the body is empty.
         self.inner.inner.body_is_empty()
@@ -87,7 +88,7 @@ impl Body {
     }
 }
 
-impl futures::Stream for Body {
+impl futures::Stream for RecvStream {
     type Item = Bytes;
     type Error = ::Error;
 
@@ -96,9 +97,9 @@ impl futures::Stream for Body {
     }
 }
 
-impl fmt::Debug for Body {
+impl fmt::Debug for RecvStream {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Body")
+        fmt.debug_struct("RecvStream")
             .field("inner", &self.inner)
             .finish()
     }

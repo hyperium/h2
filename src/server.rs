@@ -1,4 +1,4 @@
-use {Stream, Body, ReleaseCapacity};
+use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
 use proto::{self, Connection, Prioritized};
@@ -130,7 +130,7 @@ where
     B: IntoBuf + 'static,
     B::Buf: 'static,
 {
-    type Item = (Request<Body>, Respond<B>);
+    type Item = (Request<RecvStream>, Respond<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -148,7 +148,7 @@ where
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
-            let body = Body::new(ReleaseCapacity::new(inner.clone_to_opaque()));
+            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
             let request = Request::from_parts(head, body);
             let respond = Respond { inner };
@@ -221,10 +221,10 @@ impl<B: IntoBuf> Respond<B> {
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<Stream<B>, ::Error> {
+    ) -> Result<SendStream<B>, ::Error> {
         self.inner
             .send_response(response, end_of_stream)
-            .map(|_| Stream::new(self.inner.clone()))
+            .map(|_| SendStream::new(self.inner.clone()))
             .map_err(Into::into)
     }
 

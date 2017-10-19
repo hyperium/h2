@@ -1,4 +1,4 @@
-use {Stream, Body, ReleaseCapacity};
+use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
@@ -106,7 +106,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture, Stream<B>), ::Error> {
+    ) -> Result<(ResponseFuture, SendStream<B>), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -119,7 +119,7 @@ where
                     inner: stream.clone_to_opaque(),
                 };
 
-                let stream = Stream::new(stream);
+                let stream = SendStream::new(stream);
 
                 (response, stream)
             })
@@ -338,12 +338,12 @@ where
 // ===== impl ResponseFuture =====
 
 impl Future for ResponseFuture {
-    type Item = Response<Body>;
+    type Item = Response<RecvStream>;
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
-        let body = Body::new(ReleaseCapacity::new(self.inner.clone()));
+        let body = RecvStream::new(ReleaseCapacity::new(self.inner.clone()));
 
         Ok(Response::from_parts(parts, body).into())
     }

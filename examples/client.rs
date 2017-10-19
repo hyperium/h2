@@ -6,7 +6,7 @@ extern crate io_dump;
 extern crate tokio_core;
 
 use h2::client::{Client};
-use h2::Body;
+use h2::RecvStream;
 
 use futures::*;
 use http::*;
@@ -15,7 +15,7 @@ use tokio_core::net::TcpStream;
 use tokio_core::reactor;
 
 struct Process {
-    body: Body,
+    body: RecvStream,
     trailers: bool,
 }
 
