@@ -1,13 +1,15 @@
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Connection, WindowSize};
+use proto::{self, Connection};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
-use http::{HeaderMap, Request, Response};
+use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use std::fmt;
+
+pub use share::*;
 
 /// In progress H2 connection binding
 pub struct Handshake<T, B: IntoBuf = Bytes> {
@@ -32,20 +34,6 @@ pub struct Builder {
 /// Instances of `Respond` are used to send a respond or reserve push promises.
 #[derive(Debug)]
 pub struct Respond<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
-}
-
-#[derive(Debug)]
-pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
-}
-
-pub struct Body<B: IntoBuf> {
-    inner: ReleaseCapacity<B>,
-}
-
-#[derive(Debug)]
-pub struct ReleaseCapacity<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
@@ -157,9 +145,7 @@ where
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
-            let body = Body {
-                inner: ReleaseCapacity { inner: inner.clone() },
-            };
+            let body = Body::new(ReleaseCapacity::new(inner.clone()));
 
             let request = Request::from_parts(head, body);
             let respond = Respond { inner };
@@ -235,107 +221,11 @@ impl<B: IntoBuf> Respond<B> {
     ) -> Result<Stream<B>, ::Error> {
         self.inner
             .send_response(response, end_of_stream)
-            .map(|_| Stream { inner: self.inner.clone() })
+            .map(|_| Stream::new(self.inner.clone()))
             .map_err(Into::into)
     }
 
     // TODO: Support reserving push promises.
-}
-
-// ===== impl Stream =====
-
-impl<B: IntoBuf> Stream<B> {
-    /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: usize) {
-        // TODO: Check for overflow
-        self.inner.reserve_capacity(capacity as WindowSize)
-    }
-
-    /// Returns the stream's current send capacity.
-    pub fn capacity(&self) -> usize {
-        self.inner.capacity() as usize
-    }
-
-    /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ::Error> {
-        let res = try_ready!(self.inner.poll_capacity());
-        Ok(Async::Ready(res.map(|v| v as usize)))
-    }
-
-    /// Send a single data frame
-    pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), ::Error> {
-        self.inner
-            .send_data(data.into_buf(), end_of_stream)
-            .map_err(Into::into)
-    }
-
-    /// Send trailers
-    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
-        self.inner.send_trailers(trailers).map_err(Into::into)
-    }
-
-    /// Reset the stream
-    pub fn send_reset(&mut self, reason: Reason) {
-        self.inner.send_reset(reason)
-    }
-}
-
-// ===== impl Body =====
-
-impl<B: IntoBuf> Body<B> {
-    pub fn is_empty(&self) -> bool {
-        // If the recv side is closed and the receive queue is empty, the body is empty.
-        self.inner.inner.body_is_empty()
-    }
-
-    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity<B> {
-        &mut self.inner
-    }
-
-    /// Poll trailers
-    ///
-    /// This function **must** not be called until `Body::poll` returns `None`.
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
-        self.inner.inner.poll_trailers().map_err(Into::into)
-    }
-}
-
-impl<B: IntoBuf> futures::Stream for Body<B> {
-    type Item = Bytes;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.inner.poll_data().map_err(Into::into)
-    }
-}
-
-
-impl<B: IntoBuf> fmt::Debug for Body<B>
-where B: fmt::Debug,
-      B::Buf: fmt::Debug,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Body")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
-
-// ===== impl ReleaseCapacity =====
-
-impl<B: IntoBuf> ReleaseCapacity<B> {
-    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
-        self.inner
-            .release_capacity(sz as proto::WindowSize)
-            .map_err(Into::into)
-    }
-}
-
-impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
-    fn clone(&self) -> Self {
-        let inner = self.inner.clone();
-        ReleaseCapacity { inner }
-    }
 }
 
 // ===== impl Flush =====

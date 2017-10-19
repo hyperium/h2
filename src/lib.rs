@@ -42,6 +42,7 @@ pub mod frame;
 
 pub mod client;
 pub mod server;
+mod share;
 
 pub use error::{Error, Reason};
 
