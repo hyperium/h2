@@ -1,3 +1,4 @@
+use {Stream, Body, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
 use proto::{self, Connection, Prioritized};
@@ -7,8 +8,6 @@ use futures::{self, Async, Future, Poll};
 use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
-
-pub use share::*;
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {

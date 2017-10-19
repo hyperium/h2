@@ -1,3 +1,4 @@
+use {Stream, Body, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
@@ -11,8 +12,6 @@ use tokio_io::io::WriteAll;
 use std::fmt;
 use std::io;
 use std::marker::PhantomData;
-
-pub use share::*;
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {

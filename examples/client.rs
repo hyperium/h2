@@ -5,7 +5,8 @@ extern crate http;
 extern crate io_dump;
 extern crate tokio_core;
 
-use h2::client::{Body, Client};
+use h2::client::{Client};
+use h2::Body;
 
 use futures::*;
 use http::*;
