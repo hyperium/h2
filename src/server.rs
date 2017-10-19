@@ -10,7 +10,9 @@ use std::{convert, fmt, mem};
 
 /// In progress H2 connection binding
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+    /// SETTINGS frame that will be sent once the connection is established.
     settings: Settings,
+    /// The current state of the handshake.
     state: Handshaking<T, B>
 }
 
@@ -49,6 +51,16 @@ pub struct Send<T> {
     eos: bool,
 }
 
+/// Stages of an in-progress handshake.
+enum Handshaking<T, B: IntoBuf> {
+    /// State 1. Server is flushing pending SETTINGS frame.
+    Flushing(Flush<T, Prioritized<B::Buf>>),
+    /// State 2. Server is waiting for the client preface.
+    ReadingPreface(ReadPreface<T, Prioritized<B::Buf>>),
+    /// Dummy state for `mem::replace`.
+    Empty,
+}
+
 /// Flush a Sink
 struct Flush<T, B> {
     codec: Option<Codec<T, B>>,
@@ -58,13 +70,6 @@ struct Flush<T, B> {
 struct ReadPreface<T, B> {
     codec: Option<Codec<T, B>>,
     pos: usize,
-}
-
-/// Stages of an in-progress handshake.
-enum Handshaking<T, B: IntoBuf> {
-    Flushing(Flush<T, Prioritized<B::Buf>>),
-    ReadingPreface(ReadPreface<T, Prioritized<B::Buf>>),
-    Empty,
 }
 
 #[derive(Debug)]
@@ -477,58 +482,48 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        trace!("Handshake::poll()");
+        trace!("Handshake::poll(); state={:?};", self.state);
         use server::Handshaking::*;
-        //macro_rules! poll {
-        //    (|$option:ident, $codec:ident| $body:block) => {{
-        //        let mut state = $option
-        //            .take()
-        //            .expect("Handshake::poll(): state option already taken!");
-        //        match state.poll() {
-        //            Ok(Async::Ready($codec)) => {
-        //                trace!(
-        //                    "Handshake::poll(); {}.poll()=Ok(Async::Ready({}))",
-        //                    stringify!($option),
-        //                    stringify!($codec)
-        //                );
-        //                $body
-        //            },
-        //            Ok(Async::NotReady) => {
-        //                trace!(
-        //                    "Handshake::poll(); {}.poll()=Ok(Async::NotReady)",
-        //                    stringify!($option)
-        //                );
-        //                return Ok(Async::NotReady);
-        //            }
-        //            Err(e) => {
-        //                warn!(
-        //                    "Handshake::poll(); {}.poll()=Err({})",
-        //                    stringify!($option),
-        //                    e
-        //                );
-        //                return Err(e);
-        //            }
-        //        }
-        //    }}
-        //}
+
         self.state = if let Flushing(ref mut flush) = self.state {
+            // We're currently flushing a pending SETTINGS frame. Poll the
+            // flush future, and, if it's completed, advance our state to wait
+            // for the client preface.
             let codec = match flush.poll() {
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
-                Ok(Async::Ready(t)) => Ok(t),
+                Ok(Async::NotReady) => {
+                    trace!("Handshake::poll(); flush.poll()=NotReady");
+                    return Ok(Async::NotReady);
+                },
+                Ok(Async::Ready(t)) => {
+                    trace!("Handshake::poll(); flush.poll()=Ready");
+                    Ok(t)
+                },
                 Err(e) => Err(e),
             };
             Handshaking::from(ReadPreface::new(codec?))
         } else {
+            // Otherwise, we haven't actually advanced the state, but we have
+            // to replace it with itself, because we have to return a value.
+            // (note that the assignment to `self.state` has to be outside of
+            // the `if let` block above in order to placate the borrow checker).
             mem::replace(&mut self.state, Handshaking::Empty)
         };
         let poll = if let ReadingPreface(ref mut read) = self.state {
+            // We're now waiting for the client preface. Poll the `ReadPreface`
+            // future. If it has completed, we will create a `Server` handle
+            // for the connection.
             read.poll()
+            // Actually creating the `Connection` has to occur outside of this
+            // `if let` block, because we've borrowed `self` mutably in order
+            // to poll the state and won't be able to borrow the SETTINGS frame
+            // as well until we release the borrow for `poll()`.
         } else {
-            unreachable!()
+            unreachable!("Handshake::poll() state was not advanced completely!")
         };
         poll.map(|poll| poll.map(|codec| {
             let connection =
                 Connection::new(codec, &self.settings, 2.into());
+            trace!("Handshake::poll(); connection established!");
             Server { connection }
         }))
     }
@@ -660,6 +655,22 @@ impl proto::Peer for Peer {
 
 
 // ===== impl Handshaking =====
+impl<T, B> fmt::Debug for Handshaking<T, B>
+where
+    B: IntoBuf
+{
+    #[inline] fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            Handshaking::Flushing(_) =>
+                write!(f, "Handshaking::Flushing(_)"),
+            Handshaking::ReadingPreface(_) =>
+                write!(f, "Handshaking::ReadingPreface(_)"),
+            Handshaking::Empty =>
+                write!(f, "Handshaking::Empty"),
+        }
+
+    }
+}
 
 impl<T, B> convert::From<Flush<T, Prioritized<B::Buf>>> for Handshaking<T, B>
 where
