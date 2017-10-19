@@ -10,7 +10,7 @@ use std::{cmp, io};
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
-pub(super) struct Send<B> {
+pub(super) struct Send {
     /// Stream identifier to use for next initialized stream.
     next_stream_id: Result<StreamId, StreamIdOverflow>,
 
@@ -18,10 +18,10 @@ pub(super) struct Send<B> {
     init_window_sz: WindowSize,
 
     /// Prioritization layer
-    prioritize: Prioritize<B>,
+    prioritize: Prioritize,
 }
 
-impl<B> Send<B> {
+impl Send {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
         Send {
@@ -42,10 +42,11 @@ impl<B> Send<B> {
         Ok(stream_id)
     }
 
-    pub fn send_headers(
+    pub fn send_headers<B>(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         counts: &mut Counts,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
@@ -69,7 +70,7 @@ impl<B> Send<B> {
         }
 
         // Queue the frame for sending
-        self.prioritize.queue_frame(frame.into(), stream, task);
+        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
 
         Ok(())
     }
@@ -81,10 +82,11 @@ impl<B> Send<B> {
     /// + `clear_queue`: if true, all pending outbound frames will be cleared,
     ///    if false, the RST_STREAM frame will be appended to the end of the
     ///    send queue.
-    pub fn send_reset(
+    pub fn send_reset<B>(
         &mut self,
         reason: Reason,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
         clear_queue: bool,
     ) {
@@ -133,7 +135,7 @@ impl<B> Send<B> {
         //       the send queue to that method?
         if clear_queue {
             // Clear all pending outbound frames
-            self.prioritize.clear_queue(stream);
+            self.prioritize.clear_queue(buffer, stream);
         }
 
         // Reclaim all capacity assigned to the stream and re-assign it to the
@@ -144,25 +146,26 @@ impl<B> Send<B> {
         let frame = frame::Reset::new(stream.id, reason);
 
         trace!("send_reset -- queueing; frame={:?}", frame);
-        self.prioritize.queue_frame(frame.into(), stream, task);
+        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
     }
 
-    pub fn send_data(
+    pub fn send_data<B>(
         &mut self,
         frame: frame::Data<B>,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), UserError>
-    where
-        B: Buf,
+        where B: Buf,
     {
-        self.prioritize.send_data(frame, stream, task)
+        self.prioritize.send_data(frame, buffer, stream, task)
     }
 
-    pub fn send_trailers(
+    pub fn send_trailers<B>(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
         // TODO: Should this logic be moved into state.rs?
@@ -173,7 +176,7 @@ impl<B> Send<B> {
         stream.state.send_close();
 
         trace!("send_trailers -- queuing; frame={:?}", frame);
-        self.prioritize.queue_frame(frame.into(), stream, task);
+        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
 
         // Release any excess capacity
         self.prioritize.reserve_capacity(0, stream);
@@ -181,27 +184,27 @@ impl<B> Send<B> {
         Ok(())
     }
 
-    pub fn poll_complete<T>(
+    pub fn poll_complete<T, B>(
         &mut self,
-        store: &mut Store<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
-    where
-        T: AsyncWrite,
-        B: Buf,
+    where T: AsyncWrite,
+          B: Buf,
     {
-        self.prioritize.poll_complete(store, counts, dst)
+        self.prioritize.poll_complete(buffer, store, counts, dst)
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B>) {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr) {
         self.prioritize.reserve_capacity(capacity, stream)
     }
 
     pub fn poll_capacity(
         &mut self,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
     ) -> Poll<Option<WindowSize>, UserError> {
         if !stream.state.is_send_streaming() {
             return Ok(Async::Ready(None));
@@ -218,7 +221,7 @@ impl<B> Send<B> {
     }
 
     /// Current available stream send capacity
-    pub fn capacity(&self, stream: &mut store::Ptr<B>) -> WindowSize {
+    pub fn capacity(&self, stream: &mut store::Ptr) -> WindowSize {
         let available = stream.send_flow.available().as_size();
         let buffered = stream.buffered_send_data;
 
@@ -232,21 +235,25 @@ impl<B> Send<B> {
     pub fn recv_connection_window_update(
         &mut self,
         frame: frame::WindowUpdate,
-        store: &mut Store<B>,
+        store: &mut Store,
     ) -> Result<(), Reason> {
         self.prioritize
             .recv_connection_window_update(frame.size_increment(), store)
     }
 
-    pub fn recv_stream_window_update(
+    pub fn recv_stream_window_update<B>(
         &mut self,
         sz: WindowSize,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             debug!("recv_stream_window_update !!; err={:?}", e);
-            self.send_reset(Reason::FLOW_CONTROL_ERROR.into(), stream, task, true);
+
+            self.send_reset(
+                Reason::FLOW_CONTROL_ERROR.into(),
+                buffer, stream, task, true);
 
             return Err(e);
         }
@@ -254,9 +261,13 @@ impl<B> Send<B> {
         Ok(())
     }
 
-    pub fn recv_err(&mut self, stream: &mut store::Ptr<B>) {
+    pub fn recv_err<B>(
+        &mut self,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr
+    ) {
         // Clear all pending outbound frames
-        self.prioritize.clear_queue(stream);
+        self.prioritize.clear_queue(buffer, stream);
 
         // Reclaim all capacity assigned to the stream and re-assign it to the
         // connection
@@ -267,10 +278,11 @@ impl<B> Send<B> {
             .assign_connection_capacity(available, stream);
     }
 
-    pub fn apply_remote_settings(
+    pub fn apply_remote_settings<B>(
         &mut self,
         settings: &frame::Settings,
-        store: &mut Store<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
         task: &mut Option<Task>,
     ) -> Result<(), RecvError> {
         // Applies an update to the remote endpoint's initial window size.
@@ -330,7 +342,7 @@ impl<B> Send<B> {
                 let inc = val - old_val;
 
                 store.for_each(|mut stream| {
-                    self.recv_stream_window_update(inc, &mut stream, task)
+                    self.recv_stream_window_update(inc, buffer, &mut stream, task)
                         .map_err(RecvError::Connection)
                 })?;
             }

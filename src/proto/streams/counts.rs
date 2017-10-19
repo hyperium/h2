@@ -82,9 +82,9 @@ impl Counts {
     ///
     /// If the stream state transitions to closed, this function will perform
     /// all necessary cleanup.
-    pub fn transition<F, B, U>(&mut self, mut stream: store::Ptr<B>, f: F) -> U
+    pub fn transition<F, U>(&mut self, mut stream: store::Ptr, f: F) -> U
     where
-        F: FnOnce(&mut Self, &mut store::Ptr<B>) -> U,
+        F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
         let is_counted = stream.is_counted();
 
@@ -97,7 +97,7 @@ impl Counts {
     }
 
     // TODO: move this to macro?
-    pub fn transition_after<B>(&mut self, mut stream: store::Ptr<B>, is_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool) {
         if stream.is_closed() {
             stream.unlink();
 

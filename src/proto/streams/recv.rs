@@ -7,10 +7,9 @@ use proto::*;
 use http::HeaderMap;
 
 use std::io;
-use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub(super) struct Recv<B> {
+pub(super) struct Recv {
     /// Initial window size of remote initiated streams
     init_window_sz: WindowSize,
 
@@ -27,10 +26,10 @@ pub(super) struct Recv<B> {
     last_processed_id: StreamId,
 
     /// Streams that have pending window updates
-    pending_window_updates: store::Queue<B, stream::NextWindowUpdate>,
+    pending_window_updates: store::Queue<stream::NextWindowUpdate>,
 
     /// New streams to be accepted
-    pending_accept: store::Queue<B, stream::NextAccept>,
+    pending_accept: store::Queue<stream::NextAccept>,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Event>,
@@ -40,8 +39,6 @@ pub(super) struct Recv<B> {
 
     /// If push promises are allowed to be recevied.
     is_push_enabled: bool,
-
-    _p: PhantomData<B>,
 }
 
 #[derive(Debug)]
@@ -57,7 +54,7 @@ struct Indices {
     tail: store::Key,
 }
 
-impl<B> Recv<B> {
+impl Recv {
     pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         let next_stream_id = if peer.is_server() { 1 } else { 2 };
 
@@ -80,7 +77,6 @@ impl<B> Recv<B> {
             buffer: Buffer::new(),
             refused: None,
             is_push_enabled: config.local_push_enabled,
-            _p: PhantomData,
         }
     }
 
@@ -127,7 +123,7 @@ impl<B> Recv<B> {
     pub fn recv_headers(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
         counts: &mut Counts,
     ) -> Result<(), RecvError> {
         trace!("opening stream; init_window={}", self.init_window_sz);
@@ -182,7 +178,7 @@ impl<B> Recv<B> {
     /// Called by the server to get the request
     ///
     /// TODO: Should this fn return `Result`?
-    pub fn take_request(&mut self, stream: &mut store::Ptr<B>)
+    pub fn take_request(&mut self, stream: &mut store::Ptr)
         -> Request<()>
     {
         use super::peer::PollMessage::*;
@@ -196,7 +192,7 @@ impl<B> Recv<B> {
     /// Called by the client to get the response
     pub fn poll_response(
         &mut self,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
     ) -> Poll<Response<()>, proto::Error> {
         use super::peer::PollMessage::*;
 
@@ -218,7 +214,7 @@ impl<B> Recv<B> {
     pub fn recv_trailers(
         &mut self,
         frame: frame::Headers,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
     ) -> Result<(), RecvError> {
         // Transition the state
         stream.state.recv_close()?;
@@ -245,7 +241,7 @@ impl<B> Recv<B> {
     pub fn release_capacity(
         &mut self,
         capacity: WindowSize,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
         trace!("release_capacity; size={}", capacity);
@@ -322,7 +318,7 @@ impl<B> Recv<B> {
         }
     }
 
-    pub fn body_is_empty(&self, stream: &store::Ptr<B>) -> bool {
+    pub fn body_is_empty(&self, stream: &store::Ptr) -> bool {
         if !stream.state.is_recv_closed() {
             return false;
         }
@@ -337,7 +333,7 @@ impl<B> Recv<B> {
     pub fn recv_data(
         &mut self,
         frame: frame::Data,
-        stream: &mut store::Ptr<B>,
+        stream: &mut store::Ptr,
     ) -> Result<(), RecvError> {
         let sz = frame.payload().len();
 
@@ -408,9 +404,9 @@ impl<B> Recv<B> {
     pub fn recv_push_promise(
         &mut self,
         frame: frame::PushPromise,
-        send: &Send<B>,
+        send: &Send,
         stream: store::Key,
-        store: &mut Store<B>,
+        store: &mut Store,
     ) -> Result<(), RecvError> {
         // First, make sure that the values are legit
         self.ensure_can_reserve(frame.promised_id())?;
@@ -472,7 +468,7 @@ impl<B> Recv<B> {
     pub fn recv_reset(
         &mut self,
         frame: frame::Reset,
-        stream: &mut Stream<B>,
+        stream: &mut Stream,
     ) -> Result<(), RecvError> {
         let err = proto::Error::Proto(frame.reason());
 
@@ -483,7 +479,7 @@ impl<B> Recv<B> {
     }
 
     /// Handle a received error
-    pub fn recv_err(&mut self, err: &proto::Error, stream: &mut Stream<B>) {
+    pub fn recv_err(&mut self, err: &proto::Error, stream: &mut Stream) {
         // Receive an error
         stream.state.recv_err(err);
 
@@ -520,7 +516,7 @@ impl<B> Recv<B> {
     }
 
     /// Send any pending refusals.
-    pub fn send_pending_refusal<T>(
+    pub fn send_pending_refusal<T, B>(
         &mut self,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
@@ -545,9 +541,9 @@ impl<B> Recv<B> {
         Ok(Async::Ready(()))
     }
 
-    pub fn poll_complete<T>(
+    pub fn poll_complete<T, B>(
         &mut self,
-        store: &mut Store<B>,
+        store: &mut Store,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -564,7 +560,7 @@ impl<B> Recv<B> {
     }
 
     /// Send connection level window update
-    fn send_connection_window_update<T>(
+    fn send_connection_window_update<T, B>(
         &mut self,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
@@ -595,9 +591,9 @@ impl<B> Recv<B> {
 
 
     /// Send stream level window update
-    pub fn send_stream_window_updates<T>(
+    pub fn send_stream_window_updates<T, B>(
         &mut self,
-        store: &mut Store<B>,
+        store: &mut Store,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -640,11 +636,11 @@ impl<B> Recv<B> {
         }
     }
 
-    pub fn next_incoming(&mut self, store: &mut Store<B>) -> Option<store::Key> {
+    pub fn next_incoming(&mut self, store: &mut Store) -> Option<store::Key> {
         self.pending_accept.pop(store).map(|ptr| ptr.key())
     }
 
-    pub fn poll_data(&mut self, stream: &mut Stream<B>) -> Poll<Option<Bytes>, proto::Error> {
+    pub fn poll_data(&mut self, stream: &mut Stream) -> Poll<Option<Bytes>, proto::Error> {
         // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Data(payload)) => Ok(Some(payload).into()),
@@ -661,7 +657,7 @@ impl<B> Recv<B> {
 
     pub fn poll_trailers(
         &mut self,
-        stream: &mut Stream<B>,
+        stream: &mut Stream,
     ) -> Poll<Option<HeaderMap>, proto::Error> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Trailers(trailers)) => Ok(Some(trailers).into()),
@@ -675,7 +671,7 @@ impl<B> Recv<B> {
         }
     }
 
-    fn schedule_recv<T>(&mut self, stream: &mut Stream<B>) -> Poll<Option<T>, proto::Error> {
+    fn schedule_recv<T>(&mut self, stream: &mut Stream) -> Poll<Option<T>, proto::Error> {
         if stream.state.ensure_recv_open()? {
             // Request to get notified once more frames arrive
             stream.recv_task = Some(task::current());

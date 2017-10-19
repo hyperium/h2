@@ -33,17 +33,27 @@ pub(crate) struct StreamRef<B> {
 struct Inner<B> {
     /// Tracks send & recv stream concurrency.
     counts: Counts,
-    actions: Actions<B>,
-    store: Store<B>,
+
+    /// Connection level state and performs actions on streams
+    actions: Actions,
+
+    /// Stores stream state
+    store: Store,
+
+    /// Holds frames that are waiting to be written to the socket
+    ///
+    /// This buffer is kept here to avoid the `B` generic making its way into
+    /// inner types.
+    send_buffer: Buffer<Frame<B>>,
 }
 
 #[derive(Debug)]
-struct Actions<B> {
+struct Actions {
     /// Manages state transitions initiated by receiving frames
-    recv: Recv<B>,
+    recv: Recv,
 
     /// Manages state transitions initiated by sending frames
-    send: Send<B>,
+    send: Send,
 
     /// Task that calls `poll_complete`.
     task: Option<task::Task>,
@@ -70,6 +80,7 @@ where
                     conn_error: None,
                 },
                 store: Store::new(),
+                send_buffer: Buffer::new(),
             })),
             _p: ::std::marker::PhantomData,
         }
@@ -108,6 +119,7 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             trace!(
@@ -127,7 +139,7 @@ where
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            actions.reset_on_recv_stream_err(stream, res)
+            actions.reset_on_recv_stream_err(send_buffer, stream, res)
         })
     }
 
@@ -143,10 +155,11 @@ where
         };
 
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             let res = actions.recv.recv_data(frame, stream);
-            actions.reset_on_recv_stream_err(stream, res)
+            actions.reset_on_recv_stream_err(send_buffer, stream, res)
         })
     }
 
@@ -188,6 +201,7 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
+        let send_buffer = &mut me.send_buffer;
 
         let last_processed_id = actions.recv.last_processed_id();
 
@@ -195,7 +209,7 @@ where
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_err(err, &mut *stream);
-                    actions.send.recv_err(stream);
+                    actions.send.recv_err(send_buffer, stream);
                     Ok::<_, ()>(())
                 })
             })
@@ -212,6 +226,7 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
+        let send_buffer = &mut me.send_buffer;
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
@@ -220,7 +235,7 @@ where
             .for_each(|stream| if stream.id > last_stream_id {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_err(&err, &mut *stream);
-                    actions.send.recv_err(stream);
+                    actions.send.recv_err(send_buffer, stream);
                     Ok::<_, ()>(())
                 })
             } else {
@@ -254,6 +269,7 @@ where
                 // the error is informational.
                 let _ = me.actions.send.recv_stream_window_update(
                     frame.size_increment(),
+                    &mut me.send_buffer,
                     &mut stream,
                     &mut me.actions.task,
                 );
@@ -343,6 +359,7 @@ where
 
         // Send any other pending frames
         try_ready!(me.actions.send.poll_complete(
+            &mut me.send_buffer,
             &mut me.store,
             &mut me.counts,
             dst
@@ -360,9 +377,8 @@ where
 
         me.counts.apply_remote_settings(frame);
 
-        me.actions
-            .send
-            .apply_remote_settings(frame, &mut me.store, &mut me.actions.task)
+        me.actions.send.apply_remote_settings(
+            frame, &mut me.send_buffer, &mut me.store, &mut me.actions.task)
     }
 
     pub fn send_request(
@@ -422,6 +438,7 @@ where
 
             me.actions.send.send_headers(
                 headers,
+                &mut me.send_buffer,
                 &mut stream,
                 &mut me.counts,
                 &mut me.actions.task,
@@ -461,11 +478,11 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |_, stream| {
-            actions
-                .send
-                .send_reset(reason, stream, &mut actions.task, true)
+            actions.send.send_reset(
+                reason, send_buffer, stream, &mut actions.task, true)
         })
     }
 }
@@ -534,6 +551,7 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the data frame
@@ -541,7 +559,7 @@ impl<B> StreamRef<B> {
             frame.set_end_stream(end_stream);
 
             // Send the data frame
-            actions.send.send_data(frame, stream, &mut actions.task)
+            actions.send.send_data(frame, send_buffer, stream, &mut actions.task)
         })
     }
 
@@ -551,13 +569,15 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the trailers frame
             let frame = frame::Headers::trailers(stream.id, trailers);
 
             // Send the trailers frame
-            actions.send.send_trailers(frame, stream, &mut actions.task)
+            actions.send.send_trailers(
+                frame, send_buffer, stream, &mut actions.task)
         })
     }
 
@@ -567,11 +587,11 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |_, stream| {
-            actions
-                .send
-                .send_reset(reason, stream, &mut actions.task, true)
+            actions.send.send_reset(
+                reason, send_buffer, stream, &mut actions.task, true)
         })
     }
 
@@ -585,13 +605,13 @@ impl<B> StreamRef<B> {
 
         let stream = me.store.resolve(self.key);
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
 
-            actions
-                .send
-                .send_headers(frame, stream, counts, &mut actions.task)
+            actions.send.send_headers(
+                frame, send_buffer, stream, counts, &mut actions.task)
         })
     }
 
@@ -762,6 +782,8 @@ impl<B> Drop for StreamRef<B> {
         stream.ref_dec();
 
         let actions = &mut me.actions;
+        let send_buffer = &mut me.send_buffer;
+
         // the reset must be sent inside a `transition` block.
         // `transition_after` will release the stream if it is
         // released.
@@ -775,6 +797,7 @@ impl<B> Drop for StreamRef<B> {
                 );
                 actions.send.send_reset(
                     Reason::CANCEL,
+                    send_buffer,
                     stream,
                     &mut actions.task,
                     false
@@ -785,13 +808,11 @@ impl<B> Drop for StreamRef<B> {
 
 // ===== impl Actions =====
 
-impl<B> Actions<B>
-where
-    B: Buf,
-{
-    fn reset_on_recv_stream_err(
+impl Actions {
+    fn reset_on_recv_stream_err<B>(
         &mut self,
-        stream: &mut store::Ptr<B>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         res: Result<(), RecvError>,
     ) -> Result<(), RecvError> {
         if let Err(RecvError::Stream {
@@ -799,7 +820,7 @@ where
         }) = res
         {
             // Reset the stream.
-            self.send.send_reset(reason, stream, &mut self.task, true);
+            self.send.send_reset(reason, buffer, stream, &mut self.task, true);
             Ok(())
         } else {
             res
