@@ -337,6 +337,7 @@ impl State {
         // TODO: Is this correct?
         match self.inner {
             Closed(Some(Cause::Proto(reason))) => Err(proto::Error::Proto(reason)),
+            Closed(Some(Cause::Canceled)) => Err(proto::Error::Proto(Reason::CANCEL)),
             Closed(Some(Cause::Io)) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
             Closed(None) | HalfClosedRemote(..) => Ok(false),
             _ => Ok(true),
