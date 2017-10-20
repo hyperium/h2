@@ -88,7 +88,7 @@ impl Server<(), Bytes> {
 impl<T, B> Server<T, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf + 'static,
+    B: IntoBuf,
     B::Buf: 'static,
 {
     fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
@@ -127,7 +127,7 @@ where
 impl<T, B> futures::Stream for Server<T, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf + 'static,
+    B: IntoBuf,
     B::Buf: 'static,
 {
     type Item = (Request<RecvStream>, Respond<B>);
@@ -207,7 +207,8 @@ impl Builder {
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite,
-        B: IntoBuf + 'static,
+        B: IntoBuf,
+        B::Buf: 'static,
     {
         Server::handshake2(io, self.settings.clone())
     }
