@@ -21,12 +21,9 @@ use std::io;
 /// IDs, some mechanism would be necessary to ensure that the lowest-numberedh]
 /// idle stream is opened first.
 #[derive(Debug)]
-pub(super) struct Prioritize<B, P>
-where
-    P: Peer,
-{
+pub(super) struct Prioritize {
     /// Queue of streams waiting for socket capacity to send a frame.
-    pending_send: store::Queue<B, stream::NextSend, P>,
+    pending_send: store::Queue<stream::NextSend>,
 
     /// Queue of streams waiting for window capacity to produce data.
     pending_capacity: store::Queue<stream::NextSendCapacity>,
