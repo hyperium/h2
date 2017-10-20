@@ -67,7 +67,7 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 impl<T> Server<T, Bytes>
 where
-    T: AsyncRead + AsyncWrite + 'static,
+    T: AsyncRead + AsyncWrite,
 {
     /// Bind an H2 server connection.
     ///
@@ -87,7 +87,7 @@ impl Server<(), Bytes> {
 
 impl<T, B> Server<T, B>
 where
-    T: AsyncRead + AsyncWrite + 'static,
+    T: AsyncRead + AsyncWrite,
     B: IntoBuf + 'static,
     B::Buf: 'static,
 {
@@ -126,7 +126,7 @@ where
 
 impl<T, B> futures::Stream for Server<T, B>
 where
-    T: AsyncRead + AsyncWrite + 'static,
+    T: AsyncRead + AsyncWrite,
     B: IntoBuf + 'static,
     B::Buf: 'static,
 {
@@ -206,7 +206,7 @@ impl Builder {
     /// handshake has been completed.
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
-        T: AsyncRead + AsyncWrite + 'static,
+        T: AsyncRead + AsyncWrite,
         B: IntoBuf + 'static,
     {
         Server::handshake2(io, self.settings.clone())
