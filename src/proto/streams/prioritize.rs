@@ -629,7 +629,7 @@ impl Prioritize {
 
                     trace!("pop_frame; frame={:?}", frame);
 
-                    if stream.state.is_idle() {
+                    if cfg!(debug_assertions) && stream.state.is_idle() {
                         debug_assert!(stream.id > self.last_opened_id);
                         self.last_opened_id = stream.id;
                     }
