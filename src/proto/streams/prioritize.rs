@@ -628,12 +628,10 @@ impl Prioritize {
                     };
 
                     trace!("pop_frame; frame={:?}", frame);
-                    
-                    if let Frame::Headers(_) = frame {
-                        if stream.state.is_idle() {
-                            debug_assert!(stream.id > self.last_opened_id);
-                            self.last_opened_id = stream.id;
-                        }
+
+                    if stream.state.is_idle() {
+                        debug_assert!(stream.id > self.last_opened_id);
+                        self.last_opened_id = stream.id;
                     }
 
                     if !stream.pending_send.is_empty() || stream.state.is_canceled() {
