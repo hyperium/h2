@@ -1,7 +1,7 @@
 use super::*;
 use super::store::Resolve;
 
-use frame::Reason;
+use frame::{Reason, StreamId};
 
 use codec::UserError;
 use codec::UserError::*;
@@ -18,7 +18,7 @@ use std::io;
 /// This is because "idle" stream IDs – those which have been initiated but
 /// have yet to receive frames – will be implicitly closed on receipt of a
 /// frame on a higher stream ID. If these queues was not ordered by stream
-/// IDs, some mechanism would be necessary to ensure that the lowest-numbered
+/// IDs, some mechanism would be necessary to ensure that the lowest-numberedh]
 /// idle stream is opened first.
 #[derive(Debug)]
 pub(super) struct Prioritize<B, P>
@@ -36,6 +36,9 @@ where
 
     /// Connection level flow control governing sent data
     flow: FlowControl,
+
+    /// Stream ID of the last stream opened.
+    last_opened_id: StreamId,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -67,6 +70,7 @@ impl Prioritize {
             pending_capacity: store::Queue::new(),
             pending_open: store::Queue::new(),
             flow: flow,
+            last_opened_id: StreamId::ZERO
         }
     }
 
@@ -624,6 +628,13 @@ impl Prioritize {
                     };
 
                     trace!("pop_frame; frame={:?}", frame);
+                    
+                    if let Frame::Headers(_) = frame {
+                        if stream.state.is_idle() {
+                            debug_assert!(stream.id > self.last_opened_id);
+                            self.last_opened_id = stream.id;
+                        }
+                    }
 
                     if !stream.pending_send.is_empty() || stream.state.is_canceled() {
                         // TODO: Only requeue the sender IF it is ready to send
@@ -648,6 +659,7 @@ impl Prioritize {
         while counts.can_inc_num_send_streams() {
             if let Some(mut stream) = self.pending_open.pop(store) {
                 trace!("schedule_pending_open; stream={:?}", stream.id);
+
                 counts.inc_num_send_streams();
                 self.pending_send.push(&mut stream);
                 if let Some(task) = stream.open_task.take() {
