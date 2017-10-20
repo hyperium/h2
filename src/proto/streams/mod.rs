@@ -11,7 +11,7 @@ mod streams;
 
 pub(crate) use self::prioritize::Prioritized;
 pub(crate) use self::store::Key;
-pub(crate) use self::streams::{StreamRef, Streams};
+pub(crate) use self::streams::{StreamRef, OpaqueStreamRef, Streams};
 
 use self::buffer::Buffer;
 use self::counts::Counts;

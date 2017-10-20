@@ -301,7 +301,7 @@ where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf, server::Peer>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
         self.streams.next_incoming()
     }
 }

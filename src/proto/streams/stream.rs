@@ -14,10 +14,7 @@ use std::usize;
 /// (such as an accept queue), this is **not** tracked by a reference count.
 /// Thus, `ref_count` can be zero and the stream still has to be kept around.
 #[derive(Debug)]
-pub(super) struct Stream<B, P>
-where
-    P: Peer,
-{
+pub(super) struct Stream {
     /// The h2 stream identifier
     pub id: StreamId,
 
@@ -48,7 +45,7 @@ where
     pub send_task: Option<task::Task>,
 
     /// Frames pending for this stream being sent to the socket
-    pub pending_send: buffer::Deque<Frame<B>>,
+    pub pending_send: buffer::Deque,
 
     /// Next node in the linked list of streams waiting for additional
     /// connection level capacity.
@@ -88,13 +85,13 @@ where
     pub is_pending_window_update: bool,
 
     /// Frames pending for this stream to read
-    pub pending_recv: buffer::Deque<recv::Event<P::Poll>>,
+    pub pending_recv: buffer::Deque,
 
     /// Task tracking receiving frames
     pub recv_task: Option<task::Task>,
 
     /// The stream's pending push promises
-    pub pending_push_promises: store::Queue<B, NextAccept, P>,
+    pub pending_push_promises: store::Queue<NextAccept>,
 
     /// Validate content-length headers
     pub content_length: ContentLength,
@@ -123,15 +120,12 @@ pub(super) struct NextWindowUpdate;
 #[derive(Debug)]
 pub(super) struct NextOpen;
 
-impl<B, P> Stream<B, P>
-where
-    P: Peer,
-{
+impl Stream {
     pub fn new(
         id: StreamId,
         init_send_window: WindowSize,
         init_recv_window: WindowSize,
-    ) -> Stream<B, P> {
+    ) -> Stream {
         let mut send_flow = FlowControl::new();
         let mut recv_flow = FlowControl::new();
 
@@ -224,6 +218,15 @@ where
             !self.is_pending_accept && !self.is_pending_window_update
     }
 
+    /// Returns true when the consumer of the stream has dropped all handles
+    /// (indicating no further interest in the stream) and the stream state is
+    /// not actually closed.
+    ///
+    /// In this case, a reset should be sent.
+    pub fn is_canceled_interest(&self) -> bool {
+        self.ref_count == 0 && !self.state.is_recv_closed()
+    }
+
     pub fn assign_capacity(&mut self, capacity: WindowSize) {
         debug_assert!(capacity > 0);
         self.send_capacity_inc = true;
@@ -279,111 +282,111 @@ where
 }
 
 impl store::Next for NextAccept {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+    fn next(stream: &Stream) -> Option<store::Key> {
         stream.next_pending_accept
     }
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
         stream.next_pending_accept = key;
     }
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
         stream.next_pending_accept.take()
     }
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+    fn is_queued(stream: &Stream) -> bool {
         stream.is_pending_accept
     }
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+    fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_accept = val;
     }
 }
 
 impl store::Next for NextSend {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+    fn next(stream: &Stream) -> Option<store::Key> {
         stream.next_pending_send
     }
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
         stream.next_pending_send = key;
     }
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
         stream.next_pending_send.take()
     }
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+    fn is_queued(stream: &Stream) -> bool {
         stream.is_pending_send
     }
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+    fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_send = val;
     }
 }
 
 impl store::Next for NextSendCapacity {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+    fn next(stream: &Stream) -> Option<store::Key> {
         stream.next_pending_send_capacity
     }
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
         stream.next_pending_send_capacity = key;
     }
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
         stream.next_pending_send_capacity.take()
     }
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+    fn is_queued(stream: &Stream) -> bool {
         stream.is_pending_send_capacity
     }
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+    fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_send_capacity = val;
     }
 }
 
 impl store::Next for NextWindowUpdate {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+    fn next(stream: &Stream) -> Option<store::Key> {
         stream.next_window_update
     }
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
         stream.next_window_update = key;
     }
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
         stream.next_window_update.take()
     }
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+    fn is_queued(stream: &Stream) -> bool {
         stream.is_pending_window_update
     }
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+    fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_window_update = val;
     }
 }
 
 impl store::Next for NextOpen {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<store::Key> {
+    fn next(stream: &Stream) -> Option<store::Key> {
         stream.next_open
     }
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<store::Key>) {
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
         stream.next_open = key;
     }
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<store::Key> {
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
         stream.next_open.take()
     }
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool {
+    fn is_queued(stream: &Stream) -> bool {
         stream.is_pending_open
     }
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool) {
+    fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_open = val;
     }
 }

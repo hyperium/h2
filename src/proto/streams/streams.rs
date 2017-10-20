@@ -15,15 +15,33 @@ pub(crate) struct Streams<B, P>
 where
     P: Peer,
 {
-    inner: Arc<Mutex<Inner<B, P>>>,
+    /// Holds most of the connection and stream related state for processing
+    /// HTTP/2.0 frames associated with streams.
+    inner: Arc<Mutex<Inner>>,
+
+    /// This is the queue of frames to be written to the wire. This is split out
+    /// to avoid requiring a `B` generic on all public API types even if `B` is
+    /// not technically required.
+    ///
+    /// Currently, splitting this out requires a second `Arc` + `Mutex`.
+    /// However, it should be possible to avoid this duplication with a little
+    /// bit of unsafe code. This optimization has been postponed until it has
+    /// been shown to be necessary.
+    send_buffer: Arc<SendBuffer<B>>,
+
+    _p: ::std::marker::PhantomData<P>,
 }
 
 /// Reference to the stream state
-pub(crate) struct StreamRef<B, P>
-where
-    P: Peer,
-{
-    inner: Arc<Mutex<Inner<B, P>>>,
+#[derive(Debug)]
+pub(crate) struct StreamRef<B> {
+    opaque: OpaqueStreamRef,
+    send_buffer: Arc<SendBuffer<B>>,
+}
+
+/// Reference to the stream state that hides the send data chunk generic
+pub(crate) struct OpaqueStreamRef {
+    inner: Arc<Mutex<Inner>>,
     key: store::Key,
 }
 
@@ -32,26 +50,24 @@ where
 ///
 /// TODO: better name
 #[derive(Debug)]
-struct Inner<B, P>
-where
-    P: Peer,
-{
+struct Inner {
     /// Tracks send & recv stream concurrency.
-    counts: Counts<P>,
-    actions: Actions<B, P>,
-    store: Store<B, P>,
+    counts: Counts,
+
+    /// Connection level state and performs actions on streams
+    actions: Actions,
+
+    /// Stores stream state
+    store: Store,
 }
 
 #[derive(Debug)]
-struct Actions<B, P>
-where
-    P: Peer,
-{
+struct Actions {
     /// Manages state transitions initiated by receiving frames
-    recv: Recv<B, P>,
+    recv: Recv,
 
     /// Manages state transitions initiated by sending frames
-    send: Send<B, P>,
+    send: Send,
 
     /// Task that calls `poll_complete`.
     task: Option<task::Task>,
@@ -60,23 +76,35 @@ where
     conn_error: Option<proto::Error>,
 }
 
+/// Contains the buffer of frames to be written to the wire.
+#[derive(Debug)]
+struct SendBuffer<B> {
+    inner: Mutex<Buffer<Frame<B>>>,
+}
+
+// ===== impl Streams =====
+
 impl<B, P> Streams<B, P>
 where
     B: Buf,
     P: Peer,
 {
     pub fn new(config: Config) -> Self {
+        let peer = P::dyn();
+
         Streams {
             inner: Arc::new(Mutex::new(Inner {
-                counts: Counts::new(&config),
+                counts: Counts::new(peer, &config),
                 actions: Actions {
-                    recv: Recv::new(&config),
+                    recv: Recv::new(peer, &config),
                     send: Send::new(&config),
                     task: None,
                     conn_error: None,
                 },
                 store: Store::new(),
             })),
+            send_buffer: Arc::new(SendBuffer::new()),
+            _p: ::std::marker::PhantomData,
         }
     }
 
@@ -113,6 +141,8 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             trace!(
@@ -132,7 +162,7 @@ where
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            actions.reset_on_recv_stream_err(stream, res)
+            actions.reset_on_recv_stream_err(send_buffer, stream, res)
         })
     }
 
@@ -148,10 +178,12 @@ where
         };
 
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             let res = actions.recv.recv_data(frame, stream);
-            actions.reset_on_recv_stream_err(stream, res)
+            actions.reset_on_recv_stream_err(send_buffer, stream, res)
         })
     }
 
@@ -170,7 +202,7 @@ where
             None => {
                 // TODO: Are there other error cases?
                 me.actions
-                    .ensure_not_idle(id)
+                    .ensure_not_idle(me.counts.peer(), id)
                     .map_err(RecvError::Connection)?;
 
                 return Ok(());
@@ -193,6 +225,8 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         let last_processed_id = actions.recv.last_processed_id();
 
@@ -200,7 +234,7 @@ where
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_err(err, &mut *stream);
-                    actions.send.recv_err(stream);
+                    actions.send.recv_err(send_buffer, stream);
                     Ok::<_, ()>(())
                 })
             })
@@ -217,6 +251,8 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
@@ -225,7 +261,7 @@ where
             .for_each(|stream| if stream.id > last_stream_id {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_err(&err, &mut *stream);
-                    actions.send.recv_err(stream);
+                    actions.send.recv_err(send_buffer, stream);
                     Ok::<_, ()>(())
                 })
             } else {
@@ -245,6 +281,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         if id.is_zero() {
             me.actions
                 .send
@@ -259,6 +298,7 @@ where
                 // the error is informational.
                 let _ = me.actions.send.recv_stream_window_update(
                     frame.size_increment(),
+                    send_buffer,
                     &mut stream,
                     &mut me.actions.task,
                 );
@@ -284,12 +324,19 @@ where
             None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
-        me.actions
-            .recv
-            .recv_push_promise(frame, &me.actions.send, stream, &mut me.store)
+        if me.counts.peer().is_server() {
+            // The remote is a client and cannot reserve
+            trace!("recv_push_promise; error remote is client");
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
+
+        me.actions.recv.recv_push_promise(frame,
+                                          &me.actions.send,
+                                          stream,
+                                          &mut me.store)
     }
 
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B, P>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
@@ -308,8 +355,11 @@ where
 
         key.map(|key| {
             StreamRef {
-                inner: self.inner.clone(),
-                key,
+                opaque: OpaqueStreamRef {
+                    inner: self.inner.clone(),
+                    key,
+                },
+                send_buffer: self.send_buffer.clone(),
             }
         })
     }
@@ -333,6 +383,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         // Send WINDOW_UPDATE frames first
         //
         // TODO: It would probably be better to interleave updates w/ data
@@ -341,6 +394,7 @@ where
 
         // Send any other pending frames
         try_ready!(me.actions.send.poll_complete(
+            send_buffer,
             &mut me.store,
             &mut me.counts,
             dst
@@ -356,11 +410,13 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         me.counts.apply_remote_settings(frame);
 
-        me.actions
-            .send
-            .apply_remote_settings(frame, &mut me.store, &mut me.actions.task)
+        me.actions.send.apply_remote_settings(
+            frame, send_buffer, &mut me.store, &mut me.actions.task)
     }
 
     pub fn send_request(
@@ -368,7 +424,7 @@ where
         request: Request<()>,
         end_of_stream: bool,
         pending: Option<&store::Key>,
-    ) -> Result<StreamRef<B, P>, SendError> {
+    ) -> Result<StreamRef<B>, SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -380,6 +436,9 @@ where
         let key = {
             let mut me = self.inner.lock().unwrap();
             let me = &mut *me;
+
+            let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+            let send_buffer = &mut *send_buffer;
 
             me.actions.ensure_no_conn_error()?;
             me.actions.send.ensure_next_stream_id()?;
@@ -394,6 +453,11 @@ where
                 if me.store.resolve(*key).is_pending_open {
                     return Err(UserError::Rejected.into());
                 }
+            }
+
+            if me.counts.peer().is_server() {
+                // Servers cannot open streams. PushPromise must first be reserved.
+                return Err(UserError::UnexpectedFrameType.into());
             }
 
             let stream_id = me.actions.send.open()?;
@@ -415,6 +479,7 @@ where
 
             me.actions.send.send_headers(
                 headers,
+                send_buffer,
                 &mut stream,
                 &mut me.counts,
                 &mut me.actions.task,
@@ -431,8 +496,11 @@ where
         };
 
         Ok(StreamRef {
-            inner: self.inner.clone(),
-            key: key,
+            opaque: OpaqueStreamRef {
+                inner: self.inner.clone(),
+                key: key,
+            },
+            send_buffer: self.send_buffer.clone(),
         })
     }
 
@@ -454,11 +522,12 @@ where
 
         let stream = me.store.resolve(key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
-            actions
-                .send
-                .send_reset(reason, stream, &mut actions.task, true)
+            actions.send.send_reset(
+                reason, send_buffer, stream, &mut actions.task)
         })
     }
 }
@@ -510,25 +579,26 @@ where
     fn clone(&self) -> Self {
         Streams {
             inner: self.inner.clone(),
+            send_buffer: self.send_buffer.clone(),
+            _p: ::std::marker::PhantomData,
         }
     }
 }
 
 // ===== impl StreamRef =====
 
-impl<B, P> StreamRef<B, P>
-where
-    P: Peer,
-{
+impl<B> StreamRef<B> {
     pub fn send_data(&mut self, data: B, end_stream: bool) -> Result<(), UserError>
     where
         B: Buf,
     {
-        let mut me = self.inner.lock().unwrap();
+        let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        let stream = me.store.resolve(self.opaque.key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the data frame
@@ -536,37 +606,41 @@ where
             frame.set_end_stream(end_stream);
 
             // Send the data frame
-            actions.send.send_data(frame, stream, &mut actions.task)
+            actions.send.send_data(frame, send_buffer, stream, &mut actions.task)
         })
     }
 
     pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), UserError> {
-        let mut me = self.inner.lock().unwrap();
+        let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        let stream = me.store.resolve(self.opaque.key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
             // Create the trailers frame
             let frame = frame::Headers::trailers(stream.id, trailers);
 
             // Send the trailers frame
-            actions.send.send_trailers(frame, stream, &mut actions.task)
+            actions.send.send_trailers(
+                frame, send_buffer, stream, &mut actions.task)
         })
     }
 
     pub fn send_reset(&mut self, reason: Reason) {
-        let mut me = self.inner.lock().unwrap();
+        let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        let stream = me.store.resolve(self.opaque.key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
-            actions
-                .send
-                .send_reset(reason, stream, &mut actions.task, true)
+            actions.send.send_reset(
+                reason, send_buffer, stream, &mut actions.task)
         })
     }
 
@@ -575,25 +649,107 @@ where
         response: Response<()>,
         end_of_stream: bool,
     ) -> Result<(), UserError> {
-        let mut me = self.inner.lock().unwrap();
+        let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
-        let stream = me.store.resolve(self.key);
+        let stream = me.store.resolve(self.opaque.key);
         let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
             let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
 
-            actions
-                .send
-                .send_headers(frame, stream, counts, &mut actions.task)
+            actions.send.send_headers(
+                frame, send_buffer, stream, counts, &mut actions.task)
         })
     }
 
-    pub fn body_is_empty(&self) -> bool
-    where
-        B: Buf,
+    /// Called by the server after the stream is accepted. Given that clients
+    /// initialize streams by sending HEADERS, the request will always be
+    /// available.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the request isn't present.
+    pub fn take_request(&self) -> Request<()> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+        me.actions.recv.take_request(&mut stream)
+    }
+
+    /// Called by a client to see if the current stream is pending open
+    pub fn is_pending_open(&self) -> bool {
+        let mut me = self.opaque.inner.lock().unwrap();
+        me.store.resolve(self.opaque.key).is_pending_open
+    }
+
+    /// Request capacity to send data
+    pub fn reserve_capacity(&mut self, capacity: WindowSize) {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.reserve_capacity(capacity, &mut stream)
+    }
+
+    /// Returns the stream's current send capacity.
+    pub fn capacity(&self) -> WindowSize {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.capacity(&mut stream)
+    }
+
+    /// Request to be notified when the stream's capacity increases
+    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, UserError> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.poll_capacity(&mut stream)
+    }
+
+    pub(crate) fn key(&self) -> store::Key {
+        self.opaque.key
+    }
+
+    pub fn clone_to_opaque(&self) -> OpaqueStreamRef
+        where B: 'static,
     {
+        self.opaque.clone()
+    }
+}
+
+impl<B> Clone for StreamRef<B> {
+    fn clone(&self) -> Self {
+        StreamRef {
+            opaque: self.opaque.clone(),
+            send_buffer: self.send_buffer.clone(),
+        }
+    }
+}
+
+// ===== impl OpaqueStreamRef =====
+
+impl OpaqueStreamRef {
+    /// Called by a client to check for a received response.
+    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_response(&mut stream)
+    }
+
+    pub fn body_is_empty(&self) -> bool {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -602,10 +758,7 @@ where
         me.actions.recv.body_is_empty(&stream)
     }
 
-    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error>
-    where
-        B: Buf,
-    {
+    pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -614,10 +767,7 @@ where
         me.actions.recv.poll_data(&mut stream)
     }
 
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error>
-    where
-        B: Buf,
-    {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -628,10 +778,7 @@ where
 
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
-    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError>
-    where
-        B: Buf,
-    {
+    pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -641,171 +788,88 @@ where
             .recv
             .release_capacity(capacity, &mut stream, &mut me.actions.task)
     }
-
-    /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize) {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.send.reserve_capacity(capacity, &mut stream)
-    }
-
-    /// Returns the stream's current send capacity.
-    pub fn capacity(&self) -> WindowSize {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.send.capacity(&mut stream)
-    }
-
-    /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<WindowSize>, UserError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.send.poll_capacity(&mut stream)
-    }
-
-    pub(crate) fn key(&self) -> store::Key {
-        self.key
-    }
 }
 
-impl<B> StreamRef<B, server::Peer>
-where
-    B: Buf,
-{
-    /// Called by the server after the stream is accepted. Given that clients
-    /// initialize streams by sending HEADERS, the request will always be
-    /// available.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Request<()> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-        me.actions.recv.take_request(&mut stream)
-    }
-}
-
-impl<B> StreamRef<B, client::Peer>
-where
-    B: Buf,
-{
-    pub fn poll_response(&mut self) -> Poll<Response<()>, proto::Error> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_response(&mut stream)
-    }
-
-
-    pub fn is_pending_open(&self) -> bool {
-        let mut me = self.inner.lock().unwrap();
-        me.store.resolve(self.key).is_pending_open
-    }
-}
-
-impl<B, P> Clone for StreamRef<B, P>
-where
-    P: Peer,
-{
-    fn clone(&self) -> Self {
-        // Increment the ref count
-        self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
-
-        StreamRef {
-            inner: self.inner.clone(),
-            key: self.key.clone(),
-        }
-    }
-}
-
-impl<B, P> fmt::Debug for StreamRef<B, P>
-where
-    P: Peer,
-{
+impl fmt::Debug for OpaqueStreamRef {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.inner.lock() {
             Ok(me) => {
                 let stream = &me.store[self.key];
-                fmt.debug_struct("StreamRef")
+                fmt.debug_struct("OpaqueStreamRef")
                     .field("stream_id", &stream.id)
                     .field("ref_count", &stream.ref_count)
                     .finish()
             },
-            Err(_poisoned) => fmt.debug_struct("StreamRef")
+            Err(_poisoned) => fmt.debug_struct("OpaqueStreamRef")
                 .field("inner", &"<Poisoned>")
                 .finish(),
         }
     }
 }
 
-impl<B, P> Drop for StreamRef<B, P>
-where
-    P: Peer,
-{
+impl Clone for OpaqueStreamRef {
+    fn clone(&self) -> Self {
+        // Increment the ref count
+        self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
+
+        OpaqueStreamRef {
+            inner: self.inner.clone(),
+            key: self.key.clone(),
+        }
+    }
+}
+
+impl Drop for OpaqueStreamRef {
     fn drop(&mut self) {
-        trace!("StreamRef::drop({:?})", self);
-        let mut me = match self.inner.lock() {
-            Ok(inner) => inner,
-            Err(_) => if ::std::thread::panicking() {
-                trace!("StreamRef::drop; mutex poisoned");
-                return;
-            } else {
-                panic!("StreamRef::drop; mutex poisoned");
-            },
-        };
+        drop_stream_ref(&self.inner, self.key);
+    }
+}
 
-        let me = &mut *me;
+// TODO: Move back in fn above
+fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
+    let mut me = match inner.lock() {
+        Ok(inner) => inner,
+        Err(_) => if ::std::thread::panicking() {
+            trace!("StreamRef::drop; mutex poisoned");
+            return;
+        } else {
+            panic!("StreamRef::drop; mutex poisoned");
+        },
+    };
 
-        let mut stream = me.store.resolve(self.key);
-        // decrement the stream's ref count by 1.
-        stream.ref_dec();
+    let me = &mut *me;
 
-        let actions = &mut me.actions;
-        // the reset must be sent inside a `transition` block.
-        // `transition_after` will release the stream if it is
-        // released.
-        let recv_closed = stream.state.is_recv_closed();
-        me.counts.transition(stream, |_, stream|
-            // if this is the last reference to the stream, reset the stream.
-            if stream.ref_count == 0 && !recv_closed {
-                trace!(
-                    " -> last reference to {:?} was dropped, trying to reset",
-                    stream.id,
-                );
-                actions.send.send_reset(
-                    Reason::CANCEL,
-                    stream,
-                    &mut actions.task,
-                    false
-                );
-            });
+    let mut stream = me.store.resolve(key);
+    // decrement the stream's ref count by 1.
+    stream.ref_dec();
+
+    let actions = &mut me.actions;
+
+    me.counts.transition(stream, |_, mut stream| {
+        if stream.is_canceled_interest() {
+            actions.send.schedule_cancel(
+                &mut stream,
+                &mut actions.task);
+        }
+    });
+}
+
+// ===== impl SendBuffer =====
+
+impl<B> SendBuffer<B> {
+    fn new() -> Self {
+        let inner = Mutex::new(Buffer::new());
+        SendBuffer { inner }
     }
 }
 
 // ===== impl Actions =====
 
-impl<B, P> Actions<B, P>
-where
-    B: Buf,
-    P: Peer,
-{
-    fn reset_on_recv_stream_err(
+impl Actions {
+    fn reset_on_recv_stream_err<B>(
         &mut self,
-        stream: &mut store::Ptr<B, P>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         res: Result<(), RecvError>,
     ) -> Result<(), RecvError> {
         if let Err(RecvError::Stream {
@@ -813,15 +877,15 @@ where
         }) = res
         {
             // Reset the stream.
-            self.send.send_reset(reason, stream, &mut self.task, true);
+            self.send.send_reset(reason, buffer, stream, &mut self.task);
             Ok(())
         } else {
             res
         }
     }
 
-    fn ensure_not_idle(&mut self, id: StreamId) -> Result<(), Reason> {
-        if P::is_local_init(id) {
+    fn ensure_not_idle(&mut self, peer: peer::Dyn, id: StreamId) -> Result<(), Reason> {
+        if peer.is_local_init(id) {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
