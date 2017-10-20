@@ -1,7 +1,5 @@
 use slab::Slab;
 
-use std::marker::PhantomData;
-
 /// Buffers frames for multiple streams.
 #[derive(Debug)]
 pub struct Buffer<T> {
@@ -10,9 +8,8 @@ pub struct Buffer<T> {
 
 /// A sequence of frames in a `Buffer`
 #[derive(Debug)]
-pub struct Deque<B> {
+pub struct Deque {
     indices: Option<Indices>,
-    _p: PhantomData<B>,
 }
 
 /// Tracks the head & tail for a sequence of frames in a `Buffer`.
@@ -36,11 +33,10 @@ impl<T> Buffer<T> {
     }
 }
 
-impl<T> Deque<T> {
+impl Deque {
     pub fn new() -> Self {
         Deque {
             indices: None,
-            _p: PhantomData,
         }
     }
 
@@ -48,7 +44,7 @@ impl<T> Deque<T> {
         self.indices.is_none()
     }
 
-    pub fn push_back(&mut self, buf: &mut Buffer<T>, value: T) {
+    pub fn push_back<T>(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
             value,
             next: None,
@@ -68,7 +64,7 @@ impl<T> Deque<T> {
         }
     }
 
-    pub fn push_front(&mut self, buf: &mut Buffer<T>, value: T) {
+    pub fn push_front<T>(&mut self, buf: &mut Buffer<T>, value: T) {
         let key = buf.slab.insert(Slot {
             value,
             next: None,
@@ -88,7 +84,7 @@ impl<T> Deque<T> {
         }
     }
 
-    pub fn pop_front(&mut self, buf: &mut Buffer<T>) -> Option<T> {
+    pub fn pop_front<T>(&mut self, buf: &mut Buffer<T>) -> Option<T> {
         match self.indices {
             Some(mut idxs) => {
                 let mut slot = buf.slab.remove(idxs.head);
@@ -107,7 +103,7 @@ impl<T> Deque<T> {
         }
     }
 
-    pub fn peek_front<'a>(&self, buf: &'a Buffer<T>) -> Option<&'a T> {
+    pub fn peek_front<'a, T>(&self, buf: &'a Buffer<T>) -> Option<&'a T> {
         match self.indices {
             Some(idxs) => Some(&buf.slab[idxs.head].value),
             None => None,

@@ -74,6 +74,11 @@ enum Peer {
 enum Cause {
     Proto(Reason),
     Io,
+
+    /// The user droped all handles to the stream without explicitly canceling.
+    /// This indicates to the connection that a reset frame must be sent out
+    /// once the send queue has been flushed.
+    Canceled,
 }
 
 impl State {
@@ -238,8 +243,22 @@ impl State {
 
     /// Set the stream state to reset
     pub fn set_reset(&mut self, reason: Reason) {
-        debug_assert!(!self.is_reset());
         self.inner = Closed(Some(Cause::Proto(reason)));
+    }
+
+    /// Set the stream state to canceled
+    pub fn set_canceled(&mut self) {
+        debug_assert!(!self.is_closed());
+        self.inner = Closed(Some(Cause::Canceled));
+    }
+
+    pub fn is_canceled(&self) -> bool {
+        use self::Cause::Canceled;
+
+        match self.inner {
+            Closed(Some(Canceled)) => true,
+            _ => false,
+        }
     }
 
     /// Returns true if the stream is already reset.
@@ -318,6 +337,7 @@ impl State {
         // TODO: Is this correct?
         match self.inner {
             Closed(Some(Cause::Proto(reason))) => Err(proto::Error::Proto(reason)),
+            Closed(Some(Cause::Canceled)) => Err(proto::Error::Proto(Reason::CANCEL)),
             Closed(Some(Cause::Io)) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
             Closed(None) | HalfClosedRemote(..) => Ok(false),
             _ => Ok(true),

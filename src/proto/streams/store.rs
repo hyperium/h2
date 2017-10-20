@@ -9,22 +9,16 @@ use std::ops;
 
 /// Storage for streams
 #[derive(Debug)]
-pub(super) struct Store<B, P>
-where
-    P: Peer,
-{
-    slab: slab::Slab<(StoreId, Stream<B, P>)>,
+pub(super) struct Store {
+    slab: slab::Slab<(StoreId, Stream)>,
     ids: OrderMap<StreamId, (usize, StoreId)>,
     counter: StoreId,
 }
 
 /// "Pointer" to an entry in the store
-pub(super) struct Ptr<'a, B: 'a, P>
-where
-    P: Peer + 'a,
-{
+pub(super) struct Ptr<'a> {
     key: Key,
-    store: &'a mut Store<B, P>,
+    store: &'a mut Store,
 }
 
 /// References an entry in the store.
@@ -37,24 +31,21 @@ pub(crate) struct Key {
 type StoreId = usize;
 
 #[derive(Debug)]
-pub(super) struct Queue<B, N, P>
-where
-    P: Peer,
-{
+pub(super) struct Queue<N> {
     indices: Option<store::Indices>,
-    _p: PhantomData<(B, N, P)>,
+    _p: PhantomData<N>,
 }
 
 pub(super) trait Next {
-    fn next<B, P: Peer>(stream: &Stream<B, P>) -> Option<Key>;
+    fn next(stream: &Stream) -> Option<Key>;
 
-    fn set_next<B, P: Peer>(stream: &mut Stream<B, P>, key: Option<Key>);
+    fn set_next(stream: &mut Stream, key: Option<Key>);
 
-    fn take_next<B, P: Peer>(stream: &mut Stream<B, P>) -> Option<Key>;
+    fn take_next(stream: &mut Stream) -> Option<Key>;
 
-    fn is_queued<B, P: Peer>(stream: &Stream<B, P>) -> bool;
+    fn is_queued(stream: &Stream) -> bool;
 
-    fn set_queued<B, P: Peer>(stream: &mut Stream<B, P>, val: bool);
+    fn set_queued(stream: &mut Stream, val: bool);
 }
 
 /// A linked list
@@ -64,37 +55,28 @@ struct Indices {
     pub tail: Key,
 }
 
-pub(super) enum Entry<'a, B: 'a, P: Peer + 'a> {
+pub(super) enum Entry<'a> {
     Occupied(OccupiedEntry<'a>),
-    Vacant(VacantEntry<'a, B, P>),
+    Vacant(VacantEntry<'a>),
 }
 
 pub(super) struct OccupiedEntry<'a> {
     ids: ordermap::OccupiedEntry<'a, StreamId, (usize, StoreId)>,
 }
 
-pub(super) struct VacantEntry<'a, B: 'a, P>
-where
-    P: Peer + 'a,
-{
+pub(super) struct VacantEntry<'a> {
     ids: ordermap::VacantEntry<'a, StreamId, (usize, StoreId)>,
-    slab: &'a mut slab::Slab<(StoreId, Stream<B, P>)>,
+    slab: &'a mut slab::Slab<(StoreId, Stream)>,
     counter: &'a mut usize,
 }
 
-pub(super) trait Resolve<B, P>
-where
-    P: Peer,
-{
-    fn resolve(&mut self, key: Key) -> Ptr<B, P>;
+pub(super) trait Resolve {
+    fn resolve(&mut self, key: Key) -> Ptr;
 }
 
 // ===== impl Store =====
 
-impl<B, P> Store<B, P>
-where
-    P: Peer,
-{
+impl Store {
     pub fn new() -> Self {
         Store {
             slab: slab::Slab::new(),
@@ -103,7 +85,7 @@ where
         }
     }
 
-    pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<B, P>> {
+    pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr> {
         let key = match self.ids.get(id) {
             Some(key) => *key,
             None => return None,
@@ -118,7 +100,7 @@ where
         })
     }
 
-    pub fn insert(&mut self, id: StreamId, val: Stream<B, P>) -> Ptr<B, P> {
+    pub fn insert(&mut self, id: StreamId, val: Stream) -> Ptr {
         let store_id = self.counter;
         self.counter = self.counter.wrapping_add(1);
         let key = self.slab.insert((store_id, val));
@@ -133,7 +115,7 @@ where
         }
     }
 
-    pub fn find_entry(&mut self, id: StreamId) -> Entry<B, P> {
+    pub fn find_entry(&mut self, id: StreamId) -> Entry {
         use self::ordermap::Entry::*;
 
         match self.ids.entry(id) {
@@ -150,7 +132,7 @@ where
 
     pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(Ptr<B, P>) -> Result<(), E>,
+        F: FnMut(Ptr) -> Result<(), E>,
     {
         let mut len = self.ids.len();
         let mut i = 0;
@@ -182,11 +164,8 @@ where
     }
 }
 
-impl<B, P> Resolve<B, P> for Store<B, P>
-where
-    P: Peer,
-{
-    fn resolve(&mut self, key: Key) -> Ptr<B, P> {
+impl Resolve for Store {
+    fn resolve(&mut self, key: Key) -> Ptr {
         Ptr {
             key: key,
             store: self,
@@ -194,11 +173,8 @@ where
     }
 }
 
-impl<B, P> ops::Index<Key> for Store<B, P>
-where
-    P: Peer,
-{
-    type Output = Stream<B, P>;
+impl ops::Index<Key> for Store {
+    type Output = Stream;
 
     fn index(&self, key: Key) -> &Self::Output {
         let slot = self.slab.index(key.index);
@@ -207,10 +183,7 @@ where
     }
 }
 
-impl<B, P> ops::IndexMut<Key> for Store<B, P>
-where
-    P: Peer,
-{
+impl ops::IndexMut<Key> for Store {
     fn index_mut(&mut self, key: Key) -> &mut Self::Output {
         let slot = self.slab.index_mut(key.index);
         assert_eq!(slot.0, key.store_id);
@@ -218,10 +191,7 @@ where
     }
 }
 
-impl<B, P> Store<B, P>
-where
-    P: Peer,
-{
+impl Store {
     pub fn num_active_streams(&self) -> usize {
         self.ids.len()
     }
@@ -234,10 +204,9 @@ where
 
 // ===== impl Queue =====
 
-impl<B, N, P> Queue<B, N, P>
+impl<N> Queue<N>
 where
     N: Next,
-    P: Peer,
 {
     pub fn new() -> Self {
         Queue {
@@ -260,7 +229,7 @@ where
     /// Queue the stream.
     ///
     /// If the stream is already contained by the list, return `false`.
-    pub fn push(&mut self, stream: &mut store::Ptr<B, P>) -> bool {
+    pub fn push(&mut self, stream: &mut store::Ptr) -> bool {
         trace!("Queue::push");
 
         if N::is_queued(stream) {
@@ -297,9 +266,9 @@ where
         true
     }
 
-    pub fn pop<'a, R>(&mut self, store: &'a mut R) -> Option<store::Ptr<'a, B, P>>
+    pub fn pop<'a, R>(&mut self, store: &'a mut R) -> Option<store::Ptr<'a>>
     where
-        R: Resolve<B, P>,
+        R: Resolve,
     {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
@@ -324,10 +293,7 @@ where
 
 // ===== impl Ptr =====
 
-impl<'a, B: 'a, P> Ptr<'a, B, P>
-where
-    P: Peer,
-{
+impl<'a> Ptr<'a> {
     /// Returns the Key associated with the stream
     pub fn key(&self) -> Key {
         self.key
@@ -352,11 +318,8 @@ where
     }
 }
 
-impl<'a, B: 'a, P> Resolve<B, P> for Ptr<'a, B, P>
-where
-    P: Peer,
-{
-    fn resolve(&mut self, key: Key) -> Ptr<B, P> {
+impl<'a> Resolve for Ptr<'a> {
+    fn resolve(&mut self, key: Key) -> Ptr {
         Ptr {
             key: key,
             store: &mut *self.store,
@@ -364,22 +327,16 @@ where
     }
 }
 
-impl<'a, B: 'a, P> ops::Deref for Ptr<'a, B, P>
-where
-    P: Peer,
-{
-    type Target = Stream<B, P>;
+impl<'a> ops::Deref for Ptr<'a> {
+    type Target = Stream;
 
-    fn deref(&self) -> &Stream<B, P> {
+    fn deref(&self) -> &Stream {
         &self.store.slab[self.key.index].1
     }
 }
 
-impl<'a, B: 'a, P> ops::DerefMut for Ptr<'a, B, P>
-where
-    P: Peer,
-{
-    fn deref_mut(&mut self) -> &mut Stream<B, P> {
+impl<'a> ops::DerefMut for Ptr<'a> {
+    fn deref_mut(&mut self) -> &mut Stream {
         &mut self.store.slab[self.key.index].1
     }
 }
@@ -398,11 +355,8 @@ impl<'a> OccupiedEntry<'a> {
 
 // ===== impl VacantEntry =====
 
-impl<'a, B, P> VacantEntry<'a, B, P>
-where
-    P: Peer,
-{
-    pub fn insert(self, value: Stream<B, P>) -> Key {
+impl<'a> VacantEntry<'a> {
+    pub fn insert(self, value: Stream) -> Key {
         // Insert the value in the slab
         let store_id = *self.counter;
         *self.counter = store_id.wrapping_add(1);

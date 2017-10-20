@@ -1,10 +1,11 @@
+use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Connection, WindowSize, Prioritized};
+use proto::{self, Connection, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
-use http::{HeaderMap, Request, Response};
+use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
 
@@ -27,28 +28,13 @@ pub struct Builder {
     settings: Settings,
 }
 
+/// Respond to a request
+///
+///
+/// Instances of `Respond` are used to send a respond or reserve push promises.
 #[derive(Debug)]
-pub struct Stream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
-}
-
-pub struct Body<B: IntoBuf> {
-    inner: ReleaseCapacity<B>,
-}
-
-#[derive(Debug)]
-pub struct ReleaseCapacity<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf, Peer>,
-}
-
-#[derive(Debug)]
-pub struct Send<T> {
-    src: T,
-    dst: Option<Stream<Bytes>>,
-    // Pending data
-    buf: Option<Bytes>,
-    // True when this is the end of the stream
-    eos: bool,
+pub struct Respond<B: IntoBuf> {
+    inner: proto::StreamRef<B::Buf>,
 }
 
 /// Stages of an in-progress handshake.
@@ -103,6 +89,7 @@ impl<T, B> Server<T, B>
 where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,
+    B::Buf: 'static,
 {
     fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
         // Create the codec.
@@ -141,8 +128,9 @@ impl<T, B> futures::Stream for Server<T, B>
 where
     T: AsyncRead + AsyncWrite + 'static,
     B: IntoBuf + 'static,
+    B::Buf: 'static,
 {
-    type Item = (Request<Body<B>>, Stream<B>);
+    type Item = (Request<RecvStream>, Respond<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -160,16 +148,12 @@ where
         if let Some(inner) = self.connection.next_incoming() {
             trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
-            let body = Body {
-                inner: ReleaseCapacity { inner: inner.clone() },
-            };
+            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
             let request = Request::from_parts(head, body);
-            let incoming = Stream {
-                inner,
-            };
+            let respond = Respond { inner };
 
-            return Ok(Some((request, incoming)).into());
+            return Ok(Some((request, respond)).into());
         }
 
         Ok(Async::NotReady)
@@ -229,179 +213,27 @@ impl Builder {
     }
 }
 
-// ===== impl Stream =====
+// ===== impl Respond =====
 
-impl<B: IntoBuf> Stream<B> {
+impl<B: IntoBuf> Respond<B> {
     /// Send a response
     pub fn send_response(
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<(), ::Error> {
+    ) -> Result<SendStream<B>, ::Error> {
         self.inner
             .send_response(response, end_of_stream)
+            .map(|_| SendStream::new(self.inner.clone()))
             .map_err(Into::into)
     }
 
-    /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: usize) {
-        // TODO: Check for overflow
-        self.inner.reserve_capacity(capacity as WindowSize)
-    }
-
-    /// Returns the stream's current send capacity.
-    pub fn capacity(&self) -> usize {
-        self.inner.capacity() as usize
-    }
-
-    /// Request to be notified when the stream's capacity increases
-    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ::Error> {
-        let res = try_ready!(self.inner.poll_capacity());
-        Ok(Async::Ready(res.map(|v| v as usize)))
-    }
-
-    /// Send a single data frame
-    pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), ::Error> {
-        self.inner
-            .send_data(data.into_buf(), end_of_stream)
-            .map_err(Into::into)
-    }
-
-    /// Send trailers
-    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
-        self.inner.send_trailers(trailers).map_err(Into::into)
-    }
-
-    pub fn send_reset(mut self, reason: Reason) {
+    /// Reset the stream
+    pub fn send_reset(&mut self, reason: Reason) {
         self.inner.send_reset(reason)
     }
-}
 
-impl Stream<Bytes> {
-    /// Send the body
-    pub fn send<T>(self, src: T, end_of_stream: bool) -> Send<T>
-    where
-        T: futures::Stream<Item = Bytes, Error = ::Error>,
-    {
-        Send {
-            src: src,
-            dst: Some(self),
-            buf: None,
-            eos: end_of_stream,
-        }
-    }
-}
-
-// ===== impl Body =====
-
-impl<B: IntoBuf> Body<B> {
-    pub fn is_empty(&self) -> bool {
-        // If the recv side is closed and the receive queue is empty, the body is empty.
-        self.inner.inner.body_is_empty()
-    }
-
-    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity<B> {
-        &mut self.inner
-    }
-
-    /// Poll trailers
-    ///
-    /// This function **must** not be called until `Body::poll` returns `None`.
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
-        self.inner.inner.poll_trailers().map_err(Into::into)
-    }
-}
-
-impl<B: IntoBuf> futures::Stream for Body<B> {
-    type Item = Bytes;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.inner.poll_data().map_err(Into::into)
-    }
-}
-
-
-impl<B: IntoBuf> fmt::Debug for Body<B>
-where B: fmt::Debug,
-      B::Buf: fmt::Debug,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Body")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
-
-// ===== impl ReleaseCapacity =====
-
-impl<B: IntoBuf> ReleaseCapacity<B> {
-    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
-        self.inner
-            .release_capacity(sz as proto::WindowSize)
-            .map_err(Into::into)
-    }
-}
-
-impl<B: IntoBuf> Clone for ReleaseCapacity<B> {
-    fn clone(&self) -> Self {
-        let inner = self.inner.clone();
-        ReleaseCapacity { inner }
-    }
-}
-
-// ===== impl Send =====
-
-impl<T> Future for Send<T>
-where
-    T: futures::Stream<Item = Bytes, Error = ::Error>,
-{
-    type Item = Stream<Bytes>;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            if self.buf.is_none() {
-                // Get a chunk to send to the H2 stream
-                self.buf = try_ready!(self.src.poll());
-            }
-
-            match self.buf.take() {
-                Some(mut buf) => {
-                    let dst = self.dst.as_mut().unwrap();
-
-                    // Ask for the amount of capacity needed
-                    dst.reserve_capacity(buf.len());
-
-                    let cap = dst.capacity();
-
-                    if cap == 0 {
-                        self.buf = Some(buf);
-                        // TODO: This seems kind of lame :(
-                        try_ready!(dst.poll_capacity());
-                        continue;
-                    }
-
-                    let chunk = buf.split_to(cap);
-
-                    if !buf.is_empty() {
-                        self.buf = Some(buf);
-                    }
-
-                    dst.send_data(chunk, false)?;
-                },
-                None => {
-                    // TODO: It would be nice to not have to send an extra
-                    // frame...
-                    if self.eos {
-                        self.dst.as_mut().unwrap().send_data(Bytes::new(), true)?;
-                    }
-
-                    return Ok(Async::Ready(self.dst.take().unwrap()));
-                },
-            }
-        }
-    }
+    // TODO: Support reserving push promises.
 }
 
 // ===== impl Flush =====
@@ -544,6 +376,10 @@ impl proto::Peer for Peer {
 
     fn is_server() -> bool {
         true
+    }
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Server
     }
 
     fn convert_send_message(

@@ -12,24 +12,18 @@ use std::{cmp, fmt};
 use std::io;
 
 #[derive(Debug)]
-pub(super) struct Prioritize<B, P>
-where
-    P: Peer,
-{
+pub(super) struct Prioritize {
     /// Queue of streams waiting for socket capacity to send a frame
-    pending_send: store::Queue<B, stream::NextSend, P>,
+    pending_send: store::Queue<stream::NextSend>,
 
     /// Queue of streams waiting for window capacity to produce data.
-    pending_capacity: store::Queue<B, stream::NextSendCapacity, P>,
+    pending_capacity: store::Queue<stream::NextSendCapacity>,
 
     /// Streams waiting for capacity due to max concurrency
-    pending_open: store::Queue<B, stream::NextOpen, P>,
+    pending_open: store::Queue<stream::NextOpen>,
 
     /// Connection level flow control governing sent data
     flow: FlowControl,
-
-    /// Holds frames that are waiting to be written to the socket
-    buffer: Buffer<Frame<B>>,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -44,11 +38,8 @@ pub(crate) struct Prioritized<B> {
 
 // ===== impl Prioritize =====
 
-impl<B, P> Prioritize<B, P>
-where
-    P: Peer,
-{
-    pub fn new(config: &Config) -> Prioritize<B, P> {
+impl Prioritize {
+    pub fn new(config: &Config) -> Prioritize {
         let mut flow = FlowControl::new();
 
         flow.inc_window(config.remote_init_window_sz)
@@ -64,20 +55,23 @@ where
             pending_capacity: store::Queue::new(),
             pending_open: store::Queue::new(),
             flow: flow,
-            buffer: Buffer::new(),
         }
     }
 
     /// Queue a frame to be sent to the remote
-    pub fn queue_frame(
+    pub fn queue_frame<B>(
         &mut self,
         frame: Frame<B>,
-        stream: &mut store::Ptr<B, P>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) {
         // Queue the frame in the buffer
-        stream.pending_send.push_back(&mut self.buffer, frame);
+        stream.pending_send.push_back(buffer, frame);
+        self.schedule_send(stream, task);
+    }
 
+    pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
         // If the stream is waiting to be opened, nothing more to do.
         if !stream.is_pending_open {
             // Queue the stream
@@ -90,15 +84,16 @@ where
         }
     }
 
-    pub fn queue_open(&mut self, stream: &mut store::Ptr<B, P>) {
+    pub fn queue_open(&mut self, stream: &mut store::Ptr) {
         self.pending_open.push(stream);
     }
 
     /// Send a data frame
-    pub fn send_data(
+    pub fn send_data<B>(
         &mut self,
         frame: frame::Data<B>,
-        stream: &mut store::Ptr<B, P>,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), UserError>
     where
@@ -153,21 +148,21 @@ where
         if stream.send_flow.available() >= stream.buffered_send_data {
             // The stream currently has capacity to send the data frame, so
             // queue it up and notify the connection task.
-            self.queue_frame(frame.into(), stream, task);
+            self.queue_frame(frame.into(), buffer, stream, task);
         } else {
             // The stream has no capacity to send the frame now, save it but
             // don't notify the conneciton task. Once additional capacity
             // becomes available, the frame will be flushed.
             stream
                 .pending_send
-                .push_back(&mut self.buffer, frame.into());
+                .push_back(buffer, frame.into());
         }
 
         Ok(())
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr<B, P>) {
+    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr) {
         trace!(
             "reserve_capacity; stream={:?}; requested={:?}; effective={:?}; curr={:?}",
             stream.id,
@@ -212,7 +207,7 @@ where
     pub fn recv_stream_window_update(
         &mut self,
         inc: WindowSize,
-        stream: &mut store::Ptr<B, P>,
+        stream: &mut store::Ptr,
     ) -> Result<(), Reason> {
         trace!(
             "recv_stream_window_update; stream={:?}; state={:?}; inc={}; flow={:?}",
@@ -235,7 +230,7 @@ where
     pub fn recv_connection_window_update(
         &mut self,
         inc: WindowSize,
-        store: &mut Store<B, P>,
+        store: &mut Store,
     ) -> Result<(), Reason> {
         // Update the connection's window
         self.flow.inc_window(inc)?;
@@ -246,7 +241,7 @@ where
 
     pub fn assign_connection_capacity<R>(&mut self, inc: WindowSize, store: &mut R)
     where
-        R: Resolve<B, P>,
+        R: Resolve,
     {
         trace!("assign_connection_capacity; inc={}", inc);
 
@@ -267,7 +262,7 @@ where
     }
 
     /// Request capacity to send data
-    fn try_assign_capacity(&mut self, stream: &mut store::Ptr<B, P>) {
+    fn try_assign_capacity(&mut self, stream: &mut store::Ptr) {
         let total_requested = stream.requested_send_capacity;
 
         // Total requested should never go below actual assigned
@@ -366,10 +361,11 @@ where
         }
     }
 
-    pub fn poll_complete<T>(
+    pub fn poll_complete<T, B>(
         &mut self,
-        store: &mut Store<B, P>,
-        counts: &mut Counts<P>,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
+        counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -380,7 +376,7 @@ where
         try_ready!(dst.poll_ready());
 
         // Reclaim any frame that has previously been written
-        self.reclaim_frame(store, dst);
+        self.reclaim_frame(buffer, store, dst);
 
         // The max frame length
         let max_frame_len = dst.max_send_frame_size();
@@ -389,7 +385,8 @@ where
 
         loop {
             self.schedule_pending_open(store, counts);
-            match self.pop_frame(store, max_frame_len, counts) {
+
+            match self.pop_frame(buffer, store, max_frame_len, counts) {
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
 
@@ -399,14 +396,14 @@ where
                     try_ready!(dst.poll_ready());
 
                     // Because, always try to reclaim...
-                    self.reclaim_frame(store, dst);
+                    self.reclaim_frame(buffer, store, dst);
                 },
                 None => {
                     // Try to flush the codec.
                     try_ready!(dst.flush());
 
                     // This might release a data frame...
-                    if !self.reclaim_frame(store, dst) {
+                    if !self.reclaim_frame(buffer, store, dst) {
                         return Ok(().into());
                     }
 
@@ -424,9 +421,10 @@ where
     /// When a data frame is written to the codec, it may not be written in its
     /// entirety (large chunks are split up into potentially many data frames).
     /// In this case, the stream needs to be reprioritized.
-    fn reclaim_frame<T>(
+    fn reclaim_frame<T, B>(
         &mut self,
-        store: &mut Store<B, P>,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> bool
     where
@@ -458,7 +456,7 @@ where
                     frame.set_end_stream(true);
                 }
 
-                self.push_back_frame(frame.into(), &mut stream);
+                self.push_back_frame(frame.into(), buffer, &mut stream);
 
                 return true;
             }
@@ -469,9 +467,13 @@ where
 
     /// Push the frame to the front of the stream's deque, scheduling the
     /// steream if needed.
-    fn push_back_frame(&mut self, frame: Frame<B>, stream: &mut store::Ptr<B, P>) {
+    fn push_back_frame<B>(&mut self,
+                          frame: Frame<B>,
+                          buffer: &mut Buffer<Frame<B>>,
+                          stream: &mut store::Ptr)
+    {
         // Push the frame to the front of the stream's deque
-        stream.pending_send.push_front(&mut self.buffer, frame);
+        stream.pending_send.push_front(buffer, frame);
 
         // If needed, schedule the sender
         if stream.send_flow.available() > 0 {
@@ -480,20 +482,21 @@ where
         }
     }
 
-    pub fn clear_queue(&mut self, stream: &mut store::Ptr<B, P>) {
+    pub fn clear_queue<B>(&mut self, buffer: &mut Buffer<Frame<B>>, stream: &mut store::Ptr) {
         trace!("clear_queue; stream-id={:?}", stream.id);
 
         // TODO: make this more efficient?
-        while let Some(frame) = stream.pending_send.pop_front(&mut self.buffer) {
+        while let Some(frame) = stream.pending_send.pop_front(buffer) {
             trace!("dropping; frame={:?}", frame);
         }
     }
 
-    fn pop_frame(
+    fn pop_frame<B>(
         &mut self,
-        store: &mut Store<B, P>,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
         max_len: usize,
-        counts: &mut Counts<P>,
+        counts: &mut Counts,
     ) -> Option<Frame<Prioritized<B>>>
     where
         B: Buf,
@@ -508,8 +511,8 @@ where
 
                     let is_counted = stream.is_counted();
 
-                    let frame = match stream.pending_send.pop_front(&mut self.buffer).unwrap() {
-                        Frame::Data(mut frame) => {
+                    let frame = match stream.pending_send.pop_front(buffer) {
+                        Some(Frame::Data(mut frame)) => {
                             // Get the amount of capacity remaining for stream's
                             // window.
                             let stream_capacity = stream.send_flow.available();
@@ -546,7 +549,8 @@ where
                                 // frame and wait for a window update...
                                 stream
                                     .pending_send
-                                    .push_front(&mut self.buffer, frame.into());
+                                    .push_front(buffer, frame.into());
+
                                 continue;
                             }
 
@@ -597,12 +601,19 @@ where
                                 }
                             }))
                         },
-                        frame => frame.map(|_| unreachable!()),
+                        Some(frame) => frame.map(|_| unreachable!()),
+                        None => {
+                            assert!(stream.state.is_canceled());
+                            stream.state.set_reset(Reason::CANCEL);
+
+                            let frame = frame::Reset::new(stream.id, Reason::CANCEL);
+                            Frame::Reset(frame)
+                        }
                     };
 
                     trace!("pop_frame; frame={:?}", frame);
 
-                    if !stream.pending_send.is_empty() {
+                    if !stream.pending_send.is_empty() || stream.state.is_canceled() {
                         // TODO: Only requeue the sender IF it is ready to send
                         // the next frame. i.e. don't requeue it if the next
                         // frame is a data frame and the stream does not have
@@ -619,7 +630,7 @@ where
         }
     }
 
-    fn schedule_pending_open(&mut self, store: &mut Store<B, P>, counts: &mut Counts<P>) {
+    fn schedule_pending_open(&mut self, store: &mut Store, counts: &mut Counts) {
         trace!("schedule_pending_open");
         // check for any pending open streams
         while counts.can_inc_num_send_streams() {

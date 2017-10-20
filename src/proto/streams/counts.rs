@@ -1,13 +1,13 @@
 use super::*;
 
-use std::marker::PhantomData;
 use std::usize;
 
 #[derive(Debug)]
-pub(super) struct Counts<P>
-where
-    P: Peer,
-{
+pub(super) struct Counts {
+    /// Acting as a client or server. This allows us to track which values to
+    /// inc / dec.
+    peer: peer::Dyn,
+
     /// Maximum number of locally initiated streams
     max_send_streams: usize,
 
@@ -19,23 +19,23 @@ where
 
     /// Current number of locally initiated streams
     num_recv_streams: usize,
-
-    _p: PhantomData<P>,
 }
 
-impl<P> Counts<P>
-where
-    P: Peer,
-{
+impl Counts {
     /// Create a new `Counts` using the provided configuration values.
-    pub fn new(config: &Config) -> Self {
+    pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         Counts {
+            peer,
             max_send_streams: config.local_max_initiated.unwrap_or(usize::MAX),
             num_send_streams: 0,
             max_recv_streams: config.remote_max_initiated.unwrap_or(usize::MAX),
             num_recv_streams: 0,
-            _p: PhantomData,
         }
+    }
+
+    /// Returns the current peer
+    pub fn peer(&self) -> peer::Dyn {
+        self.peer
     }
 
     /// Returns true if the receive stream concurrency can be incremented
@@ -82,9 +82,9 @@ where
     ///
     /// If the stream state transitions to closed, this function will perform
     /// all necessary cleanup.
-    pub fn transition<F, B, U>(&mut self, mut stream: store::Ptr<B, P>, f: F) -> U
+    pub fn transition<F, U>(&mut self, mut stream: store::Ptr, f: F) -> U
     where
-        F: FnOnce(&mut Self, &mut store::Ptr<B, P>) -> U,
+        F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
         let is_counted = stream.is_counted();
 
@@ -97,7 +97,7 @@ where
     }
 
     // TODO: move this to macro?
-    pub fn transition_after<B>(&mut self, mut stream: store::Ptr<B, P>, is_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool) {
         if stream.is_closed() {
             stream.unlink();
 
@@ -114,7 +114,7 @@ where
     }
 
     fn dec_num_streams(&mut self, id: StreamId) {
-        if P::is_local_init(id) {
+        if self.peer.is_local_init(id) {
             self.num_send_streams -= 1;
         } else {
             self.num_recv_streams -= 1;
