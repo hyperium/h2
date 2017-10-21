@@ -507,7 +507,6 @@ impl Prioritize {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
-                    debug_assert!(!stream.pending_send.is_empty());
 
                     let is_counted = stream.is_counted();
 

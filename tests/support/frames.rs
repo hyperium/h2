@@ -258,6 +258,11 @@ impl Mock<frame::Reset> {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::REFUSED_STREAM))
     }
+
+    pub fn cancel(self) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, frame::Reason::CANCEL))
+    }
 }
 
 impl From<Mock<frame::Reset>> for SendFrame {

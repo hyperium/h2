@@ -135,3 +135,36 @@ fn sent_invalid_authority() {
 
     srv.join(client).wait().expect("wait");
 }
+
+#[test]
+fn sends_reset_cancel_when_body_is_dropped() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+        )
+        .recv_frame(frames::headers(1).response(200).eos())
+        .recv_frame(frames::reset(1).cancel())
+        .close();
+
+    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::POST);
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
