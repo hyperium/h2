@@ -169,7 +169,9 @@ fn closed_streams_are_released() {
             // stream wired.
             assert_eq!(1, client.num_wired_streams());
 
-            drop(response);
+            let (_, body) = response.into_parts();
+            assert!(body.is_end_stream());
+            drop(body);
 
             // The stream state is now free
             assert_eq!(0, client.num_wired_streams());

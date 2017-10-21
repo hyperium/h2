@@ -161,6 +161,7 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     let body = resp.into_parts().1;
+                    assert!(!body.is_end_stream());
                     body.into_future().unwrap()
                 })
                 // read the small body and then release it

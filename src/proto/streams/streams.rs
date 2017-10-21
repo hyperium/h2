@@ -758,6 +758,15 @@ impl OpaqueStreamRef {
         me.actions.recv.body_is_empty(&stream)
     }
 
+    pub fn is_end_stream(&self) -> bool {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.key);
+
+        me.actions.recv.is_end_stream(&stream)
+    }
+
     pub fn poll_data(&mut self) -> Poll<Option<Bytes>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
