@@ -36,7 +36,7 @@ impl Error {
     /// action taken by the peer (i.e. a protocol error).
     pub fn reason(&self) -> Option<Reason> {
         match self.kind {
-            Kind::Proto(ref reason) => Some(*reason),
+            Kind::Proto(reason) => Some(reason),
             _ => None,
         }
     }
