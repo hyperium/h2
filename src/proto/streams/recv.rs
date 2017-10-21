@@ -330,6 +330,16 @@ impl Recv {
             .unwrap_or(true)
     }
 
+    pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
+        if !stream.state.is_recv_closed() {
+            return false;
+        }
+
+        stream
+            .pending_recv
+            .is_empty()
+    }
+
     pub fn recv_data(
         &mut self,
         frame: frame::Data,
