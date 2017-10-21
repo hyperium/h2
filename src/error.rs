@@ -29,6 +29,19 @@ enum Kind {
 
 // ===== impl Error =====
 
+impl Error {
+    /// If the error was caused by the remote peer, the error reason.
+    ///
+    /// This is either an error received by the peer or caused by an invalid
+    /// action taken by the peer (i.e. a protocol error).
+    pub fn reason(&self) -> Option<Reason> {
+        match self.kind {
+            Kind::Proto(reason) => Some(reason),
+            _ => None,
+        }
+    }
+}
+
 impl From<proto::Error> for Error {
     fn from(src: proto::Error) -> Error {
         use proto::Error::*;
