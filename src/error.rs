@@ -34,9 +34,9 @@ impl Error {
     ///
     /// This is either an error received by the peer or caused by an invalid
     /// action taken by the peer (i.e. a protocol error).
-    pub fn reason(&self) -> Option<&Reason> {
+    pub fn reason(&self) -> Option<Reason> {
         match self.kind {
-            Kind::Proto(ref reason) => Some(reason),
+            Kind::Proto(ref reason) => Some(*reason),
             _ => None,
         }
     }
