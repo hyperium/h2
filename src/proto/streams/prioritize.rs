@@ -600,7 +600,12 @@ impl Prioritize {
                                 }
                             }))
                         },
-                        Some(frame) => frame.map(|_| unreachable!()),
+                        Some(frame) => frame.map(|_|
+                            unreachable!(
+                                "Frame::map closure will only be called \
+                                 on DATA frames."
+                             )
+                        ),
                         None => {
                             assert!(stream.state.is_canceled());
                             stream.state.set_reset(Reason::CANCEL);
