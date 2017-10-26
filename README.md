@@ -62,7 +62,7 @@ fn main() {
 
 **Is this an embedded Java SQL database engine?**
 
-[No](https://github.com/carllerche/h2/issues/168).
+[No](http://www.h2database.com).
 
 ## License
 
