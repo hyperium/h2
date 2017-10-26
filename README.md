@@ -58,6 +58,12 @@ fn main() {
 }
 ```
 
+## FAQ
+
+**Is this an embedded Java SQL database engine?**
+
+[No](https://github.com/carllerche/h2/issues/168).
+
 ## License
 
 `h2` is primarily distributed under the terms of both the MIT license and the
