@@ -1,3 +1,4 @@
+use codec::UserError;
 use frame::Reason;
 use proto::{self, WindowSize};
 
@@ -7,15 +8,19 @@ use http::{HeaderMap};
 
 use std::fmt;
 
+/// Send frames to a remote.
 #[derive(Debug)]
 pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
+/// Receive frames from a remote.
+#[must_use = "streams do nothing unless polled"]
 pub struct RecvStream {
     inner: ReleaseCapacity,
 }
 
+/// A handle to release window capacity to a remote stream.
 #[derive(Debug)]
 pub struct ReleaseCapacity {
     inner: proto::OpaqueStreamRef,
@@ -85,6 +90,9 @@ impl RecvStream {
         self.inner.inner.is_end_stream()
     }
 
+    /// Get a mutable reference to this streams `ReleaseCapacity`.
+    ///
+    /// It can be used immediately, or cloned to be used later.
     pub fn release_capacity(&mut self) -> &mut ReleaseCapacity {
         &mut self.inner
     }
@@ -121,7 +129,11 @@ impl ReleaseCapacity {
         ReleaseCapacity { inner }
     }
 
+    /// Release window capacity back to remote stream.
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
+        if sz > proto::MAX_WINDOW_SIZE as usize {
+            return Err(UserError::ReleaseCapacityTooBig.into());
+        }
         self.inner
             .release_capacity(sz as proto::WindowSize)
             .map_err(Into::into)

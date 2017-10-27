@@ -1,3 +1,4 @@
+//! HTTP2 client side.
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
@@ -14,6 +15,7 @@ use std::io;
 use std::marker::PhantomData;
 
 /// In progress H2 connection binding
+#[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
     builder: Builder,
     inner: MapErr<WriteAll<T, &'static [u8]>, fn(io::Error) -> ::Error>,
@@ -26,11 +28,17 @@ pub struct Client<B: IntoBuf> {
     pending: Option<proto::StreamKey>,
 }
 
+/// A future to drive the H2 protocol on a connection.
+///
+/// This must be placed in an executor to ensure proper connection management.
+#[must_use = "futures do nothing unless polled"]
 pub struct Connection<T, B: IntoBuf> {
     inner: proto::Connection<T, Peer, B>,
 }
 
+/// A future of an HTTP response.
 #[derive(Debug)]
+#[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
 }

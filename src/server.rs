@@ -1,3 +1,5 @@
+//! HTTP2 server side.
+
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
@@ -10,6 +12,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
 
 /// In progress H2 connection binding
+#[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
     /// SETTINGS frame that will be sent once the connection is established.
     settings: Settings,
@@ -18,6 +21,7 @@ pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
 }
 
 /// Marker type indicating a client peer
+#[must_use = "streams do nothing unless polled"]
 pub struct Server<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
@@ -31,7 +35,7 @@ pub struct Builder {
 /// Respond to a request
 ///
 ///
-/// Instances of `Respond` are used to send a respond or reserve push promises.
+/// Instances of `Respond` are used to send a response or reserve push promises.
 #[derive(Debug)]
 pub struct Respond<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
