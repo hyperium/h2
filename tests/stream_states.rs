@@ -370,6 +370,49 @@ fn recv_goaway_finishes_processed_streams() {
 }
 
 #[test]
+fn recv_next_stream_id_updated_by_malformed_headers() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+
+    let bad_auth = util::byte_str("not:a/good authority");
+    let mut bad_headers: frame::Headers = frames::headers(1)
+        .request("GET", "https://example.com/")
+        .eos()
+        .into();
+    bad_headers.pseudo_mut().authority = Some(bad_auth);
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        // bad headers -- should error.
+        .send_frame(bad_headers)
+        .recv_frame(frames::reset(1).protocol_error())
+        // this frame is good, but the stream id should already have been incr'd
+        .send_frame(frames::headers(1)
+            .request("GET", "https://example.com/")
+            .eos())
+        .recv_frame(frames::go_away(1).protocol_error())
+        .close();
+
+        let srv = Server::handshake(io)
+            .expect("handshake")
+            .and_then(|srv| srv.into_future().then(|res| {
+                let (err, _) = res.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    "protocol error: unspecific protocol error detected"
+                );
+
+                Ok::<(), ()>(())
+            })
+        );
+
+        srv.join(client).wait().expect("wait");
+}
+
+#[test]
 fn skipped_stream_ids_are_implicitly_closed() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
@@ -422,7 +465,6 @@ fn skipped_stream_ids_are_implicitly_closed() {
         h2.join(srv).wait().expect("wait");
 
 }
-
 /*
 #[test]
 fn send_data_after_headers_eos() {
