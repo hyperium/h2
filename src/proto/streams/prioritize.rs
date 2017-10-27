@@ -1,7 +1,7 @@
 use super::*;
 use super::store::Resolve;
 
-use frame::Reason;
+use frame::{Reason, StreamId};
 
 use codec::UserError;
 use codec::UserError::*;
@@ -11,9 +11,18 @@ use bytes::buf::Take;
 use std::{cmp, fmt};
 use std::io;
 
+/// # Warning
+///
+/// Queued streans are ordered by stream ID, as we need to ensure that
+/// lower-numbered streams are sent headers before higher-numbered ones.
+/// This is because "idle" stream IDs – those which have been initiated but
+/// have yet to receive frames – will be implicitly closed on receipt of a
+/// frame on a higher stream ID. If these queues was not ordered by stream
+/// IDs, some mechanism would be necessary to ensure that the lowest-numberedh]
+/// idle stream is opened first.
 #[derive(Debug)]
 pub(super) struct Prioritize {
-    /// Queue of streams waiting for socket capacity to send a frame
+    /// Queue of streams waiting for socket capacity to send a frame.
     pending_send: store::Queue<stream::NextSend>,
 
     /// Queue of streams waiting for window capacity to produce data.
@@ -24,6 +33,9 @@ pub(super) struct Prioritize {
 
     /// Connection level flow control governing sent data
     flow: FlowControl,
+
+    /// Stream ID of the last stream opened.
+    last_opened_id: StreamId,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -55,6 +67,7 @@ impl Prioritize {
             pending_capacity: store::Queue::new(),
             pending_open: store::Queue::new(),
             flow: flow,
+            last_opened_id: StreamId::ZERO
         }
     }
 
@@ -617,6 +630,11 @@ impl Prioritize {
 
                     trace!("pop_frame; frame={:?}", frame);
 
+                    if cfg!(debug_assertions) && stream.state.is_idle() {
+                        debug_assert!(stream.id > self.last_opened_id);
+                        self.last_opened_id = stream.id;
+                    }
+
                     if !stream.pending_send.is_empty() || stream.state.is_canceled() {
                         // TODO: Only requeue the sender IF it is ready to send
                         // the next frame. i.e. don't requeue it if the next
@@ -640,6 +658,7 @@ impl Prioritize {
         while counts.can_inc_num_send_streams() {
             if let Some(mut stream) = self.pending_open.pop(store) {
                 trace!("schedule_pending_open; stream={:?}", stream.id);
+
                 counts.inc_num_send_streams();
                 self.pending_send.push(&mut stream);
                 if let Some(task) = stream.open_task.take() {

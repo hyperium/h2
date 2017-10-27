@@ -331,6 +331,13 @@ impl State {
         }
     }
 
+    pub fn is_idle(&self) -> bool {
+        match self.inner {
+            Idle => true,
+            _ => false,
+        }
+    }
+
     pub fn ensure_recv_open(&self) -> Result<bool, proto::Error> {
         use std::io;
 

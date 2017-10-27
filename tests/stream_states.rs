@@ -369,6 +369,60 @@ fn recv_goaway_finishes_processed_streams() {
     h2.join(srv).wait().expect("wait");
 }
 
+#[test]
+fn skipped_stream_ids_are_implicitly_closed() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv
+        .assert_client_handshake()
+        .expect("handshake")
+        .recv_settings()
+        .recv_frame(frames::headers(5)
+            .request("GET", "https://example.com/")
+            .eos(),
+        )
+        // send the response on a lower-numbered stream, which should be
+        // implicitly closed.
+        .send_frame(frames::headers(3).response(200));
+
+        let h2 = Client::builder()
+            .initial_stream_id(5)
+            .handshake::<_, Bytes>(io)
+            .expect("handshake")
+            .and_then(|(mut client, h2)| {
+                let request = Request::builder()
+                    .method(Method::GET)
+                    .uri("https://example.com/")
+                    .body(())
+                    .unwrap();
+
+                let req = client.send_request(request, true)
+                    .unwrap()
+                    .0.then(|res| {
+                        let err = res.unwrap_err();
+                        assert_eq!(
+                            err.to_string(),
+                            "protocol error: unspecific protocol error detected");
+                        Ok::<(), ()>(())
+                    });
+                    // client should see a conn error
+                    let conn = h2.then(|res| {
+                        let err = res.unwrap_err();
+                        assert_eq!(
+                            err.to_string(),
+                            "protocol error: unspecific protocol error detected"
+                        );
+                        Ok::<(), ()>(())
+                    });
+                    conn.unwrap().join(req)
+            });
+
+
+        h2.join(srv).wait().expect("wait");
+
+}
+
 /*
 #[test]
 fn send_data_after_headers_eos() {

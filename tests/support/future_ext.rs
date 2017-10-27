@@ -15,6 +15,30 @@ pub trait FutureExt: Future {
         }
     }
 
+    /// Panic on success, yielding the content of an `Err`.
+    fn unwrap_err(self) -> UnwrapErr<Self>
+    where
+        Self: Sized,
+        Self::Error: fmt::Debug,
+    {
+        UnwrapErr {
+            inner: self,
+        }
+    }
+
+    /// Panic on success, with a message.
+    fn expect_err<T>(self, msg: T) -> ExpectErr<Self>
+    where
+        Self: Sized,
+        Self::Error: fmt::Debug,
+        T: fmt::Display,
+    {
+        ExpectErr{
+            inner: self,
+            msg: msg.to_string(),
+        }
+    }
+
     /// Panic on error, with a message.
     fn expect<T>(self, msg: T) -> Expect<Self>
     where
@@ -68,6 +92,32 @@ where
     }
 }
 
+// ===== UnwrapErr ======
+
+/// Panic on success.
+pub struct UnwrapErr<T> {
+    inner: T,
+}
+
+impl<T> Future for UnwrapErr<T>
+where
+    T: Future,
+    T::Item: fmt::Debug,
+    T::Error: fmt::Debug,
+{
+    type Item = T::Error;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<T::Error, ()> {
+        let poll =
+            self.inner.poll()
+                .map_err(Async::Ready)
+                .unwrap_err();
+        Ok(poll)
+    }
+}
+
+
 
 // ===== Expect ======
 
@@ -88,6 +138,32 @@ where
 
     fn poll(&mut self) -> Poll<T::Item, ()> {
         Ok(self.inner.poll().expect(&self.msg))
+    }
+}
+
+// ===== ExpectErr ======
+
+/// Panic on success
+pub struct ExpectErr<T> {
+    inner: T,
+    msg: String,
+}
+
+impl<T> Future for ExpectErr<T>
+where
+    T: Future,
+    T::Item: fmt::Debug,
+    T::Error: fmt::Debug,
+{
+    type Item = T::Error;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<T::Error, ()> {
+        let poll =
+            self.inner.poll()
+                .map_err(Async::Ready)
+                .expect_err(&self.msg);
+        Ok(poll)
     }
 }
 
