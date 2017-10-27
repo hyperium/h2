@@ -1,4 +1,6 @@
-#![deny(warnings, missing_debug_implementations)]
+#![deny(warnings, missing_debug_implementations, missing_docs)]
+
+//! HTTP2
 
 #[macro_use]
 extern crate futures;
@@ -24,6 +26,7 @@ extern crate string;
 extern crate ordermap;
 
 mod error;
+#[cfg_attr(feature = "unstable", allow(missing_docs))]
 mod codec;
 mod hpack;
 mod proto;
@@ -32,6 +35,7 @@ mod proto;
 mod frame;
 
 #[cfg(feature = "unstable")]
+#[allow(missing_docs)]
 pub mod frame;
 
 pub mod client;
