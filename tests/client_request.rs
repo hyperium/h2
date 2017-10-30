@@ -274,8 +274,58 @@ fn request_over_max_concurrent_streams_errors() {
 }
 
 #[test]
-#[ignore]
-fn request_without_scheme() {}
+fn request_without_scheme() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("http2.akamai.com")
+                .body(())
+                .unwrap();
+            let err = client
+                .send_request(request, true)
+                .unwrap_err();
+
+            assert_eq!(err.to_string(), "user error: scheme and authority are required");
+
+            conn.unwrap()
+        });
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn request_without_authority() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("/just-a-path")
+                .body(())
+                .unwrap();
+            let err = client
+                .send_request(request, true)
+                .unwrap_err();
+
+            assert_eq!(err.to_string(), "user error: scheme and authority are required");
+
+            conn.unwrap()
+        });
+    client.join(srv).wait().expect("wait");
+}
 
 #[test]
 #[ignore]

@@ -1,6 +1,6 @@
 //! HTTP2 client side.
 use {SendStream, RecvStream, ReleaseCapacity};
-use codec::{Codec, RecvError};
+use codec::{Codec, RecvError, UserError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
@@ -372,7 +372,7 @@ impl proto::Peer for Peer {
         false
     }
 
-    fn convert_send_message(id: StreamId, request: Self::Send, end_of_stream: bool) -> Headers {
+    fn convert_send_message(id: StreamId, request: Self::Send, end_of_stream: bool) -> Result<Headers, UserError> {
         use http::request::Parts;
 
         let (
@@ -387,7 +387,7 @@ impl proto::Peer for Peer {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let pseudo = Pseudo::request(method, uri);
+        let pseudo = Pseudo::request(method, uri)?;
 
         // Create the HEADERS frame
         let mut frame = Headers::new(id, pseudo, headers);
@@ -396,7 +396,7 @@ impl proto::Peer for Peer {
             frame.set_end_stream()
         }
 
-        frame
+        Ok(frame)
     }
 
     fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError> {

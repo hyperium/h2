@@ -1,4 +1,4 @@
-use codec::RecvError;
+use codec::{RecvError, UserError};
 use error::Reason;
 use frame::{Headers, StreamId};
 
@@ -18,7 +18,7 @@ pub trait Peer {
 
     fn is_server() -> bool;
 
-    fn convert_send_message(id: StreamId, headers: Self::Send, end_of_stream: bool) -> Headers;
+    fn convert_send_message(id: StreamId, headers: Self::Send, end_of_stream: bool) -> Result<Headers, UserError> ;
 
     fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError>;
 

@@ -1,4 +1,5 @@
 use super::{StreamDependency, StreamId};
+use codec::UserError;
 use frame::{Error, Frame, Head, Kind};
 use hpack;
 
@@ -402,7 +403,7 @@ impl fmt::Debug for PushPromise {
 // ===== impl Pseudo =====
 
 impl Pseudo {
-    pub fn request(method: Method, uri: Uri) -> Self {
+    pub fn request(method: Method, uri: Uri) -> Result<Self, UserError> {
         let parts = uri::Parts::from(uri);
 
         fn to_string(src: Bytes) -> String<Bytes> {
@@ -423,19 +424,26 @@ impl Pseudo {
         };
 
         // If the URI includes a scheme component, add it to the pseudo headers
-        //
-        // TODO: Scheme must be set...
         if let Some(scheme) = parts.scheme {
             pseudo.set_scheme(to_string(scheme.into()));
+        } else {
+            trace!("uri user error: no scheme found");
+            return Err(UserError::IncompleteUri);
         }
 
         // If the URI includes an authority component, add it to the pseudo
         // headers
         if let Some(authority) = parts.authority {
             pseudo.set_authority(to_string(authority.into()));
+        } else {
+            // I think technically this cannot ever happen, since `http`
+            // says any `Uri` with a scheme but no authority is an error,
+            // but being safe.
+            trace!("uri user error: no authority found");
+            return Err(UserError::IncompleteUri);
         }
 
-        pseudo
+        Ok(pseudo)
     }
 
     pub fn response(status: StatusCode) -> Self {
