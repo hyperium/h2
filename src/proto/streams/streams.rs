@@ -473,7 +473,11 @@ where
             }
 
             // Convert the message
-            let headers = client::Peer::convert_send_message(stream_id, request, end_of_stream);
+            let headers = client::Peer::convert_send_message(
+                stream_id,
+                request,
+                end_of_stream,
+            )?;
 
             let mut stream = me.store.insert(stream.id, stream);
 
@@ -658,7 +662,11 @@ impl<B> StreamRef<B> {
         let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
-            let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
+            let frame = server::Peer::convert_send_message(
+                stream.id,
+                response,
+                end_of_stream,
+            )?;
 
             actions.send.send_headers(
                 frame, send_buffer, stream, counts, &mut actions.task)

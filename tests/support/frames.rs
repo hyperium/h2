@@ -106,7 +106,7 @@ impl Mock<frame::Headers> {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
-        let frame = frame::Headers::new(id, frame::Pseudo::request(method, uri), fields);
+        let frame = frame::Headers::new(id, frame::Pseudo::request(method, uri).unwrap(), fields);
         Mock(frame)
     }
 
@@ -185,7 +185,7 @@ impl Mock<frame::PushPromise> {
         let uri = uri.try_into().unwrap();
         let (id, promised, _, fields) = self.into_parts();
         let frame =
-            frame::PushPromise::new(id, promised, frame::Pseudo::request(method, uri), fields);
+            frame::PushPromise::new(id, promised, frame::Pseudo::request(method, uri).unwrap(), fields);
         Mock(frame)
     }
 

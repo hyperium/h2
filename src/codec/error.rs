@@ -44,6 +44,9 @@ pub enum UserError {
     ///
     /// A new connection is needed.
     OverflowedStreamId,
+
+    /// The `:scheme` and `:authority` pseudo headers are required to send a request.
+    IncompleteUri,
 }
 
 // ===== impl RecvError =====
@@ -121,6 +124,7 @@ impl error::Error for UserError {
             Rejected => "rejected",
             ReleaseCapacityTooBig => "release capacity too big",
             OverflowedStreamId => "stream ID overflowed",
+            IncompleteUri => "scheme and authority are required",
         }
     }
 }

@@ -1,7 +1,7 @@
 //! HTTP2 server side.
 
 use {SendStream, RecvStream, ReleaseCapacity};
-use codec::{Codec, RecvError};
+use codec::{Codec, RecvError, UserError};
 use frame::{self, Reason, Settings, StreamId};
 use proto::{self, Connection, Prioritized};
 
@@ -391,7 +391,7 @@ impl proto::Peer for Peer {
         id: StreamId,
         response: Self::Send,
         end_of_stream: bool,
-    ) -> frame::Headers {
+    ) -> Result<frame::Headers, UserError> {
         use http::response::Parts;
 
         // Extract the components of the HTTP request
@@ -415,7 +415,7 @@ impl proto::Peer for Peer {
             frame.set_end_stream()
         }
 
-        frame
+        Ok(frame)
     }
 
     fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {
