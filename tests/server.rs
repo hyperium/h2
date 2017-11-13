@@ -110,7 +110,7 @@ fn serve_request() {
 fn accept_with_pending_connections_after_socket_close() {}
 
 #[test]
-fn sent_invalid_authority() {
+fn recv_invalid_authority() {
     let _ = ::env_logger::init();
     let (io, client) = mock::new();
 
@@ -127,6 +127,41 @@ fn sent_invalid_authority() {
         .recv_settings()
         .send_frame(bad_headers)
         .recv_frame(frames::reset(1).protocol_error())
+        .close();
+
+    let srv = Server::handshake(io)
+        .expect("handshake")
+        .and_then(|srv| srv.into_future().unwrap());
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn recv_connection_header() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let req = |id, name, val| {
+        frames::headers(id)
+            .request("GET", "https://example.com/")
+            .field(name, val)
+            .eos()
+    };
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(req(1, "connection", "foo"))
+        .send_frame(req(3, "keep-alive", "5"))
+        .send_frame(req(5, "proxy-connection", "bar"))
+        .send_frame(req(7, "transfer-encoding", "chunked"))
+        .send_frame(req(9, "upgrade", "HTTP/2.0"))
+        .recv_frame(frames::reset(1).protocol_error())
+        .recv_frame(frames::reset(3).protocol_error())
+        .recv_frame(frames::reset(5).protocol_error())
+        .recv_frame(frames::reset(7).protocol_error())
+        .recv_frame(frames::reset(9).protocol_error())
         .close();
 
     let srv = Server::handshake(io)

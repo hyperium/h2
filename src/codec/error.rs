@@ -44,6 +44,9 @@ pub enum UserError {
     ///
     /// A new connection is needed.
     OverflowedStreamId,
+
+    /// Illegal headers, such as connection-specific headers.
+    MalformedHeaders,
 }
 
 // ===== impl RecvError =====
@@ -121,6 +124,7 @@ impl error::Error for UserError {
             Rejected => "rejected",
             ReleaseCapacityTooBig => "release capacity too big",
             OverflowedStreamId => "stream ID overflowed",
+            MalformedHeaders => "malformed headers",
         }
     }
 }

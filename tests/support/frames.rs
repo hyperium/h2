@@ -126,6 +126,17 @@ impl Mock<frame::Headers> {
         Mock(frame)
     }
 
+    pub fn field<K, V>(self, key: K, value: V) -> Self
+    where
+        K: HttpTryInto<http::header::HeaderName>,
+        V: HttpTryInto<http::header::HeaderValue>,
+    {
+        let (id, pseudo, mut fields) = self.into_parts();
+        fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
+        let frame = frame::Headers::new(id, pseudo, fields);
+        Mock(frame)
+    }
+
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream();
         self
