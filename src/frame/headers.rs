@@ -635,7 +635,12 @@ impl HeaderBlock {
                     // Connection level header fields are not supported and must
                     // result in a protocol error.
 
-                    if name == header::CONNECTION {
+                    if name == header::CONNECTION
+                        || name == header::TRANSFER_ENCODING
+                        || name == header::UPGRADE
+                        || name == "keep-alive"
+                        || name == "proxy-connection"
+                    {
                         trace!("load_hpack; connection level header");
                         malformed = true;
                     } else if name == header::TE && value != "trailers" {

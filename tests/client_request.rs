@@ -281,6 +281,43 @@ fn request_without_scheme() {}
 #[ignore]
 fn request_with_h1_version() {}
 
+#[test]
+fn request_with_connection_headers() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .close();
+
+    let headers = vec![
+        ("connection", "foo"),
+        ("keep-alive", "5"),
+        ("proxy-connection", "bar"),
+        ("transfer-encoding", "chunked"),
+        ("upgrade", "HTTP/2.0"),
+        ("te", "boom"),
+    ];
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(move |(mut client, conn)| {
+            for (name, val) in headers {
+                let req = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .header(name, val)
+                    .body(())
+                    .unwrap();
+                let err = client.send_request(req, true).expect_err(name);
+
+                assert_eq!(err.to_string(), "user error: malformed headers");
+            }
+            conn.unwrap()
+        });
+
+    client.join(srv).wait().expect("wait");
+}
 
 #[test]
 fn sending_request_on_closed_connection() {

@@ -1,3 +1,4 @@
+use http;
 use super::*;
 use codec::{RecvError, UserError};
 use codec::UserError::*;
@@ -55,6 +56,25 @@ impl Send {
             frame,
             self.init_window_sz
         );
+
+        // 8.1.2.2. Connection-Specific Header Fields
+        if frame.fields().contains_key(http::header::CONNECTION)
+            || frame.fields().contains_key(http::header::TRANSFER_ENCODING)
+            || frame.fields().contains_key(http::header::UPGRADE)
+            || frame.fields().contains_key("keep-alive")
+            || frame.fields().contains_key("proxy-connection")
+        {
+            debug!("illegal connection-specific headers found");
+            return Err(UserError::MalformedHeaders);
+        } else if let Some(te) = frame.fields().get(http::header::TE) {
+            if te != "trailers" {
+                debug!("illegal connection-specific headers found");
+                return Err(UserError::MalformedHeaders);
+
+            }
+        }
+
+
 
         let end_stream = frame.is_end_stream();
 
