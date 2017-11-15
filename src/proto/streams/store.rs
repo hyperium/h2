@@ -12,6 +12,11 @@ use std::ops;
 pub(super) struct Store {
     slab: slab::Slab<(StoreId, Stream)>,
     ids: OrderMap<StreamId, (usize, StoreId)>,
+    /// Keeps a list of StreamIds that we have reset locally, to allow ignoring
+    /// frames on that stream "for some time".
+    // We could store an `Instant` here perhaps, and upon lookup, if the
+    // elapsed time has been too long, pop it from this Map and return false.
+    reset_streams: OrderMap<StreamId, ()>,
     counter: StoreId,
 }
 
@@ -81,6 +86,7 @@ impl Store {
         Store {
             slab: slab::Slab::new(),
             ids: OrderMap::new(),
+            reset_streams: OrderMap::new(),
             counter: 0,
         }
     }
@@ -128,6 +134,10 @@ impl Store {
                 counter: &mut self.counter,
             }),
         }
+    }
+
+    pub fn is_reset(&self, id: &StreamId) -> bool {
+        self.reset_streams.contains_key(id)
     }
 
     pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
@@ -314,6 +324,9 @@ impl<'a> Ptr<'a> {
     /// concerned.
     pub fn unlink(&mut self) {
         let id = self.id;
+        if self.state.is_local_reset() {
+            self.store.reset_streams.insert(id, ());
+        }
         self.store.ids.remove(&id);
     }
 }

@@ -1,4 +1,4 @@
-use {FutureExt, SendFrame};
+use {frames, FutureExt, SendFrame};
 
 use h2::{self, RecvError, SendError};
 use h2::frame::{self, Frame};
@@ -439,6 +439,15 @@ pub trait HandleFutureExt {
             inner: self,
             frame: Some(frame.into()),
         }
+    }
+
+    fn ping_pong(self, payload: [u8; 8]) -> RecvFrame<<SendFrameFut<Self> as IntoRecvFrame>::Future>
+    where
+        Self: Future<Item=Handle> + Sized + 'static,
+        Self::Error: fmt::Debug,
+    {
+        self.send_frame(frames::ping(payload))
+            .recv_frame(frames::ping(payload).pong())
     }
 
     fn idle_ms(self, ms: usize) -> Box<Future<Item = Handle, Error = Self::Error>>

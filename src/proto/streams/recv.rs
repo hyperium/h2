@@ -354,7 +354,9 @@ impl Recv {
         let sz = sz as WindowSize;
 
         if !stream.state.is_recv_streaming() {
-            trace!("stream is not in receiving state; state={:?}", stream.state);
+            // TODO: There are cases where this can be a stream error of
+            // STREAM_CLOSED instead...
+
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
@@ -369,19 +371,20 @@ impl Recv {
 
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
-        if self.flow.window_size() < sz || stream.recv_flow.window_size() < sz {
-            return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
-        }
+        self.consume_connection_window(sz)?;
 
-        // Update connection level flow control
-        self.flow.send_data(sz);
+        if stream.recv_flow.window_size() < sz {
+            return Err(RecvError::Stream {
+                id: stream.id,
+                reason: Reason::FLOW_CONTROL_ERROR,
+            });
+        }
 
         // Update stream level flow control
         stream.recv_flow.send_data(sz);
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
-        self.in_flight_data += sz;
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
             trace!("content-length overflow");
@@ -412,6 +415,19 @@ impl Recv {
         stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
+        Ok(())
+    }
+
+    pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
+        if self.flow.window_size() < sz {
+            return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
+        }
+
+        // Update connection level flow control
+        self.flow.send_data(sz);
+
+        // Track the data as in-flight
+        self.in_flight_data += sz;
         Ok(())
     }
 
@@ -480,15 +496,14 @@ impl Recv {
         Ok(())
     }
 
+    /// Handle remote sending an explicit RST_STREAM.
     pub fn recv_reset(
         &mut self,
         frame: frame::Reset,
         stream: &mut Stream,
     ) -> Result<(), RecvError> {
-        let err = proto::Error::Proto(frame.reason());
-
         // Notify the stream
-        stream.state.recv_err(&err);
+        stream.state.recv_reset(frame.reason());
         stream.notify_recv();
         Ok(())
     }

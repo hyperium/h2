@@ -465,6 +465,55 @@ fn skipped_stream_ids_are_implicitly_closed() {
         h2.join(srv).wait().expect("wait");
 
 }
+
+#[test]
+fn send_rst_stream_allows_recv_frames() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::reset(1).cancel())
+        // sending frame after canceled!
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        // do a pingpong to ensure no other frames were sent
+        .ping_pong([1; 8])
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                });
+
+            conn.expect("client")
+                .drive(req)
+                .and_then(|(conn, _)| conn)
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
 /*
 #[test]
 fn send_data_after_headers_eos() {

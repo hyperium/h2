@@ -5,14 +5,14 @@ use bytes::{BigEndian, BufMut};
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct GoAway {
     last_stream_id: StreamId,
-    error_code: u32,
+    error_code: Reason,
 }
 
 impl GoAway {
     pub fn new(last_stream_id: StreamId, reason: Reason) -> Self {
         GoAway {
             last_stream_id,
-            error_code: reason.into(),
+            error_code: reason,
         }
     }
 
@@ -21,7 +21,7 @@ impl GoAway {
     }
 
     pub fn reason(&self) -> Reason {
-        self.error_code.into()
+        self.error_code
     }
 
     pub fn load(payload: &[u8]) -> Result<GoAway, Error> {
@@ -34,16 +34,16 @@ impl GoAway {
 
         Ok(GoAway {
             last_stream_id: last_stream_id,
-            error_code: error_code,
+            error_code: error_code.into(),
         })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
-        trace!("encoding GO_AWAY; code={}", self.error_code);
+        trace!("encoding GO_AWAY; code={:?}", self.error_code);
         let head = Head::new(Kind::GoAway, 0, StreamId::zero());
         head.encode(8, dst);
         dst.put_u32::<BigEndian>(self.last_stream_id.into());
-        dst.put_u32::<BigEndian>(self.error_code);
+        dst.put_u32::<BigEndian>(self.error_code.into());
     }
 }
 

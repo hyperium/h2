@@ -4,7 +4,7 @@ use frame::Reason;
 use proto;
 
 use self::Inner::*;
-use self::Peer::*;
+use self::OpenPeer::*;
 
 /// Represents the state of an H2 stream
 ///
@@ -57,22 +57,22 @@ enum Inner {
     // TODO: these states shouldn't count against concurrency limits:
     //ReservedLocal,
     ReservedRemote,
-    Open { local: Peer, remote: Peer },
-    HalfClosedLocal(Peer), // TODO: explicitly name this value
-    HalfClosedRemote(Peer),
-    // When reset, a reason is provided
-    Closed(Option<Cause>),
+    Open { local: OpenPeer, remote: OpenPeer },
+    HalfClosedLocal(OpenPeer), // TODO: explicitly name this value
+    HalfClosedRemote(OpenPeer),
+    Closed(Cause),
 }
 
 #[derive(Debug, Copy, Clone)]
-enum Peer {
+enum OpenPeer {
     AwaitingHeaders,
     Streaming,
 }
 
 #[derive(Debug, Copy, Clone)]
 enum Cause {
-    Proto(Reason),
+    EndStream,
+    Proto(Peer, Reason),
     Io,
 
     /// The user droped all handles to the stream without explicitly canceling.
@@ -81,10 +81,16 @@ enum Cause {
     Canceled,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum Peer {
+    Local,
+    Remote
+}
+
 impl State {
     /// Opens the send-half of a stream if it is not already open.
     pub fn send_open(&mut self, eos: bool) -> Result<(), UserError> {
-        let local = Peer::Streaming;
+        let local = Streaming;
 
         self.inner = match self.inner {
             Idle => if eos {
@@ -107,7 +113,7 @@ impl State {
                 }
             },
             HalfClosedRemote(AwaitingHeaders) => if eos {
-                Closed(None)
+                Closed(Cause::EndStream)
             } else {
                 HalfClosedRemote(local)
             },
@@ -124,7 +130,7 @@ impl State {
     ///
     /// Returns true if this transitions the state to Open.
     pub fn recv_open(&mut self, eos: bool) -> Result<bool, RecvError> {
-        let remote = Peer::Streaming;
+        let remote = Streaming;
         let mut initial = false;
 
         self.inner = match self.inner {
@@ -144,7 +150,7 @@ impl State {
                 initial = true;
 
                 if eos {
-                    Closed(None)
+                    Closed(Cause::EndStream)
                 } else {
                     Open {
                         local: AwaitingHeaders,
@@ -164,7 +170,7 @@ impl State {
                 }
             },
             HalfClosedLocal(AwaitingHeaders) => if eos {
-                Closed(None)
+                Closed(Cause::EndStream)
             } else {
                 HalfClosedLocal(remote)
             },
@@ -201,13 +207,25 @@ impl State {
             },
             HalfClosedLocal(..) => {
                 trace!("recv_close: HalfClosedLocal => Closed");
-                self.inner = Closed(None);
+                self.inner = Closed(Cause::EndStream);
                 Ok(())
             },
             _ => Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         }
     }
 
+    /// The remote explicitly sent a RST_STREAM.
+    pub fn recv_reset(&mut self, reason: Reason) {
+        match self.inner {
+            Closed(..) => {},
+            _ => {
+                trace!("recv_reset; reason={:?}", reason);
+                self.inner = Closed(Cause::Proto(Peer::Remote, reason));
+            },
+        }
+    }
+
+    /// We noticed a protocol error.
     pub fn recv_err(&mut self, err: &proto::Error) {
         use proto::Error::*;
 
@@ -216,8 +234,8 @@ impl State {
             _ => {
                 trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
-                    Proto(reason) => Some(Cause::Proto(reason)),
-                    Io(..) => Some(Cause::Io),
+                    Proto(reason) => Cause::Proto(Peer::Local, reason),
+                    Io(..) => Cause::Io,
                 });
             },
         }
@@ -245,28 +263,34 @@ impl State {
             },
             HalfClosedRemote(..) => {
                 trace!("send_close: HalfClosedRemote => Closed");
-                self.inner = Closed(None);
+                self.inner = Closed(Cause::EndStream);
             },
             _ => panic!("transition send_close on unexpected state"),
         }
     }
 
-    /// Set the stream state to reset
+    /// Set the stream state to reset locally.
     pub fn set_reset(&mut self, reason: Reason) {
-        self.inner = Closed(Some(Cause::Proto(reason)));
+        self.inner = Closed(Cause::Proto(Peer::Local, reason));
     }
 
     /// Set the stream state to canceled
     pub fn set_canceled(&mut self) {
         debug_assert!(!self.is_closed());
-        self.inner = Closed(Some(Cause::Canceled));
+        self.inner = Closed(Cause::Canceled);
     }
 
     pub fn is_canceled(&self) -> bool {
-        use self::Cause::Canceled;
-
         match self.inner {
-            Closed(Some(Canceled)) => true,
+            Closed(Cause::Canceled) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_local_reset(&self) -> bool {
+        match self.inner {
+            Closed(Cause::Proto(Peer::Local, _)) => true,
+            Closed(Cause::Canceled) => true,
             _ => false,
         }
     }
@@ -274,7 +298,8 @@ impl State {
     /// Returns true if the stream is already reset.
     pub fn is_reset(&self) -> bool {
         match self.inner {
-            Closed(Some(_)) => true,
+            Closed(Cause::EndStream) => false,
+            Closed(_) => true,
             _ => false,
         }
     }
@@ -294,10 +319,10 @@ impl State {
     pub fn is_send_streaming(&self) -> bool {
         match self.inner {
             Open {
-                local: Peer::Streaming,
+                local: Streaming,
                 ..
             } => true,
-            HalfClosedRemote(Peer::Streaming) => true,
+            HalfClosedRemote(Streaming) => true,
             _ => false,
         }
     }
@@ -319,10 +344,10 @@ impl State {
     pub fn is_recv_streaming(&self) -> bool {
         match self.inner {
             Open {
-                remote: Peer::Streaming,
+                remote: Streaming,
                 ..
             } => true,
-            HalfClosedLocal(Peer::Streaming) => true,
+            HalfClosedLocal(Streaming) => true,
             _ => false,
         }
     }
@@ -353,10 +378,10 @@ impl State {
 
         // TODO: Is this correct?
         match self.inner {
-            Closed(Some(Cause::Proto(reason))) => Err(proto::Error::Proto(reason)),
-            Closed(Some(Cause::Canceled)) => Err(proto::Error::Proto(Reason::CANCEL)),
-            Closed(Some(Cause::Io)) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
-            Closed(None) | HalfClosedRemote(..) => Ok(false),
+            Closed(Cause::Proto(_, reason)) => Err(proto::Error::Proto(reason)),
+            Closed(Cause::Canceled) => Err(proto::Error::Proto(Reason::CANCEL)),
+            Closed(Cause::Io) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
+            Closed(Cause::EndStream) | HalfClosedRemote(..) => Ok(false),
             _ => Ok(true),
         }
     }
@@ -370,8 +395,8 @@ impl Default for State {
     }
 }
 
-impl Default for Peer {
+impl Default for OpenPeer {
     fn default() -> Self {
-        Peer::AwaitingHeaders
+        AwaitingHeaders
     }
 }

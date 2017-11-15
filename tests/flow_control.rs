@@ -276,17 +276,14 @@ fn recv_data_overflows_stream_window() {
         .send_frame(frames::data(1, vec![0u8; 16_384]))
         // this frame overflows the window!
         .send_frame(frames::data(1, &[0; 16][..]).eos())
-        // expecting goaway for the conn
-        // TODO: change to a RST_STREAM eventually
-        .recv_frame(frames::go_away(0).flow_control())
-        // close the connection
-        .map(drop);
+        .recv_frame(frames::reset(1).flow_control())
+        .close();
 
     let h2 = Client::builder()
         .initial_window_size(16_384)
         .handshake::<_, Bytes>(io)
         .unwrap()
-        .and_then(|(mut client, h2)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://http2.akamai.com/")
@@ -310,15 +307,6 @@ fn recv_data_overflows_stream_window() {
                     })
                 });
 
-            // client should see a flow control error
-            let conn = h2.then(|res| {
-                let err = res.unwrap_err();
-                assert_eq!(
-                    err.to_string(),
-                    "protocol error: flow-control protocol violated"
-                );
-                Ok::<(), ()>(())
-            });
             conn.unwrap().join(req)
         });
     h2.join(mock).wait().unwrap();
