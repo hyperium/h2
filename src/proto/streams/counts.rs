@@ -19,6 +19,12 @@ pub(super) struct Counts {
 
     /// Current number of locally initiated streams
     num_recv_streams: usize,
+
+    /// Maximum number of pending locally reset streams
+    max_reset_streams: usize,
+
+    /// Current number of pending locally reset streams
+    num_reset_streams: usize,
 }
 
 impl Counts {
@@ -30,6 +36,8 @@ impl Counts {
             num_send_streams: 0,
             max_recv_streams: config.remote_max_initiated.unwrap_or(usize::MAX),
             num_recv_streams: 0,
+            max_reset_streams: config.local_reset_max,
+            num_reset_streams: 0,
         }
     }
 
@@ -72,6 +80,22 @@ impl Counts {
         self.num_send_streams += 1;
     }
 
+    /// Returns true if the number of pending reset streams can be incremented.
+    pub fn can_inc_num_reset_streams(&self) -> bool {
+        self.max_reset_streams > self.num_reset_streams
+    }
+
+    /// Increments the number of pending reset streams.
+    ///
+    /// # Panics
+    ///
+    /// Panics on failure as this should have been validated before hand.
+    pub fn inc_num_reset_streams(&mut self) {
+        assert!(self.can_inc_num_reset_streams());
+
+        self.num_reset_streams += 1;
+    }
+
     pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_send_streams = val as usize;
@@ -87,19 +111,26 @@ impl Counts {
         F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
         let is_counted = stream.is_counted();
+        let is_pending_reset = stream.is_pending_reset_expiration();
 
         // Run the action
         let ret = f(self, &mut stream);
 
-        self.transition_after(stream, is_counted);
+        self.transition_after(stream, is_counted, is_pending_reset);
 
         ret
     }
 
     // TODO: move this to macro?
-    pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool, is_reset_counted: bool) {
         if stream.is_closed() {
-            stream.unlink();
+            if !stream.is_pending_reset_expiration() {
+                stream.unlink();
+
+                if is_reset_counted {
+                    self.dec_num_reset_streams();
+                }
+            }
 
             if is_counted {
                 // Decrement the number of active streams.
@@ -115,9 +146,16 @@ impl Counts {
 
     fn dec_num_streams(&mut self, id: StreamId) {
         if self.peer.is_local_init(id) {
+            assert!(self.num_send_streams > 0);
             self.num_send_streams -= 1;
         } else {
+            assert!(self.num_recv_streams > 0);
             self.num_recv_streams -= 1;
         }
+    }
+
+    fn dec_num_reset_streams(&mut self) {
+        assert!(self.num_reset_streams > 0);
+        self.num_reset_streams -= 1;
     }
 }

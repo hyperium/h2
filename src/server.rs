@@ -3,13 +3,14 @@
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Connection, Prioritized};
+use proto::{self, Config, Connection, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
+use std::time::Duration;
 
 /// In progress H2 connection binding
 #[must_use = "futures do nothing unless polled"]
@@ -357,8 +358,12 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             unreachable!("Handshake::poll() state was not advanced completely!")
         };
         let server = poll?.map(|codec| {
-            let connection =
-                Connection::new(codec, &self.settings, 2.into());
+            let connection = Connection::new(codec, Config {
+                next_stream_id: 2.into(),
+                reset_stream_duration: Duration::from_secs(30),
+                reset_stream_max: 10,
+                settings: self.settings.clone(),
+            });
             trace!("Handshake::poll(); connection established!");
             Server { connection }
         });

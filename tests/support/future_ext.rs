@@ -109,11 +109,11 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<T::Error, ()> {
-        let poll =
-            self.inner.poll()
-                .map_err(Async::Ready)
-                .unwrap_err();
-        Ok(poll)
+        match self.inner.poll() {
+            Ok(Async::Ready(v)) => panic!("Future::unwrap_err() on an Ok value: {:?}", v),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Ok(Async::Ready(e)),
+        }
     }
 }
 
@@ -159,11 +159,11 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<T::Error, ()> {
-        let poll =
-            self.inner.poll()
-                .map_err(Async::Ready)
-                .expect_err(&self.msg);
-        Ok(poll)
+        match self.inner.poll() {
+            Ok(Async::Ready(v)) => panic!("{}: {:?}", self.msg, v),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Ok(Async::Ready(e)),
+        }
     }
 }
 

@@ -2,11 +2,11 @@ use super::*;
 use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
-use proto::*;
 
 use http::HeaderMap;
 
 use std::io;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub(super) struct Recv {
@@ -30,6 +30,12 @@ pub(super) struct Recv {
 
     /// New streams to be accepted
     pending_accept: store::Queue<stream::NextAccept>,
+
+    /// Locally reset streams that should be reaped when they expire
+    pending_reset_expired: store::Queue<stream::NextResetExpire>,
+
+    /// How long locally reset streams should ignore received frames
+    reset_duration: Duration,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Event>,
@@ -74,6 +80,8 @@ impl Recv {
             pending_window_updates: store::Queue::new(),
             last_processed_id: StreamId::zero(),
             pending_accept: store::Queue::new(),
+            pending_reset_expired: store::Queue::new(),
+            reset_duration: config.local_reset_duration,
             buffer: Buffer::new(),
             refused: None,
             is_push_enabled: config.local_push_enabled,
@@ -353,7 +361,9 @@ impl Recv {
 
         let sz = sz as WindowSize;
 
-        if !stream.state.is_recv_streaming() {
+        let is_ignoring_frame = stream.state.is_local_reset();
+
+        if !is_ignoring_frame && !stream.state.is_recv_streaming() {
             // TODO: There are cases where this can be a stream error of
             // STREAM_CLOSED instead...
 
@@ -373,7 +383,20 @@ impl Recv {
         // on the stream.
         self.consume_connection_window(sz)?;
 
+        if is_ignoring_frame {
+            trace!("recv_data frame being ignored on locally reset {:?} for some time", stream.id);
+            return Ok(());
+        }
+
         if stream.recv_flow.window_size() < sz {
+            // http://httpwg.org/specs/rfc7540.html#WINDOW_UPDATE
+            // > A receiver MAY respond with a stream error (Section 5.4.2) or
+            // > connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR if
+            // > it is unable to accept a frame.
+            //
+            // So, for violating the **stream** window, we can send either a
+            // stream or connection error. We've opted to send a stream
+            // error.
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::FLOW_CONTROL_ERROR,
@@ -551,6 +574,34 @@ impl Recv {
         Ok(())
     }
 
+    /// Add a locally reset stream to queue to be eventually reaped.
+    pub fn enqueue_reset_expiration(
+        &mut self,
+        stream: &mut store::Ptr,
+        counts: &mut Counts,
+    ) {
+        assert!(stream.state.is_local_reset());
+
+        if stream.is_pending_reset_expiration() {
+            return;
+        }
+
+        if !counts.can_inc_num_reset_streams() {
+            // try to evict 1 stream if possible
+            // if max allow is 0, this won't be able to evict,
+            // and then we'll just bail after
+            if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
+                let is_counted = evicted.is_counted();
+                counts.transition_after(evicted, is_counted, true);
+            }
+        }
+
+        if counts.can_inc_num_reset_streams() {
+            counts.inc_num_reset_streams();
+            self.pending_reset_expired.push(stream);
+        }
+    }
+
     /// Send any pending refusals.
     pub fn send_pending_refusal<T, B>(
         &mut self,
@@ -575,6 +626,18 @@ impl Recv {
         self.refused = None;
 
         Ok(Async::Ready(()))
+    }
+
+    pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
+        let now = Instant::now();
+        let reset_duration = self.reset_duration;
+        while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
+            let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
+            now - reset_at > reset_duration
+        }) {
+            let is_counted = stream.is_counted();
+            counts.transition_after(stream, is_counted, true);
+        }
     }
 
     pub fn poll_complete<T, B>(

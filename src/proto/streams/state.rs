@@ -4,7 +4,7 @@ use frame::Reason;
 use proto;
 
 use self::Inner::*;
-use self::OpenPeer::*;
+use self::Peer::*;
 
 /// Represents the state of an H2 stream
 ///
@@ -57,14 +57,14 @@ enum Inner {
     // TODO: these states shouldn't count against concurrency limits:
     //ReservedLocal,
     ReservedRemote,
-    Open { local: OpenPeer, remote: OpenPeer },
-    HalfClosedLocal(OpenPeer), // TODO: explicitly name this value
-    HalfClosedRemote(OpenPeer),
+    Open { local: Peer, remote: Peer },
+    HalfClosedLocal(Peer), // TODO: explicitly name this value
+    HalfClosedRemote(Peer),
     Closed(Cause),
 }
 
 #[derive(Debug, Copy, Clone)]
-enum OpenPeer {
+enum Peer {
     AwaitingHeaders,
     Streaming,
 }
@@ -72,19 +72,14 @@ enum OpenPeer {
 #[derive(Debug, Copy, Clone)]
 enum Cause {
     EndStream,
-    Proto(Peer, Reason),
+    Proto(Reason),
+    LocallyReset(Reason),
     Io,
 
     /// The user droped all handles to the stream without explicitly canceling.
     /// This indicates to the connection that a reset frame must be sent out
     /// once the send queue has been flushed.
     Canceled,
-}
-
-#[derive(Debug, Copy, Clone)]
-enum Peer {
-    Local,
-    Remote
 }
 
 impl State {
@@ -220,7 +215,7 @@ impl State {
             Closed(..) => {},
             _ => {
                 trace!("recv_reset; reason={:?}", reason);
-                self.inner = Closed(Cause::Proto(Peer::Remote, reason));
+                self.inner = Closed(Cause::Proto(reason));
             },
         }
     }
@@ -234,7 +229,7 @@ impl State {
             _ => {
                 trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
-                    Proto(reason) => Cause::Proto(Peer::Local, reason),
+                    Proto(reason) => Cause::LocallyReset(reason),
                     Io(..) => Cause::Io,
                 });
             },
@@ -246,7 +241,7 @@ impl State {
             Closed(..) => {},
             s => {
                 trace!("recv_eof; state={:?}", s);
-                self.inner = Closed(Some(Cause::Io));
+                self.inner = Closed(Cause::Io);
             }
         }
     }
@@ -271,7 +266,7 @@ impl State {
 
     /// Set the stream state to reset locally.
     pub fn set_reset(&mut self, reason: Reason) {
-        self.inner = Closed(Cause::Proto(Peer::Local, reason));
+        self.inner = Closed(Cause::LocallyReset(reason));
     }
 
     /// Set the stream state to canceled
@@ -289,7 +284,7 @@ impl State {
 
     pub fn is_local_reset(&self) -> bool {
         match self.inner {
-            Closed(Cause::Proto(Peer::Local, _)) => true,
+            Closed(Cause::LocallyReset(_)) => true,
             Closed(Cause::Canceled) => true,
             _ => false,
         }
@@ -378,10 +373,12 @@ impl State {
 
         // TODO: Is this correct?
         match self.inner {
-            Closed(Cause::Proto(_, reason)) => Err(proto::Error::Proto(reason)),
+            Closed(Cause::Proto(reason)) |
+            Closed(Cause::LocallyReset(reason)) => Err(proto::Error::Proto(reason)),
             Closed(Cause::Canceled) => Err(proto::Error::Proto(Reason::CANCEL)),
             Closed(Cause::Io) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
-            Closed(Cause::EndStream) | HalfClosedRemote(..) => Ok(false),
+            Closed(Cause::EndStream) |
+            HalfClosedRemote(..) => Ok(false),
             _ => Ok(true),
         }
     }
@@ -395,7 +392,7 @@ impl Default for State {
     }
 }
 
-impl Default for OpenPeer {
+impl Default for Peer {
     fn default() -> Self {
         AwaitingHeaders
     }
