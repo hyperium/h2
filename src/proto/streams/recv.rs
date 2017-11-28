@@ -497,6 +497,11 @@ impl Recv {
         stream.notify_recv();
     }
 
+    pub fn recv_eof(&mut self, stream: &mut Stream) {
+        stream.state.recv_eof();
+        stream.notify_recv();
+    }
+
     fn next_stream_id(&self) -> Result<StreamId, RecvError> {
         if let Ok(id) = self.next_stream_id {
             Ok(id)
