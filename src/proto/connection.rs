@@ -277,8 +277,8 @@ where
                     // TODO: handle
                 },
                 None => {
-                    // TODO: Is this correct?
                     trace!("codec closed");
+                    self.streams.recv_eof();
                     return Ok(Async::Ready(()));
                 },
             }

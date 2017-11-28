@@ -223,6 +223,16 @@ impl State {
         }
     }
 
+    pub fn recv_eof(&mut self) {
+        match self.inner {
+            Closed(..) => {},
+            s => {
+                trace!("recv_eof; state={:?}", s);
+                self.inner = Closed(Some(Cause::Io));
+            }
+        }
+    }
+
     /// Indicates that the local side will not send more data to the local.
     pub fn send_close(&mut self) {
         match self.inner {

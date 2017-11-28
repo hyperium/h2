@@ -272,6 +272,23 @@ where
         actions.conn_error = Some(err);
     }
 
+    pub fn recv_eof(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let actions = &mut me.actions;
+        let counts = &mut me.counts;
+
+        me.store
+            .for_each(|stream| {
+                counts.transition(stream, |_, stream| {
+                    actions.recv.recv_eof(stream);
+                    Ok::<_, ()>(())
+                })
+            })
+            .expect("recv_eof");
+    }
+
     pub fn last_processed_id(&self) -> StreamId {
         self.inner.lock().unwrap().actions.recv.last_processed_id()
     }
