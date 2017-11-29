@@ -177,11 +177,11 @@ impl Decoder {
 
         trace!("decode");
 
-        while src.has_remaining() {
+        while let Some(ty) = peek_u8(src) {
             // At this point we are always at the beginning of the next block
             // within the HPACK data. The type of the block can always be
             // determined from the first byte.
-            match Representation::load(peek_u8(src))? {
+            match Representation::load(ty)? {
                 Indexed => {
                     trace!("    Indexed; rem={:?}", src.remaining());
                     can_resize = false;
@@ -278,12 +278,11 @@ impl Decoder {
     fn decode_string(&mut self, buf: &mut Cursor<Bytes>) -> Result<Bytes, DecoderError> {
         const HUFF_FLAG: u8 = 0b10000000;
 
-        if !buf.has_remaining() {
-            return Err(DecoderError::UnexpectedEndOfStream);
-        }
-
         // The first bit in the first byte contains the huffman encoded flag.
-        let huff = peek_u8(buf) & HUFF_FLAG == HUFF_FLAG;
+        let huff = match peek_u8(buf) {
+            Some(hdr) => (hdr & HUFF_FLAG) == HUFF_FLAG,
+            None => return Err(DecoderError::UnexpectedEndOfStream),
+        };
 
         // Decode the string length using 7 bit prefix
         let len = decode_int(buf, 7)?;
@@ -405,8 +404,12 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     Err(DecoderError::IntegerUnderflow)
 }
 
-fn peek_u8<B: Buf>(buf: &mut B) -> u8 {
-    buf.bytes()[0]
+fn peek_u8<B: Buf>(buf: &mut B) -> Option<u8> {
+    if buf.has_remaining() {
+        Some(buf.bytes()[0])
+    } else {
+        None
+    }
 }
 
 fn take(buf: &mut Cursor<Bytes>, n: usize) -> Bytes {
@@ -761,4 +764,29 @@ pub fn get_static(idx: usize) -> Header {
 
 fn from_static(s: &'static str) -> String<Bytes> {
     unsafe { String::from_utf8_unchecked(Bytes::from_static(s.as_bytes())) }
+}
+
+#[test]
+fn test_peek_u8() {
+    let b = 0xff;
+    let mut buf = Cursor::new(vec![b]);
+    assert_eq!(peek_u8(&mut buf), Some(b));
+    assert_eq!(buf.get_u8(), b);
+    assert_eq!(peek_u8(&mut buf), None);
+}
+
+#[test]
+fn test_decode_string_empty() {
+    let mut de = Decoder::new(0);
+    let buf = Bytes::new();
+    let err = de.decode_string(&mut Cursor::new(buf)).unwrap_err();
+    assert_eq!(err, DecoderError::UnexpectedEndOfStream);
+}
+
+#[test]
+fn test_decode_empty() {
+    let mut de = Decoder::new(0);
+    let buf = Bytes::new();
+    let empty = de.decode(&mut Cursor::new(buf), |_| {}).unwrap();
+    assert_eq!(empty, ());
 }
