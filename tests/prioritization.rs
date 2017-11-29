@@ -10,6 +10,7 @@ fn single_stream_send_large_body() {
 
     let mock = mock_io::Builder::new()
         .handshake()
+        .write(frames::SETTINGS_ACK)
         .write(&[
             // POST /
             0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
@@ -20,12 +21,23 @@ fn single_stream_send_large_body() {
             0, 4, 0, 0, 1, 0, 0, 0, 1,
         ])
         .write(&payload[..])
-        .write(frames::SETTINGS_ACK)
         // Read response
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
+    let notify = MockNotify::new();
     let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+
+    // Poll h2 once to get notifications
+    loop {
+        // Run the connection until all work is done, this handles processing
+        // the handshake.
+        notify.with(|| h2.poll()).unwrap();
+
+        if !notify.is_notified() {
+            break;
+        }
+    }
 
     let request = Request::builder()
         .method(Method::POST)
@@ -44,6 +56,8 @@ fn single_stream_send_large_body() {
     // Send the data
     stream.send_data(payload[..].into(), true).unwrap();
 
+    assert!(notify.is_notified());
+
     // Get the response
     let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
@@ -59,6 +73,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
     let mock = mock_io::Builder::new()
         .handshake()
+        .write(frames::SETTINGS_ACK)
         .write(&[
             // POST /
             0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
@@ -74,12 +89,23 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
             0, 64, 0, 0, 1, 0, 0, 0, 1,
         ])
         .write(&payload[16_384..])
-        .write(frames::SETTINGS_ACK)
         // Read response
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
+    let notify = MockNotify::new();
     let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+
+    // Poll h2 once to get notifications
+    loop {
+        // Run the connection until all work is done, this handles processing
+        // the handshake.
+        notify.with(|| h2.poll()).unwrap();
+
+        if !notify.is_notified() {
+            break;
+        }
+    }
 
     let request = Request::builder()
         .method(Method::POST)
@@ -96,6 +122,101 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();
+
+    assert!(notify.is_notified());
+
+    // Get the response
+    let resp = h2.run(response).unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    h2.wait().unwrap();
+}
+
+#[test]
+fn single_stream_send_body_greater_than_default_window() {
+    let _ = ::env_logger::init();
+
+    let payload = vec![0; 16384*5-1];
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(frames::SETTINGS_ACK)
+        .write(&[
+            // POST /
+            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
+            172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
+        ])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[0..16_384])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[16_384..(16_384*2)])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[(16_384*2)..(16_384*3)])
+        .write(&[
+            // DATA
+            0, 63, 255, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[(16_384*3)..(16_384*4-1)])
+
+        // Read window update
+        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 64, 0])
+        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 1, 0, 0, 64, 0])
+
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 1, 0, 0, 0, 1,
+        ])
+        .write(&payload[(16_384*4-1)..(16_384*5-1)])
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
+        .build();
+
+    let notify = MockNotify::new();
+    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+
+    // Poll h2 once to get notifications
+    loop {
+        // Run the connection until all work is done, this handles processing
+        // the handshake.
+        notify.with(|| h2.poll()).unwrap();
+
+        if !notify.is_notified() {
+            break;
+        }
+    }
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    let (response, mut stream) = client.send_request(request, false).unwrap();
+
+    // Flush request head
+    loop {
+        // Run the connection until all work is done, this handles processing
+        // the handshake.
+        notify.with(|| h2.poll()).unwrap();
+
+        if !notify.is_notified() {
+            break;
+        }
+    }
+
+    // Send the data
+    stream.send_data(payload.into(), true).unwrap();
+
+    assert!(notify.is_notified());
 
     // Get the response
     let resp = h2.run(response).unwrap();

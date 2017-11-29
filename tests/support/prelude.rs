@@ -13,6 +13,9 @@ pub use super::mock::{self, HandleFutureExt};
 // Re-export frames helpers
 pub use super::frames;
 
+// Re-export mock notify
+pub use super::notify::MockNotify;
+
 // Re-export utility mod
 pub use super::util;
 
