@@ -52,6 +52,7 @@ pub mod raw;
 pub mod frames;
 pub mod prelude;
 pub mod mock;
+pub mod notify;
 pub mod util;
 
 mod future_ext;

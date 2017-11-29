@@ -158,7 +158,15 @@ impl Prioritize {
             stream.buffered_send_data
         );
 
-        if stream.send_flow.available() >= stream.buffered_send_data {
+        // The `stream.buffered_send_data == 0` check is here so that, if a zero
+        // length data frame is queued to the front (there is no previously
+        // queued data), it gets sent out immediately even if there is no
+        // available send window.
+        //
+        // Sending out zero length data frames can be done to singal
+        // end-of-stream.
+        //
+        if stream.send_flow.available() > 0 || stream.buffered_send_data == 0 {
             // The stream currently has capacity to send the data frame, so
             // queue it up and notify the connection task.
             self.queue_frame(frame.into(), buffer, stream, task);
