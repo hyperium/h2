@@ -142,7 +142,12 @@ fn request_stream_id_overflows() {
                 .request("GET", "https://example.com/")
                 .eos(),
         )
-        .send_frame(frames::headers(::std::u32::MAX >> 1).response(200))
+        .send_frame(
+            frames::headers(::std::u32::MAX >> 1)
+                .response(200)
+                .eos()
+        )
+        .idle_ms(10)
         .close();
 
     h2.join(srv).wait().expect("wait");
