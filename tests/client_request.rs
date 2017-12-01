@@ -142,7 +142,12 @@ fn request_stream_id_overflows() {
                 .request("GET", "https://example.com/")
                 .eos(),
         )
-        .send_frame(frames::headers(::std::u32::MAX >> 1).response(200))
+        .send_frame(
+            frames::headers(::std::u32::MAX >> 1)
+                .response(200)
+                .eos()
+        )
+        .idle_ms(10)
         .close();
 
     h2.join(srv).wait().expect("wait");
@@ -357,6 +362,56 @@ fn connection_close_notifies_response_future() {
                 });
 
             conn.expect("conn").join(req)
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn connection_close_notifies_client_poll_ready() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let req = client
+                .send_request(request, true)
+                .expect("send_request1")
+                .0
+                .then(|res| {
+                    let err = res.expect_err("response");
+                    assert_eq!(
+                        err.to_string(),
+                        "broken pipe"
+                    );
+                    Ok::<_, ()>(())
+                });
+
+            conn.drive(req)
+                .and_then(move |(_conn, _)| {
+                    let err = client.poll_ready().expect_err("poll_ready");
+                    assert_eq!(
+                        err.to_string(),
+                        "broken pipe"
+                    );
+                    Ok(())
+                })
         });
 
     client.join(srv).wait().expect("wait");

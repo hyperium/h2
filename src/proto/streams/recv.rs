@@ -499,6 +499,7 @@ impl Recv {
 
     pub fn recv_eof(&mut self, stream: &mut Stream) {
         stream.state.recv_eof();
+        stream.notify_send();
         stream.notify_recv();
     }
 

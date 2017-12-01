@@ -279,6 +279,10 @@ where
         let actions = &mut me.actions;
         let counts = &mut me.counts;
 
+        if actions.conn_error.is_none() {
+            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
+        }
+
         me.store
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
