@@ -427,12 +427,13 @@ impl proto::Peer for Peer {
         let (pseudo, fields) = headers.into_parts();
 
         macro_rules! malformed {
-            () => {
+            ($($arg:tt)*) => {{
+                debug!($($arg)*);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
                 });
-            }
+            }}
         };
 
         b.version(Version::HTTP_2);
@@ -440,7 +441,7 @@ impl proto::Peer for Peer {
         if let Some(method) = pseudo.method {
             b.method(method);
         } else {
-            malformed!();
+            malformed!("malformed headers: missing method");
         }
 
         // Specifying :status for a request is a protocol error
@@ -453,24 +454,24 @@ impl proto::Peer for Peer {
 
         if let Some(scheme) = pseudo.scheme {
             parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner())
-                .or_else(|_| malformed!())?);
+                .or_else(|_| malformed!("malformed headers: malformed scheme"))?);
         } else {
-            malformed!();
+            malformed!("malformed headers: missing scheme");
         }
 
         if let Some(authority) = pseudo.authority {
             parts.authority = Some(uri::Authority::from_shared(authority.into_inner())
-                .or_else(|_| malformed!())?);
+                .or_else(|_| malformed!("malformed headers: malformed authority"))?);
         }
 
         if let Some(path) = pseudo.path {
             // This cannot be empty
             if path.is_empty() {
-                malformed!();
+                malformed!("malformed headers: missing path");
             }
 
             parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner())
-                .or_else(|_| malformed!())?);
+                .or_else(|_| malformed!("malformed headers: malformed path"))?);
         }
 
         b.uri(parts);
