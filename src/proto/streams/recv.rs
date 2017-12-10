@@ -354,6 +354,7 @@ impl Recv {
         let sz = sz as WindowSize;
 
         if !stream.state.is_recv_streaming() {
+            trace!("stream is not in receiving state; state={:?}", stream.state);
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
@@ -383,6 +384,7 @@ impl Recv {
         self.in_flight_data += sz;
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
+            trace!("content-length overflow");
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -391,6 +393,7 @@ impl Recv {
 
         if frame.is_end_stream() {
             if stream.ensure_content_length_zero().is_err() {
+                trace!("content-length underflow");
                 return Err(RecvError::Stream {
                     id: stream.id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -398,6 +401,7 @@ impl Recv {
             }
 
             if stream.state.recv_close().is_err() {
+                trace!("failed to transition to closed state");
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
@@ -467,6 +471,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
+                trace!("stream ID implicitly closed");
                 return Err(Reason::PROTOCOL_ERROR);
             }
         }
