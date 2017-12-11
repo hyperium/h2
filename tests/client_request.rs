@@ -121,7 +121,6 @@ fn request_stream_id_overflows() {
                     .body(())
                     .unwrap();
 
-
                 // second cannot use the next stream id, it's over
 
                 let poll_err = client.poll_ready().unwrap_err();
@@ -279,8 +278,71 @@ fn request_over_max_concurrent_streams_errors() {
 }
 
 #[test]
-#[ignore]
-fn request_without_scheme() {}
+fn http_11_request_without_scheme_or_authority() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "/")
+                .scheme("http")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let h2 = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            // we send a simple req here just to drive the connection so we can
+            // receive the server settings.
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let (response, _) = client.send_request(request, true).unwrap();
+            h2.drive(response)
+                .map(move |(h2, _)| (client, h2))
+        });
+
+    h2.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn http_2_request_without_scheme_or_authority() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .close();
+
+    let h2 = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            // we send a simple req here just to drive the connection so we can
+            // receive the server settings.
+            let request = Request::builder()
+                .version(Version::HTTP_2)
+                .method(Method::GET)
+                .uri("/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            assert!(client.send_request(request, true).is_err());
+            h2.expect("h2")
+        });
+
+    h2.join(srv).wait().expect("wait");
+}
 
 #[test]
 #[ignore]

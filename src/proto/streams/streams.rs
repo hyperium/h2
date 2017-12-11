@@ -494,7 +494,8 @@ where
             }
 
             // Convert the message
-            let headers = client::Peer::convert_send_message(stream_id, request, end_of_stream);
+            let headers = client::Peer::convert_send_message(
+                stream_id, request, end_of_stream)?;
 
             let mut stream = me.store.insert(stream.id, stream);
 

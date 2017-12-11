@@ -137,6 +137,16 @@ impl Mock<frame::Headers> {
         Mock(frame)
     }
 
+    pub fn scheme(self, value: &str) -> Self
+    {
+        let (id, mut pseudo, fields) = self.into_parts();
+        let value = value.parse().unwrap();
+
+        pseudo.set_scheme(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream();
         self

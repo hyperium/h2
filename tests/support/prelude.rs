@@ -32,7 +32,7 @@ pub use self::futures::{Future, IntoFuture, Sink, Stream};
 pub use super::future_ext::{FutureExt, Unwrap};
 
 // Re-export HTTP types
-pub use self::http::{HeaderMap, Method, Request, Response, StatusCode};
+pub use self::http::{HeaderMap, Method, Request, Response, StatusCode, Version};
 
 pub use self::bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 

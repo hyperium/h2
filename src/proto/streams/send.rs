@@ -74,8 +74,6 @@ impl Send {
             }
         }
 
-
-
         let end_stream = frame.is_end_stream();
 
         // Update the state

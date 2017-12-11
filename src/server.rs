@@ -375,23 +375,12 @@ impl<T, B> fmt::Debug for Handshake<T, B>
     }
 }
 
-impl proto::Peer for Peer {
-    type Send = Response<()>;
-    type Poll = Request<()>;
-
-    fn is_server() -> bool {
-        true
-    }
-
-    fn dyn() -> proto::DynPeer {
-        proto::DynPeer::Server
-    }
-
-    fn convert_send_message(
+impl Peer {
+    pub fn convert_send_message(
         id: StreamId,
-        response: Self::Send,
-        end_of_stream: bool,
-    ) -> frame::Headers {
+        response: Response<()>,
+        end_of_stream: bool) -> frame::Headers
+    {
         use http::response::Parts;
 
         // Extract the components of the HTTP request
@@ -416,6 +405,18 @@ impl proto::Peer for Peer {
         }
 
         frame
+    }
+}
+
+impl proto::Peer for Peer {
+    type Poll = Request<()>;
+
+    fn is_server() -> bool {
+        true
+    }
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Server
     }
 
     fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {

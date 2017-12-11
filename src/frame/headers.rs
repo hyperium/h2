@@ -63,6 +63,7 @@ pub struct Continuation {
     headers: Iter,
 }
 
+// TODO: These fields shouldn't be `pub`
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct Pseudo {
     // Request
@@ -405,10 +406,6 @@ impl Pseudo {
     pub fn request(method: Method, uri: Uri) -> Self {
         let parts = uri::Parts::from(uri);
 
-        fn to_string(src: Bytes) -> String<Bytes> {
-            unsafe { String::from_utf8_unchecked(src) }
-        }
-
         let path = parts
             .path_and_query
             .map(|v| v.into())
@@ -426,7 +423,7 @@ impl Pseudo {
         //
         // TODO: Scheme must be set...
         if let Some(scheme) = parts.scheme {
-            pseudo.set_scheme(to_string(scheme.into()));
+            pseudo.set_scheme(scheme);
         }
 
         // If the URI includes an authority component, add it to the pseudo
@@ -448,13 +445,17 @@ impl Pseudo {
         }
     }
 
-    pub fn set_scheme(&mut self, scheme: String<Bytes>) {
-        self.scheme = Some(scheme);
+    pub fn set_scheme(&mut self, scheme: uri::Scheme) {
+        self.scheme = Some(to_string(scheme.into()));
     }
 
     pub fn set_authority(&mut self, authority: String<Bytes>) {
         self.authority = Some(authority);
     }
+}
+
+fn to_string(src: Bytes) -> String<Bytes> {
+    unsafe { String::from_utf8_unchecked(src) }
 }
 
 // ===== impl Iter =====
