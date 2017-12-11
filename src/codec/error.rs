@@ -47,6 +47,9 @@ pub enum UserError {
 
     /// Illegal headers, such as connection-specific headers.
     MalformedHeaders,
+
+    /// Request submitted with relative URI.
+    MissingUriSchemeAndAuthority,
 }
 
 // ===== impl RecvError =====
@@ -125,6 +128,7 @@ impl error::Error for UserError {
             ReleaseCapacityTooBig => "release capacity too big",
             OverflowedStreamId => "stream ID overflowed",
             MalformedHeaders => "malformed headers",
+            MissingUriSchemeAndAuthority => "request URI missing scheme and authority",
         }
     }
 }

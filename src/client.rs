@@ -1,12 +1,12 @@
 //! HTTP2 client side.
 use {SendStream, RecvStream, ReleaseCapacity};
-use codec::{Codec, RecvError};
+use codec::{Codec, RecvError, SendError, UserError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
 use bytes::{Bytes, IntoBuf};
 use futures::{Async, Future, MapErr, Poll};
-use http::{Request, Response};
+use http::{uri, Request, Response, Method, Version};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
@@ -46,7 +46,11 @@ pub struct ResponseFuture {
 /// Build a Client.
 #[derive(Clone, Debug)]
 pub struct Builder {
+    /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
+
+    /// The stream ID of the first (lowest) stream. Subsequent streams will use
+    /// monotonically increasing stream IDs.
     stream_id: StreamId,
 }
 
@@ -359,20 +363,12 @@ impl Future for ResponseFuture {
 
 // ===== impl Peer =====
 
-impl proto::Peer for Peer {
-    type Send = Request<()>;
-    type Poll = Response<()>;
-
-
-    fn dyn() -> proto::DynPeer {
-        proto::DynPeer::Client
-    }
-
-    fn is_server() -> bool {
-        false
-    }
-
-    fn convert_send_message(id: StreamId, request: Self::Send, end_of_stream: bool) -> Headers {
+impl Peer {
+    pub fn convert_send_message(
+        id: StreamId,
+        request: Request<()>,
+        end_of_stream: bool) -> Result<Headers, SendError>
+    {
         use http::request::Parts;
 
         let (
@@ -380,14 +376,45 @@ impl proto::Peer for Peer {
                 method,
                 uri,
                 headers,
+                version,
                 ..
             },
             _,
         ) = request.into_parts();
 
+        let is_connect = method == Method::CONNECT;
+
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let pseudo = Pseudo::request(method, uri);
+        let mut pseudo = Pseudo::request(method, uri);
+
+        if pseudo.scheme.is_none() {
+            // If the scheme is not set, then there are a two options.
+            //
+            // 1) Authority is not set. In this case, a request was issued with
+            //    a relative URI. This is permitted **only** when forwarding
+            //    HTTP 1.x requests. If the HTTP version is set to 2.0, then
+            //    this is an error.
+            //
+            // 2) Authority is set, then the HTTP method *must* be CONNECT.
+            //
+            // It is not possible to have a scheme but not an authority set (the
+            // `http` crate does not allow it).
+            //
+            if pseudo.authority.is_none() {
+                if version == Version::HTTP_2 {
+                    return Err(UserError::MissingUriSchemeAndAuthority.into());
+                } else {
+                    // This is acceptable as per the above comment. However,
+                    // HTTP/2.0 requires that a scheme is set. Since we are
+                    // forwarding an HTTP 1.1 request, the scheme is set to
+                    // "http".
+                    pseudo.set_scheme(uri::Scheme::HTTP);
+                }
+            } else if !is_connect {
+                // TODO: Error
+            }
+        }
 
         // Create the HEADERS frame
         let mut frame = Headers::new(id, pseudo, headers);
@@ -396,7 +423,19 @@ impl proto::Peer for Peer {
             frame.set_end_stream()
         }
 
-        frame
+        Ok(frame)
+    }
+}
+
+impl proto::Peer for Peer {
+    type Poll = Response<()>;
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Client
+    }
+
+    fn is_server() -> bool {
+        false
     }
 
     fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError> {
