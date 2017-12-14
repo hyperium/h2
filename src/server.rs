@@ -13,7 +13,7 @@ use std::{convert, fmt, mem};
 
 /// In progress H2 connection binding
 #[must_use = "futures do nothing unless polled"]
-pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+pub struct Handshake<T, B: IntoBuf = Bytes> {
     /// SETTINGS frame that will be sent once the connection is established.
     settings: Settings,
     /// The current state of the handshake.
