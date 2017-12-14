@@ -5,20 +5,19 @@ use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{Async, Future, MapErr, Poll};
+use futures::{Async, Future, Poll};
 use http::{uri, Request, Response, Method, Version};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
 use std::fmt;
-use std::io;
 use std::marker::PhantomData;
 
 /// In progress H2 connection binding
 #[must_use = "futures do nothing unless polled"]
-pub struct Handshake<T: AsyncRead + AsyncWrite, B: IntoBuf = Bytes> {
+pub struct Handshake<T, B: IntoBuf = Bytes> {
     builder: Builder,
-    inner: MapErr<WriteAll<T, &'static [u8]>, fn(io::Error) -> ::Error>,
+    inner: WriteAll<T, &'static [u8]>,
     _marker: PhantomData<B>,
 }
 
@@ -96,7 +95,7 @@ where
         debug!("binding client connection");
 
         let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        let handshake = io::write_all(io, msg).map_err(::Error::from as _);
+        let handshake = io::write_all(io, msg);
 
         Handshake {
             builder,
@@ -306,7 +305,10 @@ where
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (io, _) = try_ready!(self.inner.poll());
+        let res = self.inner.poll()
+            .map_err(::Error::from);
+
+        let (io, _) = try_ready!(res);
 
         debug!("client connection bound");
 
