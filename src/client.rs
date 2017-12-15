@@ -272,8 +272,8 @@ impl Builder {
 impl Default for Builder {
     fn default() -> Builder {
         Builder {
-            reset_stream_duration: Duration::from_secs(30),
-            reset_stream_max: 10,
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Default::default(),
             stream_id: 1.into(),
         }
