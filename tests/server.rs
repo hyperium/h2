@@ -203,39 +203,3 @@ fn sends_reset_cancel_when_body_is_dropped() {
 
     srv.join(client).wait().expect("wait");
 }
-
-#[test]
-fn reset_stream_before_accepted_is_dropped() {
-    // https://github.com/carllerche/h2/issues/30
-
-    let _ = ::env_logger::init();
-    let (io, client) = mock::new();
-
-    let client = client
-        .assert_server_handshake()
-        .unwrap()
-        .recv_settings()
-        .send_frame(
-            frames::headers(1)
-                .request("GET", "https://example.com/")
-                .eos()
-        )
-        .send_frame(frames::reset(1).cancel())
-        .idle_ms(50)
-        .close();
-
-    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
-        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
-            let (req, mut stream) = reqstream.unwrap();
-
-            assert_eq!(req.method(), &http::Method::POST);
-
-            let rsp = http::Response::builder().status(200).body(()).unwrap();
-            stream.send_response(rsp, true).unwrap();
-
-            srv.into_future().unwrap()
-        })
-    });
-
-    srv.join(client).wait().expect("wait");
-}
