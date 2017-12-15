@@ -245,7 +245,28 @@ impl Recv {
         Ok(())
     }
 
-    /// Releases capacity back to the connection
+    /// Releases capacity of the connection
+    fn release_connection_capacity(
+        &mut self,
+        capacity: WindowSize,
+        task: &mut Option<Task>,
+    ) {
+        trace!("release_connection_capacity; size={}", capacity);
+
+        // Decrement in-flight data
+        self.in_flight_data -= capacity;
+
+        // Assign capacity to connection
+        self.flow.assign_capacity(capacity);
+
+        if self.flow.unclaimed_capacity().is_some() {
+            if let Some(task) = task.take() {
+                task.notify();
+            }
+        }
+    }
+
+    /// Releases capacity back to the connection & stream
     pub fn release_capacity(
         &mut self,
         capacity: WindowSize,
@@ -258,19 +279,14 @@ impl Recv {
             return Err(UserError::ReleaseCapacityTooBig);
         }
 
+        self.release_connection_capacity(capacity, task);
+
         // Decrement in-flight data
         stream.in_flight_recv_data -= capacity;
-        self.in_flight_data -= capacity;
 
-        // Assign capacity to connection & stream
-        self.flow.assign_capacity(capacity);
+        // Assign capacity to stream
         stream.recv_flow.assign_capacity(capacity);
 
-        if self.flow.unclaimed_capacity().is_some() {
-            if let Some(task) = task.take() {
-                task.notify();
-            }
-        }
 
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
@@ -385,6 +401,7 @@ impl Recv {
 
         if is_ignoring_frame {
             trace!("recv_data frame being ignored on locally reset {:?} for some time", stream.id);
+            self.release_connection_capacity(sz, &mut None);
             return Ok(());
         }
 
@@ -591,6 +608,10 @@ impl Recv {
             // if max allow is 0, this won't be able to evict,
             // and then we'll just bail after
             if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
+                // It's possible that this stream is still sitting in a send queue,
+                // such as if some data is to be sent and then a CANCEL. In this case,
+                // it could still be "counted", so we just make sure to always ask the
+                // stream instead of assuming.
                 let is_counted = evicted.is_counted();
                 counts.transition_after(evicted, is_counted, true);
             }

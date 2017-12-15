@@ -480,10 +480,13 @@ fn send_rst_stream_allows_recv_frames() {
                 .eos(),
         )
         .send_frame(frames::headers(1).response(200))
-        .send_frame(frames::data(1, vec![0; 16_384]))
         .recv_frame(frames::reset(1).cancel())
-        // sending frame after canceled!
+        // sending frames after canceled!
+        //   note: sending 2 to cosume 50% of connection window
+        .send_frame(frames::data(1, vec![0; 16_384]))
         .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        // make sure we automatically free the connection window
+        .recv_frame(frames::window_update(0, 16_384 * 2))
         // do a pingpong to ensure no other frames were sent
         .ping_pong([1; 8])
         .close();

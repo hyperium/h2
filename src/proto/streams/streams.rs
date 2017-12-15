@@ -175,15 +175,6 @@ where
 
         let id = frame.stream_id();
 
-        /*
-        if me.store.is_reset(&id) {
-            trace!("recv_data; {:?} was locally reset, ignoring frame", id);
-            let len = frame.payload().len();
-            assert!(len <= MAX_WINDOW_SIZE as usize);
-            return me.actions.recv.consume_connection_window(len as WindowSize);
-        }
-        */
-
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => {
