@@ -1,6 +1,59 @@
-#![deny(warnings, missing_debug_implementations, missing_docs)]
+//! An asynchronous, HTTP/2.0 server and client implementation.
+//!
+//! This library implements the [HTTP/2.0] specification. The implementation is
+//! asynchronous, using [futures] as the basis for the API. The implementation
+//! is also decoupled from TCP or TLS details. The user must handle ALPN and
+//! HTTP/1.1 upgrades themselves.
+//!
+//! # Getting started
+//!
+//! Add the following to your `Cargo.toml` file:
+//!
+//! ```toml
+//! [dependencies]
+//! h2 = { git = 'https://github.com/carllerche/h2' } # soon to be on crates.io!
+//! ```
+//!
+//! Next, add this to your crate:
+//!
+//! ```no_run
+//! extern crate h2;
+//! ```
+//!
+//! # Layout
+//!
+//! The crate is split into [`client`] and [`server`] modules. Types that are
+//! common to both clients and servers are located at the root of the crate. See
+//! module level documentation for more details on how to use `h2`.
+//!
+//! # Handshake
+//!
+//! TODO: Discuss how to initialize HTTP/2.0 clients and servers.
+//!
+//! # Outbound data type
+//!
+//! TODO: Discuss how to customize the outbound data type
+//!
+//! # Flow control
+//!
+//! [Flow control] is a fundamental feature of HTTP/2.0. The `h2` library
+//! exposes flow control to the user. Be sure to read the flow control
+//! documentation in order to avoid introducing potential dead locking in your
+//! code.
+//!
+//! Managing flow control for inbound data is done through [`ReleaseCapacity`].
+//! Managing flow control for outbound data is done through [`SendStream`]. See
+//! the struct level documentation for those two types for more details.
+//!
+//! [HTTP/2.0]: https://http2.github.io/
+//! [futures]: https://docs.rs/futures/
+//! [`client`]: client/index.html
+//! [`server`]: server/index.html
+//! [Flow control]: http://httpwg.org/specs/rfc7540.html#FlowControl
+//! [`ReleaseCapacity`]: struct.ReleaseCapacity.html
+//! [`SendStream`]: struct.SendStream.html
 
-//! HTTP2
+#![deny(warnings, missing_debug_implementations, missing_docs)]
 
 #[macro_use]
 extern crate futures;

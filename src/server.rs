@@ -26,7 +26,44 @@ pub struct Server<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
 
-/// Build a Server
+/// Server factory, which can be used in order to configure the properties of
+/// the HTTP/2.0 server before it is created.
+///
+/// Methods can be changed on it in order to configure it.
+///
+/// The server is constructed by calling [`handshake`] and passing the I/O
+/// handle that will back the HTTP/2.0 server.
+///
+/// New instances of `Builder` are obtained via [`Server::builder`].
+///
+/// See function level documentation for details on the various server
+/// configuration settings.
+///
+/// [`Server::builder`]: struct.Server.html#method.builder
+/// [`handshake`]: struct.Builder.html#method.handshake
+///
+/// # Examples
+///
+/// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # -> Handshake<T>
+/// # {
+/// // `server_fut` is a future representing the completion of the HTTP/2.0
+/// // handshake.
+/// let server_fut = Server::builder()
+///     .initial_window_size(1_000_000)
+///     .max_concurrent_streams(1000)
+///     .handshake(my_io);
+/// # server_fut
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct Builder {
     settings: Settings,
@@ -180,13 +217,77 @@ where
 // ===== impl Builder =====
 
 impl Builder {
-    /// Set the initial window size of the remote peer.
+    /// Indicates the initial window size (in octets) for stream-level
+    /// flow control for received data.
+    ///
+    /// The initial window of a stream is used as part of flow control. For more
+    /// details, see [`ReleaseCapacity`].
+    ///
+    /// The default value is 65,535.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .initial_window_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
         self
     }
 
-    /// Set the max frame size of received frames.
+    /// Indicates the size (in octets) of the largest HTTP/2.0 frame payload that the
+    /// configured server is able to accept.
+    ///
+    /// The sender may send data frames that are **smaller** than this value,
+    /// but any data larger than `max` will be broken up into multiple `DATA`
+    /// frames.
+    ///
+    /// The value **must** be between 16,384 and 16,777,215. The default value is 16,384.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_frame_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is not within the legal range specified
+    /// above.
     pub fn max_frame_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_frame_size(Some(max));
         self
@@ -194,20 +295,114 @@ impl Builder {
 
     /// Set the maximum number of concurrent streams.
     ///
-    /// Servers can only limit the maximum number of streams that that the
-    /// client can initiate. See [Section 5.1.2] in the HTTP/2 spec for more
-    /// details.
+    /// The maximum concurrent streams setting only controls the maximum number
+    /// of streams that can be initiated by the remote peer. In otherwords, when
+    /// this setting is set to 100, this does not limit the number of concurrent
+    /// streams that can be created by the caller.
+    ///
+    /// It is recommended that this value be no smaller than 100, so as to not
+    /// unnecessarily limit parallelism. However, any value is legal, including
+    /// 0. If `max` is set to 0, then the remote will not be permitted to
+    /// initiate streams.
+    ///
+    /// Note that streams in the reserved state, i.e., push promises that have
+    /// been reserved but the stream has not started, do not count against this
+    /// setting.
+    ///
+    /// Also note that if the remote *does* exceed the value set here, it is not
+    /// a protocol level error. Instead, the `h2` library will immediately reset
+    /// the stream.
+    ///
+    /// See [Section 5.1.2] in the HTTP/2.0 spec for more details.
     ///
     /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_concurrent_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_concurrent_streams(Some(max));
         self
     }
 
-    /// Bind an H2 server connection.
+    /// Create a new configured HTTP/2.0 server backed by `io`.
     ///
-    /// Returns a future which resolves to the connection value once the H2
-    /// handshake has been completed.
+    /// It is expected that `io` already be in an appropriate state to commence
+    /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+    ///
+    /// Returns a future which resolves to the [`Server`] value once the
+    /// HTTP/2.0 handshake has been completed.
+    ///
+    /// This function also allows the caller to configure the send payload data
+    /// type. See [Outbound data type] for more details.
+    ///
+    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+    /// [Handshake]: ../index.html#handshake
+    /// [`Server`]: struct.Server.html
+    /// [Outbound data type]: ../index.html#outbound-data-type.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// Customizing the outbound data type. In this case, the outbound data type
+    /// will be `&'static [u8]`.
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T, &'static [u8]>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut: Handshake<_, &'static [u8]> = Server::builder()
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite,
