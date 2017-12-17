@@ -1,4 +1,99 @@
-//! HTTP2 server side.
+//! Server implementation of the HTTP/2.0 protocol.
+//!
+//! # Getting started
+//!
+//! Running an HTTP/2.0 requires the caller to manage accepting the connections
+//! as well as getting the connections to a state that is ready to begin the
+//! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
+//!
+//! The following example runs a basic HTTP/2.0 server with [prior knowledge],
+//! i.e. both the client and the server assume that the TCP socket will use the
+//! HTTP/2.0 protocol without any prior negotiation.
+//!
+//! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
+//! upgrade, etc...), the connection handle is passed to [`Server::handshake`],
+//! which will begin the [HTTP/2.0 handshake]. This returns a future that will
+//! complete once the handshake is complete and HTTP/2.0 streams may be
+//! received.
+//!
+//! [`Server::handshake`] will use a default configuration. There are a number
+//! of configuration values that can be set by using a [`Builder`] instead.
+//!
+//! # Accepting inbound streams
+//!
+//! The [`Server`] instance is used to accept inbound HTTP/2.0 streams as well
+//! as to manage the connection state. Either [`Server::poll`] or
+//! [`Server::poll_close`] must be called or no data will be sent to or received
+//! from the connection.
+//!
+//! [prior knowledge]: (http://httpwg.org/specs/rfc7540.html#known-http)
+//! [`Server::handshake`]: struct.Server.html#method.handshake
+//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+//! [`Builder`]: struct.Builder.html
+//! [`Server`]: struct.Server.html
+//! [`Server::poll`]: struct.Server.html#method.poll
+//! [`Server::poll_close`]: struct.Server.html#method.poll_close
+//!
+//! # Example
+//!
+//! A basic HTTP/2.0 server example that runs over TCP and assumes prior
+//! knowledge.
+//!
+//! ```rust
+//! extern crate futures;
+//! extern crate h2;
+//! extern crate http;
+//! extern crate tokio_core;
+//!
+//! use futures::{Future, Stream};
+//! # use futures::future::ok;
+//! use h2::server::Server;
+//! use http::{Response, StatusCode};
+//! use tokio_core::reactor;
+//! use tokio_core::net::TcpListener;
+//!
+//! pub fn main () {
+//!     let mut core = reactor::Core::new().unwrap();
+//!     let handle = core.handle();
+//!
+//!     let addr = "127.0.0.1:5928".parse().unwrap();
+//!     let listener = TcpListener::bind(&addr, &handle).unwrap();
+//!
+//!     core.run({
+//!         // Accept all incoming TCP connections.
+//!         listener.incoming().for_each(move |(socket, _)| {
+//!             // Spawn a new task to process each connection.
+//!             handle.spawn({
+//!                 // Start the HTTP/2.0 connection handshake
+//!                 Server::handshake(socket)
+//!                     .and_then(|h2| {
+//!                         // Accept all inbound HTTP/2.0 streams sent over the
+//!                         // connection.
+//!                         h2.for_each(|(request, mut respond)| {
+//!                             println!("Received request: {:?}", request);
+//!
+//!                             // Build a response with no body
+//!                             let response = Response::builder()
+//!                                 .status(StatusCode::OK)
+//!                                 .body(())
+//!                                 .unwrap();
+//!
+//!                             // Send the response back to the client
+//!                             respond.send_response(response, true)
+//!                                 .unwrap();
+//!
+//!                             Ok(())
+//!                         })
+//!                     })
+//!                     .map_err(|e| panic!("unexpected error = {:?}", e))
+//!             });
+//!
+//!             Ok(())
+//!         })
+//!         # .select(ok(()))
+//!     }).ok().expect("failed to run HTTP/2.0 server");
+//! }
+//! ```
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
@@ -20,7 +115,28 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     state: Handshaking<T, B>
 }
 
-/// Marker type indicating a client peer
+/// Accepts inbound HTTP/2.0 streams on a connection.
+///
+/// A `Server` is backed by an I/O resource (usually a TCP socket) and
+/// implements the HTTP/2.0 server logic for that connection. It is responsible
+/// for receiving inbound streams initiated by the client as well as driving the
+/// internal state forward.
+///
+/// `Server` values are created by calling [`handshake`]. Once a `Server` value
+/// is obtained, the caller must call [`poll`] or [`poll_close`] in order to
+/// drive the internal connection state forward.
+///
+/// See [module level] documentation for more details
+///
+/// [module level]: index.html
+/// [`handshake`]: struct.Server.html#method.handshake
+/// [`poll`]: struct.Server.html#method.poll
+/// [`poll_close`]: struct.Server.html#method.poll_close
+///
+/// # Examples
+///
+/// ```
+/// ```
 #[must_use = "streams do nothing unless polled"]
 pub struct Server<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
