@@ -1,4 +1,4 @@
-//! HTTP2 client side.
+//! Client implementation of the HTTP/2.0 protocol.
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError, SendError, UserError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};

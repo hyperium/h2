@@ -23,16 +23,34 @@
 //! # Layout
 //!
 //! The crate is split into [`client`] and [`server`] modules. Types that are
-//! common to both clients and servers are located at the root of the crate. See
-//! module level documentation for more details on how to use `h2`.
+//! common to both clients and servers are located at the root of the crate.
+//!
+//! See module level documentation for more details on how to use `h2`.
 //!
 //! # Handshake
 //!
-//! TODO: Discuss how to initialize HTTP/2.0 clients and servers.
+//! Both the client and the server require a connection to already be in a state
+//! ready to start the HTTP/2.0 handshake. This library does not provide
+//! facilities to do this.
 //!
-//! # Outbound data type
+//! There are three ways to reach an appropriate state to start the HTTP/2.0
+//! handshake.
 //!
-//! TODO: Discuss how to customize the outbound data type
+//! * Opening an HTTP/1.1 connection and performing an [upgrade].
+//! * Opening a connection with TLS and use ALPN to negotiate the protocol.
+//! * Open a connection with prior knowledge, i.e. both the client and the
+//!   server assume that the connection is immediately ready to start the
+//!   HTTP/2.0 handshake once opened.
+//!
+//! Once the connection is ready to start the HTTP/2.0 handshake, it can be
+//! passed to [`Server::handshake`] or [`Client::handshake`]. At this point, the
+//! library will start the handshake process, which consists of:
+//!
+//! * The client sends the connection preface (a predefined sequence of 24
+//! octets).
+//! * Both the client and the server sending a SETTINGS frame.
+//!
+//! See the [Starting HTTP/2] in the specification for more details.
 //!
 //! # Flow control
 //!
@@ -52,6 +70,10 @@
 //! [Flow control]: http://httpwg.org/specs/rfc7540.html#FlowControl
 //! [`ReleaseCapacity`]: struct.ReleaseCapacity.html
 //! [`SendStream`]: struct.SendStream.html
+//! [Starting HTTP/2]: http://httpwg.org/specs/rfc7540.html#starting
+//! [upgrade]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism
+//! [`Server::handshake`]: server/struct.Server.html#method.handshake
+//! [`Client::handshake`]: client/struct.Client.html#method.handshake
 
 #![deny(warnings, missing_debug_implementations, missing_docs)]
 

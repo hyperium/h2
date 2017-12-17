@@ -135,7 +135,16 @@ use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
 
-/// In progress H2 connection binding
+/// In progress HTTP/2.0 connection handshake.
+///
+/// This type implements `Future`, yielding a `Server` instance once the
+/// handshake has completed.
+///
+/// The handshake is completed once the connection preface is fully received
+/// from the client **and** the initial settings frame is sent to the client.
+///
+/// The handshake future does not wait for the initial settings frame from the
+/// client.
 #[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     /// SETTINGS frame that will be sent once the connection is established.
@@ -165,6 +174,22 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # Examples
 ///
 /// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T) {
+/// Server::handshake(my_io)
+///     .and_then(|server| {
+///         server.for_each(|(request, respond)| {
+///             // Process the request and send the response back to the client
+///             // using `respond`.
+///         })
+///     })
+/// # }
+/// #
+/// # pub fn main() {}
 /// ```
 #[must_use = "streams do nothing unless polled"]
 pub struct Server<T, B: IntoBuf> {
@@ -215,7 +240,6 @@ pub struct Builder {
 }
 
 /// Respond to a request
-///
 ///
 /// Instances of `Respond` are used to send a response or reserve push promises.
 #[derive(Debug)]
