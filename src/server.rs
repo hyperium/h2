@@ -6,10 +6,6 @@
 //! as well as getting the connections to a state that is ready to begin the
 //! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
 //!
-//! The following example runs a basic HTTP/2.0 server with [prior knowledge],
-//! i.e. both the client and the server assume that the TCP socket will use the
-//! HTTP/2.0 protocol without any prior negotiation.
-//!
 //! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
 //! upgrade, etc...), the connection handle is passed to [`Server::handshake`],
 //! which will begin the [HTTP/2.0 handshake]. This returns a future that will
@@ -19,25 +15,47 @@
 //! [`Server::handshake`] will use a default configuration. There are a number
 //! of configuration values that can be set by using a [`Builder`] instead.
 //!
-//! # Accepting inbound streams
+//! # Inbound streams
 //!
-//! The [`Server`] instance is used to accept inbound HTTP/2.0 streams as well
-//! as to manage the connection state. Either [`Server::poll`] or
-//! [`Server::poll_close`] must be called or no data will be sent to or received
-//! from the connection.
+//! The [`Server`] instance is used to accept inbound HTTP/2.0 streams. It does
+//! this by implementing [`futures::Stream`]. When a new stream is received, a
+//! call to [`Server::poll`] will return `(request, response)`. The `request`
+//! handle (of type [`http::Request<RecvStream>`]) contains the HTTP request
+//! head as well as provides a way to receive the inbound data stream and the
+//! trailers. The `response` handle (of type [`SendStream`]) allows responding
+//! to the request, stream the response payload, send trailers, and send push
+//! promises.
 //!
-//! [prior knowledge]: (http://httpwg.org/specs/rfc7540.html#known-http)
-//! [`Server::handshake`]: struct.Server.html#method.handshake
-//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
-//! [`Builder`]: struct.Builder.html
-//! [`Server`]: struct.Server.html
-//! [`Server::poll`]: struct.Server.html#method.poll
-//! [`Server::poll_close`]: struct.Server.html#method.poll_close
+//! The send ([`SendStream`]) and receive ([`RecvStream`]) halves of the stream
+//! can be operated independently.
+//!
+//! # Managing the connection
+//!
+//! The [`Server`] instance is used to manage the connection state. The caller
+//! is required to call either [`Server::poll`] or [`Server::poll_close`] in
+//! order to advance the connection state. Simply operating on [`SendStream`] or
+//! [`RecvStream`] will have no effect unless the connection state is advanced.
+//!
+//! It is not required to call **both** [`Server::poll`] and
+//! [`Server::poll_close`]. If the caller is ready to accept a new stream, then
+//! only [`Server::poll`] should be called. When the caller **does not** want to
+//! accept a new stream, [`Server::poll_close`] should be called.
+//!
+//! The [`Server`] instance should only be dropped once [`Server::poll_close`]
+//! returns `Ready`. Once [`Server::poll`] returns `Ready(None)`, there will no
+//! longer be any more inbound streams. At this point, only
+//! [`Server::poll_close`] should be called.
+//!
+//! # Shutting down the server
+//!
+//! Graceful shutdown of the server is [not yet
+//! implemented](https://github.com/carllerche/h2/issues/69).
 //!
 //! # Example
 //!
-//! A basic HTTP/2.0 server example that runs over TCP and assumes prior
-//! knowledge.
+//! A basic HTTP/2.0 server example that runs over TCP and assumes [prior
+//! knowledge], i.e. both the client and the server assume that the TCP socket
+//! will use the HTTP/2.0 protocol without prior negotiation.
 //!
 //! ```rust
 //! extern crate futures;
@@ -94,6 +112,17 @@
 //!     }).ok().expect("failed to run HTTP/2.0 server");
 //! }
 //! ```
+//!
+//! [prior knowledge]: (http://httpwg.org/specs/rfc7540.html#known-http)
+//! [`Server::handshake`]: struct.Server.html#method.handshake
+//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+//! [`Builder`]: struct.Builder.html
+//! [`Server`]: struct.Server.html
+//! [`Server::poll`]: struct.Server.html#method.poll
+//! [`Server::poll_close`]: struct.Server.html#method.poll_close
+//! [`futures::Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
+//! [`http::Request<RecvStream>`]: ../struct.RecvStream.html
+//! [`SendStream`]: ../struct.SendStream.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
