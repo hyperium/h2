@@ -240,6 +240,9 @@ where
     fn poll2(&mut self) -> Poll<(), RecvError> {
         use frame::Frame::*;
 
+        // This happens outside of the loop to prevent needing to do a clock
+        // check and then comparison of the queue possibly multiple times a
+        // second (and thus, the clock wouldn't have changed enough to matter).
         self.clear_expired_reset_streams();
 
         loop {
