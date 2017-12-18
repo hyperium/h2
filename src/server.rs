@@ -1,4 +1,128 @@
-//! HTTP2 server side.
+//! Server implementation of the HTTP/2.0 protocol.
+//!
+//! # Getting started
+//!
+//! Running an HTTP/2.0 requires the caller to manage accepting the connections
+//! as well as getting the connections to a state that is ready to begin the
+//! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
+//!
+//! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
+//! upgrade, etc...), the connection handle is passed to [`Server::handshake`],
+//! which will begin the [HTTP/2.0 handshake]. This returns a future that will
+//! complete once the handshake is complete and HTTP/2.0 streams may be
+//! received.
+//!
+//! [`Server::handshake`] will use a default configuration. There are a number
+//! of configuration values that can be set by using a [`Builder`] instead.
+//!
+//! # Inbound streams
+//!
+//! The [`Server`] instance is used to accept inbound HTTP/2.0 streams. It does
+//! this by implementing [`futures::Stream`]. When a new stream is received, a
+//! call to [`Server::poll`] will return `(request, response)`. The `request`
+//! handle (of type [`http::Request<RecvStream>`]) contains the HTTP request
+//! head as well as provides a way to receive the inbound data stream and the
+//! trailers. The `response` handle (of type [`SendStream`]) allows responding
+//! to the request, stream the response payload, send trailers, and send push
+//! promises.
+//!
+//! The send ([`SendStream`]) and receive ([`RecvStream`]) halves of the stream
+//! can be operated independently.
+//!
+//! # Managing the connection
+//!
+//! The [`Server`] instance is used to manage the connection state. The caller
+//! is required to call either [`Server::poll`] or [`Server::poll_close`] in
+//! order to advance the connection state. Simply operating on [`SendStream`] or
+//! [`RecvStream`] will have no effect unless the connection state is advanced.
+//!
+//! It is not required to call **both** [`Server::poll`] and
+//! [`Server::poll_close`]. If the caller is ready to accept a new stream, then
+//! only [`Server::poll`] should be called. When the caller **does not** want to
+//! accept a new stream, [`Server::poll_close`] should be called.
+//!
+//! The [`Server`] instance should only be dropped once [`Server::poll_close`]
+//! returns `Ready`. Once [`Server::poll`] returns `Ready(None)`, there will no
+//! longer be any more inbound streams. At this point, only
+//! [`Server::poll_close`] should be called.
+//!
+//! # Shutting down the server
+//!
+//! Graceful shutdown of the server is [not yet
+//! implemented](https://github.com/carllerche/h2/issues/69).
+//!
+//! # Example
+//!
+//! A basic HTTP/2.0 server example that runs over TCP and assumes [prior
+//! knowledge], i.e. both the client and the server assume that the TCP socket
+//! will use the HTTP/2.0 protocol without prior negotiation.
+//!
+//! ```rust
+//! extern crate futures;
+//! extern crate h2;
+//! extern crate http;
+//! extern crate tokio_core;
+//!
+//! use futures::{Future, Stream};
+//! # use futures::future::ok;
+//! use h2::server::Server;
+//! use http::{Response, StatusCode};
+//! use tokio_core::reactor;
+//! use tokio_core::net::TcpListener;
+//!
+//! pub fn main () {
+//!     let mut core = reactor::Core::new().unwrap();
+//!     let handle = core.handle();
+//!
+//!     let addr = "127.0.0.1:5928".parse().unwrap();
+//!     let listener = TcpListener::bind(&addr, &handle).unwrap();
+//!
+//!     core.run({
+//!         // Accept all incoming TCP connections.
+//!         listener.incoming().for_each(move |(socket, _)| {
+//!             // Spawn a new task to process each connection.
+//!             handle.spawn({
+//!                 // Start the HTTP/2.0 connection handshake
+//!                 Server::handshake(socket)
+//!                     .and_then(|h2| {
+//!                         // Accept all inbound HTTP/2.0 streams sent over the
+//!                         // connection.
+//!                         h2.for_each(|(request, mut respond)| {
+//!                             println!("Received request: {:?}", request);
+//!
+//!                             // Build a response with no body
+//!                             let response = Response::builder()
+//!                                 .status(StatusCode::OK)
+//!                                 .body(())
+//!                                 .unwrap();
+//!
+//!                             // Send the response back to the client
+//!                             respond.send_response(response, true)
+//!                                 .unwrap();
+//!
+//!                             Ok(())
+//!                         })
+//!                     })
+//!                     .map_err(|e| panic!("unexpected error = {:?}", e))
+//!             });
+//!
+//!             Ok(())
+//!         })
+//!         # .select(ok(()))
+//!     }).ok().expect("failed to run HTTP/2.0 server");
+//! }
+//! ```
+//!
+//! [prior knowledge]: (http://httpwg.org/specs/rfc7540.html#known-http)
+//! [`Server::handshake`]: struct.Server.html#method.handshake
+//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+//! [`Builder`]: struct.Builder.html
+//! [`Server`]: struct.Server.html
+//! [`Server::poll`]: struct.Server.html#method.poll
+//! [`Server::poll_close`]: struct.Server.html#method.poll_close
+//! [`futures::Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
+//! [`http::Request<RecvStream>`]: ../struct.RecvStream.html
+//! [`SendStream`]: ../struct.SendStream.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
@@ -12,7 +136,20 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
 use std::time::Duration;
 
-/// In progress H2 connection binding
+/// In progress HTTP/2.0 connection handshake future.
+///
+/// This type implements `Future`, yielding a `Server` instance once the
+/// handshake has completed.
+///
+/// The handshake is completed once the connection preface is fully received
+/// from the client **and** the initial settings frame is sent to the client.
+///
+/// The handshake future does not wait for the initial settings frame from the
+/// client.
+///
+/// See [module] level docs for more details.
+///
+/// [module]: index.html
 #[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     /// The config to pass to Connection::new after handshake succeeds.
@@ -21,13 +158,91 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     state: Handshaking<T, B>
 }
 
-/// Marker type indicating a client peer
+/// Accepts inbound HTTP/2.0 streams on a connection.
+///
+/// A `Server` is backed by an I/O resource (usually a TCP socket) and
+/// implements the HTTP/2.0 server logic for that connection. It is responsible
+/// for receiving inbound streams initiated by the client as well as driving the
+/// internal state forward.
+///
+/// `Server` values are created by calling [`handshake`]. Once a `Server` value
+/// is obtained, the caller must call [`poll`] or [`poll_close`] in order to
+/// drive the internal connection state forward.
+///
+/// See [module level] documentation for more details
+///
+/// [module level]: index.html
+/// [`handshake`]: struct.Server.html#method.handshake
+/// [`poll`]: struct.Server.html#method.poll
+/// [`poll_close`]: struct.Server.html#method.poll_close
+///
+/// # Examples
+///
+/// ```
+/// # extern crate futures;
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use futures::{Future, Stream};
+/// # use tokio_io::*;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T) {
+/// Server::handshake(my_io)
+///     .and_then(|server| {
+///         server.for_each(|(request, respond)| {
+///             // Process the request and send the response back to the client
+///             // using `respond`.
+///             # Ok(())
+///         })
+///     })
+/// # .wait().unwrap();
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
 #[must_use = "streams do nothing unless polled"]
 pub struct Server<T, B: IntoBuf> {
     connection: Connection<T, Peer, B>,
 }
 
-/// Build a Server
+/// Server factory, which can be used in order to configure the properties of
+/// the HTTP/2.0 server before it is created.
+///
+/// Methods can be changed on it in order to configure it.
+///
+/// The server is constructed by calling [`handshake`] and passing the I/O
+/// handle that will back the HTTP/2.0 server.
+///
+/// New instances of `Builder` are obtained via [`Server::builder`].
+///
+/// See function level documentation for details on the various server
+/// configuration settings.
+///
+/// [`Server::builder`]: struct.Server.html#method.builder
+/// [`handshake`]: struct.Builder.html#method.handshake
+///
+/// # Examples
+///
+/// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # -> Handshake<T>
+/// # {
+/// // `server_fut` is a future representing the completion of the HTTP/2.0
+/// // handshake.
+/// let server_fut = Server::builder()
+///     .initial_window_size(1_000_000)
+///     .max_concurrent_streams(1000)
+///     .handshake(my_io);
+/// # server_fut
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
 #[derive(Clone, Debug)]
 pub struct Builder {
     /// Time to keep locally reset streams around before reaping.
@@ -40,10 +255,22 @@ pub struct Builder {
     settings: Settings,
 }
 
-/// Respond to a request
+/// Respond to a client request.
 ///
+/// A `Respond` instance is provided when receiving a request and is used to
+/// send the associated response back to the client. It is also used to
+/// explicitly reset the stream with a custom reason.
 ///
-/// Instances of `Respond` are used to send a response or reserve push promises.
+/// It will also be used to initiate push promises linked with the associated
+/// stream. This is [not yet
+/// implemented](https://github.com/carllerche/h2/issues/185).
+///
+/// If the `Response` instance is dropped without sending a response, then the
+/// HTTP/2.0 stream will be reset.
+///
+/// See [module] level docs for more details.
+///
+/// [module]: index.html
 #[derive(Debug)]
 pub struct Respond<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
@@ -81,17 +308,73 @@ impl<T> Server<T, Bytes>
 where
     T: AsyncRead + AsyncWrite,
 {
-    /// Bind an H2 server connection.
+    /// Create a new configured HTTP/2.0 server with default configuration
+    /// values backed by `io`.
     ///
-    /// Returns a future which resolves to the connection value once the H2
-    /// handshake has been completed.
+    /// It is expected that `io` already be in an appropriate state to commence
+    /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+    ///
+    /// Returns a future which resolves to the [`Server`] instance once the
+    /// HTTP/2.0 handshake has been completed. The returned [`Server`] instance
+    /// will be using default configuration values. Use [`Builder`] to customize
+    /// the configuration values used by a [`Server`] instance.
+    ///
+    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+    /// [Handshake]: ../index.html#handshake
+    /// [`Server`]: struct.Server.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let handshake_fut = Server::handshake(my_io);
+    /// # handshake_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn handshake(io: T) -> Handshake<T, Bytes> {
         Server::builder().handshake(io)
     }
 }
 
 impl Server<(), Bytes> {
-    /// Create a Server Builder
+    /// Return a new `Server` builder instance initialized with default
+    /// configuration values.
+    ///
+    /// Configuration methods can be chained on the return value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .initial_window_size(1_000_000)
+    ///     .max_concurrent_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -124,16 +407,40 @@ where
 
     /// Sets the target window size for the whole connection.
     ///
-    /// Default in HTTP2 is 65_535.
+    /// If `size` is greater than the current value, then a `WINDOW_UPDATE`
+    /// frame will be immediately sent to the remote, increasing the connection
+    /// level window by `size - current_value`.
+    ///
+    /// If `size` is less than the current value, nothing will happen
+    /// immediately. However, as window capacity is released by
+    /// [`ReleaseCapacity`] instances, no `WINDOW_UPDATE` frames will be sent
+    /// out until the number of "in flight" bytes drops below `size`.
+    ///
+    /// The default value is 65,535.
+    ///
+    /// See [`ReleaseCapacity`] documentation for more details.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    /// [library level]: ../index.html#flow-control
     pub fn set_target_window_size(&mut self, size: u32) {
         assert!(size <= proto::MAX_WINDOW_SIZE);
         self.connection.set_target_window_size(size);
     }
 
     /// Returns `Ready` when the underlying connection has closed.
+    ///
+    /// If any new inbound streams are received during a call to `poll_close`,
+    /// they will be queued and returned on the next call to [`poll`].
+    ///
+    /// This function will advance the internal connection state, driving
+    /// progress on all the other handles (e.g. `RecvStream` and `SendStream`).
+    ///
+    /// See [here](index.html#managing-the-connection) for more details.
+    ///
+    /// [`poll`]: struct.Server.html#method.poll
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll().map_err(Into::into)
-}
+    }
 }
 
 impl<T, B> futures::Stream for Server<T, B>
@@ -188,13 +495,77 @@ where
 // ===== impl Builder =====
 
 impl Builder {
-    /// Set the initial window size of the remote peer.
+    /// Indicates the initial window size (in octets) for stream-level
+    /// flow control for received data.
+    ///
+    /// The initial window of a stream is used as part of flow control. For more
+    /// details, see [`ReleaseCapacity`].
+    ///
+    /// The default value is 65,535.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .initial_window_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
         self
     }
 
-    /// Set the max frame size of received frames.
+    /// Indicates the size (in octets) of the largest HTTP/2.0 frame payload that the
+    /// configured server is able to accept.
+    ///
+    /// The sender may send data frames that are **smaller** than this value,
+    /// but any data larger than `max` will be broken up into multiple `DATA`
+    /// frames.
+    ///
+    /// The value **must** be between 16,384 and 16,777,215. The default value is 16,384.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_frame_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is not within the legal range specified
+    /// above.
     pub fn max_frame_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_frame_size(Some(max));
         self
@@ -202,11 +573,49 @@ impl Builder {
 
     /// Set the maximum number of concurrent streams.
     ///
-    /// Servers can only limit the maximum number of streams that that the
-    /// client can initiate. See [Section 5.1.2] in the HTTP/2 spec for more
-    /// details.
+    /// The maximum concurrent streams setting only controls the maximum number
+    /// of streams that can be initiated by the remote peer. In otherwords, when
+    /// this setting is set to 100, this does not limit the number of concurrent
+    /// streams that can be created by the caller.
+    ///
+    /// It is recommended that this value be no smaller than 100, so as to not
+    /// unnecessarily limit parallelism. However, any value is legal, including
+    /// 0. If `max` is set to 0, then the remote will not be permitted to
+    /// initiate streams.
+    ///
+    /// Note that streams in the reserved state, i.e., push promises that have
+    /// been reserved but the stream has not started, do not count against this
+    /// setting.
+    ///
+    /// Also note that if the remote *does* exceed the value set here, it is not
+    /// a protocol level error. Instead, the `h2` library will immediately reset
+    /// the stream.
+    ///
+    /// See [Section 5.1.2] in the HTTP/2.0 spec for more details.
     ///
     /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_concurrent_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_concurrent_streams(Some(max));
         self
@@ -214,10 +623,46 @@ impl Builder {
 
     /// Set the maximum number of concurrent locally reset streams.
     ///
-    /// Locally reset streams are to "ignore frames from the peer for some
-    /// time". While waiting for that time, locally reset streams "waste"
-    /// space in order to be able to ignore those frames. This setting
-    /// can limit how many extra streams are left waiting for "some time".
+    /// When a stream is explicitly reset by either calling
+    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
+    /// completing te stream, the HTTP/2.0 specification requires that any
+    /// further frames received for that stream must be ignored for "some time".
+    ///
+    /// In order to satisfy the specification, internal state must be maintained
+    /// to implement the behavior. This state grows linearly with the number of
+    /// streams that are locally reset.
+    ///
+    /// The `max_concurrent_reset_streams` setting configures sets an upper
+    /// bound on the amount of state that is maintained. When this max value is
+    /// reached, the oldest reset stream is purged from memory.
+    ///
+    /// Once the stream has been fully purged from memory, any additional frames
+    /// received for that stream will result in a connection level protocol
+    /// error, forcing the connection to terminate.
+    ///
+    /// The default value is 10.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_concurrent_reset_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.reset_stream_max = max;
         self
@@ -225,17 +670,112 @@ impl Builder {
 
     /// Set the maximum number of concurrent locally reset streams.
     ///
-    /// Locally reset streams are to "ignore frames from the peer for some
-    /// time", but that time is unspecified. Set that time with this setting.
+    /// When a stream is explicitly reset by either calling
+    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
+    /// completing te stream, the HTTP/2.0 specification requires that any
+    /// further frames received for that stream must be ignored for "some time".
+    ///
+    /// In order to satisfy the specification, internal state must be maintained
+    /// to implement the behavior. This state grows linearly with the number of
+    /// streams that are locally reset.
+    ///
+    /// The `reset_stream_duration` setting configures the max amount of time
+    /// this state will be maintained in memory. Once the duration elapses, the
+    /// stream state is purged from memory.
+    ///
+    /// Once the stream has been fully purged from memory, any additional frames
+    /// received for that stream will result in a connection level protocol
+    /// error, forcing the connection to terminate.
+    ///
+    /// The default value is 30 seconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// # use std::time::Duration;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .reset_stream_duration(Duration::from_secs(10))
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
         self.reset_stream_duration = dur;
         self
     }
 
-    /// Bind an H2 server connection.
+    /// Create a new configured HTTP/2.0 server backed by `io`.
     ///
-    /// Returns a future which resolves to the connection value once the H2
-    /// handshake has been completed.
+    /// It is expected that `io` already be in an appropriate state to commence
+    /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+    ///
+    /// Returns a future which resolves to the [`Server`] instance once the
+    /// HTTP/2.0 handshake has been completed.
+    ///
+    /// This function also allows the caller to configure the send payload data
+    /// type. See [Outbound data type] for more details.
+    ///
+    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+    /// [Handshake]: ../index.html#handshake
+    /// [`Server`]: struct.Server.html
+    /// [Outbound data type]: ../index.html#outbound-data-type.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let handshake_fut = Server::builder()
+    ///     .handshake(my_io);
+    /// # handshake_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// Customizing the outbound data type. In this case, the outbound data type
+    /// will be `&'static [u8]`.
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T, &'static [u8]>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut: Handshake<_, &'static [u8]> = Server::builder()
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite,

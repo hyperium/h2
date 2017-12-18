@@ -26,7 +26,7 @@ pub struct ReleaseCapacity {
     inner: proto::OpaqueStreamRef,
 }
 
-// ===== impl Stream =====
+// ===== impl SendStream =====
 
 impl<B: IntoBuf> SendStream<B> {
     pub(crate) fn new(inner: proto::StreamRef<B::Buf>) -> Self {
@@ -68,7 +68,7 @@ impl<B: IntoBuf> SendStream<B> {
     }
 }
 
-// ===== impl Body =====
+// ===== impl RecvStream =====
 
 impl RecvStream {
     pub(crate) fn new(inner: ReleaseCapacity) -> Self {
