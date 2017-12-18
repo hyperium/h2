@@ -12,6 +12,7 @@ use tokio_io::io::WriteAll;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 /// In progress H2 connection binding
 #[must_use = "futures do nothing unless polled"]
@@ -45,6 +46,12 @@ pub struct ResponseFuture {
 /// Build a Client.
 #[derive(Clone, Debug)]
 pub struct Builder {
+    /// Time to keep locally reset streams around before reaping.
+    reset_stream_duration: Duration,
+
+    /// Maximum number of locally reset streams to keep at a time.
+    reset_stream_max: usize,
+
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
 
@@ -208,6 +215,26 @@ impl Builder {
         self
     }
 
+    /// Set the maximum number of concurrent locally reset streams.
+    ///
+    /// Locally reset streams are to "ignore frames from the peer for some
+    /// time". While waiting for that time, locally reset streams "waste"
+    /// space in order to be able to ignore those frames. This setting
+    /// can limit how many extra streams are left waiting for "some time".
+    pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
+        self.reset_stream_max = max;
+        self
+    }
+
+    /// Set the maximum number of concurrent locally reset streams.
+    ///
+    /// Locally reset streams are to "ignore frames from the peer for some
+    /// time", but that time is unspecified. Set that time with this setting.
+    pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
+        self.reset_stream_duration = dur;
+        self
+    }
+
     /// Enable or disable the server to send push promises.
     pub fn enable_push(&mut self, enabled: bool) -> &mut Self {
         self.settings.set_enable_push(enabled);
@@ -245,6 +272,8 @@ impl Builder {
 impl Default for Builder {
     fn default() -> Builder {
         Builder {
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Default::default(),
             stream_id: 1.into(),
         }
@@ -324,8 +353,12 @@ where
             .buffer(self.builder.settings.clone().into())
             .expect("invalid SETTINGS frame");
 
-        let connection =
-            proto::Connection::new(codec, &self.builder.settings, self.builder.stream_id);
+        let connection = proto::Connection::new(codec, proto::Config {
+            next_stream_id: self.builder.stream_id,
+            reset_stream_duration: self.builder.reset_stream_duration,
+            reset_stream_max: self.builder.reset_stream_max,
+            settings: self.builder.settings.clone(),
+        });
         let client = Client {
             inner: connection.streams().clone(),
             pending: None,

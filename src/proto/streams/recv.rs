@@ -2,11 +2,11 @@ use super::*;
 use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
-use proto::*;
 
 use http::HeaderMap;
 
 use std::io;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub(super) struct Recv {
@@ -30,6 +30,12 @@ pub(super) struct Recv {
 
     /// New streams to be accepted
     pending_accept: store::Queue<stream::NextAccept>,
+
+    /// Locally reset streams that should be reaped when they expire
+    pending_reset_expired: store::Queue<stream::NextResetExpire>,
+
+    /// How long locally reset streams should ignore received frames
+    reset_duration: Duration,
 
     /// Holds frames that are waiting to be read
     buffer: Buffer<Event>,
@@ -74,6 +80,8 @@ impl Recv {
             pending_window_updates: store::Queue::new(),
             last_processed_id: StreamId::zero(),
             pending_accept: store::Queue::new(),
+            pending_reset_expired: store::Queue::new(),
+            reset_duration: config.local_reset_duration,
             buffer: Buffer::new(),
             refused: None,
             is_push_enabled: config.local_push_enabled,
@@ -237,7 +245,28 @@ impl Recv {
         Ok(())
     }
 
-    /// Releases capacity back to the connection
+    /// Releases capacity of the connection
+    fn release_connection_capacity(
+        &mut self,
+        capacity: WindowSize,
+        task: &mut Option<Task>,
+    ) {
+        trace!("release_connection_capacity; size={}", capacity);
+
+        // Decrement in-flight data
+        self.in_flight_data -= capacity;
+
+        // Assign capacity to connection
+        self.flow.assign_capacity(capacity);
+
+        if self.flow.unclaimed_capacity().is_some() {
+            if let Some(task) = task.take() {
+                task.notify();
+            }
+        }
+    }
+
+    /// Releases capacity back to the connection & stream
     pub fn release_capacity(
         &mut self,
         capacity: WindowSize,
@@ -250,19 +279,14 @@ impl Recv {
             return Err(UserError::ReleaseCapacityTooBig);
         }
 
+        self.release_connection_capacity(capacity, task);
+
         // Decrement in-flight data
         stream.in_flight_recv_data -= capacity;
-        self.in_flight_data -= capacity;
 
-        // Assign capacity to connection & stream
-        self.flow.assign_capacity(capacity);
+        // Assign capacity to stream
         stream.recv_flow.assign_capacity(capacity);
 
-        if self.flow.unclaimed_capacity().is_some() {
-            if let Some(task) = task.take() {
-                task.notify();
-            }
-        }
 
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
@@ -353,8 +377,12 @@ impl Recv {
 
         let sz = sz as WindowSize;
 
-        if !stream.state.is_recv_streaming() {
-            trace!("stream is not in receiving state; state={:?}", stream.state);
+        let is_ignoring_frame = stream.state.is_local_reset();
+
+        if !is_ignoring_frame && !stream.state.is_recv_streaming() {
+            // TODO: There are cases where this can be a stream error of
+            // STREAM_CLOSED instead...
+
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
@@ -369,19 +397,46 @@ impl Recv {
 
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
-        if self.flow.window_size() < sz || stream.recv_flow.window_size() < sz {
-            return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
+        self.consume_connection_window(sz)?;
+
+        if is_ignoring_frame {
+            trace!(
+                "recv_data frame ignored on locally reset {:?} for some time",
+                stream.id,
+            );
+            // we just checked for enough connection window capacity, and
+            // consumed it. Since we are ignoring this frame "for some time",
+            // we aren't returning the frame to the user. That means they
+            // have no way to release the capacity back to the connection. So
+            // we have to release it automatically.
+            //
+            // This call doesn't send a WINDOW_UPDATE immediately, just marks
+            // the capacity as available to be reclaimed. When the available
+            // capacity meets a threshold, a WINDOW_UPDATE is then sent.
+            self.release_connection_capacity(sz, &mut None);
+            return Ok(());
         }
 
-        // Update connection level flow control
-        self.flow.send_data(sz);
+        if stream.recv_flow.window_size() < sz {
+            // http://httpwg.org/specs/rfc7540.html#WINDOW_UPDATE
+            // > A receiver MAY respond with a stream error (Section 5.4.2) or
+            // > connection error (Section 5.4.1) of type FLOW_CONTROL_ERROR if
+            // > it is unable to accept a frame.
+            //
+            // So, for violating the **stream** window, we can send either a
+            // stream or connection error. We've opted to send a stream
+            // error.
+            return Err(RecvError::Stream {
+                id: stream.id,
+                reason: Reason::FLOW_CONTROL_ERROR,
+            });
+        }
 
         // Update stream level flow control
         stream.recv_flow.send_data(sz);
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
-        self.in_flight_data += sz;
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
             trace!("content-length overflow");
@@ -412,6 +467,19 @@ impl Recv {
         stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
+        Ok(())
+    }
+
+    pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
+        if self.flow.window_size() < sz {
+            return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
+        }
+
+        // Update connection level flow control
+        self.flow.send_data(sz);
+
+        // Track the data as in-flight
+        self.in_flight_data += sz;
         Ok(())
     }
 
@@ -480,15 +548,14 @@ impl Recv {
         Ok(())
     }
 
+    /// Handle remote sending an explicit RST_STREAM.
     pub fn recv_reset(
         &mut self,
         frame: frame::Reset,
         stream: &mut Stream,
     ) -> Result<(), RecvError> {
-        let err = proto::Error::Proto(frame.reason());
-
         // Notify the stream
-        stream.state.recv_err(&err);
+        stream.state.recv_reset(frame.reason());
         stream.notify_recv();
         Ok(())
     }
@@ -536,6 +603,38 @@ impl Recv {
         Ok(())
     }
 
+    /// Add a locally reset stream to queue to be eventually reaped.
+    pub fn enqueue_reset_expiration(
+        &mut self,
+        stream: &mut store::Ptr,
+        counts: &mut Counts,
+    ) {
+        assert!(stream.state.is_local_reset());
+
+        if stream.is_pending_reset_expiration() {
+            return;
+        }
+
+        if !counts.can_inc_num_reset_streams() {
+            // try to evict 1 stream if possible
+            // if max allow is 0, this won't be able to evict,
+            // and then we'll just bail after
+            if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
+                // It's possible that this stream is still sitting in a send queue,
+                // such as if some data is to be sent and then a CANCEL. In this case,
+                // it could still be "counted", so we just make sure to always ask the
+                // stream instead of assuming.
+                let is_counted = evicted.is_counted();
+                counts.transition_after(evicted, is_counted, true);
+            }
+        }
+
+        if counts.can_inc_num_reset_streams() {
+            counts.inc_num_reset_streams();
+            self.pending_reset_expired.push(stream);
+        }
+    }
+
     /// Send any pending refusals.
     pub fn send_pending_refusal<T, B>(
         &mut self,
@@ -560,6 +659,18 @@ impl Recv {
         self.refused = None;
 
         Ok(Async::Ready(()))
+    }
+
+    pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
+        let now = Instant::now();
+        let reset_duration = self.reset_duration;
+        while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
+            let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
+            now - reset_at > reset_duration
+        }) {
+            let is_counted = stream.is_counted();
+            counts.transition_after(stream, is_counted, true);
+        }
     }
 
     pub fn poll_complete<T, B>(

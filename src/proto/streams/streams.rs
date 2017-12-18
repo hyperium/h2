@@ -1,11 +1,14 @@
-use super::*;
-use super::store::Resolve;
+use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
+use super::store::{self, Entry, Resolve, Store};
 use {client, proto, server};
-use codec::{RecvError, SendError, UserError};
-use frame::Reason;
-use proto::*;
+use codec::{Codec, RecvError, SendError, UserError};
+use frame::{self, Frame, Reason};
+use proto::{peer, Peer, WindowSize};
 
-use http::HeaderMap;
+use bytes::{Buf, Bytes};
+use futures::{task, Async, Poll};
+use http::{HeaderMap, Request, Response};
+use tokio_io::AsyncWrite;
 
 use std::{fmt, io};
 use std::sync::{Arc, Mutex};
@@ -174,7 +177,10 @@ where
 
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
-            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+            None => {
+                trace!("recv_data; stream not found: {:?}", id);
+                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+            },
         };
 
         let actions = &mut me.actions;
@@ -364,8 +370,10 @@ where
 
             match me.actions.recv.next_incoming(&mut me.store) {
                 Some(key) => {
+                    let mut stream = me.store.resolve(key);
+                    trace!("next_incoming; id={:?}, state={:?}", stream.id, stream.state);
                     // Increment the ref count
-                    me.store.resolve(key).ref_inc();
+                    stream.ref_inc();
 
                     // Return the key
                     Some(key)
@@ -395,6 +403,12 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
         me.actions.recv.send_pending_refusal(dst)
+    }
+
+    pub fn clear_expired_reset_streams(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+        me.actions.recv.clear_expired_reset_streams(&mut me.store, &mut me.counts);
     }
 
     pub fn poll_complete<T>(&mut self, dst: &mut Codec<T, Prioritized<B>>) -> Poll<(), io::Error>
@@ -547,9 +561,10 @@ where
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.transition(stream, |_, stream| {
+        me.counts.transition(stream, |counts, stream| {
             actions.send.send_reset(
-                reason, send_buffer, stream, &mut actions.task)
+                reason, send_buffer, stream, &mut actions.task);
+            actions.recv.enqueue_reset_expiration(stream, counts)
         })
     }
 }
@@ -876,11 +891,12 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
 
     let actions = &mut me.actions;
 
-    me.counts.transition(stream, |_, mut stream| {
+    me.counts.transition(stream, |counts, mut stream| {
         if stream.is_canceled_interest() {
             actions.send.schedule_cancel(
                 &mut stream,
                 &mut actions.task);
+            actions.recv.enqueue_reset_expiration(stream, counts);
         }
     });
 }
