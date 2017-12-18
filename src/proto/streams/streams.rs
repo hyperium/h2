@@ -188,7 +188,16 @@ where
         let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |_, stream| {
+            let sz = frame.payload().len();
             let res = actions.recv.recv_data(frame, stream);
+
+            // Any stream error after receiving a DATA frame means
+            // we won't give the data to the user, and so they can't
+            // release the capacity. We do it automatically.
+            if let Err(RecvError::Stream { .. }) = res {
+                actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
+            }
+
             actions.reset_on_recv_stream_err(send_buffer, stream, res)
         })
     }
