@@ -400,7 +400,19 @@ impl Recv {
         self.consume_connection_window(sz)?;
 
         if is_ignoring_frame {
-            trace!("recv_data frame being ignored on locally reset {:?} for some time", stream.id);
+            trace!(
+                "recv_data frame ignored on locally reset {:?} for some time",
+                stream.id,
+            );
+            // we just checked for enough connection window capacity, and
+            // consumed it. Since we are ignoring this frame "for some time",
+            // we aren't returning the frame to the user. That means they
+            // have no way to release the capacity back to the connection. So
+            // we have to release it automatically.
+            //
+            // This call doesn't send a WINDOW_UPDATE immediately, just marks
+            // the capacity as available to be reclaimed. When the available
+            // capacity meets a threshold, a WINDOW_UPDATE is then sent.
             self.release_connection_capacity(sz, &mut None);
             return Ok(());
         }
