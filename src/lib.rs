@@ -59,6 +59,8 @@
 //! documentation in order to avoid introducing potential dead locking in your
 //! code.
 //!
+//! TODO: Describe how `h2` handles flow control
+//!
 //! Managing flow control for inbound data is done through [`ReleaseCapacity`].
 //! Managing flow control for outbound data is done through [`SendStream`]. See
 //! the struct level documentation for those two types for more details.
