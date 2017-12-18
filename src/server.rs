@@ -418,7 +418,7 @@ where
     ///
     /// The default value is 65,535.
     ///
-    /// See [library level] documentation for more details.
+    /// See [`ReleaseCapacity`] documentation for more details.
     ///
     /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
     /// [library level]: ../index.html#flow-control
@@ -440,7 +440,7 @@ where
     /// [`poll`]: struct.Server.html#method.poll
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll().map_err(Into::into)
-}
+    }
 }
 
 impl<T, B> futures::Stream for Server<T, B>
@@ -623,10 +623,46 @@ impl Builder {
 
     /// Set the maximum number of concurrent locally reset streams.
     ///
-    /// Locally reset streams are to "ignore frames from the peer for some
-    /// time". While waiting for that time, locally reset streams "waste"
-    /// space in order to be able to ignore those frames. This setting
-    /// can limit how many extra streams are left waiting for "some time".
+    /// When a stream is explicitly reset by either calling
+    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
+    /// completing te stream, the HTTP/2.0 specification requires that any
+    /// further frames received for that stream must be ignored for "some time".
+    ///
+    /// In order to satisfy the specification, internal state must be maintained
+    /// to implement the behavior. This state grows linearly with the number of
+    /// streams that are locally reset.
+    ///
+    /// The `max_concurrent_reset_streams` setting configures sets an upper
+    /// bound on the amount of state that is maintained. When this max value is
+    /// reached, the oldest reset stream is purged from memory.
+    ///
+    /// Once the stream has been fully purged from memory, any additional frames
+    /// received for that stream will result in a connection level protocol
+    /// error, forcing the connection to terminate.
+    ///
+    /// The default value is 10.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .max_concurrent_reset_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.reset_stream_max = max;
         self
@@ -634,8 +670,47 @@ impl Builder {
 
     /// Set the maximum number of concurrent locally reset streams.
     ///
-    /// Locally reset streams are to "ignore frames from the peer for some
-    /// time", but that time is unspecified. Set that time with this setting.
+    /// When a stream is explicitly reset by either calling
+    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
+    /// completing te stream, the HTTP/2.0 specification requires that any
+    /// further frames received for that stream must be ignored for "some time".
+    ///
+    /// In order to satisfy the specification, internal state must be maintained
+    /// to implement the behavior. This state grows linearly with the number of
+    /// streams that are locally reset.
+    ///
+    /// The `reset_stream_duration` setting configures the max amount of time
+    /// this state will be maintained in memory. Once the duration elapses, the
+    /// stream state is purged from memory.
+    ///
+    /// Once the stream has been fully purged from memory, any additional frames
+    /// received for that stream will result in a connection level protocol
+    /// error, forcing the connection to terminate.
+    ///
+    /// The default value is 30 seconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// # use std::time::Duration;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Server::builder()
+    ///     .reset_stream_duration(Duration::from_secs(10))
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
         self.reset_stream_duration = dur;
         self

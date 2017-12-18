@@ -55,11 +55,18 @@
 //! # Flow control
 //!
 //! [Flow control] is a fundamental feature of HTTP/2.0. The `h2` library
-//! exposes flow control to the user. Be sure to read the flow control
-//! documentation in order to avoid introducing potential dead locking in your
-//! code.
+//! exposes flow control to the user.
 //!
-//! TODO: Describe how `h2` handles flow control
+//! An HTTP/2.0 client or server may not send unlimited data to the peer. When a
+//! stream is initiated, both the client and the server are provided with an
+//! initial window size for that stream.  A window size is the number of bytes
+//! the endpoint can send to the peer. At any point in time, the peer may
+//! increase this window size by sending a `WINDOW_UPDATE` frame. Once a client
+//! or server has sent data filling the window for a stream, no further data may
+//! be sent on that stream until the peer increases the window.
+//!
+//! There is also a **connection level** window governing data sent across all
+//! streams.
 //!
 //! Managing flow control for inbound data is done through [`ReleaseCapacity`].
 //! Managing flow control for outbound data is done through [`SendStream`]. See
