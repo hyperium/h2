@@ -246,7 +246,7 @@ impl Recv {
     }
 
     /// Releases capacity of the connection
-    fn release_connection_capacity(
+    pub fn release_connection_capacity(
         &mut self,
         capacity: WindowSize,
         task: &mut Option<Task>,

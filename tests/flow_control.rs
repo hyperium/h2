@@ -321,6 +321,76 @@ fn recv_window_update_causes_overflow() {
 }
 
 #[test]
+fn stream_error_release_connection_capacity() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        // we're sending the wrong content-length
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", &*(16_384 * 3).to_string())
+        )
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 10]).eos())
+        // mismatched content-length is a protocol error
+        .recv_frame(frames::reset(1).protocol_error())
+        // but then the capacity should be released automatically
+        .recv_frame(frames::window_update(0, 16_384 * 2 + 10))
+        .close();
+
+    let client = Client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let mut body = resp.into_parts().1;
+                    let mut cap = body.release_capacity().clone();
+                    let to_release = 16_384 * 2;
+                    let mut should_recv_bytes = to_release;
+                    let mut should_recv_frames = 2;
+                    body
+                        .for_each(move |bytes| {
+                            should_recv_bytes -= bytes.len();
+                            should_recv_frames -= 1;
+                            if should_recv_bytes == 0 {
+                                assert_eq!(should_recv_bytes, 0);
+                            }
+
+                            Ok(())
+                        })
+                        .expect_err("body")
+                        .map(move |err| {
+                            assert_eq!(
+                                err.to_string(),
+                                "protocol error: unspecific protocol error detected"
+                            );
+                            cap.release_capacity(to_release).expect("release_capacity");
+                        })
+                });
+            conn.drive(req.expect("response"))
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+    srv.join(client).wait().unwrap();
+}
+
+#[test]
 fn stream_close_by_data_frame_releases_capacity() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
@@ -1016,7 +1086,7 @@ fn increase_target_window_size_after_using_some() {
 
 #[test]
 fn decrease_target_window_size() {
-     let _ = ::env_logger::init();
+    let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
