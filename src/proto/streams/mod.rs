@@ -20,12 +20,13 @@ use self::prioritize::Prioritize;
 use self::recv::Recv;
 use self::send::Send;
 use self::state::State;
-use self::store::{Entry, Store};
+use self::store::Store;
 use self::stream::Stream;
 
 use frame::{StreamId, StreamIdOverflow};
 use proto::*;
 
+use std::time::Duration;
 use bytes::Bytes;
 use http::{Request, Response};
 
@@ -42,6 +43,12 @@ pub struct Config {
 
     /// If the local peer is willing to receive push promises
     pub local_push_enabled: bool,
+
+    /// How long a locally reset stream should ignore frames
+    pub local_reset_duration: Duration,
+
+    /// Maximum number of locally reset streams to keep at a time
+    pub local_reset_max: usize,
 
     /// Initial window size of remote initiated streams
     pub remote_init_window_sz: WindowSize,

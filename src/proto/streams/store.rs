@@ -289,6 +289,21 @@ where
 
         None
     }
+
+    pub fn pop_if<'a, R, F>(&mut self, store: &'a mut R, f: F) -> Option<store::Ptr<'a>>
+    where
+        R: Resolve,
+        F: Fn(&Stream) -> bool,
+    {
+        if let Some(idxs) = self.indices {
+            let should_pop = f(&store.resolve(idxs.head));
+            if should_pop {
+                return self.pop(store);
+            }
+        }
+
+        None
+    }
 }
 
 // ===== impl Ptr =====
@@ -297,6 +312,10 @@ impl<'a> Ptr<'a> {
     /// Returns the Key associated with the stream
     pub fn key(&self) -> Key {
         self.key
+    }
+
+    pub fn store_mut(&mut self) -> &mut Store {
+        &mut self.store
     }
 
     /// Remove the stream from the store

@@ -1,5 +1,6 @@
 use super::*;
 
+use std::time::Instant;
 use std::usize;
 
 /// Tracks Stream related state
@@ -84,6 +85,12 @@ pub(super) struct Stream {
     /// True if the stream is waiting to send a window update
     pub is_pending_window_update: bool,
 
+    /// The time when this stream may have been locally reset.
+    pub reset_at: Option<Instant>,
+
+    /// Next node in list of reset streams that should expire eventually
+    pub next_reset_expire: Option<store::Key>,
+
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque,
 
@@ -119,6 +126,9 @@ pub(super) struct NextWindowUpdate;
 
 #[derive(Debug)]
 pub(super) struct NextOpen;
+
+#[derive(Debug)]
+pub(super) struct NextResetExpire;
 
 impl Stream {
     pub fn new(
@@ -167,6 +177,8 @@ impl Stream {
             in_flight_recv_data: 0,
             next_window_update: None,
             is_pending_window_update: false,
+            reset_at: None,
+            next_reset_expire: None,
             pending_recv: buffer::Deque::new(),
             recv_task: None,
             pending_push_promises: store::Queue::new(),
@@ -192,6 +204,12 @@ impl Stream {
         !self.is_pending_open && self.state.is_at_least_half_open()
     }
 
+    /// Returns true if stream is currently being held for some time because of
+    /// a local reset.
+    pub fn is_pending_reset_expiration(&self) -> bool {
+        self.reset_at.is_some()
+    }
+
     /// Returns true if the stream is closed
     pub fn is_closed(&self) -> bool {
         // The state has fully transitioned to closed.
@@ -215,7 +233,8 @@ impl Stream {
             self.ref_count == 0 &&
             // The stream is not in any queue
             !self.is_pending_send && !self.is_pending_send_capacity &&
-            !self.is_pending_accept && !self.is_pending_window_update
+            !self.is_pending_accept && !self.is_pending_window_update &&
+            !self.reset_at.is_some()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles
@@ -388,6 +407,32 @@ impl store::Next for NextOpen {
 
     fn set_queued(stream: &mut Stream, val: bool) {
         stream.is_pending_open = val;
+    }
+}
+
+impl store::Next for NextResetExpire {
+    fn next(stream: &Stream) -> Option<store::Key> {
+        stream.next_reset_expire
+    }
+
+    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
+        stream.next_reset_expire = key;
+    }
+
+    fn take_next(stream: &mut Stream) -> Option<store::Key> {
+        stream.next_reset_expire.take()
+    }
+
+    fn is_queued(stream: &Stream) -> bool {
+        stream.reset_at.is_some()
+    }
+
+    fn set_queued(stream: &mut Stream, val: bool) {
+        if val {
+            stream.reset_at = Some(Instant::now());
+        } else {
+            stream.reset_at = None;
+        }
     }
 }
 

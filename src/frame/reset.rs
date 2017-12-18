@@ -5,14 +5,14 @@ use bytes::{BigEndian, BufMut};
 #[derive(Debug, Eq, PartialEq)]
 pub struct Reset {
     stream_id: StreamId,
-    error_code: u32,
+    error_code: Reason,
 }
 
 impl Reset {
     pub fn new(stream_id: StreamId, error: Reason) -> Reset {
         Reset {
             stream_id,
-            error_code: error.into(),
+            error_code: error,
         }
     }
 
@@ -21,7 +21,7 @@ impl Reset {
     }
 
     pub fn reason(&self) -> Reason {
-        self.error_code.into()
+        self.error_code
     }
 
     pub fn load(head: Head, payload: &[u8]) -> Result<Reset, Error> {
@@ -33,19 +33,19 @@ impl Reset {
 
         Ok(Reset {
             stream_id: head.stream_id(),
-            error_code: error_code,
+            error_code: error_code.into(),
         })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
         trace!(
-            "encoding RESET; id={:?} code={}",
+            "encoding RESET; id={:?} code={:?}",
             self.stream_id,
             self.error_code
         );
         let head = Head::new(Kind::Reset, 0, self.stream_id);
         head.encode(4, dst);
-        dst.put_u32::<BigEndian>(self.error_code);
+        dst.put_u32::<BigEndian>(self.error_code.into());
     }
 }
 

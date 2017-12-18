@@ -1,6 +1,6 @@
 use {client, frame, proto, server};
 use codec::RecvError;
-use frame::Reason;
+use frame::{Reason, StreamId};
 
 use frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use proto::*;
@@ -10,6 +10,7 @@ use futures::Stream;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use std::marker::PhantomData;
+use std::time::Duration;
 
 /// An H2 connection
 #[derive(Debug)]
@@ -42,6 +43,14 @@ where
     _phantom: PhantomData<P>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct Config {
+    pub next_stream_id: StreamId,
+    pub reset_stream_duration: Duration,
+    pub reset_stream_max: usize,
+    pub settings: frame::Settings,
+}
+
 #[derive(Debug)]
 enum State {
     /// Currently open in a sane state
@@ -65,18 +74,19 @@ where
 {
     pub fn new(
         codec: Codec<T, Prioritized<B::Buf>>,
-        settings: &frame::Settings,
-        next_stream_id: frame::StreamId,
+        config: Config,
     ) -> Connection<T, P, B> {
         let streams = Streams::new(streams::Config {
-            local_init_window_sz: settings
+            local_init_window_sz: config.settings
                 .initial_window_size()
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
             local_max_initiated: None,
-            local_next_stream_id: next_stream_id,
-            local_push_enabled: settings.is_push_enabled(),
+            local_next_stream_id: config.next_stream_id,
+            local_push_enabled: config.settings.is_push_enabled(),
+            local_reset_duration: config.reset_stream_duration,
+            local_reset_max: config.reset_stream_max,
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            remote_max_initiated: settings
+            remote_max_initiated: config.settings
                 .max_concurrent_streams()
                 .map(|max| max as usize),
         });
@@ -230,6 +240,11 @@ where
     fn poll2(&mut self) -> Poll<(), RecvError> {
         use frame::Frame::*;
 
+        // This happens outside of the loop to prevent needing to do a clock
+        // check and then comparison of the queue possibly multiple times a
+        // second (and thus, the clock wouldn't have changed enough to matter).
+        self.clear_expired_reset_streams();
+
         loop {
             // First, ensure that the `Connection` is able to receive a frame
             try_ready!(self.poll_ready());
@@ -283,6 +298,10 @@ where
                 },
             }
         }
+    }
+
+    fn clear_expired_reset_streams(&mut self) {
+        self.streams.clear_expired_reset_streams();
     }
 }
 

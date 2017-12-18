@@ -529,7 +529,13 @@ impl Prioritize {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
 
+                    // It's possible that this stream, besides having data to send,
+                    // is also queued to send a reset, and thus is already in the queue
+                    // to wait for "some time" after a reset.
+                    //
+                    // To be safe, we just always ask the stream.
                     let is_counted = stream.is_counted();
+                    let is_pending_reset = stream.is_pending_reset_expiration();
 
                     let frame = match stream.pending_send.pop_front(buffer) {
                         Some(Frame::Data(mut frame)) => {
@@ -651,7 +657,7 @@ impl Prioritize {
                         self.pending_send.push(&mut stream);
                     }
 
-                    counts.transition_after(stream, is_counted);
+                    counts.transition_after(stream, is_counted, is_pending_reset);
 
                     return Some(frame);
                 },

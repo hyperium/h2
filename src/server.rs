@@ -127,13 +127,14 @@
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Connection, Prioritized};
+use proto::{self, Config, Connection, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{Request, Response};
 use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
+use std::time::Duration;
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -151,8 +152,8 @@ use std::{convert, fmt, mem};
 /// [module]: index.html
 #[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T, B: IntoBuf = Bytes> {
-    /// SETTINGS frame that will be sent once the connection is established.
-    settings: Settings,
+    /// The config to pass to Connection::new after handshake succeeds.
+    builder: Builder,
     /// The current state of the handshake.
     state: Handshaking<T, B>
 }
@@ -242,8 +243,15 @@ pub struct Server<T, B: IntoBuf> {
 /// #
 /// # pub fn main() {}
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Builder {
+    /// Time to keep locally reset streams around before reaping.
+    reset_stream_duration: Duration,
+
+    /// Maximum number of locally reset streams to keep at a time.
+    reset_stream_max: usize,
+
+    /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
 }
 
@@ -378,23 +386,23 @@ where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    fn handshake2(io: T, settings: Settings) -> Handshake<T, B> {
+    fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
         let mut codec = Codec::new(io);
 
-        if let Some(max) = settings.max_frame_size() {
+        if let Some(max) = builder.settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
         }
 
         // Send initial settings frame.
         codec
-            .buffer(settings.clone().into())
+            .buffer(builder.settings.clone().into())
             .expect("invalid SETTINGS frame");
 
         // Create the handshake future.
         let state = Handshaking::from(codec);
 
-        Handshake { settings, state }
+        Handshake { builder, state }
     }
 
     /// Sets the target window size for the whole connection.
@@ -613,6 +621,26 @@ impl Builder {
         self
     }
 
+    /// Set the maximum number of concurrent locally reset streams.
+    ///
+    /// Locally reset streams are to "ignore frames from the peer for some
+    /// time". While waiting for that time, locally reset streams "waste"
+    /// space in order to be able to ignore those frames. This setting
+    /// can limit how many extra streams are left waiting for "some time".
+    pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
+        self.reset_stream_max = max;
+        self
+    }
+
+    /// Set the maximum number of concurrent locally reset streams.
+    ///
+    /// Locally reset streams are to "ignore frames from the peer for some
+    /// time", but that time is unspecified. Set that time with this setting.
+    pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
+        self.reset_stream_duration = dur;
+        self
+    }
+
     /// Create a new configured HTTP/2.0 server backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
@@ -679,7 +707,17 @@ impl Builder {
         B: IntoBuf,
         B::Buf: 'static,
     {
-        Server::handshake2(io, self.settings.clone())
+        Server::handshake2(io, self.clone())
+    }
+}
+
+impl Default for Builder {
+    fn default() -> Builder {
+        Builder {
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            settings: Settings::default(),
+        }
     }
 }
 
@@ -822,8 +860,12 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             unreachable!("Handshake::poll() state was not advanced completely!")
         };
         let server = poll?.map(|codec| {
-            let connection =
-                Connection::new(codec, &self.settings, 2.into());
+            let connection = Connection::new(codec, Config {
+                next_stream_id: 2.into(),
+                reset_stream_duration: self.builder.reset_stream_duration,
+                reset_stream_max: self.builder.reset_stream_max,
+                settings: self.builder.settings.clone(),
+            });
             trace!("Handshake::poll(); connection established!");
             Server { connection }
         });

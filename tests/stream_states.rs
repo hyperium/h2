@@ -465,6 +465,209 @@ fn skipped_stream_ids_are_implicitly_closed() {
         h2.join(srv).wait().expect("wait");
 
 }
+
+#[test]
+fn send_rst_stream_allows_recv_frames() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .recv_frame(frames::reset(1).cancel())
+        // sending frames after canceled!
+        //   note: sending 2 to cosume 50% of connection window
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        // make sure we automatically free the connection window
+        .recv_frame(frames::window_update(0, 16_384 * 2))
+        // do a pingpong to ensure no other frames were sent
+        .ping_pong([1; 8])
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                });
+
+            conn.expect("client")
+                .drive(req)
+                .and_then(|(conn, _)| conn)
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn rst_stream_expires() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::reset(1).cancel())
+        // wait till after the configured duration
+        .idle_ms(15)
+        .ping_pong([1; 8])
+        // sending frame after canceled!
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        .recv_frame(frames::go_away(0).protocol_error())
+        .close();
+
+    let client = Client::builder()
+        .reset_stream_duration(Duration::from_millis(10))
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                })
+                .map_err(|()| -> Error {
+                    unreachable!()
+                });
+
+            conn.drive(req)
+                .and_then(|(conn, _)| conn.expect_err("client"))
+                .map(|err| {
+                    assert_eq!(
+                        err.to_string(),
+                        "protocol error: unspecific protocol error detected"
+                    );
+                })
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn rst_stream_max() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16]))
+        .send_frame(frames::headers(3).response(200))
+        .send_frame(frames::data(3, vec![0; 16]))
+        .recv_frame(frames::reset(1).cancel())
+        .recv_frame(frames::reset(3).cancel())
+        // sending frame after canceled!
+        // newer streams trump older streams
+        // 3 is still being ignored
+        .send_frame(frames::data(3, vec![0; 16]).eos())
+        // ping pong to be sure of no goaway
+        .ping_pong([1; 8])
+        // 1 has been evicted, will get a goaway
+        .send_frame(frames::data(1, vec![0; 16]).eos())
+        .recv_frame(frames::go_away(0).protocol_error())
+        .close();
+
+    let client = Client::builder()
+        .max_concurrent_reset_streams(1)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req1 = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response1")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                })
+                .map_err(|()| -> Error {
+                    unreachable!()
+                });
+
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req2 = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response2")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                })
+                .map_err(|()| -> Error {
+                    unreachable!()
+                });
+
+            conn.drive(req1.join(req2))
+                .and_then(|(conn, _)| conn.expect_err("client"))
+                .map(|err| {
+                    assert_eq!(
+                        err.to_string(),
+                        "protocol error: unspecific protocol error detected"
+                    );
+                })
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
 /*
 #[test]
 fn send_data_after_headers_eos() {
