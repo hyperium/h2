@@ -178,26 +178,29 @@ where
                     try_ready!(self.inner.write_buf(&mut self.buf));
                 },
             }
-        }
 
-        // The data frame has been written, so unset it
-        match self.next.take() {
-            Some(Next::Data(frame)) => {
-                self.last_data_frame = Some(frame);
-            },
-            Some(Next::Continuation(_)) => {
-                unimplemented!();
-            },
-            None => {},
+            // Clear internal buffer
+            self.buf.set_position(0);
+            self.buf.get_mut().clear();
+
+            // The data frame has been written, so unset it
+            match self.next.take() {
+                Some(Next::Data(frame)) => {
+                    self.last_data_frame = Some(frame);
+                },
+                Some(Next::Continuation(frame)) => {
+                    // Buffer the continuation frame, then try to write again
+                    if let Some(continuation) = frame.encode(&mut self.hpack, self.buf.get_mut()) {
+                        self.next = Some(Next::Continuation(continuation));
+                    }
+                },
+                None => {},
+            }
         }
 
         trace!("flushing buffer");
         // Flush the upstream
         try_nb!(self.inner.flush());
-
-        // Clear internal buffer
-        self.buf.set_position(0);
-        self.buf.get_mut().clear();
 
         Ok(Async::Ready(()))
     }

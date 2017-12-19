@@ -326,8 +326,14 @@ impl Continuable {
 impl<T> From<Continuable> for Frame<T> {
     fn from(cont: Continuable) -> Self {
         match cont {
-            Continuable::Headers(headers) => headers.into(),
-            Continuable::PushPromise(push) => push.into(),
+            Continuable::Headers(mut headers) => {
+                headers.set_end_headers();
+                headers.into()
+            }
+            Continuable::PushPromise(mut push) => {
+                push.set_end_headers();
+                push.into()
+            }
         }
     }
 }
