@@ -265,7 +265,7 @@ pub struct Builder {
 /// stream. This is [not yet
 /// implemented](https://github.com/carllerche/h2/issues/185).
 ///
-/// If the `Response` instance is dropped without sending a response, then the
+/// If the `Respond` instance is dropped without sending a response, then the
 /// HTTP/2.0 stream will be reset.
 ///
 /// See [module] level docs for more details.
@@ -433,11 +433,13 @@ where
     /// they will be queued and returned on the next call to [`poll`].
     ///
     /// This function will advance the internal connection state, driving
-    /// progress on all the other handles (e.g. `RecvStream` and `SendStream`).
+    /// progress on all the other handles (e.g. [`RecvStream`] and [`SendStream`]).
     ///
     /// See [here](index.html#managing-the-connection) for more details.
     ///
     /// [`poll`]: struct.Server.html#method.poll
+    /// [`RecvStream`]: ../struct.RecvStream.html
+    /// [`SendStream`]: ../struct.SendStream.html
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll().map_err(Into::into)
     }
@@ -799,7 +801,22 @@ impl Default for Builder {
 // ===== impl Respond =====
 
 impl<B: IntoBuf> Respond<B> {
-    /// Send a response
+    /// Send a response to a client request.
+    ///
+    /// On success, a [`SendStream`] instance is returned. This instance can be
+    /// used to stream the response body and send trailers.
+    ///
+    /// If a body or trailers will be sent on the returned [`SendStream`]
+    /// instance, then `end_of_stream` must be set to `true` when calling this
+    /// function.
+    ///
+    /// The [`Respond`] instance is already associated with a received request.
+    /// This function may only be called once per instance and only if
+    /// [`send_reset`] has not been previously called.
+    ///
+    /// [`Respond`]: #
+    /// [`SendStream`]: ../struct.SendStream.html
+    /// [`send_reset`]: #method.send_reset
     pub fn send_response(
         &mut self,
         response: Response<()>,
@@ -811,7 +828,21 @@ impl<B: IntoBuf> Respond<B> {
             .map_err(Into::into)
     }
 
-    /// Reset the stream
+    /// Send a stream reset to the peer.
+    ///
+    /// This essentially cancels the stream, including any inbound or outbound
+    /// data streams.
+    ///
+    /// If this function is called before [`send_response`], a call to
+    /// [`send_response`] will result in an error.
+    ///
+    /// If this function is called while a [`SendStream`] instance is active,
+    /// any further use of the instance will result in an error.
+    ///
+    /// This function should only be called once.
+    ///
+    /// [`send_response`]: #method.send_response
+    /// [`SendStream`]: ../struct.SendStream.html
     pub fn send_reset(&mut self, reason: Reason) {
         self.inner.send_reset(reason)
     }
@@ -1077,9 +1108,8 @@ impl proto::Peer for Peer {
     }
 }
 
-
-
 // ===== impl Handshaking =====
+
 impl<T, B> fmt::Debug for Handshaking<T, B>
 where
     B: IntoBuf
