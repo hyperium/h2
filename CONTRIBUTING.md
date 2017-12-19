@@ -19,20 +19,6 @@ Do you have an improvement?
     - Code review has been completed.
     - The branch has passed tests in CI.
 
-## Code Style ##
-
-[`rustfmt-nightly`][rustfmt] is used to enforce a consistent style (as configured by
-[`.rustfmt.toml`](./.rustfmt.toml)). Style is checked by CI, so be sure to apply rustfmt
-before committing your work.  For example:
-
-```
-$ rustup run nightly cargo install --force rustfmt-nightly
-    Updating registry `https://github.com/rust-lang/crates.io-index`
-  Installing rustfmt-nightly v0.2.5
-...
-$ rustup run nightly cargo fmt
-```
-
 ## Committing ##
 
 We prefer squash or rebase commits so that all changes from a branch are
