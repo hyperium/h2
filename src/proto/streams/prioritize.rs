@@ -238,6 +238,11 @@ impl Prioritize {
             stream.send_flow
         );
 
+        if stream.state.is_send_closed() && stream.buffered_send_data == 0 {
+            // We can't send any data, so don't bother doing anything else.
+            return Ok(());
+        }
+
         // Update the stream level flow control.
         stream.send_flow.inc_window(inc)?;
 
