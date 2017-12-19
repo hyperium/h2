@@ -95,6 +95,49 @@ fn recv_push_when_push_disabled_is_conn_error() {
 }
 
 #[test]
+fn pending_push_promises_reset_when_dropped() {
+    let _ = ::env_logger::init();
+
+    let (io, srv) = mock::new();
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(
+            frames::push_promise(1, 2)
+                .request("GET", "https://http2.akamai.com/style.css")
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .recv_frame(frames::reset(2).cancel())
+        .close();
+
+    let client = Client::handshake(io).unwrap().and_then(|(mut client, conn)| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let req = client
+            .send_request(request, true)
+            .unwrap()
+            .0.expect("response")
+            .and_then(|resp| {
+                assert_eq!(resp.status(), StatusCode::OK);
+                Ok(())
+            });
+
+        conn.drive(req)
+            .and_then(|(conn, _)| conn.expect("client"))
+    });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
 #[ignore]
 fn recv_push_promise_with_unsafe_method_is_stream_error() {
     // for instance, when :method = POST
