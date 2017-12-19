@@ -8,19 +8,70 @@ use http::{HeaderMap};
 
 use std::fmt;
 
-/// Send frames to a remote.
+/// Send the body stream and trailers to the peer.
 #[derive(Debug)]
 pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-/// Receive frames from a remote.
+/// Receive the body stream and trailers from the peer.
 #[must_use = "streams do nothing unless polled"]
 pub struct RecvStream {
     inner: ReleaseCapacity,
 }
 
 /// A handle to release window capacity to a remote stream.
+///
+/// This type allows the caller to manage inbound data [flow control]. The
+/// caller is expected to call [`release_capacity`] after dropping data frames.
+///
+/// # Overview
+///
+/// Each stream has a window size. This window size is the maximum amount of
+/// inbound data that can be in-flight. In-flight data is defined as data that
+/// has been received, but not yet released.
+///
+/// When a stream is created, the window size is set to the connection's initial
+/// window size value. When a data frame is received, the window size is then
+/// decremented by size of the data frame before the data is provided to the
+/// caller. As the caller finishes using the data, [`release_capacity`] must be
+/// called. This will then increment the window size again, allowing the peer to
+/// send more data.
+///
+/// There is also a connection level window as well as the stream level window.
+/// Received data counts against the connection level window as well and calls
+/// to [`release_capacity`] will also increment the connection level window.
+///
+/// # Sending `WINDOW_UPDATE` frames
+///
+/// `WINDOW_UPDATE` frames will not be sent out for **every** call to
+/// `release_capacity`, as this would end up slowing down the protocol. Instead,
+/// `h2` waits until the window size is increased to a certain threshold and
+/// then sends out a single `WINDOW_UPDATE` frame representing all the calls to
+/// `release_capacity` since the last `WINDOW_UPDATE` frame.
+///
+/// This essentially batches window updating.
+///
+/// # Scenarios
+///
+/// Following is a basic scenario with an HTTP/2.0 connection containing a
+/// single active stream.
+///
+/// * A new stream is activated. The receive window is initialized to 1024 (the
+///   value of the initial window size for this connection).
+/// * A `DATA` frame is received containing a payload of 400 bytes.
+/// * The receive window size is reduced to 424 bytes.
+/// * [`release_capacity`] is called with 200.
+/// * The receive window size is now 624 bytes. The peer may send no more than
+///   this.
+/// * A `DATA` frame is received with a payload of 624 bytes.
+/// * The window size is now 0 bytes. The peer may not send any more data.
+/// * [`release_capacity`] is called with 1024.
+/// * The receive window size is now 1024 bytes. The peer may now send more
+/// data.
+///
+/// [flow control]: ../index.html#flow-control
+/// [`release_capacity`]: struct.ReleaseCapacity.html#method.release_capacity
 #[derive(Debug)]
 pub struct ReleaseCapacity {
     inner: proto::OpaqueStreamRef,
@@ -97,7 +148,7 @@ impl RecvStream {
         &mut self.inner
     }
 
-    /// Poll trailers
+    /// Returns received trailers.
     ///
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
@@ -130,6 +181,22 @@ impl ReleaseCapacity {
     }
 
     /// Release window capacity back to remote stream.
+    ///
+    /// This releases capacity back to the stream level and the connection level
+    /// windows. Both window sizes will be increased by `sz`.
+    ///
+    /// See [struct level] documentation for more details.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if increasing the receive window size by `sz` would
+    /// result in a window size greater than the target window size set by
+    /// [`set_target_window_size`]. In other words, the caller cannot release
+    /// more capacity than data has been received. If 1024 bytes of data have
+    /// been received, at most 1024 bytes can be released.
+    ///
+    /// [struct level]: #
+    /// [`set_target_window_size`]: server/struct.Server.html#method.set_target_window_size
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
         if sz > proto::MAX_WINDOW_SIZE as usize {
             return Err(UserError::ReleaseCapacityTooBig.into());
