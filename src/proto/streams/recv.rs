@@ -780,6 +780,16 @@ impl Recv {
                 // Frame is trailer
                 stream.pending_recv.push_front(&mut self.buffer, event);
 
+                // Notify the recv task. This is done just in case
+                // `poll_trailers` was called.
+                //
+                // It is very likely that `notify_recv` will just be a no-op (as
+                // the task will be None), so this isn't really much of a
+                // performance concern. It also means we don't have to track
+                // state to see if `poll_trailers` was called before `poll_data`
+                // returned `None`.
+                stream.notify_recv();
+
                 // No more data frames
                 Ok(None.into())
             },
@@ -793,11 +803,11 @@ impl Recv {
     ) -> Poll<Option<HeaderMap>, proto::Error> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Trailers(trailers)) => Ok(Some(trailers).into()),
-            Some(_) => {
-                // TODO: This is a user error. `poll_trailers` was called before
-                // the entire set of data frames have been consumed. What should
-                // we do?
-                panic!("poll_trailers called before data has been consumed");
+            Some(event) => {
+                // Frame is not trailers.. not ready to poll trailers yet.
+                stream.pending_recv.push_front(&mut self.buffer, event);
+
+                Ok(Async::NotReady)
             },
             None => self.schedule_recv(stream),
         }
