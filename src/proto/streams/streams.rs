@@ -143,6 +143,15 @@ where
         };
 
         let stream = me.store.resolve(key);
+
+        if stream.state.is_local_reset() {
+            // Locally reset streams must ignore frames "for some time".
+            // This is because the remote may have sent trailers before
+            // receiving the RST_STREAM frame.
+            trace!("recv_headers; ignoring trailers on {:?}", stream.id);
+            return Ok(());
+        }
+
         let actions = &mut me.actions;
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
