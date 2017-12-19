@@ -98,8 +98,6 @@ impl RecvStream {
     }
 
     /// Poll trailers
-    ///
-    /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.inner.poll_trailers().map_err(Into::into)
     }
