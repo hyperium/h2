@@ -8,13 +8,13 @@ use http::{HeaderMap};
 
 use std::fmt;
 
-/// Send frames to a remote.
+/// Send the body stream and trailers to the peer.
 #[derive(Debug)]
 pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
-/// Receive frames from a remote.
+/// Receive the body stream and trailers from the peer.
 #[must_use = "streams do nothing unless polled"]
 pub struct RecvStream {
     inner: ReleaseCapacity,
@@ -148,7 +148,7 @@ impl RecvStream {
         &mut self.inner
     }
 
-    /// Poll trailers
+    /// Returns received trailers.
     ///
     /// This function **must** not be called until `Body::poll` returns `None`.
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
