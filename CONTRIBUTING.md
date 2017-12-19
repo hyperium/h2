@@ -21,10 +21,14 @@ Do you have an improvement?
 
 ## Committing ##
 
-We prefer squash or rebase commits so that all changes from a branch are
-committed to master as a single commit. All pull requests are squashed when
-merged, but rebasing prior to merge gives you better control over the commit
-message.
+When initially submitting a pull request, we prefer a single squashed commit. It
+is preferable to split up contributions into multiple pull requests if the
+changes are unrelated. All pull requests are squashed when merged, but
+squashing yourself gives you better control over the commit message.
+
+After the pull request is submitted, all changes should be done in separate
+commits. This makes reviewing the evolution of the pull request easier. We will
+squash all the changes into a single commit when we merge the pull request.
 
 ### Commit messages ###
 
@@ -78,4 +82,3 @@ changes should include before- and after- benchmark results.
 
 [issue]: https://github.com/carllerche/h2/issues/new
 [gitter]: https://gitter.im/tokio-rs/tokio
-[rustfmt]: https://github.com/rust-lang-nursery/rustfmt
