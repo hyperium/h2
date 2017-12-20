@@ -467,7 +467,7 @@ fn skipped_stream_ids_are_implicitly_closed() {
 }
 
 #[test]
-fn send_rst_stream_allows_recv_frames() {
+fn send_rst_stream_allows_recv_data() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
@@ -487,6 +487,55 @@ fn send_rst_stream_allows_recv_frames() {
         .send_frame(frames::data(1, vec![0; 16_384]).eos())
         // make sure we automatically free the connection window
         .recv_frame(frames::window_update(0, 16_384 * 2))
+        // do a pingpong to ensure no other frames were sent
+        .ping_pong([1; 8])
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                });
+
+            conn.expect("client")
+                .drive(req)
+                .and_then(|(conn, _)| conn)
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn send_rst_stream_allows_recv_trailers() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::reset(1).cancel())
+        // sending frames after canceled!
+        .send_frame(frames::headers(1).field("foo", "bar").eos())
         // do a pingpong to ensure no other frames were sent
         .ping_pong([1; 8])
         .close();
@@ -663,6 +712,58 @@ fn rst_stream_max() {
                         "protocol error: unspecific protocol error detected"
                     );
                 })
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn reserved_state_recv_window_update() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(
+            frames::push_promise(1, 2)
+                .request("GET", "https://example.com/push")
+        )
+        // it'd be weird to send a window update on a push promise,
+        // since the client can't send us data, but whatever. The
+        // point is that it's allowed, so we're testing it.
+        .send_frame(frames::window_update(2, 128))
+        .send_frame(frames::headers(1).response(200).eos())
+        // ping pong to ensure no goaway
+        .ping_pong([1; 8])
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    Ok(())
+                });
+
+
+            conn.drive(req)
+                .and_then(|(conn, _)| conn.expect("client"))
         });
 
 

@@ -361,6 +361,13 @@ impl State {
         }
     }
 
+    pub fn is_send_closed(&self) -> bool {
+        match self.inner {
+            Closed(..) | HalfClosedLocal(..) | ReservedRemote => true,
+            _ => false,
+        }
+    }
+
     pub fn is_idle(&self) -> bool {
         match self.inner {
             Idle => true,
