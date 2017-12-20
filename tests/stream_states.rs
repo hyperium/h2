@@ -717,6 +717,58 @@ fn rst_stream_max() {
 
     client.join(srv).wait().expect("wait");
 }
+
+#[test]
+fn reserved_state_recv_window_update() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(
+            frames::push_promise(1, 2)
+                .request("GET", "https://example.com/push")
+        )
+        // it'd be weird to send a window update on a push promise,
+        // since the client can't send us data, but whatever. The
+        // point is that it's allowed, so we're testing it.
+        .send_frame(frames::window_update(2, 128))
+        .send_frame(frames::headers(1).response(200).eos())
+        // ping pong to ensure no goaway
+        .ping_pong([1; 8])
+        .close();
+
+    let client = Client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    Ok(())
+                });
+
+
+            conn.drive(req)
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
 /*
 #[test]
 fn send_data_after_headers_eos() {

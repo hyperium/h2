@@ -745,6 +745,10 @@ impl Recv {
             if !stream.state.is_recv_streaming() {
                 // No need to send window updates on the stream if the stream is
                 // no longer receiving data.
+                //
+                // TODO: is this correct? We could possibly send a window
+                // update on a ReservedRemote stream if we already know
+                // we want to stream the data faster...
                 continue;
             }
 
