@@ -81,7 +81,7 @@ pub struct Iter {
     fields: header::IntoIter<HeaderValue>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct HeaderBlock {
     /// The decoded header fields
     fields: HeaderMap,
@@ -242,7 +242,8 @@ impl Headers {
         let head = self.head();
 
         self.header_block.into_encoding()
-            .encode(&head, encoder, dst)
+            .encode(&head, encoder, dst, |_| {
+            })
     }
 
     fn head(&self) -> Head {
@@ -332,13 +333,18 @@ impl PushPromise {
     }
 
     pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
+        use bytes::BufMut;
+
         // At this point, the `is_end_headers` flag should always be set
         debug_assert!(self.flags.is_end_headers());
 
         let head = self.head();
+        let promised_id = self.promised_id;
 
         self.header_block.into_encoding()
-            .encode(&head, encoder, dst)
+            .encode(&head, encoder, dst, |dst| {
+                dst.put_u32::<BigEndian>(promised_id.into());
+            })
     }
 
     fn head(&self) -> Head {
@@ -407,7 +413,8 @@ impl Continuation {
         let head = self.head();
 
         self.header_block
-            .encode(&head, encoder, dst)
+            .encode(&head, encoder, dst, |_| {
+            })
     }
 }
 
@@ -472,11 +479,13 @@ fn to_string(src: Bytes) -> String<Bytes> {
 // ===== impl EncodingHeaderBlock =====
 
 impl EncodingHeaderBlock {
-    fn encode(mut self,
-              head: &Head,
-              encoder: &mut hpack::Encoder,
-              dst: &mut BytesMut)
+    fn encode<F>(mut self,
+                 head: &Head,
+                 encoder: &mut hpack::Encoder,
+                 dst: &mut BytesMut,
+                 f: F)
         -> Option<Continuation>
+    where F: FnOnce(&mut BytesMut),
     {
         let head_pos = dst.len();
 
@@ -486,6 +495,8 @@ impl EncodingHeaderBlock {
         head.encode(0, dst);
 
         let payload_pos = dst.len();
+
+        f(dst);
 
         // Now, encode the header payload
         let continuation = match encoder.encode(self.hpack, &mut self.headers, dst) {
