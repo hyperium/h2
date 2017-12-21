@@ -59,6 +59,7 @@ impl<T> FramedRead<T> {
         let head = frame::Head::parse(&bytes);
 
         if self.partial.is_some() && head.kind() != Kind::Continuation {
+            trace!("connection error PROTOCOL_ERROR -- expected CONTINUATION, got {:?}", head.kind());
             return Err(Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -70,24 +71,36 @@ impl<T> FramedRead<T> {
             Kind::Settings => {
                 let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load SETTINGS frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::Ping => {
                 let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load PING frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::WindowUpdate => {
                 let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load WINDOW_UPDATE frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
                 let res = frame::Data::load(head, bytes.freeze());
 
                 // TODO: Should this always be connection level? Probably not...
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load DATA frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::Headers => {
                 // Drop the frame header
@@ -101,12 +114,16 @@ impl<T> FramedRead<T> {
                         // A stream cannot depend on itself. An endpoint MUST
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
+                        debug!("stream error PROTOCOL_ERROR -- invalid HEADERS dependency ID");
                         return Err(Stream {
                             id: head.stream_id(),
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    _ => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    Err(e) => {
+                        debug!("connection error PROTOCOL_ERROR -- failed to load HEADERS frame; err={:?}", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    }
                 };
 
                 if headers.is_end_headers() {
@@ -114,12 +131,16 @@ impl<T> FramedRead<T> {
                     match headers.load_hpack(payload, &mut self.hpack) {
                         Ok(_) => {},
                         Err(frame::Error::MalformedMessage) => {
+                            debug!("stream error PROTOCOL_ERROR -- malformed HEADERS frame");
                             return Err(Stream {
                                 id: head.stream_id(),
                                 reason: Reason::PROTOCOL_ERROR,
                             });
                         },
-                        Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                        Err(e) => {
+                            debug!("connection error PROTOCOL_ERROR -- failed HEADERS frame HPACK decoding; err={:?}", e);
+                            return Err(Connection(Reason::PROTOCOL_ERROR));
+                        }
                     }
 
                     headers.into()
@@ -148,19 +169,26 @@ impl<T> FramedRead<T> {
 
                 // Parse the frame w/o parsing the payload
                 let (mut push, payload) = frame::PushPromise::load(head, bytes)
-                    .map_err(|_| Connection(Reason::PROTOCOL_ERROR))?;
+                    .map_err(|e| {
+                        debug!("connection error PROTOCOL_ERROR -- failed to load PUSH_PROMISE frame; err={:?}", e);
+                        Connection(Reason::PROTOCOL_ERROR)
+                    })?;
 
                 if push.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
                     match push.load_hpack(payload, &mut self.hpack) {
                         Ok(_) => {},
                         Err(frame::Error::MalformedMessage) => {
+                            debug!("stream error PROTOCOL_ERROR -- malformed PUSH_PROMISE frame");
                             return Err(Stream {
                                 id: head.stream_id(),
                                 reason: Reason::PROTOCOL_ERROR,
                             });
                         },
-                        Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                        Err(e) => {
+                            debug!("connection error PROTOCOL_ERROR -- failed PUSH_PROMISE frame HPACK decoding; err={:?}", e);
+                            return Err(Connection(Reason::PROTOCOL_ERROR));
+                        }
                     }
 
                     push.into()
@@ -186,6 +214,7 @@ impl<T> FramedRead<T> {
                         // A stream cannot depend on itself. An endpoint MUST
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
+                        debug!("stream error PROTOCOL_ERROR -- PRIORITY invalid dependency ID");
                         return Err(Stream {
                             id: head.stream_id(),
                             reason: Reason::PROTOCOL_ERROR,
@@ -200,7 +229,10 @@ impl<T> FramedRead<T> {
 
                 let mut partial = match self.partial.take() {
                     Some(partial) => partial,
-                    None => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    None => {
+                        debug!("connection error PROTOCOL_ERROR -- received unexpected CONTINUATION frame");
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    }
                 };
 
                 // Extend the buf
@@ -213,12 +245,14 @@ impl<T> FramedRead<T> {
 
                 // The stream identifiers must match
                 if partial.frame.stream_id() != head.stream_id() {
+                    debug!("connection error PROTOCOL_ERROR -- CONTINUATION frame stream ID does not match previous frame stream ID");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
                 match partial.frame.load_hpack(partial.buf, &mut self.hpack) {
                     Ok(_) => {},
                     Err(frame::Error::MalformedMessage) => {
+                        debug!("stream error PROTOCOL_ERROR -- malformed CONTINUATION frame");
                         return Err(Stream {
                             id: head.stream_id(),
                             reason: Reason::PROTOCOL_ERROR,
@@ -326,8 +360,14 @@ impl Continuable {
 impl<T> From<Continuable> for Frame<T> {
     fn from(cont: Continuable) -> Self {
         match cont {
-            Continuable::Headers(headers) => headers.into(),
-            Continuable::PushPromise(push) => push.into(),
+            Continuable::Headers(mut headers) => {
+                headers.set_end_headers();
+                headers.into()
+            }
+            Continuable::PushPromise(mut push) => {
+                push.set_end_headers();
+                push.into()
+            }
         }
     }
 }

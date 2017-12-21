@@ -168,36 +168,47 @@ where
     pub fn flush(&mut self) -> Poll<(), io::Error> {
         trace!("flush");
 
-        while !self.is_empty() {
-            match self.next {
-                Some(Next::Data(ref mut frame)) => {
-                    let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
-                    try_ready!(self.inner.write_buf(&mut buf));
-                },
-                _ => {
-                    try_ready!(self.inner.write_buf(&mut self.buf));
-                },
+        loop {
+            while !self.is_empty() {
+                match self.next {
+                    Some(Next::Data(ref mut frame)) => {
+                        trace!("  -> queued data frame");
+                        let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
+                        try_ready!(self.inner.write_buf(&mut buf));
+                    },
+                    _ => {
+                        trace!("  -> not a queued data frame");
+                        try_ready!(self.inner.write_buf(&mut self.buf));
+                    },
+                }
             }
-        }
 
-        // The data frame has been written, so unset it
-        match self.next.take() {
-            Some(Next::Data(frame)) => {
-                self.last_data_frame = Some(frame);
-            },
-            Some(Next::Continuation(_)) => {
-                unimplemented!();
-            },
-            None => {},
+            // Clear internal buffer
+            self.buf.set_position(0);
+            self.buf.get_mut().clear();
+
+            // The data frame has been written, so unset it
+            match self.next.take() {
+                Some(Next::Data(frame)) => {
+                    self.last_data_frame = Some(frame);
+                    debug_assert!(self.is_empty());
+                    break;
+                },
+                Some(Next::Continuation(frame)) => {
+                    // Buffer the continuation frame, then try to write again
+                    if let Some(continuation) = frame.encode(&mut self.hpack, self.buf.get_mut()) {
+                        self.next = Some(Next::Continuation(continuation));
+                    }
+                },
+                None => {
+                    break;
+                }
+            }
         }
 
         trace!("flushing buffer");
         // Flush the upstream
         try_nb!(self.inner.flush());
-
-        // Clear internal buffer
-        self.buf.set_position(0);
-        self.buf.get_mut().clear();
 
         Ok(Async::Ready(()))
     }
