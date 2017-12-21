@@ -615,6 +615,8 @@ impl Recv {
             return;
         }
 
+        trace!("enqueue_reset_expiration; {:?}", stream.id);
+
         if !counts.can_inc_num_reset_streams() {
             // try to evict 1 stream if possible
             // if max allow is 0, this won't be able to evict,

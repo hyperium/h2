@@ -909,14 +909,27 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
 
     let actions = &mut me.actions;
 
-    me.counts.transition(stream, |counts, mut stream| {
-        if stream.is_canceled_interest() {
-            actions.send.schedule_cancel(
-                &mut stream,
-                &mut actions.task);
-            actions.recv.enqueue_reset_expiration(stream, counts);
+    me.counts.transition(stream, |counts, stream| {
+        maybe_cancel(stream, actions, counts);
+
+        if stream.ref_count == 0 {
+            let mut ppp = stream.pending_push_promises.take();
+            while let Some(promise) = ppp.pop(stream.store_mut()) {
+                counts.transition(promise, |counts, stream| {
+                    maybe_cancel(stream, actions, counts);
+                });
+            }
         }
     });
+}
+
+fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Counts) {
+    if stream.is_canceled_interest() {
+        actions.send.schedule_cancel(
+            stream,
+            &mut actions.task);
+        actions.recv.enqueue_reset_expiration(stream, counts);
+    }
 }
 
 // ===== impl SendBuffer =====

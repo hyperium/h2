@@ -87,6 +87,7 @@ impl Prioritize {
     pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
         // If the stream is waiting to be opened, nothing more to do.
         if !stream.is_pending_open {
+            trace!("schedule_send; {:?}", stream.id);
             // Queue the stream
             self.pending_send.push(stream);
 
