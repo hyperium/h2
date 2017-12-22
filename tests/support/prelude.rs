@@ -5,7 +5,7 @@ pub use super::h2;
 pub use self::h2::*;
 pub use self::h2::client::{self, Client};
 pub use self::h2::frame::StreamId;
-pub use self::h2::server::{self, Server};
+pub use self::h2::server;
 
 // Re-export mock
 pub use super::mock::{self, HandleFutureExt};

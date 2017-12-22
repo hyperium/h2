@@ -1142,7 +1142,7 @@ fn server_target_window_size() {
         .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
         .close();
 
-    let srv = Server::handshake(io).unwrap()
+    let srv = server::Connection::handshake(io).unwrap()
         .and_then(|mut conn| {
             conn.set_target_window_size(2 << 20);
             conn.into_future().unwrap()
