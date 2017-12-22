@@ -27,9 +27,9 @@ fn write_continuation_frames() {
         )
         .close();
 
-    let client = Client::handshake(io)
+    let client = client::Connection::handshake(io)
         .expect("handshake")
-        .and_then(|(mut client, conn)| {
+        .and_then(|(conn, mut client)| {
             let mut request = Request::builder();
             request.uri("https://http2.akamai.com/");
 

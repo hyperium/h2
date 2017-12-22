@@ -27,7 +27,7 @@ fn send_data_without_requesting_capacity() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -82,7 +82,7 @@ fn release_capacity_sends_window_update() {
         // gotta end the connection
         .map(drop);
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")
@@ -147,7 +147,7 @@ fn release_capacity_of_small_amount_does_not_send_window_update() {
         // gotta end the connection
         .map(drop);
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")
@@ -216,7 +216,7 @@ fn recv_data_overflows_connection_window() {
         .recv_frame(frames::go_away(0).flow_control());
     // connection is ended by client
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")
@@ -279,11 +279,11 @@ fn recv_data_overflows_stream_window() {
         .recv_frame(frames::reset(1).flow_control())
         .close();
 
-    let h2 = Client::builder()
+    let h2 = client::Connection::builder()
         .initial_window_size(16_384)
         .handshake::<_, Bytes>(io)
         .unwrap()
-        .and_then(|(mut client, conn)| {
+        .and_then(|(conn, mut client)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://http2.akamai.com/")
@@ -348,8 +348,8 @@ fn stream_error_release_connection_capacity() {
         .recv_frame(frames::window_update(0, 16_384 * 2 + 10))
         .close();
 
-    let client = Client::handshake(io).unwrap()
-        .and_then(|(mut client, conn)| {
+    let client = client::Connection::handshake(io).unwrap()
+        .and_then(|(conn, mut client)| {
             let request = Request::builder()
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
@@ -397,7 +397,7 @@ fn stream_close_by_data_frame_releases_capacity() {
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
         let request = Request::builder()
             .method(Method::POST)
             .uri("https://http2.akamai.com/")
@@ -468,7 +468,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
         let request = Request::builder()
             .method(Method::POST)
             .uri("https://http2.akamai.com/")
@@ -551,9 +551,9 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::Connection::handshake(io)
         .unwrap()
-        .and_then(|(mut client, h2)| {
+        .and_then(|(h2, mut client)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -600,9 +600,9 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::Connection::handshake(io)
         .unwrap()
-        .and_then(|(mut client, h2)| {
+        .and_then(|(h2, mut client)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -729,7 +729,7 @@ fn connection_notified_on_released_capacity() {
 
 
     let th2 = thread::spawn(move || {
-        let (mut client, h2) = Client::handshake(io).wait().unwrap();
+        let (h2, mut client) = client::Connection::handshake(io).wait().unwrap();
 
         let (h2, _) = h2.drive(settings_rx).wait().unwrap();
 
@@ -809,8 +809,8 @@ fn recv_settings_removes_available_capacity() {
         .close();
 
 
-    let h2 = Client::handshake(io).unwrap()
-        .and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap()
+        .and_then(|(h2, mut client)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -870,8 +870,8 @@ fn recv_no_init_window_then_receive_some_init_window() {
         .close();
 
 
-    let h2 = Client::handshake(io).unwrap()
-        .and_then(|(mut client, h2)| {
+    let h2 = client::Connection::handshake(io).unwrap()
+        .and_then(|(h2, mut client)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
@@ -971,7 +971,7 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
             .wait().unwrap();
     });
 
-    let (mut client, h2) = Client::handshake(io).unwrap()
+    let (h2, mut client) = client::Connection::handshake(io).unwrap()
         .wait().unwrap();
 
     // Drive client connection
@@ -1034,8 +1034,8 @@ fn client_increase_target_window_size() {
         .close();
 
 
-    let client = Client::handshake(io).unwrap()
-        .and_then(|(_client, mut conn)| {
+    let client = client::Connection::handshake(io).unwrap()
+        .and_then(|(mut conn, _client)| {
             conn.set_target_window_size(2 << 20);
 
             conn.unwrap()
@@ -1062,8 +1062,8 @@ fn increase_target_window_size_after_using_some() {
         .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
         .close();
 
-    let client = Client::handshake(io).unwrap()
-        .and_then(|(mut client, conn)| {
+    let client = client::Connection::handshake(io).unwrap()
+        .and_then(|(conn, mut client)| {
             let request = Request::builder()
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
@@ -1105,8 +1105,8 @@ fn decrease_target_window_size() {
         .recv_frame(frames::window_update(0, 16_384))
         .close();
 
-    let client = Client::handshake(io).unwrap()
-        .and_then(|(mut client, mut conn)| {
+    let client = client::Connection::handshake(io).unwrap()
+        .and_then(|(mut conn, mut client)| {
             conn.set_target_window_size(16_384 * 2);
 
             let request = Request::builder()

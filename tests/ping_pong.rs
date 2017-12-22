@@ -8,9 +8,9 @@ fn recv_single_ping() {
     let (m, mock) = mock::new();
 
     // Create the handshake
-    let h2 = Client::handshake(m)
+    let h2 = client::Connection::handshake(m)
         .unwrap()
-        .and_then(|(_, conn)| conn.unwrap());
+        .and_then(|(conn, _)| conn.unwrap());
 
     let mock = mock.assert_client_handshake()
         .unwrap()

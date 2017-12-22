@@ -23,7 +23,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 }
 
 /// Marker type indicating a client peer
-pub struct Client<B: IntoBuf> {
+pub struct SendRequest<B: IntoBuf> {
     inner: proto::Streams<B::Buf, Peer>,
     pending: Option<proto::StreamKey>,
 }
@@ -43,7 +43,7 @@ pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
 }
 
-/// Build a Client.
+/// Build a client.
 #[derive(Clone, Debug)]
 pub struct Builder {
     /// Time to keep locally reset streams around before reaping.
@@ -63,54 +63,13 @@ pub struct Builder {
 #[derive(Debug)]
 pub(crate) struct Peer;
 
-// ===== impl Client =====
+// ===== impl SendRequest =====
 
-impl Client<Bytes> {
-    /// Bind an H2 client connection.
-    ///
-    /// Returns a future which resolves to the connection value once the H2
-    /// handshake has been completed.
-    ///
-    /// It's important to note that this does not **flush** the outbound
-    /// settings to the wire.
-    pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
-    where
-        T: AsyncRead + AsyncWrite,
-    {
-        Builder::default().handshake(io)
-    }
-}
-
-impl Client<Bytes> {
-    /// Creates a Client Builder to customize a Client before binding.
-    pub fn builder() -> Builder {
-        Builder::default()
-    }
-}
-
-impl<B> Client<B>
+impl<B> SendRequest<B>
 where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    fn handshake2<T>(io: T, builder: Builder) -> Handshake<T, B>
-    where
-        T: AsyncRead + AsyncWrite,
-    {
-        use tokio_io::io;
-
-        debug!("binding client connection");
-
-        let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        let handshake = io::write_all(io, msg);
-
-        Handshake {
-            builder,
-            inner: handshake,
-            _marker: PhantomData,
-        }
-    }
-
     /// Returns `Ready` when the connection can initialize a new HTTP 2.0
     /// stream.
     pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
@@ -144,21 +103,21 @@ where
     }
 }
 
-impl<B> fmt::Debug for Client<B>
+impl<B> fmt::Debug for SendRequest<B>
 where
     B: IntoBuf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Client").finish()
+        fmt.debug_struct("SendRequest").finish()
     }
 }
 
-impl<B> Clone for Client<B>
+impl<B> Clone for SendRequest<B>
 where
     B: IntoBuf,
 {
     fn clone(&self) -> Self {
-        Client {
+        SendRequest {
             inner: self.inner.clone(),
             pending: None,
         }
@@ -166,7 +125,7 @@ where
 }
 
 #[cfg(feature = "unstable")]
-impl<B> Client<B>
+impl<B> SendRequest<B>
 where
     B: IntoBuf,
 {
@@ -265,7 +224,7 @@ impl Builder {
         B: IntoBuf,
         B::Buf: 'static,
     {
-        Client::handshake2(io, self.clone())
+        Connection::handshake2(io, self.clone())
     }
 }
 
@@ -282,12 +241,48 @@ impl Default for Builder {
 
 // ===== impl Connection =====
 
+impl Connection<(), Bytes> {
+    /// Creates a `Connection` Builder to customize a `Connection` before binding.
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+}
+
+impl<T> Connection<T, Bytes>
+where T: AsyncRead + AsyncWrite,
+{
+    /// Bind an H2 client connection.
+    ///
+    /// Returns a future which resolves to the connection value once the H2
+    /// handshake has been completed.
+    ///
+    /// It's important to note that this does not **flush** the outbound
+    /// settings to the wire.
+    pub fn handshake(io: T) -> Handshake<T, Bytes> {
+        Builder::default().handshake(io)
+    }
+}
 
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
+    fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
+        use tokio_io::io;
+
+        debug!("binding client connection");
+
+        let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        let handshake = io::write_all(io, msg);
+
+        Handshake {
+            builder,
+            inner: handshake,
+            _marker: PhantomData,
+        }
+    }
+
     /// Sets the target window size for the whole connection.
     ///
     /// Default in HTTP2 is 65_535.
@@ -330,7 +325,7 @@ where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    type Item = (Client<B>, Connection<T, B>);
+    type Item = (Connection<T, B>, SendRequest<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -359,14 +354,14 @@ where
             reset_stream_max: self.builder.reset_stream_max,
             settings: self.builder.settings.clone(),
         });
-        let client = Client {
+        let send_request = SendRequest {
             inner: connection.streams().clone(),
             pending: None,
         };
-        let conn = Connection {
+        let connection = Connection {
             inner: connection,
         };
-        Ok(Async::Ready((client, conn)))
+        Ok(Async::Ready((connection, send_request)))
     }
 }
 

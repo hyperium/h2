@@ -26,7 +26,7 @@ fn single_stream_send_large_body() {
         .build();
 
     let notify = MockNotify::new();
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
 
     // Poll h2 once to get notifications
     loop {
@@ -94,7 +94,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .build();
 
     let notify = MockNotify::new();
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
 
     // Poll h2 once to get notifications
     loop {
@@ -181,7 +181,7 @@ fn single_stream_send_body_greater_than_default_window() {
         .build();
 
     let notify = MockNotify::new();
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
 
     // Poll h2 once to get notifications
     loop {
@@ -265,7 +265,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -296,9 +296,9 @@ fn send_data_receive_window_update() {
     let _ = ::env_logger::init();
     let (m, mock) = mock::new();
 
-    let h2 = Client::handshake(m)
+    let h2 = client::Connection::handshake(m)
         .unwrap()
-        .and_then(|(mut client, h2)| {
+        .and_then(|(h2, mut client)| {
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://http2.akamai.com/")
