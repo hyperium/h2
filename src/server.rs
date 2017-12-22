@@ -258,24 +258,24 @@ pub struct Builder {
     settings: Settings,
 }
 
-/// Respond to a client request.
+/// Send a response back to the client
 ///
-/// A `Respond` instance is provided when receiving a request and is used to
-/// send the associated response back to the client. It is also used to
+/// A `SendResponse` instance is provided when receiving a request and is used
+/// to send the associated response back to the client. It is also used to
 /// explicitly reset the stream with a custom reason.
 ///
 /// It will also be used to initiate push promises linked with the associated
 /// stream. This is [not yet
 /// implemented](https://github.com/carllerche/h2/issues/185).
 ///
-/// If the `Respond` instance is dropped without sending a response, then the
-/// HTTP/2.0 stream will be reset.
+/// If the `SendResponse` instance is dropped without sending a response, then
+/// the HTTP/2.0 stream will be reset.
 ///
 /// See [module] level docs for more details.
 ///
 /// [module]: index.html
 #[derive(Debug)]
-pub struct Respond<B: IntoBuf> {
+pub struct SendResponse<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
@@ -454,7 +454,7 @@ where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    type Item = (Request<RecvStream>, Respond<B>);
+    type Item = (Request<RecvStream>, SendResponse<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -475,7 +475,7 @@ where
             let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
             let request = Request::from_parts(head, body);
-            let respond = Respond { inner };
+            let respond = SendResponse { inner };
 
             return Ok(Some((request, respond)).into());
         }
@@ -629,9 +629,10 @@ impl Builder {
     /// Set the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
-    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
-    /// completing te stream, the HTTP/2.0 specification requires that any
-    /// further frames received for that stream must be ignored for "some time".
+    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
+    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// any further frames received for that stream must be ignored for "some
+    /// time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
@@ -676,9 +677,10 @@ impl Builder {
     /// Set the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
-    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
-    /// completing te stream, the HTTP/2.0 specification requires that any
-    /// further frames received for that stream must be ignored for "some time".
+    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
+    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// any further frames received for that stream must be ignored for "some
+    /// time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
@@ -801,9 +803,9 @@ impl Default for Builder {
     }
 }
 
-// ===== impl Respond =====
+// ===== impl SendResponse =====
 
-impl<B: IntoBuf> Respond<B> {
+impl<B: IntoBuf> SendResponse<B> {
     /// Send a response to a client request.
     ///
     /// On success, a [`SendStream`] instance is returned. This instance can be
@@ -813,11 +815,11 @@ impl<B: IntoBuf> Respond<B> {
     /// instance, then `end_of_stream` must be set to `true` when calling this
     /// function.
     ///
-    /// The [`Respond`] instance is already associated with a received request.
-    /// This function may only be called once per instance and only if
+    /// The [`SendResponse`] instance is already associated with a received
+    /// request.  This function may only be called once per instance and only if
     /// [`send_reset`] has not been previously called.
     ///
-    /// [`Respond`]: #
+    /// [`SendResponse`]: #
     /// [`SendStream`]: ../struct.SendStream.html
     /// [`send_reset`]: #method.send_reset
     pub fn send_response(
