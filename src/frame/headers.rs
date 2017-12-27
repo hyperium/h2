@@ -323,8 +323,8 @@ impl PushPromise {
         Ok((frame, src))
     }
 
-    pub fn load_hpack(&mut self, src: &mut BytesMut, decoder: &mut hpack::Decoder) -> Result<(), Error> {
-        self.header_block.load(src, 0, decoder)
+    pub fn load_hpack(&mut self, src: &mut BytesMut, max_header_list_size: usize, decoder: &mut hpack::Decoder) -> Result<(), Error> {
+        self.header_block.load(src, max_header_list_size, decoder)
     }
 
     pub fn stream_id(&self) -> StreamId {

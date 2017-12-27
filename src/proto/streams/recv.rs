@@ -1,4 +1,5 @@
 use super::*;
+use super::store::Resolve;
 use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
@@ -549,15 +550,20 @@ impl Recv {
         );
 
         new_stream.state.reserve_remote()?;
+        // Store the stream
+        let new_stream = store.insert(frame.promised_id(), new_stream).key();
+
+
+        if frame.is_over_size() {
+            trace!("recv_push_promise; frame for {:?} is over size", frame.promised_id());
+            return Err(RecvError::Stream {
+                id: frame.promised_id(),
+                reason: Reason::REFUSED_STREAM,
+            });
+        }
 
         let mut ppp = store[stream].pending_push_promises.take();
-
-        {
-            // Store the stream
-            let mut new_stream = store.insert(frame.promised_id(), new_stream);
-
-            ppp.push(&mut new_stream);
-        }
+        ppp.push(&mut store.resolve(new_stream));
 
         let stream = &mut store[stream];
 

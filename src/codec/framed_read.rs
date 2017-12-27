@@ -121,7 +121,7 @@ impl<T> FramedRead<T> {
                 if is_end_headers {
                     frame.into()
                 } else {
-                    // Defer loading the frame
+                    // Defer returning the frame
                     self.partial = Some(Partial {
                         frame: Continuable::$frame(frame),
                         buf: payload,
@@ -169,57 +169,6 @@ impl<T> FramedRead<T> {
             },
             Kind::Headers => {
                 header_block!(Headers, head, bytes)
-                /*
-                // Drop the frame header
-                // TODO: Change to drain: carllerche/bytes#130
-                let _ = bytes.split_to(frame::HEADER_LEN);
-
-                // Parse the header frame w/o parsing the payload
-                let (mut headers, payload) = match frame::Headers::load(head, bytes) {
-                    Ok(res) => res,
-                    Err(frame::Error::InvalidDependencyId) => {
-                        // A stream cannot depend on itself. An endpoint MUST
-                        // treat this as a stream error (Section 5.4.2) of type
-                        // `PROTOCOL_ERROR`.
-                        debug!("stream error PROTOCOL_ERROR -- invalid HEADERS dependency ID");
-                        return Err(Stream {
-                            id: head.stream_id(),
-                            reason: Reason::PROTOCOL_ERROR,
-                        });
-                    },
-                    Err(e) => {
-                        debug!("connection error PROTOCOL_ERROR -- failed to load HEADERS frame; err={:?}", e);
-                        return Err(Connection(Reason::PROTOCOL_ERROR));
-                    }
-                };
-
-                let is_end_headers = headers.is_end_headers();
-
-                // Load the HPACK encoded headers
-                match headers.load_hpack(payload, self.max_header_list_size, &mut self.hpack) {
-                    Ok(_) => {},
-                    Err(frame::Error::Hpack(hpack::NeedMore(_))) if !is_end_headers => {},
-                    Err(frame::Error::MalformedMessage) => {
-                        return Err(Stream {
-                            id: head.stream_id(),
-                            reason: Reason::PROTOCOL_ERROR,
-                        });
-                    },
-                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
-                }
-
-                if is_end_headers {
-                    headers.into()
-                } else {
-                    // Defer loading the frame
-                    self.partial = Some(Partial {
-                        frame: Continuable::Headers(headers),
-                        buf: payload,
-                    });
-
-                    return Ok(None);
-                }
-                */
             },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
@@ -230,41 +179,7 @@ impl<T> FramedRead<T> {
                 res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
             },
             Kind::PushPromise => {
-                // Drop the frame header
-                // TODO: Change to drain: carllerche/bytes#130
-                let _ = bytes.split_to(frame::HEADER_LEN);
-
-                // Parse the frame w/o parsing the payload
-                let (mut push, mut payload) = frame::PushPromise::load(head, bytes)
-                    .map_err(|_| Connection(Reason::PROTOCOL_ERROR))?;
-
-                if push.is_end_headers() {
-                    // Load the HPACK encoded headers & return the frame
-                    match push.load_hpack(&mut payload, &mut self.hpack) {
-                        Ok(_) => {},
-                        Err(frame::Error::MalformedMessage) => {
-                            debug!("stream error PROTOCOL_ERROR -- malformed PUSH_PROMISE frame");
-                            return Err(Stream {
-                                id: head.stream_id(),
-                                reason: Reason::PROTOCOL_ERROR,
-                            });
-                        },
-                        Err(e) => {
-                            debug!("connection error PROTOCOL_ERROR -- failed PUSH_PROMISE frame HPACK decoding; err={:?}", e);
-                            return Err(Connection(Reason::PROTOCOL_ERROR));
-                        }
-                    }
-
-                    push.into()
-                } else {
-                    // Defer loading the frame
-                    self.partial = Some(Partial {
-                        frame: Continuable::PushPromise(push),
-                        buf: payload,
-                    });
-
-                    return Ok(None);
-                }
+                header_block!(PushPromise, head, bytes)
             },
             Kind::Priority => {
                 if head.stream_id() == 0 {
@@ -288,7 +203,6 @@ impl<T> FramedRead<T> {
                 }
             },
             Kind::Continuation => {
-                // TODO: Un-hack this
                 let end_of_headers = (head.flag() & 0x4) == 0x4;
 
                 let mut partial = match self.partial.take() {
@@ -299,21 +213,40 @@ impl<T> FramedRead<T> {
                     }
                 };
 
-                // Extend the buf
-                partial.buf.extend_from_slice(&bytes[frame::HEADER_LEN..]);
-
-                if !end_of_headers {
-                    self.partial = Some(partial);
-                    return Ok(None);
-                }
-
                 // The stream identifiers must match
                 if partial.frame.stream_id() != head.stream_id() {
                     debug!("connection error PROTOCOL_ERROR -- CONTINUATION frame stream ID does not match previous frame stream ID");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
-                match partial.frame.load_hpack(&mut partial.buf, &mut self.hpack) {
+
+
+                // Extend the buf
+                if partial.buf.is_empty() {
+                    partial.buf = bytes.split_to(frame::HEADER_LEN);
+                } else {
+                    if partial.frame.is_over_size() {
+                        // If there was left over bytes previously, they may be
+                        // needed to continue decoding, even though we will
+                        // be ignoring this frame. This is done to keep the HPACK
+                        // decoder state up-to-date.
+                        //
+                        // Still, we need to be careful, because if a malicious
+                        // attacker were to try to send a gigantic string, such
+                        // that it fits over multiple header blocks, we could
+                        // grow memory uncontrollably again, and that'd be a shame.
+                        //
+                        // Instead, we use a simple heuristic to determine if
+                        // we should continue to ignore decoding, or to tell
+                        // the attacker to go away.
+                        if partial.buf.len() + bytes.len() > self.max_header_list_size {
+                            return Err(Connection(Reason::COMPRESSION_ERROR));
+                        }
+                    }
+                    partial.buf.extend_from_slice(&bytes[frame::HEADER_LEN..]);
+                }
+
+                match partial.frame.load_hpack(&mut partial.buf, self.max_header_list_size, &mut self.hpack) {
                     Ok(_) => {},
                     Err(frame::Error::MalformedMessage) => {
                         debug!("stream error PROTOCOL_ERROR -- malformed CONTINUATION frame");
@@ -325,7 +258,12 @@ impl<T> FramedRead<T> {
                     Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
                 }
 
-                partial.frame.into()
+                if end_of_headers {
+                    partial.frame.into()
+                } else {
+                    self.partial = Some(partial);
+                    return Ok(None);
+                }
             },
             Kind::Unknown => {
                 // Unknown frames are ignored
@@ -414,15 +352,22 @@ impl Continuable {
         }
     }
 
+    fn is_over_size(&self) -> bool {
+        match *self {
+            Continuable::Headers(ref h) => h.is_over_size(),
+            Continuable::PushPromise(ref p) => p.is_over_size(),
+        }
+    }
+
     fn load_hpack(
         &mut self,
         src: &mut BytesMut,
+        max_header_list_size: usize,
         decoder: &mut hpack::Decoder,
     ) -> Result<(), frame::Error> {
-        //FIXME: sean
         match *self {
-            Continuable::Headers(ref mut h) => h.load_hpack(src, 0, decoder),
-            Continuable::PushPromise(ref mut p) => p.load_hpack(src, decoder),
+            Continuable::Headers(ref mut h) => h.load_hpack(src, max_header_list_size, decoder),
+            Continuable::PushPromise(ref mut p) => p.load_hpack(src, max_header_list_size, decoder),
         }
     }
 }
