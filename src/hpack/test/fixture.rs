@@ -74,7 +74,7 @@ fn test_story(story: Value) {
             }
 
             decoder
-                .decode(&mut Cursor::new(case.wire.clone().into()), |e| {
+                .decode(&mut Cursor::new(&mut case.wire.clone().into()), |e| {
                     let (name, value) = expect.remove(0);
                     assert_eq!(name, key_str(&e));
                     assert_eq!(value, value_str(&e));
@@ -108,7 +108,7 @@ fn test_story(story: Value) {
             encoder.encode(None, &mut input.clone().into_iter(), &mut buf);
 
             decoder
-                .decode(&mut Cursor::new(buf.into()), |e| {
+                .decode(&mut Cursor::new(&mut buf), |e| {
                     assert_eq!(e, input.remove(0).reify().unwrap());
                 })
                 .unwrap();

@@ -13,12 +13,17 @@ use std::io;
 use tokio_io::AsyncRead;
 use tokio_io::codec::length_delimited;
 
+// 16 MB "sane default" taken from golang http2
+const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
+
 #[derive(Debug)]
 pub struct FramedRead<T> {
     inner: length_delimited::FramedRead<T>,
 
     // hpack decoder state
     hpack: hpack::Decoder,
+
+    max_header_list_size: usize,
 
     partial: Option<Partial>,
 }
@@ -46,6 +51,7 @@ impl<T> FramedRead<T> {
         FramedRead {
             inner: inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
+            max_header_list_size: DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
             partial: None,
         }
     }
@@ -66,6 +72,65 @@ impl<T> FramedRead<T> {
         let kind = head.kind();
 
         trace!("    -> kind={:?}", kind);
+
+        macro_rules! header_block {
+            ($frame:ident, $head:ident, $bytes:ident) => ({
+                // Drop the frame header
+                // TODO: Change to drain: carllerche/bytes#130
+                let _ = $bytes.split_to(frame::HEADER_LEN);
+
+                // Parse the header frame w/o parsing the payload
+                let (mut frame, mut payload) = match frame::$frame::load($head, $bytes) {
+                    Ok(res) => res,
+                    Err(frame::Error::InvalidDependencyId) => {
+                        debug!("stream error PROTOCOL_ERROR -- invalid HEADERS dependency ID");
+                        // A stream cannot depend on itself. An endpoint MUST
+                        // treat this as a stream error (Section 5.4.2) of type
+                        // `PROTOCOL_ERROR`.
+                        return Err(Stream {
+                            id: $head.stream_id(),
+                            reason: Reason::PROTOCOL_ERROR,
+                        });
+                    },
+                    Err(e) => {
+                        debug!("connection error PROTOCOL_ERROR -- failed to load frame; err={:?}", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    }
+                };
+
+                let is_end_headers = frame.is_end_headers();
+
+                // Load the HPACK encoded headers
+                match frame.load_hpack(&mut payload, self.max_header_list_size, &mut self.hpack) {
+                    Ok(_) => {},
+                    Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
+                    Err(frame::Error::MalformedMessage) => {
+
+                        debug!("stream error PROTOCOL_ERROR -- malformed header block");
+                        return Err(Stream {
+                            id: $head.stream_id(),
+                            reason: Reason::PROTOCOL_ERROR,
+                        });
+                    },
+                    Err(e) => {
+                        debug!("connection error PROTOCOL_ERROR -- failed HPACK decoding; err={:?}", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    }
+                }
+
+                if is_end_headers {
+                    frame.into()
+                } else {
+                    // Defer loading the frame
+                    self.partial = Some(Partial {
+                        frame: Continuable::$frame(frame),
+                        buf: payload,
+                    });
+
+                    return Ok(None);
+                }
+            });
+        }
 
         let frame = match kind {
             Kind::Settings => {
@@ -103,6 +168,8 @@ impl<T> FramedRead<T> {
                 })?.into()
             },
             Kind::Headers => {
+                header_block!(Headers, head, bytes)
+                /*
                 // Drop the frame header
                 // TODO: Change to drain: carllerche/bytes#130
                 let _ = bytes.split_to(frame::HEADER_LEN);
@@ -126,23 +193,22 @@ impl<T> FramedRead<T> {
                     }
                 };
 
-                if headers.is_end_headers() {
-                    // Load the HPACK encoded headers & return the frame
-                    match headers.load_hpack(payload, &mut self.hpack) {
-                        Ok(_) => {},
-                        Err(frame::Error::MalformedMessage) => {
-                            debug!("stream error PROTOCOL_ERROR -- malformed HEADERS frame");
-                            return Err(Stream {
-                                id: head.stream_id(),
-                                reason: Reason::PROTOCOL_ERROR,
-                            });
-                        },
-                        Err(e) => {
-                            debug!("connection error PROTOCOL_ERROR -- failed HEADERS frame HPACK decoding; err={:?}", e);
-                            return Err(Connection(Reason::PROTOCOL_ERROR));
-                        }
-                    }
+                let is_end_headers = headers.is_end_headers();
 
+                // Load the HPACK encoded headers
+                match headers.load_hpack(payload, self.max_header_list_size, &mut self.hpack) {
+                    Ok(_) => {},
+                    Err(frame::Error::Hpack(hpack::NeedMore(_))) if !is_end_headers => {},
+                    Err(frame::Error::MalformedMessage) => {
+                        return Err(Stream {
+                            id: head.stream_id(),
+                            reason: Reason::PROTOCOL_ERROR,
+                        });
+                    },
+                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                }
+
+                if is_end_headers {
                     headers.into()
                 } else {
                     // Defer loading the frame
@@ -153,6 +219,7 @@ impl<T> FramedRead<T> {
 
                     return Ok(None);
                 }
+                */
             },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
@@ -168,15 +235,12 @@ impl<T> FramedRead<T> {
                 let _ = bytes.split_to(frame::HEADER_LEN);
 
                 // Parse the frame w/o parsing the payload
-                let (mut push, payload) = frame::PushPromise::load(head, bytes)
-                    .map_err(|e| {
-                        debug!("connection error PROTOCOL_ERROR -- failed to load PUSH_PROMISE frame; err={:?}", e);
-                        Connection(Reason::PROTOCOL_ERROR)
-                    })?;
+                let (mut push, mut payload) = frame::PushPromise::load(head, bytes)
+                    .map_err(|_| Connection(Reason::PROTOCOL_ERROR))?;
 
                 if push.is_end_headers() {
                     // Load the HPACK encoded headers & return the frame
-                    match push.load_hpack(payload, &mut self.hpack) {
+                    match push.load_hpack(&mut payload, &mut self.hpack) {
                         Ok(_) => {},
                         Err(frame::Error::MalformedMessage) => {
                             debug!("stream error PROTOCOL_ERROR -- malformed PUSH_PROMISE frame");
@@ -249,7 +313,7 @@ impl<T> FramedRead<T> {
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
-                match partial.frame.load_hpack(partial.buf, &mut self.hpack) {
+                match partial.frame.load_hpack(&mut partial.buf, &mut self.hpack) {
                     Ok(_) => {},
                     Err(frame::Error::MalformedMessage) => {
                         debug!("stream error PROTOCOL_ERROR -- malformed CONTINUATION frame");
@@ -295,6 +359,12 @@ impl<T> FramedRead<T> {
         assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
         self.inner.set_max_frame_length(val)
     }
+
+    /// Update the max header list size setting.
+    #[inline]
+    pub fn set_max_header_list_size(&mut self, val: usize) {
+        self.max_header_list_size = val;
+    }
 }
 
 impl<T> Stream for FramedRead<T>
@@ -322,14 +392,13 @@ where
 }
 
 fn map_err(err: io::Error) -> RecvError {
-    use std::error::Error;
+    use tokio_io::codec::length_delimited::FrameTooBig;
 
     if let io::ErrorKind::InvalidData = err.kind() {
-        // woah, brittle...
-        // TODO: with tokio-io v0.1.4, we can check
-        // err.get_ref().is::<tokio_io::length_delimited::FrameTooBig>()
-        if err.description() == "frame size too big" {
-            return RecvError::Connection(Reason::FRAME_SIZE_ERROR);
+        if let Some(custom) = err.get_ref() {
+            if custom.is::<FrameTooBig>() {
+                return RecvError::Connection(Reason::FRAME_SIZE_ERROR);
+            }
         }
     }
     err.into()
@@ -347,11 +416,12 @@ impl Continuable {
 
     fn load_hpack(
         &mut self,
-        src: BytesMut,
+        src: &mut BytesMut,
         decoder: &mut hpack::Decoder,
     ) -> Result<(), frame::Error> {
+        //FIXME: sean
         match *self {
-            Continuable::Headers(ref mut h) => h.load_hpack(src, decoder),
+            Continuable::Headers(ref mut h) => h.load_hpack(src, 0, decoder),
             Continuable::PushPromise(ref mut p) => p.load_hpack(src, decoder),
         }
     }

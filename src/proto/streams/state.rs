@@ -76,10 +76,14 @@ enum Cause {
     LocallyReset(Reason),
     Io,
 
-    /// The user droped all handles to the stream without explicitly canceling.
     /// This indicates to the connection that a reset frame must be sent out
     /// once the send queue has been flushed.
-    Canceled,
+    ///
+    /// Examples of when this could happen:
+    /// - User drops all references to a stream, so we want to CANCEL the it.
+    /// - Header block size was too large, so we want to REFUSE, possibly
+    ///   after sending a 431 response frame.
+    Scheduled(Reason),
 }
 
 impl State {
@@ -269,15 +273,22 @@ impl State {
         self.inner = Closed(Cause::LocallyReset(reason));
     }
 
-    /// Set the stream state to canceled
-    pub fn set_canceled(&mut self) {
+    /// Set the stream state to a scheduled reset.
+    pub fn set_scheduled_reset(&mut self, reason: Reason) {
         debug_assert!(!self.is_closed());
-        self.inner = Closed(Cause::Canceled);
+        self.inner = Closed(Cause::Scheduled(reason));
     }
 
-    pub fn is_canceled(&self) -> bool {
+    pub fn get_scheduled_reset(&self) -> Option<Reason> {
         match self.inner {
-            Closed(Cause::Canceled) => true,
+            Closed(Cause::Scheduled(reason)) => Some(reason),
+            _ => None,
+        }
+    }
+
+    pub fn is_scheduled_reset(&self) -> bool {
+        match self.inner {
+            Closed(Cause::Scheduled(..)) => true,
             _ => false,
         }
     }
@@ -285,7 +296,7 @@ impl State {
     pub fn is_local_reset(&self) -> bool {
         match self.inner {
             Closed(Cause::LocallyReset(_)) => true,
-            Closed(Cause::Canceled) => true,
+            Closed(Cause::Scheduled(..)) => true,
             _ => false,
         }
     }
@@ -381,8 +392,8 @@ impl State {
         // TODO: Is this correct?
         match self.inner {
             Closed(Cause::Proto(reason)) |
-            Closed(Cause::LocallyReset(reason)) => Err(proto::Error::Proto(reason)),
-            Closed(Cause::Canceled) => Err(proto::Error::Proto(Reason::CANCEL)),
+            Closed(Cause::LocallyReset(reason)) |
+            Closed(Cause::Scheduled(reason)) => Err(proto::Error::Proto(reason)),
             Closed(Cause::Io) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
             Closed(Cause::EndStream) |
             HalfClosedRemote(..) => Ok(false),

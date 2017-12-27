@@ -659,10 +659,12 @@ impl Prioritize {
                              )
                         ),
                         None => {
-                            assert!(stream.state.is_canceled());
-                            stream.state.set_reset(Reason::CANCEL);
+                            let reason = stream.state.get_scheduled_reset()
+                                .expect("must be scheduled to reset");
 
-                            let frame = frame::Reset::new(stream.id, Reason::CANCEL);
+                            stream.state.set_reset(reason);
+
+                            let frame = frame::Reset::new(stream.id, reason);
                             Frame::Reset(frame)
                         }
                     };
@@ -674,7 +676,7 @@ impl Prioritize {
                         self.last_opened_id = stream.id;
                     }
 
-                    if !stream.pending_send.is_empty() || stream.state.is_canceled() {
+                    if !stream.pending_send.is_empty() || stream.state.is_scheduled_reset() {
                         // TODO: Only requeue the sender IF it is ready to send
                         // the next frame. i.e. don't requeue it if the next
                         // frame is a data frame and the stream does not have

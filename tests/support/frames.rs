@@ -304,6 +304,11 @@ impl Mock<frame::Settings> {
         self.0.set_initial_window_size(Some(val));
         self
     }
+
+    pub fn max_header_list_size(mut self, val: u32) -> Self {
+        self.0.set_max_header_list_size(Some(val));
+        self
+    }
 }
 
 impl From<Mock<frame::Settings>> for frame::Settings {

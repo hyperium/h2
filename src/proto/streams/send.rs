@@ -132,6 +132,9 @@ impl Send {
             return;
         }
 
+        // Transition the state to reset no matter what.
+        stream.state.set_reset(reason);
+
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
         if is_closed && is_empty {
@@ -143,9 +146,6 @@ impl Send {
             return;
         }
 
-        // Transition the state
-        stream.state.set_reset(reason);
-
         self.recv_err(buffer, stream);
 
         let frame = frame::Reset::new(stream.id, reason);
@@ -154,14 +154,18 @@ impl Send {
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
     }
 
-    pub fn schedule_cancel(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
-        trace!("schedule_cancel; {:?}", stream.id);
+    pub fn schedule_implicit_reset(
+        &mut self,
+        stream: &mut store::Ptr,
+        reason: Reason,
+        task: &mut Option<Task>,
+    ) {
         if stream.state.is_closed() {
             // Stream is already closed, nothing more to do
             return;
         }
 
-        stream.state.set_canceled();
+        stream.state.set_scheduled_reset(reason);
 
         self.prioritize.reclaim_reserved_capacity(stream);
         self.prioritize.schedule_send(stream, task);

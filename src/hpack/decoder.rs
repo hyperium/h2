@@ -34,10 +34,15 @@ pub enum DecoderError {
     InvalidStatusCode,
     InvalidPseudoheader,
     InvalidMaxDynamicSize,
-    IntegerUnderflow,
     IntegerOverflow,
-    StringUnderflow,
+    NeedMore(NeedMore),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum NeedMore {
     UnexpectedEndOfStream,
+    IntegerUnderflow,
+    StringUnderflow,
 }
 
 enum Representation {
@@ -163,7 +168,7 @@ impl Decoder {
     }
 
     /// Decodes the headers found in the given buffer.
-    pub fn decode<F>(&mut self, src: &mut Cursor<Bytes>, mut f: F) -> Result<(), DecoderError>
+    pub fn decode<F>(&mut self, src: &mut Cursor<&mut BytesMut>, mut f: F) -> Result<(), DecoderError>
     where
         F: FnMut(Header),
     {
@@ -227,7 +232,7 @@ impl Decoder {
         Ok(())
     }
 
-    fn process_size_update(&mut self, buf: &mut Cursor<Bytes>) -> Result<(), DecoderError> {
+    fn process_size_update(&mut self, buf: &mut Cursor<&mut BytesMut>) -> Result<(), DecoderError> {
         let new_size = decode_int(buf, 5)?;
 
         if new_size > self.last_max_update {
@@ -245,14 +250,14 @@ impl Decoder {
         Ok(())
     }
 
-    fn decode_indexed(&self, buf: &mut Cursor<Bytes>) -> Result<Header, DecoderError> {
+    fn decode_indexed(&self, buf: &mut Cursor<&mut BytesMut>) -> Result<Header, DecoderError> {
         let index = decode_int(buf, 7)?;
         self.table.get(index)
     }
 
     fn decode_literal(
         &mut self,
-        buf: &mut Cursor<Bytes>,
+        buf: &mut Cursor<&mut BytesMut>,
         index: bool,
     ) -> Result<Header, DecoderError> {
         let prefix = if index { 6 } else { 4 };
@@ -275,13 +280,13 @@ impl Decoder {
         }
     }
 
-    fn decode_string(&mut self, buf: &mut Cursor<Bytes>) -> Result<Bytes, DecoderError> {
+    fn decode_string(&mut self, buf: &mut Cursor<&mut BytesMut>) -> Result<Bytes, DecoderError> {
         const HUFF_FLAG: u8 = 0b10000000;
 
         // The first bit in the first byte contains the huffman encoded flag.
         let huff = match peek_u8(buf) {
             Some(hdr) => (hdr & HUFF_FLAG) == HUFF_FLAG,
-            None => return Err(DecoderError::UnexpectedEndOfStream),
+            None => return Err(DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream)),
         };
 
         // Decode the string length using 7 bit prefix
@@ -293,7 +298,7 @@ impl Decoder {
                 len,
                 buf.remaining()
             );
-            return Err(DecoderError::StringUnderflow);
+            return Err(DecoderError::NeedMore(NeedMore::StringUnderflow));
         }
 
         if huff {
@@ -358,7 +363,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     }
 
     if !buf.has_remaining() {
-        return Err(DecoderError::IntegerUnderflow);
+        return Err(DecoderError::NeedMore(NeedMore::IntegerUnderflow));
     }
 
     let mask = if prefix_size == 8 {
@@ -401,7 +406,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
         }
     }
 
-    Err(DecoderError::IntegerUnderflow)
+    Err(DecoderError::NeedMore(NeedMore::IntegerUnderflow))
 }
 
 fn peek_u8<B: Buf>(buf: &mut B) -> Option<u8> {
@@ -412,11 +417,12 @@ fn peek_u8<B: Buf>(buf: &mut B) -> Option<u8> {
     }
 }
 
-fn take(buf: &mut Cursor<Bytes>, n: usize) -> Bytes {
+fn take(buf: &mut Cursor<&mut BytesMut>, n: usize) -> Bytes {
     let pos = buf.position() as usize;
-    let ret = buf.get_ref().slice(pos, pos + n);
-    buf.set_position((pos + n) as u64);
-    ret
+    let mut head = buf.get_mut().split_to(pos + n);
+    buf.set_position(0);
+    head.split_to(pos);
+    head.freeze()
 }
 
 // ===== impl Table =====
@@ -778,15 +784,15 @@ fn test_peek_u8() {
 #[test]
 fn test_decode_string_empty() {
     let mut de = Decoder::new(0);
-    let buf = Bytes::new();
-    let err = de.decode_string(&mut Cursor::new(buf)).unwrap_err();
-    assert_eq!(err, DecoderError::UnexpectedEndOfStream);
+    let mut buf = BytesMut::new();
+    let err = de.decode_string(&mut Cursor::new(&mut buf)).unwrap_err();
+    assert_eq!(err, DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream));
 }
 
 #[test]
 fn test_decode_empty() {
     let mut de = Decoder::new(0);
-    let buf = Bytes::new();
-    let empty = de.decode(&mut Cursor::new(buf), |_| {}).unwrap();
+    let mut buf = BytesMut::new();
+    let empty = de.decode(&mut Cursor::new(&mut buf), |_| {}).unwrap();
     assert_eq!(empty, ());
 }

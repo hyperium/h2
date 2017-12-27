@@ -54,6 +54,12 @@ pub(super) enum Event {
     Trailers(HeaderMap),
 }
 
+#[derive(Debug)]
+pub(super) enum RecvHeaderBlockError<T> {
+    Oversize(T),
+    State(RecvError),
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Indices {
     head: store::Key,
@@ -133,7 +139,7 @@ impl Recv {
         frame: frame::Headers,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-    ) -> Result<(), RecvError> {
+    ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
         trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
@@ -158,12 +164,38 @@ impl Recv {
                         return Err(RecvError::Stream {
                             id: stream.id,
                             reason: Reason::PROTOCOL_ERROR,
-                        })
+                        }.into())
                     },
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
             }
+        }
+
+        if frame.is_over_size() {
+            // A frame is over size if the decoded header block was bigger than
+            // SETTINGS_MAX_HEADER_LIST_SIZE.
+            //
+            // > A server that receives a larger header block than it is willing
+            // > to handle can send an HTTP 431 (Request Header Fields Too
+            // > Large) status code [RFC6585]. A client can discard responses
+            // > that it cannot process.
+            //
+            // So, if peer is a server, we'll send a 431. In either case,
+            // an error is recorded, which will send a REFUSED_STREAM,
+            // since we don't want any of the data frames either.
+            trace!("recv_headers; frame for {:?} is over size", stream.id);
+            return if counts.peer().is_server() && is_initial {
+                let mut res = frame::Headers::new(
+                    stream.id,
+                    frame::Pseudo::response(::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
+                    HeaderMap::new()
+                );
+                res.set_end_stream();
+                Err(RecvHeaderBlockError::Oversize(Some(res)))
+            } else {
+                Err(RecvHeaderBlockError::Oversize(None))
+            };
         }
 
         let message = counts.peer().convert_poll_message(frame)?;
@@ -609,9 +641,7 @@ impl Recv {
         stream: &mut store::Ptr,
         counts: &mut Counts,
     ) {
-        assert!(stream.state.is_local_reset());
-
-        if stream.is_pending_reset_expiration() {
+        if !stream.state.is_local_reset() || stream.is_pending_reset_expiration() {
             return;
         }
 
@@ -839,6 +869,14 @@ impl Event {
             Event::Data(..) => true,
             _ => false,
         }
+    }
+}
+
+// ===== impl RecvHeaderBlockError =====
+
+impl<T> From<RecvError> for RecvHeaderBlockError<T> {
+    fn from(err: RecvError) -> Self {
+        RecvHeaderBlockError::State(err)
     }
 }
 
