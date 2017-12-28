@@ -202,7 +202,7 @@ impl<T> FramedRead<T> {
                 }
             },
             Kind::Continuation => {
-                let end_of_headers = (head.flag() & 0x4) == 0x4;
+                let is_end_headers = (head.flag() & 0x4) == 0x4;
 
                 let mut partial = match self.partial.take() {
                     Some(partial) => partial,
@@ -248,6 +248,7 @@ impl<T> FramedRead<T> {
 
                 match partial.frame.load_hpack(&mut partial.buf, self.max_header_list_size, &mut self.hpack) {
                     Ok(_) => {},
+                    Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
                     Err(frame::Error::MalformedMessage) => {
                         debug!("stream error PROTOCOL_ERROR -- malformed CONTINUATION frame");
                         return Err(Stream {
@@ -255,10 +256,13 @@ impl<T> FramedRead<T> {
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    Err(e) => {
+                        debug!("connection error PROTOCOL_ERROR -- failed HPACK decoding; err={:?}", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    },
                 }
 
-                if end_of_headers {
+                if is_end_headers {
                     partial.frame.into()
                 } else {
                     self.partial = Some(partial);

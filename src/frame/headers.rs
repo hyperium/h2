@@ -696,7 +696,7 @@ impl fmt::Debug for PushPromiseFlag {
 
 impl HeaderBlock {
     fn load(&mut self, src: &mut BytesMut, max_header_list_size: usize, decoder: &mut hpack::Decoder) -> Result<(), Error> {
-        let mut reg = false;
+        let mut reg = !self.fields.is_empty();
         let mut malformed = false;
         let mut headers_size = self.calculate_header_list_size();
 
