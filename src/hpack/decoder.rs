@@ -190,7 +190,9 @@ impl Decoder {
                 Indexed => {
                     trace!("    Indexed; rem={:?}", src.remaining());
                     can_resize = false;
-                    f(self.decode_indexed(src)?);
+                    let entry = self.decode_indexed(src)?;
+                    consume(src);
+                    f(entry);
                 },
                 LiteralWithIndexing => {
                     trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
@@ -199,6 +201,7 @@ impl Decoder {
 
                     // Insert the header into the table
                     self.table.insert(entry.clone());
+                    consume(src);
 
                     f(entry);
                 },
@@ -206,12 +209,14 @@ impl Decoder {
                     trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
+                    consume(src);
                     f(entry);
                 },
                 LiteralNeverIndexed => {
                     trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
+                    consume(src);
 
                     // TODO: Track that this should never be indexed
 
@@ -225,6 +230,7 @@ impl Decoder {
 
                     // Handle the dynamic table size update
                     self.process_size_update(src)?;
+                    consume(src);
                 },
             }
         }
@@ -423,6 +429,13 @@ fn take(buf: &mut Cursor<&mut BytesMut>, n: usize) -> Bytes {
     buf.set_position(0);
     head.split_to(pos);
     head.freeze()
+}
+
+fn consume(buf: &mut Cursor<&mut BytesMut>) {
+    // remove bytes from the internal BytesMut when they have been successfully
+    // decoded. This is a more permanent cursor position, which will be
+    // used to resume if decoding was only partial.
+    take(buf, 0);
 }
 
 // ===== impl Table =====

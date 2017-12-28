@@ -722,6 +722,7 @@ impl HeaderBlock {
         }
 
         let mut cursor = Cursor::new(src);
+        info!("hpack pre-load; cursor pos={}, len={}", cursor.position(), cursor.get_ref().len());
 
         // If the header frame is malformed, we still have to continue decoding
         // the headers. A malformed header frame is a stream level error, but
@@ -768,6 +769,8 @@ impl HeaderBlock {
                 Status(v) => set_pseudo!(status, v),
             }
         });
+
+        info!("hpack load; cursor pos={}, len={}", cursor.position(), cursor.get_ref().len());
 
         if let Err(e) = res {
             trace!("hpack decoding error; err={:?}", e);

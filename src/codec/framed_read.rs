@@ -41,8 +41,6 @@ struct Partial {
 #[derive(Debug)]
 enum Continuable {
     Headers(frame::Headers),
-    // Decode the Continuation frame but ignore it...
-    // Ignore(StreamId),
     PushPromise(frame::PushPromise),
 }
 
@@ -114,13 +112,14 @@ impl<T> FramedRead<T> {
                     },
                     Err(e) => {
                         debug!("connection error PROTOCOL_ERROR -- failed HPACK decoding; err={:?}", e);
-                        return Err(Connection(Reason::PROTOCOL_ERROR)),
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
                     }
                 }
 
                 if is_end_headers {
                     frame.into()
                 } else {
+                    trace!("loaded partial header block");
                     // Defer returning the frame
                     self.partial = Some(Partial {
                         frame: Continuable::$frame(frame),
@@ -223,7 +222,7 @@ impl<T> FramedRead<T> {
 
                 // Extend the buf
                 if partial.buf.is_empty() {
-                    partial.buf = bytes.split_to(frame::HEADER_LEN);
+                    partial.buf = bytes.split_off(frame::HEADER_LEN);
                 } else {
                     if partial.frame.is_over_size() {
                         // If there was left over bytes previously, they may be
@@ -240,6 +239,7 @@ impl<T> FramedRead<T> {
                         // we should continue to ignore decoding, or to tell
                         // the attacker to go away.
                         if partial.buf.len() + bytes.len() > self.max_header_list_size {
+                            debug!("connection error COMPRESSION_ERROR -- CONTINUATION frame header block size over ignorable limit");
                             return Err(Connection(Reason::COMPRESSION_ERROR));
                         }
                     }
