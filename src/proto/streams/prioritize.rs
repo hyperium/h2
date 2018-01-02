@@ -370,8 +370,6 @@ impl Prioritize {
 
         // If data is buffered, then schedule the stream for execution
         if stream.buffered_send_data > 0 {
-            debug_assert!(stream.send_flow.available() > 0);
-
             // TODO: This assertion isn't *exactly* correct. There can still be
             // buffered send data while the stream's pending send queue is
             // empty. This can happen when a large data frame is in the process
