@@ -130,12 +130,15 @@ impl Data<Bytes> {
 }
 
 impl<T: Buf> Data<T> {
+    /// Encode the data frame into the `dst` buffer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dst` cannot contain the data frame.
     pub(crate) fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {
         let len = self.data.remaining() as usize;
 
-        if len > dst.remaining_mut() {
-            unimplemented!();
-        }
+        assert!(dst.remaining_mut() >= len);
 
         self.head().encode(len, dst);
         dst.put(&mut self.data);

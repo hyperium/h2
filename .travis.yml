@@ -17,6 +17,8 @@ matrix:
   - rust: nightly
   - rust: stable
     before_deploy: cargo doc --no-deps
+  allow_failures:
+    - rust: nightly
 
 install:
   - bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
