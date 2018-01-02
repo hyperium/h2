@@ -479,6 +479,8 @@ impl proto::Peer for Peer {
         let stream_id = headers.stream_id();
         let (pseudo, fields) = headers.into_parts();
 
+        b.version(Version::HTTP_2);
+
         if let Some(status) = pseudo.status {
             b.status(status);
         }
