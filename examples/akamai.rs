@@ -8,7 +8,7 @@ extern crate tokio_core;
 extern crate tokio_rustls;
 extern crate webpki_roots;
 
-use h2::client::Connection;
+use h2::client;
 
 use futures::*;
 use http::{Method, Request};
@@ -64,10 +64,10 @@ pub fn main() {
                 let tls = io_dump::Dump::to_stdout(tls);
 
                 println!("Starting client handshake");
-                Connection::handshake(tls)
+                client::handshake(tls)
             })
             .then(|res| {
-                let (h2, mut client) = res.unwrap();
+                let (mut client, h2) = res.unwrap();
 
                 let request = Request::builder()
                     .method(Method::GET)

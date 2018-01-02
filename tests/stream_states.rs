@@ -20,7 +20,7 @@ fn send_recv_headers_only() {
         .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
         .build();
 
-    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -62,7 +62,7 @@ fn send_recv_data() {
         ])
         .build();
 
-    let (mut h2, mut client) = client::Connection::builder().handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = client::Builder::new().handshake(mock).wait().unwrap();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -119,7 +119,7 @@ fn send_headers_recv_data_single_frame() {
         ])
         .build();
 
-    let (mut h2, mut client) = client::Connection::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -154,7 +154,7 @@ fn closed_streams_are_released() {
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
 
-    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
+    let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::get("https://example.com/").body(()).unwrap();
 
         // Send request
@@ -199,7 +199,7 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
     let _ = ::env_logger::init();
     let (io, mut srv) = mock::new();
 
-    let h2 = client::Connection::handshake(io).unwrap().and_then(|(h2, mut client)| {
+    let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://example.com/")
@@ -254,11 +254,11 @@ fn configure_max_frame_size() {
     let _ = ::env_logger::init();
     let (io, mut srv) = mock::new();
 
-    let h2 = client::Connection::builder()
+    let h2 = client::Builder::new()
         .max_frame_size(16_384 * 2)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
-        .and_then(|(h2, mut client)| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -325,9 +325,9 @@ fn recv_goaway_finishes_processed_streams() {
         .recv_frame(frames::go_away(0));
         //.close();
 
-    let h2 = client::Connection::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
-        .and_then(|(h2, mut client)| {
+        .and_then(|(mut client, h2)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -429,11 +429,11 @@ fn skipped_stream_ids_are_implicitly_closed() {
         // implicitly closed.
         .send_frame(frames::headers(3).response(200));
 
-        let h2 = client::Connection::builder()
+        let h2 = client::Builder::new()
             .initial_stream_id(5)
             .handshake::<_, Bytes>(io)
             .expect("handshake")
-            .and_then(|(h2, mut client)| {
+            .and_then(|(mut client, h2)| {
                 let request = Request::builder()
                     .method(Method::GET)
                     .uri("https://example.com/")
@@ -491,9 +491,9 @@ fn send_rst_stream_allows_recv_data() {
         .ping_pong([1; 8])
         .close();
 
-    let client = client::Connection::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
-        .and_then(|(conn, mut client)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -540,9 +540,9 @@ fn send_rst_stream_allows_recv_trailers() {
         .ping_pong([1; 8])
         .close();
 
-    let client = client::Connection::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
-        .and_then(|(conn, mut client)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -591,11 +591,11 @@ fn rst_stream_expires() {
         .recv_frame(frames::go_away(0).protocol_error())
         .close();
 
-    let client = client::Connection::builder()
+    let client = client::Builder::new()
         .reset_stream_duration(Duration::from_millis(10))
         .handshake::<_, Bytes>(io)
         .expect("handshake")
-        .and_then(|(conn, mut client)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -663,11 +663,11 @@ fn rst_stream_max() {
         .recv_frame(frames::go_away(0).protocol_error())
         .close();
 
-    let client = client::Connection::builder()
+    let client = client::Builder::new()
         .max_concurrent_reset_streams(1)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
-        .and_then(|(conn, mut client)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")
@@ -744,9 +744,9 @@ fn reserved_state_recv_window_update() {
         .ping_pong([1; 8])
         .close();
 
-    let client = client::Connection::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
-        .and_then(|(conn, mut client)| {
+        .and_then(|(mut client, conn)| {
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("https://example.com/")

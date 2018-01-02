@@ -150,6 +150,16 @@ where
 // ===== impl Builder =====
 
 impl Builder {
+    /// Creates a `Connection` Builder to customize a `Connection` before binding.
+    pub fn new() -> Builder {
+        Builder {
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            settings: Default::default(),
+            stream_id: 1.into(),
+        }
+    }
+
     /// Set the initial window size of the remote peer.
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
@@ -230,38 +240,24 @@ impl Builder {
 
 impl Default for Builder {
     fn default() -> Builder {
-        Builder {
-            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
-            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
-            settings: Default::default(),
-            stream_id: 1.into(),
-        }
+        Builder::new()
     }
+}
+
+/// Bind an H2 client connection.
+///
+/// Returns a future which resolves to the connection value once the H2
+/// handshake has been completed.
+///
+/// It's important to note that this does not **flush** the outbound
+/// settings to the wire.
+pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+where T: AsyncRead + AsyncWrite,
+{
+    Builder::new().handshake(io)
 }
 
 // ===== impl Connection =====
-
-impl Connection<(), Bytes> {
-    /// Creates a `Connection` Builder to customize a `Connection` before binding.
-    pub fn builder() -> Builder {
-        Builder::default()
-    }
-}
-
-impl<T> Connection<T, Bytes>
-where T: AsyncRead + AsyncWrite,
-{
-    /// Bind an H2 client connection.
-    ///
-    /// Returns a future which resolves to the connection value once the H2
-    /// handshake has been completed.
-    ///
-    /// It's important to note that this does not **flush** the outbound
-    /// settings to the wire.
-    pub fn handshake(io: T) -> Handshake<T, Bytes> {
-        Builder::default().handshake(io)
-    }
-}
 
 impl<T, B> Connection<T, B>
 where
@@ -325,7 +321,7 @@ where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    type Item = (Connection<T, B>, SendRequest<B>);
+    type Item = (SendRequest<B>, Connection<T, B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -361,7 +357,7 @@ where
         let connection = Connection {
             inner: connection,
         };
-        Ok(Async::Ready((connection, send_request)))
+        Ok(Async::Ready((send_request, connection)))
     }
 }
 
