@@ -116,7 +116,7 @@
 //! }
 //! ```
 //!
-//! [prior knowledge]: (http://httpwg.org/specs/rfc7540.html#known-http)
+//! [prior knowledge]: http://httpwg.org/specs/rfc7540.html#known-http
 //! [`Connection::handshake`]: struct.Connection.html#method.handshake
 //! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
