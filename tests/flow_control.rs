@@ -1150,3 +1150,49 @@ fn server_target_window_size() {
 
     srv.join(client).wait().unwrap();
 }
+
+
+#[test]
+fn recv_settings_increase_window_size_after_using_some() {
+    // See https://github.com/carllerche/h2/issues/208
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let new_win_size = 16_384 * 4; // 1 bigger than default
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::data(1, vec![0; 16_384]))
+        .recv_frame(frames::data(1, vec![0; 16_383]))
+        .send_frame(
+            frames::settings()
+                .initial_window_size(new_win_size as u32)
+        )
+        .recv_frame(frames::settings_ack())
+        .send_frame(frames::window_update(0, 1))
+        .recv_frame(frames::data(1, vec![0; 1]).eos())
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let client = Client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method("POST")
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+            let (resp, mut req_body) = client.send_request(request, false).unwrap();
+            req_body.send_data(vec![0; new_win_size].into(), true).unwrap();
+            conn.drive(resp.expect("response"))
+        })
+        .and_then(|(conn, _res)| {
+            conn.expect("client")
+        });
+
+    srv.join(client).wait().unwrap();
+}
