@@ -396,7 +396,7 @@ fn recv_next_stream_id_updated_by_malformed_headers() {
         .recv_frame(frames::go_away(1).protocol_error())
         .close();
 
-        let srv = server::Connection::handshake(io)
+        let srv = server::handshake(io)
             .expect("handshake")
             .and_then(|srv| srv.into_future().then(|res| {
                 let (err, _) = res.unwrap_err();

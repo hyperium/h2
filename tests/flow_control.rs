@@ -1142,7 +1142,7 @@ fn server_target_window_size() {
         .recv_frame(frames::window_update(0, (2 << 20) - 65_535))
         .close();
 
-    let srv = server::Connection::handshake(io).unwrap()
+    let srv = server::handshake(io).unwrap()
         .and_then(|mut conn| {
             conn.set_target_window_size(2 << 20);
             conn.into_future().unwrap()
@@ -1180,8 +1180,8 @@ fn recv_settings_increase_window_size_after_using_some() {
         .send_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let client = Client::handshake(io).unwrap()
-        .and_then(|(mut client, conn)| {
+    let client = client::Connection::handshake(io).unwrap()
+        .and_then(|(conn, mut client)| {
             let request = Request::builder()
                 .method("POST")
                 .uri("https://http2.akamai.com/")

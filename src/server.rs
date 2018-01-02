@@ -68,7 +68,7 @@
 //!
 //! use futures::{Future, Stream};
 //! # use futures::future::ok;
-//! use h2::server::Connection;
+//! use h2::server;
 //! use http::{Response, StatusCode};
 //! use tokio_core::reactor;
 //! use tokio_core::net::TcpListener;
@@ -86,7 +86,7 @@
 //!             // Spawn a new task to process each connection.
 //!             handle.spawn({
 //!                 // Start the HTTP/2.0 connection handshake
-//!                 Connection::handshake(socket)
+//!                 server::handshake(socket)
 //!                     .and_then(|h2| {
 //!                         // Accept all inbound HTTP/2.0 streams sent over the
 //!                         // connection.
@@ -187,10 +187,11 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # extern crate tokio_io;
 /// # use futures::{Future, Stream};
 /// # use tokio_io::*;
+/// # use h2::server;
 /// # use h2::server::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T) {
-/// Connection::handshake(my_io)
+/// server::handshake(my_io)
 ///     .and_then(|server| {
 ///         server.for_each(|(request, respond)| {
 ///             // Process the request and send the response back to the client
@@ -208,20 +209,20 @@ pub struct Connection<T, B: IntoBuf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
-/// Connection factory, which can be used in order to configure the properties
-/// of the HTTP/2.0 server before it is created.
+/// Client connection factory, which can be used in order to configure the
+/// properties of the HTTP/2.0 server before it is created.
 ///
 /// Methods can be changed on it in order to configure it.
 ///
 /// The server is constructed by calling [`handshake`] and passing the I/O
 /// handle that will back the HTTP/2.0 server.
 ///
-/// New instances of `Builder` are obtained via [`Connection::builder`].
+/// New instances of `Builder` are obtained via [`Builder::new`].
 ///
 /// See function level documentation for details on the various server
 /// configuration settings.
 ///
-/// [`Connection::builder`]: struct.Connection.html#method.builder
+/// [`Builder::new`]: struct.Builder.html#method.new
 /// [`handshake`]: struct.Builder.html#method.handshake
 ///
 /// # Examples
@@ -237,7 +238,7 @@ pub struct Connection<T, B: IntoBuf> {
 /// # {
 /// // `server_fut` is a future representing the completion of the HTTP/2.0
 /// // handshake.
-/// let server_fut = Connection::builder()
+/// let server_fut = Builder::new()
 ///     .initial_window_size(1_000_000)
 ///     .max_concurrent_streams(1000)
 ///     .handshake(my_io);
@@ -305,83 +306,48 @@ pub(crate) struct Peer;
 
 const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-// ===== impl Connection =====
-
-impl<T> Connection<T, Bytes>
-where
-    T: AsyncRead + AsyncWrite,
+/// Create a new configured HTTP/2.0 server with default configuration
+/// values backed by `io`.
+///
+/// It is expected that `io` already be in an appropriate state to commence
+/// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+///
+/// Returns a future which resolves to the [`Connection`] instance once the
+/// HTTP/2.0 handshake has been completed. The returned [`Connection`]
+/// instance will be using default configuration values. Use [`Builder`] to
+/// customize the configuration values used by a [`Connection`] instance.
+///
+/// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+/// [Handshake]: ../index.html#handshake
+/// [`Connection`]: struct.Connection.html
+///
+/// # Examples
+///
+/// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # -> Handshake<T>
+/// # {
+/// // `server_fut` is a future representing the completion of the HTTP/2.0
+/// // handshake.
+/// let handshake_fut = server::handshake(my_io);
+/// # handshake_fut
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
+pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+where T: AsyncRead + AsyncWrite,
 {
-    /// Create a new configured HTTP/2.0 server with default configuration
-    /// values backed by `io`.
-    ///
-    /// It is expected that `io` already be in an appropriate state to commence
-    /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
-    ///
-    /// Returns a future which resolves to the [`Connection`] instance once the
-    /// HTTP/2.0 handshake has been completed. The returned [`Connection`]
-    /// instance will be using default configuration values. Use [`Builder`] to
-    /// customize the configuration values used by a [`Connection`] instance.
-    ///
-    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
-    /// [Handshake]: ../index.html#handshake
-    /// [`Connection`]: struct.Connection.html
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
-    /// # use tokio_io::*;
-    /// # use h2::server::*;
-    /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-    /// # -> Handshake<T>
-    /// # {
-    /// // `server_fut` is a future representing the completion of the HTTP/2.0
-    /// // handshake.
-    /// let handshake_fut = Connection::handshake(my_io);
-    /// # handshake_fut
-    /// # }
-    /// #
-    /// # pub fn main() {}
-    /// ```
-    pub fn handshake(io: T) -> Handshake<T, Bytes> {
-        Connection::builder().handshake(io)
-    }
+    Builder::new().handshake(io)
 }
 
-impl Connection<(), Bytes> {
-    /// Return a new `Connection` builder instance initialized with default
-    /// configuration values.
-    ///
-    /// Configuration methods can be chained on the return value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
-    /// # use tokio_io::*;
-    /// # use h2::server::*;
-    /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-    /// # -> Handshake<T>
-    /// # {
-    /// // `server_fut` is a future representing the completion of the HTTP/2.0
-    /// // handshake.
-    /// let server_fut = Connection::builder()
-    ///     .initial_window_size(1_000_000)
-    ///     .max_concurrent_streams(1000)
-    ///     .handshake(my_io);
-    /// # server_fut
-    /// # }
-    /// #
-    /// # pub fn main() {}
-    /// ```
-    pub fn builder() -> Builder {
-        Builder::default()
-    }
-}
+// ===== impl Connection =====
 
 impl<T, B> Connection<T, B>
 where
@@ -500,6 +466,41 @@ where
 // ===== impl Builder =====
 
 impl Builder {
+    /// Return a new client builder instance initialized with default
+    /// configuration values.
+    ///
+    /// Configuration methods can be chained on the return value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .initial_window_size(1_000_000)
+    ///     .max_concurrent_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn new() -> Builder {
+        Builder {
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            settings: Settings::default(),
+        }
+    }
+
     /// Indicates the initial window size (in octets) for stream-level
     /// flow control for received data.
     ///
@@ -523,7 +524,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Connection::builder()
+    /// let server_fut = Builder::new()
     ///     .initial_window_size(1_000_000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -558,7 +559,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Connection::builder()
+    /// let server_fut = Builder::new()
     ///     .max_frame_size(1_000_000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -613,7 +614,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Connection::builder()
+    /// let server_fut = Builder::new()
     ///     .max_concurrent_streams(1000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -661,7 +662,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Connection::builder()
+    /// let server_fut = Builder::new()
     ///     .max_concurrent_reset_streams(1000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -710,7 +711,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Connection::builder()
+    /// let server_fut = Builder::new()
     ///     .reset_stream_duration(Duration::from_secs(10))
     ///     .handshake(my_io);
     /// # server_fut
@@ -754,7 +755,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let handshake_fut = Connection::builder()
+    /// let handshake_fut = Builder::new()
     ///     .handshake(my_io);
     /// # handshake_fut
     /// # }
@@ -776,7 +777,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut: Handshake<_, &'static [u8]> = Connection::builder()
+    /// let server_fut: Handshake<_, &'static [u8]> = Builder::new()
     ///     .handshake(my_io);
     /// # server_fut
     /// # }
@@ -795,11 +796,7 @@ impl Builder {
 
 impl Default for Builder {
     fn default() -> Builder {
-        Builder {
-            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
-            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
-            settings: Settings::default(),
-        }
+        Builder::new()
     }
 }
 

@@ -49,7 +49,7 @@ fn recv_multiple_pings() {
         .recv_frame(frames::ping([2; 8]).pong())
         .close();
 
-    let srv = server::Connection::handshake(io)
+    let srv = server::handshake(io)
         .expect("handshake")
         .and_then(|srv| {
             // future of first request, which never comes
@@ -79,7 +79,7 @@ fn pong_has_highest_priority() {
         .recv_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let srv = server::Connection::handshake(io)
+    let srv = server::handshake(io)
         .expect("handshake")
         .and_then(|srv| {
             // future of first request
