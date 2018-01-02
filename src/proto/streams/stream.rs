@@ -243,7 +243,7 @@ impl Stream {
     ///
     /// In this case, a reset should be sent.
     pub fn is_canceled_interest(&self) -> bool {
-        self.ref_count == 0 && !self.state.is_recv_closed()
+        self.ref_count == 0 && !self.state.is_closed()
     }
 
     pub fn assign_capacity(&mut self, capacity: WindowSize) {
