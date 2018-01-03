@@ -5,7 +5,7 @@ extern crate h2;
 extern crate http;
 extern crate tokio_core;
 
-use h2::server::Server;
+use h2::server;
 
 use bytes::*;
 use futures::*;
@@ -27,7 +27,7 @@ pub fn main() {
     let server = listener.incoming().for_each(move |(socket, _)| {
         // let socket = io_dump::Dump::to_stdout(socket);
 
-        let connection = Server::handshake(socket)
+        let connection = server::handshake(socket)
             .and_then(|conn| {
                 println!("H2 connection bound");
 

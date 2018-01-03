@@ -27,7 +27,7 @@ fn write_continuation_frames() {
         )
         .close();
 
-    let client = Client::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
             let mut request = Request::builder();

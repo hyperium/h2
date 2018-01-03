@@ -13,7 +13,7 @@ fn handshake() {
         .write(SETTINGS_ACK)
         .build();
 
-    let (_, h2) = Client::handshake(mock).wait().unwrap();
+    let (_, h2) = client::handshake(mock).wait().unwrap();
 
     trace!("hands have been shook");
 
@@ -37,7 +37,7 @@ fn client_other_thread() {
         .send_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
             ::std::thread::spawn(move || {
@@ -76,7 +76,7 @@ fn recv_invalid_server_stream_id() {
         .write(&[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
         .build();
 
-    let (mut client, h2) = Client::handshake(mock).wait().unwrap();
+    let (mut client, h2) = client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -100,7 +100,7 @@ fn request_stream_id_overflows() {
     let (io, srv) = mock::new();
 
 
-    let h2 = Client::builder()
+    let h2 = client::Builder::new()
         .initial_stream_id(::std::u32::MAX >> 1)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
@@ -172,7 +172,7 @@ fn client_builder_max_concurrent_streams() {
         .send_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let mut builder = Client::builder();
+    let mut builder = client::Builder::new();
     builder.max_concurrent_streams(1);
 
     let h2 = builder
@@ -219,7 +219,7 @@ fn request_over_max_concurrent_streams_errors() {
         .send_frame(frames::data(5, "").eos())
         .close();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
             // we send a simple req here just to drive the connection so we can
@@ -294,7 +294,7 @@ fn http_11_request_without_scheme_or_authority() {
         .send_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
             // we send a simple req here just to drive the connection so we can
@@ -324,7 +324,7 @@ fn http_2_request_without_scheme_or_authority() {
         .recv_settings()
         .close();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
             // we send a simple req here just to drive the connection so we can
@@ -367,7 +367,7 @@ fn request_with_connection_headers() {
         ("te", "boom"),
     ];
 
-    let client = Client::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
         .and_then(move |(mut client, conn)| {
             for (name, val) in headers {
@@ -402,7 +402,7 @@ fn connection_close_notifies_response_future() {
         // don't send any response, just close
         .close();
 
-    let client = Client::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
             let request = Request::builder()
@@ -444,7 +444,7 @@ fn connection_close_notifies_client_poll_ready() {
         )
         .close();
 
-    let client = Client::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
             let request = Request::builder()
@@ -497,7 +497,7 @@ fn sending_request_on_closed_connection() {
         .send_frame(frames::headers(0).response(200).eos())
         .close();
 
-    let h2 = Client::handshake(io)
+    let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
             let request = Request::builder()

@@ -17,7 +17,7 @@ fn read_preface_in_multiple_frames() {
         .read(SETTINGS_ACK)
         .build();
 
-    let h2 = Server::handshake(mock).wait().unwrap();
+    let h2 = server::handshake(mock).wait().unwrap();
 
     assert!(Stream::wait(h2).next().is_none());
 }
@@ -47,7 +47,7 @@ fn server_builder_set_max_concurrent_streams() {
         .recv_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let mut builder = Server::builder();
+    let mut builder = server::Builder::new();
     builder.max_concurrent_streams(1);
 
     let h2 = builder
@@ -89,7 +89,7 @@ fn serve_request() {
         .recv_frame(frames::headers(1).response(200).eos())
         .close();
 
-    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
         srv.into_future().unwrap().and_then(|(reqstream, srv)| {
             let (req, mut stream) = reqstream.unwrap();
 
@@ -129,7 +129,7 @@ fn recv_invalid_authority() {
         .recv_frame(frames::reset(1).protocol_error())
         .close();
 
-    let srv = Server::handshake(io)
+    let srv = server::handshake(io)
         .expect("handshake")
         .and_then(|srv| srv.into_future().unwrap());
 
@@ -164,7 +164,7 @@ fn recv_connection_header() {
         .recv_frame(frames::reset(9).protocol_error())
         .close();
 
-    let srv = Server::handshake(io)
+    let srv = server::handshake(io)
         .expect("handshake")
         .and_then(|srv| srv.into_future().unwrap());
 
@@ -188,7 +188,7 @@ fn sends_reset_cancel_when_body_is_dropped() {
         .recv_frame(frames::reset(1).cancel())
         .close();
 
-    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
         srv.into_future().unwrap().and_then(|(reqstream, srv)| {
             let (req, mut stream) = reqstream.unwrap();
 

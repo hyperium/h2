@@ -7,44 +7,47 @@
 //! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
 //!
 //! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
-//! upgrade, etc...), the connection handle is passed to [`Server::handshake`],
-//! which will begin the [HTTP/2.0 handshake]. This returns a future that will
-//! complete once the handshake is complete and HTTP/2.0 streams may be
-//! received.
+//! upgrade, etc...), the connection handle is passed to
+//! [`Connection::handshake`], which will begin the [HTTP/2.0 handshake]. This
+//! returns a future that will complete once the handshake is complete and
+//! HTTP/2.0 streams may be received.
 //!
-//! [`Server::handshake`] will use a default configuration. There are a number
-//! of configuration values that can be set by using a [`Builder`] instead.
+//! [`Connection::handshake`] will use a default configuration. There are a
+//! number of configuration values that can be set by using a [`Builder`]
+//! instead.
 //!
 //! # Inbound streams
 //!
-//! The [`Server`] instance is used to accept inbound HTTP/2.0 streams. It does
-//! this by implementing [`futures::Stream`]. When a new stream is received, a
-//! call to [`Server::poll`] will return `(request, response)`. The `request`
-//! handle (of type [`http::Request<RecvStream>`]) contains the HTTP request
-//! head as well as provides a way to receive the inbound data stream and the
-//! trailers. The `response` handle (of type [`SendStream`]) allows responding
-//! to the request, stream the response payload, send trailers, and send push
-//! promises.
+//! The [`Connection`] instance is used to accept inbound HTTP/2.0 streams. It
+//! does this by implementing [`futures::Stream`]. When a new stream is
+//! received, a call to [`Connection::poll`] will return `(request, response)`.
+//! The `request` handle (of type [`http::Request<RecvStream>`]) contains the
+//! HTTP request head as well as provides a way to receive the inbound data
+//! stream and the trailers. The `response` handle (of type [`SendStream`])
+//! allows responding to the request, stream the response payload, send
+//! trailers, and send push promises.
 //!
 //! The send ([`SendStream`]) and receive ([`RecvStream`]) halves of the stream
 //! can be operated independently.
 //!
 //! # Managing the connection
 //!
-//! The [`Server`] instance is used to manage the connection state. The caller
-//! is required to call either [`Server::poll`] or [`Server::poll_close`] in
-//! order to advance the connection state. Simply operating on [`SendStream`] or
-//! [`RecvStream`] will have no effect unless the connection state is advanced.
+//! The [`Connection`] instance is used to manage the connection state. The
+//! caller is required to call either [`Connection::poll`] or
+//! [`Connection::poll_close`] in order to advance the connection state. Simply
+//! operating on [`SendStream`] or [`RecvStream`] will have no effect unless the
+//! connection state is advanced.
 //!
-//! It is not required to call **both** [`Server::poll`] and
-//! [`Server::poll_close`]. If the caller is ready to accept a new stream, then
-//! only [`Server::poll`] should be called. When the caller **does not** want to
-//! accept a new stream, [`Server::poll_close`] should be called.
+//! It is not required to call **both** [`Connection::poll`] and
+//! [`Connection::poll_close`]. If the caller is ready to accept a new stream,
+//! then only [`Connection::poll`] should be called. When the caller **does
+//! not** want to accept a new stream, [`Connection::poll_close`] should be
+//! called.
 //!
-//! The [`Server`] instance should only be dropped once [`Server::poll_close`]
-//! returns `Ready`. Once [`Server::poll`] returns `Ready(None)`, there will no
-//! longer be any more inbound streams. At this point, only
-//! [`Server::poll_close`] should be called.
+//! The [`Connection`] instance should only be dropped once
+//! [`Connection::poll_close`] returns `Ready`. Once [`Connection::poll`]
+//! returns `Ready(None)`, there will no longer be any more inbound streams. At
+//! this point, only [`Connection::poll_close`] should be called.
 //!
 //! # Shutting down the server
 //!
@@ -65,7 +68,7 @@
 //!
 //! use futures::{Future, Stream};
 //! # use futures::future::ok;
-//! use h2::server::Server;
+//! use h2::server;
 //! use http::{Response, StatusCode};
 //! use tokio_core::reactor;
 //! use tokio_core::net::TcpListener;
@@ -83,7 +86,7 @@
 //!             // Spawn a new task to process each connection.
 //!             handle.spawn({
 //!                 // Start the HTTP/2.0 connection handshake
-//!                 Server::handshake(socket)
+//!                 server::handshake(socket)
 //!                     .and_then(|h2| {
 //!                         // Accept all inbound HTTP/2.0 streams sent over the
 //!                         // connection.
@@ -114,12 +117,12 @@
 //! ```
 //!
 //! [prior knowledge]: http://httpwg.org/specs/rfc7540.html#known-http
-//! [`Server::handshake`]: struct.Server.html#method.handshake
+//! [`Connection::handshake`]: struct.Connection.html#method.handshake
 //! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
-//! [`Server`]: struct.Server.html
-//! [`Server::poll`]: struct.Server.html#method.poll
-//! [`Server::poll_close`]: struct.Server.html#method.poll_close
+//! [`Connection`]: struct.Connection.html
+//! [`Connection::poll`]: struct.Connection.html#method.poll
+//! [`Connection::poll_close`]: struct.Connection.html#method.poll_close
 //! [`futures::Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
 //! [`http::Request<RecvStream>`]: ../struct.RecvStream.html
 //! [`SendStream`]: ../struct.SendStream.html
@@ -127,7 +130,7 @@
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
 use frame::{self, Reason, Settings, StreamId};
-use proto::{self, Config, Connection, Prioritized};
+use proto::{self, Config, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
@@ -138,7 +141,7 @@ use std::time::Duration;
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
-/// This type implements `Future`, yielding a `Server` instance once the
+/// This type implements `Future`, yielding a `Connection` instance once the
 /// handshake has completed.
 ///
 /// The handshake is completed once the connection preface is fully received
@@ -160,21 +163,21 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 
 /// Accepts inbound HTTP/2.0 streams on a connection.
 ///
-/// A `Server` is backed by an I/O resource (usually a TCP socket) and
+/// A `Connection` is backed by an I/O resource (usually a TCP socket) and
 /// implements the HTTP/2.0 server logic for that connection. It is responsible
 /// for receiving inbound streams initiated by the client as well as driving the
 /// internal state forward.
 ///
-/// `Server` values are created by calling [`handshake`]. Once a `Server` value
-/// is obtained, the caller must call [`poll`] or [`poll_close`] in order to
-/// drive the internal connection state forward.
+/// `Connection` values are created by calling [`handshake`]. Once a
+/// `Connection` value is obtained, the caller must call [`poll`] or
+/// [`poll_close`] in order to drive the internal connection state forward.
 ///
 /// See [module level] documentation for more details
 ///
 /// [module level]: index.html
-/// [`handshake`]: struct.Server.html#method.handshake
-/// [`poll`]: struct.Server.html#method.poll
-/// [`poll_close`]: struct.Server.html#method.poll_close
+/// [`handshake`]: struct.Connection.html#method.handshake
+/// [`poll`]: struct.Connection.html#method.poll
+/// [`poll_close`]: struct.Connection.html#method.poll_close
 ///
 /// # Examples
 ///
@@ -184,10 +187,11 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # extern crate tokio_io;
 /// # use futures::{Future, Stream};
 /// # use tokio_io::*;
+/// # use h2::server;
 /// # use h2::server::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T) {
-/// Server::handshake(my_io)
+/// server::handshake(my_io)
 ///     .and_then(|server| {
 ///         server.for_each(|(request, respond)| {
 ///             // Process the request and send the response back to the client
@@ -201,24 +205,24 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # pub fn main() {}
 /// ```
 #[must_use = "streams do nothing unless polled"]
-pub struct Server<T, B: IntoBuf> {
-    connection: Connection<T, Peer, B>,
+pub struct Connection<T, B: IntoBuf> {
+    connection: proto::Connection<T, Peer, B>,
 }
 
-/// Server factory, which can be used in order to configure the properties of
-/// the HTTP/2.0 server before it is created.
+/// Client connection factory, which can be used in order to configure the
+/// properties of the HTTP/2.0 server before it is created.
 ///
 /// Methods can be changed on it in order to configure it.
 ///
 /// The server is constructed by calling [`handshake`] and passing the I/O
 /// handle that will back the HTTP/2.0 server.
 ///
-/// New instances of `Builder` are obtained via [`Server::builder`].
+/// New instances of `Builder` are obtained via [`Builder::new`].
 ///
 /// See function level documentation for details on the various server
 /// configuration settings.
 ///
-/// [`Server::builder`]: struct.Server.html#method.builder
+/// [`Builder::new`]: struct.Builder.html#method.new
 /// [`handshake`]: struct.Builder.html#method.handshake
 ///
 /// # Examples
@@ -234,7 +238,7 @@ pub struct Server<T, B: IntoBuf> {
 /// # {
 /// // `server_fut` is a future representing the completion of the HTTP/2.0
 /// // handshake.
-/// let server_fut = Server::builder()
+/// let server_fut = Builder::new()
 ///     .initial_window_size(1_000_000)
 ///     .max_concurrent_streams(1000)
 ///     .handshake(my_io);
@@ -255,32 +259,32 @@ pub struct Builder {
     settings: Settings,
 }
 
-/// Respond to a client request.
+/// Send a response back to the client
 ///
-/// A `Respond` instance is provided when receiving a request and is used to
-/// send the associated response back to the client. It is also used to
+/// A `SendResponse` instance is provided when receiving a request and is used
+/// to send the associated response back to the client. It is also used to
 /// explicitly reset the stream with a custom reason.
 ///
 /// It will also be used to initiate push promises linked with the associated
 /// stream. This is [not yet
 /// implemented](https://github.com/carllerche/h2/issues/185).
 ///
-/// If the `Respond` instance is dropped without sending a response, then the
-/// HTTP/2.0 stream will be reset.
+/// If the `SendResponse` instance is dropped without sending a response, then
+/// the HTTP/2.0 stream will be reset.
 ///
 /// See [module] level docs for more details.
 ///
 /// [module]: index.html
 #[derive(Debug)]
-pub struct Respond<B: IntoBuf> {
+pub struct SendResponse<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
 /// Stages of an in-progress handshake.
 enum Handshaking<T, B: IntoBuf> {
-    /// State 1. Server is flushing pending SETTINGS frame.
+    /// State 1. Connection is flushing pending SETTINGS frame.
     Flushing(Flush<T, Prioritized<B::Buf>>),
-    /// State 2. Server is waiting for the client preface.
+    /// State 2. Connection is waiting for the client preface.
     ReadingPreface(ReadPreface<T, Prioritized<B::Buf>>),
     /// Dummy state for `mem::replace`.
     Empty,
@@ -302,85 +306,50 @@ pub(crate) struct Peer;
 
 const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-// ===== impl Server =====
-
-impl<T> Server<T, Bytes>
-where
-    T: AsyncRead + AsyncWrite,
+/// Create a new configured HTTP/2.0 server with default configuration
+/// values backed by `io`.
+///
+/// It is expected that `io` already be in an appropriate state to commence
+/// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+///
+/// Returns a future which resolves to the [`Connection`] instance once the
+/// HTTP/2.0 handshake has been completed. The returned [`Connection`]
+/// instance will be using default configuration values. Use [`Builder`] to
+/// customize the configuration values used by a [`Connection`] instance.
+///
+/// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+/// [Handshake]: ../index.html#handshake
+/// [`Connection`]: struct.Connection.html
+///
+/// # Examples
+///
+/// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # -> Handshake<T>
+/// # {
+/// // `server_fut` is a future representing the completion of the HTTP/2.0
+/// // handshake.
+/// let handshake_fut = server::handshake(my_io);
+/// # handshake_fut
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
+pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
+where T: AsyncRead + AsyncWrite,
 {
-    /// Create a new configured HTTP/2.0 server with default configuration
-    /// values backed by `io`.
-    ///
-    /// It is expected that `io` already be in an appropriate state to commence
-    /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
-    ///
-    /// Returns a future which resolves to the [`Server`] instance once the
-    /// HTTP/2.0 handshake has been completed. The returned [`Server`] instance
-    /// will be using default configuration values. Use [`Builder`] to customize
-    /// the configuration values used by a [`Server`] instance.
-    ///
-    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
-    /// [Handshake]: ../index.html#handshake
-    /// [`Server`]: struct.Server.html
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
-    /// # use tokio_io::*;
-    /// # use h2::server::*;
-    /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-    /// # -> Handshake<T>
-    /// # {
-    /// // `server_fut` is a future representing the completion of the HTTP/2.0
-    /// // handshake.
-    /// let handshake_fut = Server::handshake(my_io);
-    /// # handshake_fut
-    /// # }
-    /// #
-    /// # pub fn main() {}
-    /// ```
-    pub fn handshake(io: T) -> Handshake<T, Bytes> {
-        Server::builder().handshake(io)
-    }
+    Builder::new().handshake(io)
 }
 
-impl Server<(), Bytes> {
-    /// Return a new `Server` builder instance initialized with default
-    /// configuration values.
-    ///
-    /// Configuration methods can be chained on the return value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
-    /// # use tokio_io::*;
-    /// # use h2::server::*;
-    /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-    /// # -> Handshake<T>
-    /// # {
-    /// // `server_fut` is a future representing the completion of the HTTP/2.0
-    /// // handshake.
-    /// let server_fut = Server::builder()
-    ///     .initial_window_size(1_000_000)
-    ///     .max_concurrent_streams(1000)
-    ///     .handshake(my_io);
-    /// # server_fut
-    /// # }
-    /// #
-    /// # pub fn main() {}
-    /// ```
-    pub fn builder() -> Builder {
-        Builder::default()
-    }
-}
+// ===== impl Connection =====
 
-impl<T, B> Server<T, B>
+impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
@@ -437,7 +406,7 @@ where
     ///
     /// See [here](index.html#managing-the-connection) for more details.
     ///
-    /// [`poll`]: struct.Server.html#method.poll
+    /// [`poll`]: struct.Connection.html#method.poll
     /// [`RecvStream`]: ../struct.RecvStream.html
     /// [`SendStream`]: ../struct.SendStream.html
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
@@ -445,13 +414,13 @@ where
     }
 }
 
-impl<T, B> futures::Stream for Server<T, B>
+impl<T, B> futures::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
     B::Buf: 'static,
 {
-    type Item = (Request<RecvStream>, Respond<B>);
+    type Item = (Request<RecvStream>, SendResponse<B>);
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
@@ -472,7 +441,7 @@ where
             let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
             let request = Request::from_parts(head, body);
-            let respond = Respond { inner };
+            let respond = SendResponse { inner };
 
             return Ok(Some((request, respond)).into());
         }
@@ -481,14 +450,14 @@ where
     }
 }
 
-impl<T, B> fmt::Debug for Server<T, B>
+impl<T, B> fmt::Debug for Connection<T, B>
 where
     T: fmt::Debug,
     B: fmt::Debug + IntoBuf,
     B::Buf: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Server")
+        fmt.debug_struct("Connection")
             .field("connection", &self.connection)
             .finish()
     }
@@ -497,6 +466,41 @@ where
 // ===== impl Builder =====
 
 impl Builder {
+    /// Return a new client builder instance initialized with default
+    /// configuration values.
+    ///
+    /// Configuration methods can be chained on the return value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .initial_window_size(1_000_000)
+    ///     .max_concurrent_streams(1000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn new() -> Builder {
+        Builder {
+            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
+            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            settings: Settings::default(),
+        }
+    }
+
     /// Indicates the initial window size (in octets) for stream-level
     /// flow control for received data.
     ///
@@ -520,7 +524,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Server::builder()
+    /// let server_fut = Builder::new()
     ///     .initial_window_size(1_000_000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -555,7 +559,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Server::builder()
+    /// let server_fut = Builder::new()
     ///     .max_frame_size(1_000_000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -610,7 +614,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Server::builder()
+    /// let server_fut = Builder::new()
     ///     .max_concurrent_streams(1000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -626,9 +630,10 @@ impl Builder {
     /// Set the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
-    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
-    /// completing te stream, the HTTP/2.0 specification requires that any
-    /// further frames received for that stream must be ignored for "some time".
+    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
+    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// any further frames received for that stream must be ignored for "some
+    /// time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
@@ -657,7 +662,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Server::builder()
+    /// let server_fut = Builder::new()
     ///     .max_concurrent_reset_streams(1000)
     ///     .handshake(my_io);
     /// # server_fut
@@ -673,9 +678,10 @@ impl Builder {
     /// Set the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
-    /// [`Respond::send_reset`] or by dropping a [`Respond`] instance before
-    /// completing te stream, the HTTP/2.0 specification requires that any
-    /// further frames received for that stream must be ignored for "some time".
+    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
+    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// any further frames received for that stream must be ignored for "some
+    /// time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
@@ -705,7 +711,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut = Server::builder()
+    /// let server_fut = Builder::new()
     ///     .reset_stream_duration(Duration::from_secs(10))
     ///     .handshake(my_io);
     /// # server_fut
@@ -723,7 +729,7 @@ impl Builder {
     /// It is expected that `io` already be in an appropriate state to commence
     /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
     ///
-    /// Returns a future which resolves to the [`Server`] instance once the
+    /// Returns a future which resolves to the [`Connection`] instance once the
     /// HTTP/2.0 handshake has been completed.
     ///
     /// This function also allows the caller to configure the send payload data
@@ -731,7 +737,7 @@ impl Builder {
     ///
     /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
     /// [Handshake]: ../index.html#handshake
-    /// [`Server`]: struct.Server.html
+    /// [`Connection`]: struct.Connection.html
     /// [Outbound data type]: ../index.html#outbound-data-type.
     ///
     /// # Examples
@@ -749,7 +755,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let handshake_fut = Server::builder()
+    /// let handshake_fut = Builder::new()
     ///     .handshake(my_io);
     /// # handshake_fut
     /// # }
@@ -771,7 +777,7 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let server_fut: Handshake<_, &'static [u8]> = Server::builder()
+    /// let server_fut: Handshake<_, &'static [u8]> = Builder::new()
     ///     .handshake(my_io);
     /// # server_fut
     /// # }
@@ -784,23 +790,19 @@ impl Builder {
         B: IntoBuf,
         B::Buf: 'static,
     {
-        Server::handshake2(io, self.clone())
+        Connection::handshake2(io, self.clone())
     }
 }
 
 impl Default for Builder {
     fn default() -> Builder {
-        Builder {
-            reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
-            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
-            settings: Settings::default(),
-        }
+        Builder::new()
     }
 }
 
-// ===== impl Respond =====
+// ===== impl SendResponse =====
 
-impl<B: IntoBuf> Respond<B> {
+impl<B: IntoBuf> SendResponse<B> {
     /// Send a response to a client request.
     ///
     /// On success, a [`SendStream`] instance is returned. This instance can be
@@ -810,11 +812,11 @@ impl<B: IntoBuf> Respond<B> {
     /// instance, then `end_of_stream` must be set to `true` when calling this
     /// function.
     ///
-    /// The [`Respond`] instance is already associated with a received request.
-    /// This function may only be called once per instance and only if
+    /// The [`SendResponse`] instance is already associated with a received
+    /// request.  This function may only be called once per instance and only if
     /// [`send_reset`] has not been previously called.
     ///
-    /// [`Respond`]: #
+    /// [`SendResponse`]: #
     /// [`SendStream`]: ../struct.SendStream.html
     /// [`send_reset`]: #method.send_reset
     pub fn send_response(
@@ -924,7 +926,7 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
     where T: AsyncRead + AsyncWrite,
           B: IntoBuf,
 {
-    type Item = Server<T, B>;
+    type Item = Connection<T, B>;
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -955,7 +957,7 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
         };
         let poll = if let ReadingPreface(ref mut read) = self.state {
             // We're now waiting for the client preface. Poll the `ReadPreface`
-            // future. If it has completed, we will create a `Server` handle
+            // future. If it has completed, we will create a `Connection` handle
             // for the connection.
             read.poll()
             // Actually creating the `Connection` has to occur outside of this
@@ -966,14 +968,14 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             unreachable!("Handshake::poll() state was not advanced completely!")
         };
         let server = poll?.map(|codec| {
-            let connection = Connection::new(codec, Config {
+            let connection = proto::Connection::new(codec, Config {
                 next_stream_id: 2.into(),
                 reset_stream_duration: self.builder.reset_stream_duration,
                 reset_stream_max: self.builder.reset_stream_max,
                 settings: self.builder.settings.clone(),
             });
             trace!("Handshake::poll(); connection established!");
-            Server { connection }
+            Connection { connection }
         });
         Ok(server)
     }

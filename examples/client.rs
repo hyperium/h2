@@ -5,7 +5,7 @@ extern crate http;
 extern crate io_dump;
 extern crate tokio_core;
 
-use h2::client::{Client};
+use h2::client;
 use h2::RecvStream;
 
 use futures::*;
@@ -55,7 +55,7 @@ pub fn main() {
 
     let tcp = tcp.then(|res| {
         let tcp = io_dump::Dump::to_stdout(res.unwrap());
-        Client::handshake(tcp)
+        client::handshake(tcp)
     }).then(|res| {
             let (mut client, h2) = res.unwrap();
 

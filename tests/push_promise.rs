@@ -20,7 +20,7 @@ fn recv_push_works() {
         .send_frame(frames::headers(1).response(200).eos())
         .send_frame(frames::headers(2).response(200).eos());
 
-    let h2 = Client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+    let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")
@@ -58,7 +58,7 @@ fn recv_push_when_push_disabled_is_conn_error() {
         .send_frame(frames::headers(1).response(200).eos())
         .recv_frame(frames::go_away(0).protocol_error());
 
-    let h2 = Client::builder()
+    let h2 = client::Builder::new()
         .enable_push(false)
         .handshake::<_, Bytes>(io)
         .unwrap()
@@ -115,7 +115,7 @@ fn pending_push_promises_reset_when_dropped() {
         .recv_frame(frames::reset(2).cancel())
         .close();
 
-    let client = Client::handshake(io).unwrap().and_then(|(mut client, conn)| {
+    let client = client::handshake(io).unwrap().and_then(|(mut client, conn)| {
         let request = Request::builder()
             .method(Method::GET)
             .uri("https://http2.akamai.com/")

@@ -23,7 +23,7 @@ fn recv_trailers_only() {
         ])
         .build();
 
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
@@ -71,7 +71,7 @@ fn send_trailers_immediately() {
         ])
         .build();
 
-    let (mut client, mut h2) = Client::handshake(mock).wait().unwrap();
+    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
 
     // Send the request
     let request = Request::builder()
