@@ -230,7 +230,7 @@ fn sends_reset_cancel_when_res_body_is_dropped() {
         .recv_frame(frames::reset(3).cancel())
         .close();
 
-    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
         srv.into_future().unwrap().and_then(|(reqstream, srv)| {
             let (req, mut stream) = reqstream.unwrap();
 
