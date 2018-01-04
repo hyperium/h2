@@ -266,6 +266,27 @@ impl Prioritize {
         Ok(())
     }
 
+    /// Reclaim all capacity assigned to the stream and re-assign it to the
+    /// connection
+    pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr) {
+        let available = stream.send_flow.available().as_size();
+        stream.send_flow.claim_capacity(available);
+        // Re-assign all capacity to the connection
+        self.assign_connection_capacity(available, stream);
+    }
+
+    /// Reclaim just reserved capacity, not buffered capacity, and re-assign
+    /// it to the connection
+    pub fn reclaim_reserved_capacity(&mut self, stream: &mut store::Ptr) {
+        // only reclaim requested capacity that isn't already buffered
+        if stream.requested_send_capacity > stream.buffered_send_data {
+            let reserved = stream.requested_send_capacity - stream.buffered_send_data;
+
+            stream.send_flow.claim_capacity(reserved);
+            self.assign_connection_capacity(reserved, stream);
+        }
+    }
+
     pub fn assign_connection_capacity<R>(&mut self, inc: WindowSize, store: &mut R)
     where
         R: Resolve,

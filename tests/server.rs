@@ -172,7 +172,7 @@ fn recv_connection_header() {
 }
 
 #[test]
-fn sends_reset_cancel_when_body_is_dropped() {
+fn sends_reset_cancel_when_req_body_is_dropped() {
     let _ = ::env_logger::init();
     let (io, client) = mock::new();
 
@@ -196,6 +196,64 @@ fn sends_reset_cancel_when_body_is_dropped() {
 
             let rsp = http::Response::builder().status(200).body(()).unwrap();
             stream.send_response(rsp, true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn sends_reset_cancel_when_res_body_is_dropped() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .recv_frame(frames::headers(1).response(200))
+        .recv_frame(frames::reset(1).cancel())
+        .send_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .recv_frame(frames::headers(3).response(200))
+        .recv_frame(frames::data(3, vec![0; 10]))
+        .recv_frame(frames::reset(3).cancel())
+        .close();
+
+    let srv = Server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::GET);
+
+            let rsp = http::Response::builder()
+                .status(200)
+                .body(())
+                .unwrap();
+            stream.send_response(rsp, false).unwrap();
+            // SendStream dropped
+
+            srv.into_future().unwrap()
+        }).and_then(|(reqstream, srv)| {
+            let (_req, mut stream) = reqstream.unwrap();
+
+            let rsp = http::Response::builder()
+                .status(200)
+                .body(())
+                .unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(vec![0; 10].into(), false).unwrap();
+            // no send_data with eos
 
             srv.into_future().unwrap()
         })

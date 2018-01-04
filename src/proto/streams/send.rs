@@ -155,6 +155,7 @@ impl Send {
     }
 
     pub fn schedule_cancel(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
+        trace!("schedule_cancel; {:?}", stream.id);
         if stream.state.is_closed() {
             // Stream is already closed, nothing more to do
             return;
@@ -162,7 +163,7 @@ impl Send {
 
         stream.state.set_canceled();
 
-        self.reclaim_capacity(stream);
+        self.prioritize.reclaim_reserved_capacity(stream);
         self.prioritize.schedule_send(stream, task);
     }
 
@@ -285,17 +286,7 @@ impl Send {
     ) {
         // Clear all pending outbound frames
         self.prioritize.clear_queue(buffer, stream);
-        self.reclaim_capacity(stream);
-    }
-
-    fn reclaim_capacity(&mut self, stream: &mut store::Ptr) {
-        // Reclaim all capacity assigned to the stream and re-assign it to the
-        // connection
-        let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
-        // Re-assign all capacity to the connection
-        self.prioritize
-            .assign_connection_capacity(available, stream);
+        self.prioritize.reclaim_all_capacity(stream);
     }
 
     pub fn apply_remote_settings<B>(
