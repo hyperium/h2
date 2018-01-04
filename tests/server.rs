@@ -284,7 +284,7 @@ fn too_big_headers_sends_431() {
         .idle_ms(10)
         .close();
 
-    let srv = Server::builder()
+    let srv = server::Builder::new()
         .max_header_list_size(10)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
@@ -320,7 +320,7 @@ fn too_big_headers_sends_reset_after_431_if_not_eos() {
         .recv_frame(frames::reset(1).refused())
         .close();
 
-    let srv = Server::builder()
+    let srv = server::Builder::new()
         .max_header_list_size(10)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
