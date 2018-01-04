@@ -134,7 +134,7 @@ fn read_continuation_frames() {
         .send_frame(frame)
         .close();
 
-    let client = Client::handshake(io)
+    let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
             let request = Request::builder()
