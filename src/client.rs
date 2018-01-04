@@ -1,4 +1,85 @@
 //! Client implementation of the HTTP/2.0 protocol.
+//!
+//! # Getting started
+//!
+//! Running an HTTP/2.0 client requires the caller to establish the underlying
+//! connection as well as get the connection to a state that is ready to begin
+//! the HTTP/2.0 handshake. See [here](../index.html#handshake) for more
+//! details.
+//!
+//! This could be as basic as using Tokio's [`TcpStream`] to connect to a remote
+//! host, but usually it means using either ALPN or HTTP/1.1 protocol upgrades.
+//!
+//! Once a connection is obtained, it is passed to [`handshake`], which will
+//! begin the [HTTP/2.0 handshake]. This returns a future that completes once
+//! the handshake process is performed and HTTP/2.0 streams may be initialized.
+//!
+//! [`handshake`] uses default configuration values. THere are a number of
+//! settings that can be changed by using [`Builder`] instead.
+//!
+//! Once the the handshake future completes, the caller is provided with a
+//! [`Connection`] instance and a [`SendRequest`] instance. The [`Connection`]
+//! instance is used to drive the connection (see [Managing the connection]).
+//! The [`SendRequest`] instance is used to initialize new streams (see [Making
+//! requests]).
+//!
+//! # Making requests
+//!
+//! Requests are made using the [`SendRequest`] handle provided by the handshake
+//! future. Once the request is submitted, an HTTP/2.0 stream is initialized and
+//! the request is sent to the server.
+//!
+//! A request body and request trailers are sent using [`SendRequest`] and the
+//! server's response is returned once the [`ResponseFuture`] future completes.
+//! Both the [`SendRequest`] and [`ResponseFuture`] instances are returned by
+//! [`SendRequest::send_request`] and are tied to the HTTP/2.0 stream
+//! initialized by the sent request.
+//!
+//! The [`MAX_CONCURRENT_STREAMS`] setting is enforced by [`SendRequest`]. A
+//! request cannot be sent if the number of currently active streams has reached
+//! the maximum permitted for the connection.
+//!
+//! The [`SendRequest::poll_ready`] function returns `Ready` when a new HTTP/2.0
+//! stream can be created. If a new stream cannot be created, the caller will be
+//! notified once an existing stream closes, freeing capacity for the caller.
+//! The caller should use [`SendRequest::poll_ready`] to check for capacity
+//! before sending a request to the server.
+//!
+//! # Managing the connection
+//!
+//! The [`Connection`] instance is used to manage connection state. The caller
+//! is required to call [`Connection::poll`] in order to advance state.
+//! [`SendRequest::send_request`] and other functions have no effect unless
+//! [`Connection::poll`] is called.
+//!
+//! The [`Connection`] instance should only be dropped once [`Connection::poll`]
+//! returns `Ready`. At this point, the underlying socket has been closed and no
+//! further work needs to be done.
+//!
+//! The easiest is to just submit the [`Connection`] instance to an [executor].
+//!
+//! # Example
+//!
+//! ```rust
+//! unimplemented!();
+//! ```
+//!
+//! [`TcpStream`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpStream.html
+//! [`handshake`]: fn.handshake.html
+//! [executor]: https://docs.rs/futures/0.1/futures/future/trait.Executor.html
+//! [`SendRequest`]: struct.SendRequest.html
+//! [Making requests]: #making-requests
+//! [Managing the connection]: #managing-the-connection
+//! [`Connection`]: struct.Connection.html
+//! [`Connection::poll`]: struct.Connection.html#method.poll
+//! [`SendRequest::send_request`]: struct.SendRequest.html#method.send_request
+//! [`MAX_CONCURRENT_STREAMS`]: http://httpwg.org/specs/rfc7540.html#SettingValues
+//! [`SendRequest`]: struct.SendRequest.html
+//! [`ResponseFuture`]: struct.ResponseFuture.html
+//! [`SendRequest::poll_ready`]: struct.SendRequest.html#method.poll_ready
+//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+//! [`Builder`]: struct.Builder.html
+
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError, SendError, UserError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};

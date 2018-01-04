@@ -2,19 +2,22 @@
 //!
 //! # Getting started
 //!
-//! Running an HTTP/2.0 requires the caller to manage accepting the connections
-//! as well as getting the connections to a state that is ready to begin the
-//! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
+//! Running an HTTP/2.0 server requires the caller to manage accepting the
+//! connections as well as getting the connections to a state that is ready to
+//! begin the HTTP/2.0 handshake. See [here](../index.html#handshake) for more
+//! details.
 //!
-//! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
-//! upgrade, etc...), the connection handle is passed to
-//! [`Connection::handshake`], which will begin the [HTTP/2.0 handshake]. This
-//! returns a future that will complete once the handshake is complete and
-//! HTTP/2.0 streams may be received.
+//! This could be as basic as using Tokio's [`TcpListener`] to accept
+//! connections, but usually it means using either ALPN or HTTP/1.1 protocol
+//! upgrades.
 //!
-//! [`Connection::handshake`] will use a default configuration. There are a
-//! number of configuration values that can be set by using a [`Builder`]
-//! instead.
+//! Once a connection is obtained, it is passed to [`handshake`],
+//! which will begin the [HTTP/2.0 handshake]. This returns a future that
+//! completes once the handshake process is performed and HTTP/2.0 streams may
+//! be received.
+//!
+//! [`handshake`] uses default configuration values. THere are a number of
+//! settings that can be changed by using [`Builder`] instead.
 //!
 //! # Inbound streams
 //!
@@ -32,8 +35,8 @@
 //!
 //! # Managing the connection
 //!
-//! The [`Connection`] instance is used to manage the connection state. The
-//! caller is required to call either [`Connection::poll`] or
+//! The [`Connection`] instance is used to manage connection state. The caller
+//! is required to call either [`Connection::poll`] or
 //! [`Connection::poll_close`] in order to advance the connection state. Simply
 //! operating on [`SendStream`] or [`RecvStream`] will have no effect unless the
 //! connection state is advanced.
@@ -117,7 +120,7 @@
 //! ```
 //!
 //! [prior knowledge]: http://httpwg.org/specs/rfc7540.html#known-http
-//! [`Connection::handshake`]: struct.Connection.html#method.handshake
+//! [`handshake`]: fn.handshake.html
 //! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
 //! [`Connection`]: struct.Connection.html
@@ -125,7 +128,9 @@
 //! [`Connection::poll_close`]: struct.Connection.html#method.poll_close
 //! [`futures::Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
 //! [`http::Request<RecvStream>`]: ../struct.RecvStream.html
+//! [`RecvStream`]: ../struct.RecvStream.html
 //! [`SendStream`]: ../struct.SendStream.html
+//! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
