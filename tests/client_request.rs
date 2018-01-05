@@ -573,7 +573,7 @@ fn recv_too_big_headers() {
         .idle_ms(10)
         .close();
 
-    let client = Client::builder()
+    let client = client::Builder::new()
         .max_header_list_size(10)
         .handshake::<_, Bytes>(io)
         .expect("handshake")
