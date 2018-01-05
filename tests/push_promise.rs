@@ -138,6 +138,56 @@ fn pending_push_promises_reset_when_dropped() {
 }
 
 #[test]
+fn recv_push_promise_over_max_header_list_size() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_custom_settings(
+            frames::settings()
+                .max_header_list_size(10)
+        )
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::reset(2).refused())
+        .send_frame(frames::headers(1).response(200).eos())
+        .idle_ms(10)
+        .close();
+
+    let client = client::Builder::new()
+        .max_header_list_size(10)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let req = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .expect_err("response")
+                .map(|err| {
+                    assert_eq!(
+                        err.reason(),
+                        Some(Reason::REFUSED_STREAM)
+                    );
+                });
+
+            conn.drive(req)
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
 #[ignore]
 fn recv_push_promise_with_unsafe_method_is_stream_error() {
     // for instance, when :method = POST

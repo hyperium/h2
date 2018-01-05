@@ -363,6 +363,10 @@ where
             codec.set_max_recv_frame_size(max as usize);
         }
 
+        if let Some(max) = builder.settings.max_header_list_size() {
+            codec.set_max_recv_header_list_size(max as usize);
+        }
+
         // Send initial settings frame.
         codec
             .buffer(builder.settings.clone().into())
@@ -574,6 +578,12 @@ impl Builder {
     /// above.
     pub fn max_frame_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_frame_size(Some(max));
+        self
+    }
+
+    /// Set the max size of received header frames.
+    pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
+        self.settings.set_max_header_list_size(Some(max));
         self
     }
 

@@ -54,6 +54,15 @@ pub enum UserError {
 
 // ===== impl RecvError =====
 
+impl RecvError {
+    pub(crate) fn is_stream_error(&self) -> bool {
+        match *self {
+            RecvError::Stream { .. } => true,
+            _ => false,
+        }
+    }
+}
+
 impl From<io::Error> for RecvError {
     fn from(src: io::Error) -> Self {
         RecvError::Io(src)

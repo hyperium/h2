@@ -89,6 +89,14 @@ impl Settings {
         self.max_frame_size = size;
     }
 
+    pub fn max_header_list_size(&self) -> Option<u32> {
+        self.max_header_list_size
+    }
+
+    pub fn set_max_header_list_size(&mut self, size: Option<u32>) {
+        self.max_header_list_size = size;
+    }
+
     pub fn is_push_enabled(&self) -> bool {
         self.enable_push.unwrap_or(1) != 0
     }

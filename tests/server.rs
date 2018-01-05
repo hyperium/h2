@@ -261,3 +261,76 @@ fn sends_reset_cancel_when_res_body_is_dropped() {
 
     srv.join(client).wait().expect("wait");
 }
+
+#[test]
+fn too_big_headers_sends_431() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_custom_settings(
+            frames::settings()
+                .max_header_list_size(10)
+        )
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .field("some-header", "some-value")
+                .eos()
+        )
+        .recv_frame(frames::headers(1).response(431).eos())
+        .idle_ms(10)
+        .close();
+
+    let srv = server::Builder::new()
+        .max_header_list_size(10)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, _)| {
+                    assert!(req.is_none(), "req is {:?}", req);
+                })
+        });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn too_big_headers_sends_reset_after_431_if_not_eos() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_custom_settings(
+            frames::settings()
+                .max_header_list_size(10)
+        )
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .field("some-header", "some-value")
+        )
+        .recv_frame(frames::headers(1).response(431).eos())
+        .recv_frame(frames::reset(1).refused())
+        .close();
+
+    let srv = server::Builder::new()
+        .max_header_list_size(10)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, _)| {
+                    assert!(req.is_none(), "req is {:?}", req);
+                })
+        });
+
+    srv.join(client).wait().expect("wait");
+}

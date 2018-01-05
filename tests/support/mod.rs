@@ -64,3 +64,4 @@ pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
 
 // This is the frame type that is sent
 pub type SendFrame = h2::frame::Frame<::std::io::Cursor<::bytes::Bytes>>;
+

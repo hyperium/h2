@@ -152,6 +152,10 @@ impl Mock<frame::Headers> {
         self
     }
 
+    pub fn into_fields(self) -> HeaderMap {
+        self.0.into_parts().1
+    }
+
     fn into_parts(self) -> (StreamId, frame::Pseudo, HeaderMap) {
         assert!(!self.0.is_end_stream(), "eos flag will be lost");
         assert!(self.0.is_end_headers(), "unset eoh will be lost");
@@ -302,6 +306,11 @@ impl Mock<frame::Settings> {
 
     pub fn initial_window_size(mut self, val: u32) -> Self {
         self.0.set_initial_window_size(Some(val));
+        self
+    }
+
+    pub fn max_header_list_size(mut self, val: u32) -> Self {
+        self.0.set_max_header_list_size(Some(val));
         self
     }
 }
