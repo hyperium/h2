@@ -31,7 +31,7 @@
 //!
 //! A request body and request trailers are sent using [`SendRequest`] and the
 //! server's response is returned once the [`ResponseFuture`] future completes.
-//! Both the [`SendRequest`] and [`ResponseFuture`] instances are returned by
+//! Both the [`SendStream`] and [`ResponseFuture`] instances are returned by
 //! [`SendRequest::send_request`] and are tied to the HTTP/2.0 stream
 //! initialized by the sent request.
 //!
@@ -61,13 +61,84 @@
 //! # Example
 //!
 //! ```rust
-//! unimplemented!();
+//! extern crate futures;
+//! extern crate h2;
+//! extern crate http;
+//! extern crate tokio_core;
+//!
+//! use h2::client;
+//!
+//! use futures::*;
+//! # use futures::future::ok;
+//! use http::*;
+//!
+//! use tokio_core::net::TcpStream;
+//! use tokio_core::reactor;
+//!
+//! pub fn main() {
+//!     let mut core = reactor::Core::new().unwrap();
+//!     let handle = core.handle();
+//!
+//!     let addr = "127.0.0.1:5928".parse().unwrap();
+//!
+//!     core.run({
+//!         // Establish TCP connection to the server.
+//!         TcpStream::connect(&addr, &handle)
+//!             .map_err(|e| {
+//!                 panic!("failed to establish TCP connection; err={:?}", e)
+//!             })
+//!             .and_then(|tcp| client::handshake(tcp))
+//!             .and_then(|(mut h2, connection)| {
+//!                 let connection = connection
+//!                     .map_err(|e| panic!("HTTP/2.0 connection failed; err={:?}", e));
+//!
+//!                 // Spawn a new task to drive the connection state
+//!                 handle.spawn(connection);
+//!
+//!                 // Prepare the HTTP request to send to the server.
+//!                 let request = Request::builder()
+//!                     .method(Method::GET)
+//!                     .uri("https://www.example.com/")
+//!                     .body(())
+//!                     .unwrap();
+//!
+//!                 // Send the request. The second tuple item allows the caller
+//!                 // to stream a request body.
+//!                 let (response, _) = h2.send_request(request, true).unwrap();
+//!
+//!                 response.and_then(|response| {
+//!                     let (head, mut body) = response.into_parts();
+//!
+//!                     println!("Received response: {:?}", head);
+//!
+//!                     // The `release_capacity` handle allows the caller to manage
+//!                     // flow control.
+//!                     //
+//!                     // Whenever data is received, the caller is responsible for
+//!                     // releasing capacity back to the server once it has freed
+//!                     // the data from memory.
+//!                     let mut release_capacity = body.release_capacity().clone();
+//!
+//!                     body.for_each(move |chunk| {
+//!                         println!("RX: {:?}", chunk);
+//!
+//!                         // Let the server send more data.
+//!                         let _ = release_capacity.release_capacity(chunk.len());
+//!
+//!                         Ok(())
+//!                     })
+//!                 })
+//!             })
+//!             # .select(ok(()))
+//!     }).ok().expect("failed to perform HTTP/2.0 request");
+//! }
 //! ```
 //!
 //! [`TcpStream`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpStream.html
 //! [`handshake`]: fn.handshake.html
 //! [executor]: https://docs.rs/futures/0.1/futures/future/trait.Executor.html
 //! [`SendRequest`]: struct.SendRequest.html
+//! [`SendStream`]: ../struct.SendStream.html
 //! [Making requests]: #making-requests
 //! [Managing the connection]: #managing-the-connection
 //! [`Connection`]: struct.Connection.html
