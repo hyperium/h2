@@ -84,13 +84,13 @@
 //!     core.run({
 //!         // Establish TCP connection to the server.
 //!         TcpStream::connect(&addr, &handle)
-//!             .map_err(|e| {
-//!                 panic!("failed to establish TCP connection; err={:?}", e)
+//!             .map_err(|_| {
+//!                 panic!("failed to establish TCP connection")
 //!             })
 //!             .and_then(|tcp| client::handshake(tcp))
 //!             .and_then(|(mut h2, connection)| {
 //!                 let connection = connection
-//!                     .map_err(|e| panic!("HTTP/2.0 connection failed; err={:?}", e));
+//!                     .map_err(|_| panic!("HTTP/2.0 connection failed"));
 //!
 //!                 // Spawn a new task to drive the connection state
 //!                 handle.spawn(connection);
@@ -166,7 +166,20 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-/// In progress H2 connection binding
+/// In progress HTTP/2.0 connection handshake future.
+///
+/// This type implements `Future`, yielding a `(SendRequest, Connection)`
+/// instance once the handshake has completed.
+///
+/// The handshake is completed once both the connection preface and the initial
+/// settings frame is sent by the client.
+///
+/// The handshake future does not wait for the initial settings frame from the
+/// server.
+///
+/// See [module] level documentation for more details.
+///
+/// [module]: index.html
 #[must_use = "futures do nothing unless polled"]
 pub struct Handshake<T, B: IntoBuf = Bytes> {
     builder: Builder,
@@ -174,17 +187,78 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     _marker: PhantomData<B>,
 }
 
-/// Marker type indicating a client peer
+/// Initialize new HTTP/2.0 streams on a connection by sending a request.
+///
+/// This type does no work itself. Instead, it is a handle to the inner
+/// connection state held by [`Connection`]. If the associated connection
+/// instance is dropped, all [`SendRequest`] functions will error.
+///
+/// See [module] level documentation for more details.
+///
+/// [module]: index.html
+/// [`Connection`]: struct.Connection.html
 pub struct SendRequest<B: IntoBuf> {
     inner: proto::Streams<B::Buf, Peer>,
     pending: Option<proto::StreamKey>,
 }
 
-/// A future to drive the H2 protocol on a connection.
+/// Manages all state associated with an HTTP/2.0 client connection.
 ///
-/// This must be placed in an executor to ensure proper connection management.
+/// A `Connection` is backed by an I/O resource (usually a TCP socket) and
+/// implements the HTTP/2.0 client logic for that connection. It is responsible
+/// for driving the internal state forward, performing the work requested of the
+/// associated handles ([`SendRequest`], [`ResponseFuture`], [`SendStream`],
+/// [`RecvStream`]).
+///
+/// `Connection` values are created by calling [`handshake`]. Once a
+/// `Connection` value is obtained, the caller must repeatedly call [`poll`]
+/// until `Ready` is returned. The easiest way to do this is to submit the
+/// `Connection` instance to an executor.
+///
+/// [module]: index.html
+/// [`SendRequest`]: struct.SendRequest.html
+/// [`ResponseFuture`]: struct.ResponseFuture.html
+/// [`SendStream`]: ../struct.SendStream.html
+/// [`RecvStream`]: ../struct.RecvStream.html
+///
+/// # Examples
+///
+/// ```
+/// # extern crate bytes;
+/// # extern crate futures;
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use futures::{Future, Stream};
+/// # use futures::future::Executor;
+/// # use tokio_io::*;
+/// # use h2::client;
+/// # use h2::client::*;
+/// #
+/// # fn doc<T, E>(my_io: T, my_executor: E)
+/// # where T: AsyncRead + AsyncWrite + 'static,
+/// #       E: Executor<Box<Future<Item = (), Error = ()>>>,
+/// # {
+/// client::handshake(my_io)
+///     .and_then(|(send_request, connection)| {
+///         // Submit the connection handle to an executor.
+///         my_executor.execute(
+///             # Box::new(
+///             connection.map_err(|_| panic!("connection failed"))
+///             # )
+///         ).unwrap();
+///
+///         // Now, use `send_request` to initialize HTTP/2.0 streams.
+///         // ...
+///         # drop(send_request);
+///         # Ok(())
+///     })
+/// # .wait().unwrap();
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
 #[must_use = "futures do nothing unless polled"]
-pub struct Connection<T, B: IntoBuf> {
+pub struct Connection<T, B: IntoBuf = Bytes> {
     inner: proto::Connection<T, Peer, B>,
 }
 
