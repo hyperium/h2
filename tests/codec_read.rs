@@ -12,6 +12,7 @@ fn read_none() {
 }
 
 #[test]
+#[ignore]
 fn read_frame_too_big() {}
 
 // ===== DATA =====
@@ -100,13 +101,72 @@ fn read_data_stream_id_zero() {
 // ===== HEADERS =====
 
 #[test]
+#[ignore]
 fn read_headers_without_pseudo() {}
 
 #[test]
+#[ignore]
 fn read_headers_with_pseudo() {}
 
 #[test]
+#[ignore]
 fn read_headers_empty_payload() {}
+
+#[test]
+fn read_continuation_frames() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let large = build_large_headers();
+    let frame = large.iter().fold(
+        frames::headers(1).response(200),
+        |frame, &(name, ref value)| frame.field(name, &value[..]),
+    ).eos();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frame)
+        .close();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let req = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .expect("response")
+                .map(move |res| {
+                    assert_eq!(res.status(), StatusCode::OK);
+                    let (head, _body) = res.into_parts();
+                    let expected = large.iter().fold(HeaderMap::new(), |mut map, &(name, ref value)| {
+                        use support::frames::HttpTryInto;
+                        map.append(name, value.as_str().try_into().unwrap());
+                        map
+                    });
+                    assert_eq!(head.headers, expected);
+                });
+
+            conn.drive(req)
+                .and_then(move |(h2, _)| {
+                    h2.expect("client")
+                })
+        });
+
+    client.join(srv).wait().expect("wait");
+
+}
 
 #[test]
 fn update_max_frame_len_at_rest() {

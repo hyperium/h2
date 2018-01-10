@@ -527,6 +527,12 @@ impl Builder {
         self
     }
 
+    /// Set the max size of received header frames.
+    pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
+        self.settings.set_max_header_list_size(Some(max));
+        self
+    }
+
     /// Set the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
@@ -894,6 +900,10 @@ where
 
         if let Some(max) = self.builder.settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
+        }
+
+        if let Some(max) = self.builder.settings.max_header_list_size() {
+            codec.set_max_recv_header_list_size(max as usize);
         }
 
         // Send initial settings frame

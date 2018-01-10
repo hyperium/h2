@@ -544,6 +544,82 @@ fn sending_request_on_closed_connection() {
     h2.join(srv).wait().expect("wait");
 }
 
+#[test]
+fn recv_too_big_headers() {
+    let _ = ::env_logger::init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_custom_settings(
+            frames::settings()
+                .max_header_list_size(10)
+        )
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .send_frame(frames::headers(3).response(200))
+        // no reset for 1, since it's closed anyways
+        // but reset for 3, since server hasn't closed stream
+        .recv_frame(frames::reset(3).refused())
+        .idle_ms(10)
+        .close();
+
+    let client = client::Builder::new()
+        .max_header_list_size(10)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let req1 = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .expect_err("response1")
+                .map(|err| {
+                    assert_eq!(
+                        err.reason(),
+                        Some(Reason::REFUSED_STREAM)
+                    );
+                });
+
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let req2 = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .expect_err("response2")
+                .map(|err| {
+                    assert_eq!(
+                        err.reason(),
+                        Some(Reason::REFUSED_STREAM)
+                    );
+                });
+
+            conn.drive(req1.join(req2))
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+    client.join(srv).wait().expect("wait");
+
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 

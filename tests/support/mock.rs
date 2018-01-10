@@ -394,12 +394,13 @@ pub trait HandleFutureExt {
         self.recv_custom_settings(frame::Settings::default())
     }
 
-    fn recv_custom_settings(self, settings: frame::Settings)
+    fn recv_custom_settings<T>(self, settings: T)
         -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
     where
         Self: Sized + 'static,
         Self: Future<Item = (frame::Settings, Handle)>,
         Self::Error: fmt::Debug,
+        T: Into<frame::Settings>,
     {
         let map = self
             .map(|(settings, handle)| (Some(settings.into()), handle))
@@ -409,7 +410,7 @@ pub trait HandleFutureExt {
             Box::new(map);
         RecvFrame {
             inner: boxed,
-            frame: settings.into(),
+            frame: settings.into().into(),
         }
     }
 

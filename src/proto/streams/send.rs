@@ -132,6 +132,9 @@ impl Send {
             return;
         }
 
+        // Transition the state to reset no matter what.
+        stream.state.set_reset(reason);
+
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
         if is_closed && is_empty {
@@ -143,9 +146,6 @@ impl Send {
             return;
         }
 
-        // Transition the state
-        stream.state.set_reset(reason);
-
         self.recv_err(buffer, stream);
 
         let frame = frame::Reset::new(stream.id, reason);
@@ -154,15 +154,20 @@ impl Send {
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
     }
 
-    pub fn schedule_cancel(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
+    pub fn schedule_implicit_reset(
+        &mut self,
+        stream: &mut store::Ptr,
+        reason: Reason,
+        task: &mut Option<Task>,
+    ) {
         if stream.state.is_closed() {
             // Stream is already closed, nothing more to do
             return;
         }
 
-        stream.state.set_canceled();
+        stream.state.set_scheduled_reset(reason);
 
-        self.reclaim_capacity(stream);
+        self.prioritize.reclaim_reserved_capacity(stream);
         self.prioritize.schedule_send(stream, task);
     }
 
@@ -285,17 +290,7 @@ impl Send {
     ) {
         // Clear all pending outbound frames
         self.prioritize.clear_queue(buffer, stream);
-        self.reclaim_capacity(stream);
-    }
-
-    fn reclaim_capacity(&mut self, stream: &mut store::Ptr) {
-        // Reclaim all capacity assigned to the stream and re-assign it to the
-        // connection
-        let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
-        // Re-assign all capacity to the connection
-        self.prioritize
-            .assign_connection_capacity(available, stream);
+        self.prioritize.reclaim_all_capacity(stream);
     }
 
     pub fn apply_remote_settings<B>(

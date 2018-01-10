@@ -1,4 +1,5 @@
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
+use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
 use {client, proto, server};
 use codec::{Codec, RecvError, SendError, UserError};
@@ -164,7 +165,28 @@ where
             );
 
             let res = if stream.state.is_recv_headers() {
-                actions.recv.recv_headers(frame, stream, counts)
+                match actions.recv.recv_headers(frame, stream, counts) {
+                    Ok(()) => Ok(()),
+                    Err(RecvHeaderBlockError::Oversize(resp)) => {
+                        if let Some(resp) = resp {
+                            let _ = actions.send.send_headers(
+                                resp, send_buffer, stream, counts, &mut actions.task);
+
+                            actions.send.schedule_implicit_reset(
+                                stream,
+                                Reason::REFUSED_STREAM,
+                                &mut actions.task);
+                            actions.recv.enqueue_reset_expiration(stream, counts);
+                            Ok(())
+                        } else {
+                            Err(RecvError::Stream {
+                                id: stream.id,
+                                reason: Reason::REFUSED_STREAM,
+                            })
+                        }
+                    },
+                    Err(RecvHeaderBlockError::State(err)) => Err(err),
+                }
             } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
@@ -363,22 +385,42 @@ where
         let me = &mut *me;
 
         let id = frame.stream_id();
+        let promised_id = frame.promised_id();
 
-        let stream = match me.store.find_mut(&id) {
-            Some(stream) => stream.key(),
-            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+        let res = {
+            let stream = match me.store.find_mut(&id) {
+                Some(stream) => stream.key(),
+                None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+            };
+
+            if me.counts.peer().is_server() {
+                // The remote is a client and cannot reserve
+                trace!("recv_push_promise; error remote is client");
+                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+            }
+
+            me.actions.recv.recv_push_promise(frame,
+                                              &me.actions.send,
+                                              stream,
+                                              &mut me.store)
         };
 
-        if me.counts.peer().is_server() {
-            // The remote is a client and cannot reserve
-            trace!("recv_push_promise; error remote is client");
-            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
-        }
+        if let Err(err) = res {
+            if let Some(ref mut new_stream) = me.store.find_mut(&promised_id) {
 
-        me.actions.recv.recv_push_promise(frame,
-                                          &me.actions.send,
-                                          stream,
-                                          &mut me.store)
+                let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+                me.actions.reset_on_recv_stream_err(&mut *send_buffer, new_stream, Err(err))
+            } else {
+                // If there was a stream error, the stream should have been stored
+                // so we can track sending a reset.
+                //
+                // Otherwise, this MUST be an connection error.
+                assert!(!err.is_stream_error());
+                Err(err)
+            }
+        } else {
+            res
+        }
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
@@ -925,8 +967,9 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
 
 fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Counts) {
     if stream.is_canceled_interest() {
-        actions.send.schedule_cancel(
+        actions.send.schedule_implicit_reset(
             stream,
+            Reason::CANCEL,
             &mut actions.task);
         actions.recv.enqueue_reset_expiration(stream, counts);
     }

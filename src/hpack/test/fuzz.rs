@@ -149,7 +149,7 @@ impl FuzzHpack {
 
                         // Decode the chunk!
                         decoder
-                            .decode(&mut Cursor::new(buf.into()), |e| {
+                            .decode(&mut Cursor::new(&mut buf), |e| {
                                 assert_eq!(e, expect.remove(0).reify().unwrap());
                             })
                             .unwrap();
@@ -161,7 +161,7 @@ impl FuzzHpack {
 
             // Decode the chunk!
             decoder
-                .decode(&mut Cursor::new(buf.into()), |e| {
+                .decode(&mut Cursor::new(&mut buf), |e| {
                     assert_eq!(e, expect.remove(0).reify().unwrap());
                 })
                 .unwrap();

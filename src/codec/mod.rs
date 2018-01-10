@@ -90,6 +90,11 @@ impl<T, B> Codec<T, B> {
         self.framed_write().set_max_frame_size(val)
     }
 
+    /// Set the max header list size that can be received.
+    pub fn set_max_recv_header_list_size(&mut self, val: usize) {
+        self.inner.set_max_header_list_size(val);
+    }
+
     /// Get a reference to the inner stream.
     #[cfg(feature = "unstable")]
     pub fn get_ref(&self) -> &T {
