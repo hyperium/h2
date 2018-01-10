@@ -214,7 +214,7 @@ pub struct Connection<T, B: IntoBuf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
-/// Client connection factory, which can be used in order to configure the
+/// Server connection factory, which can be used in order to configure the
 /// properties of the HTTP/2.0 server before it is created.
 ///
 /// Methods can be changed on it in order to configure it.
@@ -471,7 +471,7 @@ where
 // ===== impl Builder =====
 
 impl Builder {
-    /// Return a new client builder instance initialized with default
+    /// Return a new server builder instance initialized with default
     /// configuration values.
     ///
     /// Configuration methods can be chained on the return value.
@@ -585,9 +585,9 @@ impl Builder {
     /// Set the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
-    /// of streams that can be initiated by the remote peer. In otherwords, when
-    /// this setting is set to 100, this does not limit the number of concurrent
-    /// streams that can be created by the caller.
+    /// of streams that can be initiated by the remote peer. In other words,
+    /// when this setting is set to 100, this does not limit the number of
+    /// concurrent streams that can be created by the caller.
     ///
     /// It is recommended that this value be no smaller than 100, so as to not
     /// unnecessarily limit parallelism. However, any value is legal, including
@@ -760,9 +760,9 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let handshake_fut = Builder::new()
+    /// let server_fut = Builder::new()
     ///     .handshake(my_io);
-    /// # handshake_fut
+    /// # server_fut
     /// # }
     /// #
     /// # pub fn main() {}
