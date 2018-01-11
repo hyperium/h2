@@ -1,11 +1,21 @@
 use std::fmt;
 
 
-/// HTTP2 Error codes
+/// HTTP/2.0 error codes.
+///
+/// Error codes are used in `RST_STREAM` and `GOAWAY` frames to convey the
+/// reasons for the stream or connection error. For example,
+/// [`SendStream::send_reset`] takes a `Reason` argument. Also, the `Error` type
+/// may contain a `Reason`.
+///
+/// Error codes share a common code space. Some error codes apply only to
+/// streams, others apply only to connections, and others may apply to either.
+/// See [RFC 7540] for more information.
 ///
 /// See [Error Codes in the spec][spec].
 ///
-/// [spec}: http://httpwg.org/specs/rfc7540.html#ErrorCodes
+/// [spec]: http://httpwg.org/specs/rfc7540.html#ErrorCodes
+/// [`SendStream::send_reset`]: struct.SendStream.html#method.send_reset
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Reason(u32);
 
