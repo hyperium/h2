@@ -250,7 +250,7 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// [`SendStream`]: ../struct.SendStream.html
 /// [`RecvStream`]: ../struct.RecvStream.html
 /// [`poll`]: #method.poll
-//! [executor]: https://docs.rs/futures/0.1/futures/future/trait.Executor.html
+/// [executor]: https://docs.rs/futures/0.1/futures/future/trait.Executor.html
 ///
 /// # Examples
 ///
@@ -775,7 +775,7 @@ impl Builder {
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .max_header_list_size(16 * 1024)
-    ///     .client_fut(my_io);
+    ///     .handshake(my_io);
     /// # client_fut
     /// # }
     /// #
