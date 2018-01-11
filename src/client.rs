@@ -1050,8 +1050,8 @@ impl Default for Builder {
 /// # extern crate h2;
 /// # extern crate tokio_io;
 /// # use tokio_io::*;
-/// # use h2::server;
-/// # use h2::server::*;
+/// # use h2::client;
+/// # use h2::client::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
 /// # -> Handshake<T>
