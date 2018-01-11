@@ -336,12 +336,14 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # use h2::server::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-/// # -> Handshake<T>
 /// # {
-/// // `server_fut` is a future representing the completion of the HTTP/2.0
-/// // handshake.
-/// let server_fut = server::handshake(my_io);
-/// # server_fut
+/// server::handshake(my_io)
+///     .and_then(|connection| {
+///         // The HTTP/2.0 handshake has completed, now use `connection` to
+///         // accept inbound HTTP/2.0 streams.
+///         # Ok(())
+///     })
+///     # .wait().unwrap();
 /// # }
 /// #
 /// # pub fn main() {}

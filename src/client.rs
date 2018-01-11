@@ -1054,12 +1054,15 @@ impl Default for Builder {
 /// # use h2::client::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-/// # -> Handshake<T>
 /// # {
-/// // `client_fut` is a future representing the completion of the HTTP/2.0
-/// // handshake.
-/// let client_fut = client::handshake(my_io);
-/// # client_fut
+/// client::handshake(my_io)
+///     .and_then(|send_request, connection| {
+///         // The HTTP/2.0 handshake has completed, now start polling
+///         // `connection` and use `send_request` to send requests to the
+///         // server.
+///         # Ok(())
+///     })
+///     # .wait().unwrap();
 /// # }
 /// #
 /// # pub fn main() {}
