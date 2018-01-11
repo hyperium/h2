@@ -170,7 +170,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-/// In progress HTTP/2.0 connection handshake future.
+/// Performs the HTTP/2.0 connection handshake.
 ///
 /// This type implements `Future`, yielding a `(SendRequest, Connection)`
 /// instance once the handshake has completed.
@@ -191,7 +191,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     _marker: PhantomData<B>,
 }
 
-/// Initialize new HTTP/2.0 streams on a connection by sending a request.
+/// Initializes new HTTP/2.0 streams on a connection by sending a request.
 ///
 /// This type does no work itself. Instead, it is a handle to the inner
 /// connection state held by [`Connection`]. If the associated connection
@@ -285,10 +285,9 @@ pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
 }
 
-/// Client connection factory, which can be used in order to configure the
-/// properties of the HTTP/2.0 client before it is created.
+/// Builds client connections with custom configuration values.
 ///
-/// Methods can be changed on it in order to configure it.
+/// Methods can be chained in order to set the configuration values.
 ///
 /// The client is constructed by calling [`handshake`] and passing the I/O
 /// handle that will back the HTTP/2.0 server.
