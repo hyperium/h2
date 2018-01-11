@@ -49,7 +49,7 @@ use std::fmt;
 /// that it intends to send data by calling [`reserve_capacity`], specifying the
 /// amount of data, in octets, that the caller intends to send. After this,
 /// `poll_capacity` is used to be notified when the requested capacity is
-/// assigned to the stream. Once `poll_capacity` returns `Ready` with the number
+/// assigned to the stream. Once [`poll_capacity`] returns `Ready` with the number
 /// of octets available to the stream, the caller is able to actually send the
 /// data using [`send_data`].
 ///
@@ -73,6 +73,8 @@ use std::fmt;
 /// [`SendResponse`]: server/struct.SendResponse.html
 /// [specification]: http://httpwg.org/specs/rfc7540.html#FlowControl
 /// [`reserve_capacity`]: #method.reserve_capacity
+/// [`poll_capacity`]: #method.poll_capacity
+/// [`send_data`]: #method.send_data
 #[derive(Debug)]
 pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
@@ -90,9 +92,15 @@ pub struct SendStream<B: IntoBuf> {
 /// See method level documentation for more details on receivng data. See
 /// [`ReleaseCapacity`] for more details on inbound flow control.
 ///
+/// Note that this type implements [`Stream`], yielding the received data frames.
+/// When this implementation is used, the capacity is immediately released when
+/// the data is yielded. It is recommended to only use this API when the data
+/// will not be retained in memory for extended periods of time.
+///
 /// [`client::ResponseFuture`]: client/struct.ResponseFuture.html
 /// [`server::Connection`]: server/struct.Connection.html
 /// [`ReleaseCapacity`]: struct.ReleaseCapacity.html
+/// [`Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
 #[must_use = "streams do nothing unless polled"]
 pub struct RecvStream {
     inner: ReleaseCapacity,
