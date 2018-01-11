@@ -57,9 +57,10 @@
 //! returns `Ready`. At this point, the underlying socket has been closed and no
 //! further work needs to be done.
 //!
-//! The easiest option is to submit the [`Connection`] instance to an
-//! [executor]. The executor will then manage polling the connection until the
-//! connection is complete.
+//! The easiest way to ensure that the [`Connection`] instance gets polled is to
+//! submit the [`Connection`] instance to an [executor]. The executor will then
+//! manage polling the connection until the connection is complete.
+//! Alternatively, the caller can call `poll` manually.
 //!
 //! # Example
 //!
@@ -200,7 +201,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 ///
 /// This type does no work itself. Instead, it is a handle to the inner
 /// connection state held by [`Connection`]. If the associated connection
-/// instance is dropped, all `SendRequest` functions will error.
+/// instance is dropped, all `SendRequest` functions will return [`Error`].
 ///
 /// [`SendRequest`] instances are able to move to and operate on separate tasks
 /// / threads than their associated [`Connection`] instance. Internally, there
@@ -216,6 +217,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// [module]: index.html
 /// [`Connection`]: struct.Connection.html
 /// [`Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
+/// [`Error`]: ../struct.Error.html
 pub struct SendRequest<B: IntoBuf> {
     inner: proto::Streams<B::Buf, Peer>,
     pending: Option<proto::StreamKey>,
@@ -239,7 +241,7 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// `Connection` values are created by calling [`handshake`]. Once a
 /// `Connection` value is obtained, the caller must repeatedly call [`poll`]
 /// until `Ready` is returned. The easiest way to do this is to submit the
-/// `Connection` instance to an executor.
+/// `Connection` instance to an [executor].
 ///
 /// [module]: index.html
 /// [`handshake`]: fn.handshake.html
@@ -248,6 +250,7 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// [`SendStream`]: ../struct.SendStream.html
 /// [`RecvStream`]: ../struct.RecvStream.html
 /// [`poll`]: #method.poll
+//! [executor]: https://docs.rs/futures/0.1/futures/future/trait.Executor.html
 ///
 /// # Examples
 ///
