@@ -2,19 +2,22 @@
 //!
 //! # Getting started
 //!
-//! Running an HTTP/2.0 requires the caller to manage accepting the connections
-//! as well as getting the connections to a state that is ready to begin the
-//! HTTP/2.0 handshake. See [here](../index.html#handshake) for more details.
+//! Running an HTTP/2.0 server requires the caller to manage accepting the
+//! connections as well as getting the connections to a state that is ready to
+//! begin the HTTP/2.0 handshake. See [here](../index.html#handshake) for more
+//! details.
 //!
-//! Once a connection is obtained and primed (ALPN negotiation, HTTP/1.1
-//! upgrade, etc...), the connection handle is passed to
-//! [`Connection::handshake`], which will begin the [HTTP/2.0 handshake]. This
-//! returns a future that will complete once the handshake is complete and
-//! HTTP/2.0 streams may be received.
+//! This could be as basic as using Tokio's [`TcpListener`] to accept
+//! connections, but usually it means using either ALPN or HTTP/1.1 protocol
+//! upgrades.
 //!
-//! [`Connection::handshake`] will use a default configuration. There are a
-//! number of configuration values that can be set by using a [`Builder`]
-//! instead.
+//! Once a connection is obtained, it is passed to [`handshake`],
+//! which will begin the [HTTP/2.0 handshake]. This returns a future that
+//! completes once the handshake process is performed and HTTP/2.0 streams may
+//! be received.
+//!
+//! [`handshake`] uses default configuration values. THere are a number of
+//! settings that can be changed by using [`Builder`] instead.
 //!
 //! # Inbound streams
 //!
@@ -32,8 +35,8 @@
 //!
 //! # Managing the connection
 //!
-//! The [`Connection`] instance is used to manage the connection state. The
-//! caller is required to call either [`Connection::poll`] or
+//! The [`Connection`] instance is used to manage connection state. The caller
+//! is required to call either [`Connection::poll`] or
 //! [`Connection::poll_close`] in order to advance the connection state. Simply
 //! operating on [`SendStream`] or [`RecvStream`] will have no effect unless the
 //! connection state is advanced.
@@ -117,7 +120,7 @@
 //! ```
 //!
 //! [prior knowledge]: http://httpwg.org/specs/rfc7540.html#known-http
-//! [`Connection::handshake`]: struct.Connection.html#method.handshake
+//! [`handshake`]: fn.handshake.html
 //! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
 //! [`Connection`]: struct.Connection.html
@@ -125,7 +128,9 @@
 //! [`Connection::poll_close`]: struct.Connection.html#method.poll_close
 //! [`futures::Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
 //! [`http::Request<RecvStream>`]: ../struct.RecvStream.html
+//! [`RecvStream`]: ../struct.RecvStream.html
 //! [`SendStream`]: ../struct.SendStream.html
+//! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
@@ -209,10 +214,9 @@ pub struct Connection<T, B: IntoBuf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
-/// Client connection factory, which can be used in order to configure the
-/// properties of the HTTP/2.0 server before it is created.
+/// Builds server connections with custom configuration values.
 ///
-/// Methods can be changed on it in order to configure it.
+/// Methods can be chained in order to set the configuration values.
 ///
 /// The server is constructed by calling [`handshake`] and passing the I/O
 /// handle that will back the HTTP/2.0 server.
@@ -306,7 +310,7 @@ pub(crate) struct Peer;
 
 const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-/// Create a new configured HTTP/2.0 server with default configuration
+/// Creates a new configured HTTP/2.0 server with default configuration
 /// values backed by `io`.
 ///
 /// It is expected that `io` already be in an appropriate state to commence
@@ -324,19 +328,23 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
+/// # extern crate futures;
 /// # extern crate h2;
 /// # extern crate tokio_io;
 /// # use tokio_io::*;
+/// # use futures::*;
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
-/// # -> Handshake<T>
 /// # {
-/// // `server_fut` is a future representing the completion of the HTTP/2.0
-/// // handshake.
-/// let handshake_fut = server::handshake(my_io);
-/// # handshake_fut
+/// server::handshake(my_io)
+///     .and_then(|connection| {
+///         // The HTTP/2.0 handshake has completed, now use `connection` to
+///         // accept inbound HTTP/2.0 streams.
+///         # Ok(())
+///     })
+///     # .wait().unwrap();
 /// # }
 /// #
 /// # pub fn main() {}
@@ -470,7 +478,7 @@ where
 // ===== impl Builder =====
 
 impl Builder {
-    /// Return a new client builder instance initialized with default
+    /// Returns a new server builder instance initialized with default
     /// configuration values.
     ///
     /// Configuration methods can be chained on the return value.
@@ -581,18 +589,48 @@ impl Builder {
         self
     }
 
-    /// Set the max size of received header frames.
+    /// Sets the max size of received header frames.
+    ///
+    /// This advisory setting informs a peer of the maximum size of header list
+    /// that the sender is prepared to accept, in octets. The value is based on
+    /// the uncompressed size of header fields, including the length of the name
+    /// and value in octets plus an overhead of 32 octets for each header field.
+    ///
+    /// This setting is also used to limit the maximum amount of data that is
+    /// buffered to decode HEADERS frames.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .max_header_list_size(16 * 1024)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_header_list_size(Some(max));
         self
     }
 
-    /// Set the maximum number of concurrent streams.
+    /// Sets the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
-    /// of streams that can be initiated by the remote peer. In otherwords, when
-    /// this setting is set to 100, this does not limit the number of concurrent
-    /// streams that can be created by the caller.
+    /// of streams that can be initiated by the remote peer. In other words,
+    /// when this setting is set to 100, this does not limit the number of
+    /// concurrent streams that can be created by the caller.
     ///
     /// It is recommended that this value be no smaller than 100, so as to not
     /// unnecessarily limit parallelism. However, any value is legal, including
@@ -637,7 +675,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -685,7 +723,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -734,7 +772,7 @@ impl Builder {
         self
     }
 
-    /// Create a new configured HTTP/2.0 server backed by `io`.
+    /// Creates a new configured HTTP/2.0 server backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
     /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
@@ -765,16 +803,16 @@ impl Builder {
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
     /// // handshake.
-    /// let handshake_fut = Builder::new()
+    /// let server_fut = Builder::new()
     ///     .handshake(my_io);
-    /// # handshake_fut
+    /// # server_fut
     /// # }
     /// #
     /// # pub fn main() {}
     /// ```
     ///
-    /// Customizing the outbound data type. In this case, the outbound data type
-    /// will be `&'static [u8]`.
+    /// Configures the send-payload data type. In this case, the outbound data
+    /// type will be `&'static [u8]`.
     ///
     /// ```
     /// # extern crate h2;
