@@ -5,7 +5,16 @@ use std::{error, fmt, io};
 
 pub use frame::Reason;
 
-/// The error type for HTTP/2 operations
+/// Represents HTTP/2.0 operation errors.
+///
+/// `Error` covers error cases raised by protocol errors caused by the
+/// peer, I/O (transport) errors, and errors caused by the user of the library.
+///
+/// If the error was caused by the remote peer, then it will contain a
+/// [`Reason`] which can be obtained with the [`reason`] function.
+///
+/// [`Reason`]: struct.Reason.html
+/// [`reason`]: #method.reason
 #[derive(Debug)]
 pub struct Error {
     kind: Kind,
@@ -112,19 +121,3 @@ impl error::Error for Error {
         }
     }
 }
-
-// ===== impl User =====
-
-/*
-impl User {
-    pub fn description(&self) -> &str {
-        user_desc!(*self)
-    }
-}
-
-impl fmt::Display for User {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.description())
-    }
-}
-*/
