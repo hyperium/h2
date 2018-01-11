@@ -329,9 +329,11 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
+/// # extern crate futures;
 /// # extern crate h2;
 /// # extern crate tokio_io;
 /// # use tokio_io::*;
+/// # use futures::*;
 /// # use h2::server;
 /// # use h2::server::*;
 /// #

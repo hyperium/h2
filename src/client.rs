@@ -1047,8 +1047,10 @@ impl Default for Builder {
 /// # Examples
 ///
 /// ```
+/// # extern crate futures;
 /// # extern crate h2;
 /// # extern crate tokio_io;
+/// # use futures::*;
 /// # use tokio_io::*;
 /// # use h2::client;
 /// # use h2::client::*;
@@ -1056,7 +1058,7 @@ impl Default for Builder {
 /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
 /// # {
 /// client::handshake(my_io)
-///     .and_then(|send_request, connection| {
+///     .and_then(|(send_request, connection)| {
 ///         // The HTTP/2.0 handshake has completed, now start polling
 ///         // `connection` and use `send_request` to send requests to the
 ///         // server.
