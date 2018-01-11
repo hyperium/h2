@@ -19,6 +19,17 @@ use std::fmt;
 ///
 /// The `SendStream` instance is also used to manage outbound flow control.
 ///
+/// If a `SendStream` is dropped without explicitly closing the send stream, a
+/// `RST_STREAM` frame will be sent. This essentially cancels the request /
+/// response exchange.
+///
+/// The ways to explicitly close the send stream are:
+///
+/// * Set `end_of_stream` to true when calling [`send_request`],
+///   [`send_response`], or [`send_data`].
+/// * Send trailers with [`send_trailers`].
+/// * Explicitly reset the stream with [`send_reset`].
+///
 /// # Flow control
 ///
 /// In HTTP/2.0, data cannot be sent to the remote peer unless there is
@@ -69,12 +80,17 @@ use std::fmt;
 ///
 /// See [`reserve_capacity`] documentation for more details.
 ///
-/// [`SendRequest`]: client/struct/SendRequest.html
+/// [`SendRequest`]: client/struct.SendRequest.html
 /// [`SendResponse`]: server/struct.SendResponse.html
 /// [specification]: http://httpwg.org/specs/rfc7540.html#FlowControl
 /// [`reserve_capacity`]: #method.reserve_capacity
 /// [`poll_capacity`]: #method.poll_capacity
 /// [`send_data`]: #method.send_data
+/// [`send_request`]: client/struct.SendRequest.html#method.send_request
+/// [`send_response`]: server/struct.SendResponse.html#method.send_response
+/// [`send_data`]: #method.send_data
+/// [`send_trailers`]: #method.send_trailers
+/// [`send_reset`]: #method.send_reset
 #[derive(Debug)]
 pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
@@ -89,7 +105,7 @@ pub struct SendStream<B: IntoBuf> {
 /// It is used to receive the streaming message body from the remote peer,
 /// receive any trailers, as well as to manage inbound flow control.
 ///
-/// See method level documentation for more details on receivng data. See
+/// See method level documentation for more details on receiving data. See
 /// [`ReleaseCapacity`] for more details on inbound flow control.
 ///
 /// Note that this type implements [`Stream`], yielding the received data frames.
@@ -170,36 +186,132 @@ impl<B: IntoBuf> SendStream<B> {
         SendStream { inner }
     }
 
-    /// Request capacity to send data
+    /// Requests capacity to send data.
+    ///
+    /// This function is used to express intent to send data. This requests
+    /// connection level capacity. Once the capacity is available, it is
+    /// assigned to the stream and not reused by other streams.
+    ///
+    /// This function may be called repeatedly. The `capacity` argument is the
+    /// **total** amount of requested capacity. Sequential calls to
+    /// `reserve_capacity` are *not* additive. Given the following:
+    ///
+    /// ```rust
+    /// # fn doc(send_stream: SendStream<&'static [u8]>) {
+    /// send_stream.reserve_capacity(100);
+    /// send_stream.reserve_capacity(200);
+    /// # }
+    /// ```
+    ///
+    /// After the second call to `reserve_capacity`, the *total* requested
+    /// capacity will be 200.
+    ///
+    /// `reserve_capacity` is also used to cancel previous capacity requests.
+    /// Given the following:
+    ///
+    /// ```rust
+    /// # fn doc(send_stream: SendStream<&'static [u8]>) {
+    /// send_stream.reserve_capacity(100);
+    /// send_stream.reserve_capacity(0);
+    /// # }
+    /// ```
+    ///
+    /// After the second call to `reserve_capacity`, the *total* requested
+    /// capcaity will be 0, i.e. there is no requested capacity for the stream.
+    ///
+    /// If `reserve_capacity` is called with a lower value than the amount of
+    /// capacity **currently** assigned to the stream, this capacity will be
+    /// returned to the connection to be re-assigned to other streams.
+    ///
+    /// Also, the amount of capacity that is reserved gets decremented as data
+    /// is sent. For example:
+    ///
+    /// ```rust
+    /// # fn doc(mut send_stream: SendStream<&'static [u8]>) {
+    /// send_stream.reserve_capacity(100);
+    ///
+    /// let capacity = send_stream.poll_capacity();
+    /// // capacity == 5;
+    ///
+    /// send_stream.send_data(b"hello").unwrap();
+    /// // At this point, the total amount of requested capacity is 95 bytes.
+    ///
+    /// // Calling `reserve_capacity` with `100` again essentially requests an
+    /// // additional 5 bytes.
+    /// send_stream.reserve_capacity(100);
+    /// # }
+    /// ```
+    ///
+    /// See [Flow contro](struct.SendStream.html#flow-control) for an overview
+    /// of how send flow control works.
     pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
         self.inner.reserve_capacity(capacity as WindowSize)
     }
 
     /// Returns the stream's current send capacity.
+    ///
+    /// This allows the caller to check the current amount of available capacity
+    /// before sending data.
     pub fn capacity(&self) -> usize {
         self.inner.capacity() as usize
     }
 
-    /// Request to be notified when the stream's capacity increases
+    /// Requests to be notified when the stream's capacity increases.
+    ///
+    /// Before calling this, capacity should be requested with
+    /// [`reserve_capacity`]. Once capacity is requested, the connection will
+    /// assign capacity to the stream **as it becomes available**. There is no
+    /// guarantee as to when and in what increments capacity gets assigned to
+    /// the stream.
+    ///
+    /// To get notified when the available capacity increases, the caller calls
+    /// `poll_capacity`, which returns `Ready(Some(n))` when `n` has been
+    /// increased by the connection. Note that `n` here represents the **total**
+    /// amount of assigned capacity at that point in time. It is also possible
+    /// that `n` is lower than the previous call if, since then, the caller has
+    /// sent data.
     pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ::Error> {
         let res = try_ready!(self.inner.poll_capacity());
         Ok(Async::Ready(res.map(|v| v as usize)))
     }
 
-    /// Send a single data frame
+    /// Sends a single data frame to the remote peer.
+    ///
+    /// This function may be called repeatedly as long as `end_of_stream` is set
+    /// to `false`. Setting `end_of_stream` to `true` sets the end stream flag
+    /// on the data frame. Any further calls to `send_data` or `send_trailers`
+    /// will return an [`Error`].
+    ///
+    /// `send_data` can be called without reserving capacity. In this case, the
+    /// data is buffered and the capacity is implicitly requested. Once the
+    /// capacity becomes available, the data is flushed to the connection.
+    /// However, this buffering is unbounded. As such, sending large amounts of
+    /// data without reserving capacity before hand could result in large
+    /// amounts of data being buffered in memory.
+    ///
+    /// [`Error`]: struct.Error.html
     pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), ::Error> {
         self.inner
             .send_data(data.into_buf(), end_of_stream)
             .map_err(Into::into)
     }
 
-    /// Send trailers
+    /// Sends trailers to the remote peer.
+    ///
+    /// Sending trailers implicitly closes the send stream. Once the send stream
+    /// is closed, no more data can be sent.
     pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
         self.inner.send_trailers(trailers).map_err(Into::into)
     }
 
-    /// Reset the stream
+    /// Resets the stream.
+    ///
+    /// This cancels the request / response exchange. If the response has not
+    /// yet been received, the associatd `ResponseFuture` will return an
+    /// [`Error`] to reflect the canceled exchange.
+    ///
+    /// [`Error`]: struct.Error.html
     pub fn send_reset(&mut self, reason: Reason) {
         self.inner.send_reset(reason)
     }

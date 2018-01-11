@@ -8,9 +8,9 @@ use std::fmt;
 /// [`SendStream::send_reset`] takes a `Reason` argument. Also, the `Error` type
 /// may contain a `Reason`.
 ///
-/// Error codes share a common code space. Some error codes apply only to either
-/// streams or the entire connection and have no defined semantics in the other
-/// context.
+/// Error codes share a common code space. Some error codes apply only to
+/// streams, others apply only to connections, and others may apply to either.
+/// See [RFC 7540] for more information.
 ///
 /// See [Error Codes in the spec][spec].
 ///
