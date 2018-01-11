@@ -14,7 +14,7 @@
 //! begin the [HTTP/2.0 handshake]. This returns a future that completes once
 //! the handshake process is performed and HTTP/2.0 streams may be initialized.
 //!
-//! [`handshake`] uses default configuration values. THere are a number of
+//! [`handshake`] uses default configuration values. There are a number of
 //! settings that can be changed by using [`Builder`] instead.
 //!
 //! Once the the handshake future completes, the caller is provided with a
@@ -26,7 +26,7 @@
 //! # Making requests
 //!
 //! Requests are made using the [`SendRequest`] handle provided by the handshake
-//! future. Once the request is submitted, an HTTP/2.0 stream is initialized and
+//! future. Once a request is submitted, an HTTP/2.0 stream is initialized and
 //! the request is sent to the server.
 //!
 //! A request body and request trailers are sent using [`SendRequest`] and the
@@ -35,15 +35,16 @@
 //! [`SendRequest::send_request`] and are tied to the HTTP/2.0 stream
 //! initialized by the sent request.
 //!
-//! The [`MAX_CONCURRENT_STREAMS`] setting is enforced by [`SendRequest`]. A
-//! request cannot be sent if the number of currently active streams has reached
-//! the maximum permitted for the connection.
-//!
 //! The [`SendRequest::poll_ready`] function returns `Ready` when a new HTTP/2.0
-//! stream can be created. If a new stream cannot be created, the caller will be
-//! notified once an existing stream closes, freeing capacity for the caller.
-//! The caller should use [`SendRequest::poll_ready`] to check for capacity
-//! before sending a request to the server.
+//! stream can be created, i.e. as long as the current number of active streams
+//! is below [`MAX_CONCURRENT_STREAMS`]. If a new stream cannot be created, the
+//! caller will be notified once an existing stream closes, freeing capacity for
+//! the caller.  The caller should use [`SendRequest::poll_ready`] to check for
+//! capacity before sending a request to the server.
+//!
+//! [`SendRequest`] enforces the [`MAX_CONCURRENT_STREAMS`] setting. The user
+//! must not send a request if `poll_ready` does not return `Ready`. Attempting
+//! to do so will result in an [`Error`] being returned.
 //!
 //! # Managing the connection
 //!
@@ -56,7 +57,9 @@
 //! returns `Ready`. At this point, the underlying socket has been closed and no
 //! further work needs to be done.
 //!
-//! The easiest is to just submit the [`Connection`] instance to an [executor].
+//! The easiest option is to submit the [`Connection`] instance to an
+//! [executor]. The executor will then manage polling the connection until the
+//! connection is complete.
 //!
 //! # Example
 //!
@@ -150,6 +153,7 @@
 //! [`SendRequest::poll_ready`]: struct.SendRequest.html#method.poll_ready
 //! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
+//! [`Error`]: ../struct.Error.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError, SendError, UserError};
