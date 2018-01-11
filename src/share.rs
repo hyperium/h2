@@ -102,8 +102,9 @@ pub struct SendStream<B: IntoBuf> {
 /// [`server::Connection`] with the received HTTP/2.0 message head (the response
 /// and request head respectively).
 ///
-/// It is used to receive the streaming message body from the remote peer,
-/// receive any trailers, as well as to manage inbound flow control.
+/// A `RecvStream` instance is used to receive the streaming message body and
+/// any trailers from the remote peer. It is also used to manage inbound flow
+/// control.
 ///
 /// See method level documentation for more details on receiving data. See
 /// [`ReleaseCapacity`] for more details on inbound flow control.
