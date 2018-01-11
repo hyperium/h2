@@ -340,8 +340,8 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # {
 /// // `server_fut` is a future representing the completion of the HTTP/2.0
 /// // handshake.
-/// let handshake_fut = server::handshake(my_io);
-/// # handshake_fut
+/// let server_fut = server::handshake(my_io);
+/// # server_fut
 /// # }
 /// #
 /// # pub fn main() {}

@@ -91,13 +91,18 @@
 //!                 panic!("failed to establish TCP connection")
 //!             })
 //!             .and_then(|tcp| client::handshake(tcp))
-//!             .and_then(|(mut h2, connection)| {
+//!             .and_then(|(h2, connection)| {
 //!                 let connection = connection
 //!                     .map_err(|_| panic!("HTTP/2.0 connection failed"));
 //!
 //!                 // Spawn a new task to drive the connection state
 //!                 handle.spawn(connection);
 //!
+//!                 // Wait until the `SendRequest` handle has available
+//!                 // capacity.
+//!                 h2.ready()
+//!             })
+//!             .and_then(|mut h2| {
 //!                 // Prepare the HTTP request to send to the server.
 //!                 let request = Request::builder()
 //!                     .method(Method::GET)
@@ -373,6 +378,39 @@ where
 
     /// Consumes `self`, returning a future that returns `self` back once it is
     /// ready to send a request.
+    ///
+    /// This function should be called before calling `send_request`.
+    ///
+    /// This is a functional combinator for [`poll_ready`]. The returned future
+    /// will call `SendStream::poll_ready` until `Ready`, then returns `self` to
+    /// the caller.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # extern crate futures;
+    /// # extern crate h2;
+    /// # extern crate http;
+    /// # use futures::*;
+    /// # use h2::client::*;
+    /// # use http::*;
+    /// # fn doc(send_request: SendRequest<&'static [u8]>)
+    /// # {
+    /// // First, wait until the `send_request` handle is ready to send a new
+    /// // request
+    /// send_request.ready()
+    ///     .and_then(|mut send_request| {
+    ///         // Use `send_request` here.
+    ///         # Ok(())
+    ///     })
+    ///     # .wait().unwrap();
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// See [module] level docs for more details.
+    ///
+    /// [module]: index.html
     pub fn ready(self) -> ReadySendRequest<B> {
         ReadySendRequest { inner: Some(self) }
     }
@@ -410,6 +448,96 @@ where
     ///
     /// The caller should always set the request's version field to 2.0 unless
     /// specifically transmitting an HTTP 1.1 request over 2.0.
+    ///
+    /// # Examples
+    ///
+    /// Sending a request with no body
+    ///
+    /// ```rust
+    /// # extern crate futures;
+    /// # extern crate h2;
+    /// # extern crate http;
+    /// # use futures::*;
+    /// # use h2::client::*;
+    /// # use http::*;
+    /// # fn doc(send_request: SendRequest<&'static [u8]>)
+    /// # {
+    /// // First, wait until the `send_request` handle is ready to send a new
+    /// // request
+    /// send_request.ready()
+    ///     .and_then(|mut send_request| {
+    ///         // Prepare the HTTP request to send to the server.
+    ///         let request = Request::get("https://www.example.com/")
+    ///             .body(())
+    ///             .unwrap();
+    ///
+    ///         // Send the request to the server. Since we are not sending a
+    ///         // body or trailers, we can drop the `SendStream` instance.
+    ///         let (response, _) = send_request
+    ///             .send_request(request, true).unwrap();
+    ///
+    ///         response
+    ///     })
+    ///     .and_then(|response| {
+    ///         // Process the response
+    ///         # Ok(())
+    ///     })
+    ///     # .wait().unwrap();
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// Sending a request with a body and trailers
+    ///
+    /// ```rust
+    /// # extern crate futures;
+    /// # extern crate h2;
+    /// # extern crate http;
+    /// # use futures::*;
+    /// # use h2::client::*;
+    /// # use http::*;
+    /// # fn doc(send_request: SendRequest<&'static [u8]>)
+    /// # {
+    /// // First, wait until the `send_request` handle is ready to send a new
+    /// // request
+    /// send_request.ready()
+    ///     .and_then(|mut send_request| {
+    ///         // Prepare the HTTP request to send to the server.
+    ///         let request = Request::get("https://www.example.com/")
+    ///             .body(())
+    ///             .unwrap();
+    ///
+    ///         // Send the request to the server. Since we are not sending a
+    ///         // body or trailers, we can drop the `SendStream` instance.
+    ///         let (response, mut send_stream) = send_request
+    ///             .send_request(request, false).unwrap();
+    ///
+    ///         // At this point, one option would be to wait for send capacity.
+    ///         // Doing so would allow us to not hold data in memory that
+    ///         // cannot be sent. However, this is not a requirement, so this
+    ///         // example will skip that step. See `SendStream` documentation
+    ///         // for more details.
+    ///         send_stream.send_data(b"hello", false).unwrap();
+    ///         send_stream.send_data(b"world", false).unwrap();
+    ///
+    ///         // Send the trailers.
+    ///         let mut trailers = HeaderMap::new();
+    ///         trailers.insert(
+    ///             header::HeaderName::from_bytes(b"my-trailer").unwrap(),
+    ///             header::HeaderValue::from_bytes(b"hello").unwrap());
+    ///
+    ///         send_stream.send_trailers(trailers).unwrap();
+    ///
+    ///         response
+    ///     })
+    ///     .and_then(|response| {
+    ///         // Process the response
+    ///         # Ok(())
+    ///     })
+    ///     # .wait().unwrap();
+    /// # }
+    /// # pub fn main() {}
+    /// ```
     ///
     /// [`ResponseFuture`]: struct.ResponseFuture.html
     /// [`SendStream`]: ../struct.SendStream.html
@@ -899,13 +1027,43 @@ impl Default for Builder {
     }
 }
 
-/// Bind an H2 client connection.
+/// Create a new configured HTTP/2.0 client with default configuration
+/// values backed by `io`.
 ///
-/// Returns a future which resolves to the connection value once the H2
-/// handshake has been completed.
+/// It is expected that `io` already be in an appropriate state to commence
+/// the [HTTP/2.0 handshake]. See [Handshake] for more details.
 ///
-/// It's important to note that this does not **flush** the outbound
-/// settings to the wire.
+/// Returns a future which resolves to the [`Connection`] / [`SendRequest`]
+/// tuple once the HTTP/2.0 handshake has been completed. The returned
+/// [`Connection`] instance will be using default configuration values. Use
+/// [`Builder`] to customize the configuration values used by a [`Connection`]
+/// instance.
+///
+/// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+/// [Handshake]: ../index.html#handshake
+/// [`Connection`]: struct.Connection.html
+/// [`SendRequest`]: struct.SendRequest.html
+///
+/// # Examples
+///
+/// ```
+/// # extern crate h2;
+/// # extern crate tokio_io;
+/// # use tokio_io::*;
+/// # use h2::server;
+/// # use h2::server::*;
+/// #
+/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # -> Handshake<T>
+/// # {
+/// // `client_fut` is a future representing the completion of the HTTP/2.0
+/// // handshake.
+/// let client_fut = client::handshake(my_io);
+/// # client_fut
+/// # }
+/// #
+/// # pub fn main() {}
+/// ```
 pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
 where T: AsyncRead + AsyncWrite,
 {
@@ -936,7 +1094,21 @@ where
 
     /// Sets the target window size for the whole connection.
     ///
-    /// Default in HTTP2 is 65_535.
+    /// If `size` is greater than the current value, then a `WINDOW_UPDATE`
+    /// frame will be immediately sent to the remote, increasing the connection
+    /// level window by `size - current_value`.
+    ///
+    /// If `size` is less than the current value, nothing will happen
+    /// immediately. However, as window capacity is released by
+    /// [`ReleaseCapacity`] instances, no `WINDOW_UPDATE` frames will be sent
+    /// out until the number of "in flight" bytes drops below `size`.
+    ///
+    /// The default value is 65,535.
+    ///
+    /// See [`ReleaseCapacity`] documentation for more details.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    /// [library level]: ../index.html#flow-control
     pub fn set_target_window_size(&mut self, size: u32) {
         assert!(size <= proto::MAX_WINDOW_SIZE);
         self.inner.set_target_window_size(size);
