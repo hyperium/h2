@@ -197,7 +197,8 @@ impl<B: IntoBuf> SendStream<B> {
     /// `reserve_capacity` are *not* additive. Given the following:
     ///
     /// ```rust
-    /// # fn doc(send_stream: SendStream<&'static [u8]>) {
+    /// # use h2::*;
+    /// # fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
     /// send_stream.reserve_capacity(200);
     /// # }
@@ -210,7 +211,8 @@ impl<B: IntoBuf> SendStream<B> {
     /// Given the following:
     ///
     /// ```rust
-    /// # fn doc(send_stream: SendStream<&'static [u8]>) {
+    /// # use h2::*;
+    /// # fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
     /// send_stream.reserve_capacity(0);
     /// # }
@@ -227,13 +229,14 @@ impl<B: IntoBuf> SendStream<B> {
     /// is sent. For example:
     ///
     /// ```rust
+    /// # use h2::*;
     /// # fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
     ///
     /// let capacity = send_stream.poll_capacity();
     /// // capacity == 5;
     ///
-    /// send_stream.send_data(b"hello").unwrap();
+    /// send_stream.send_data(b"hello", false).unwrap();
     /// // At this point, the total amount of requested capacity is 95 bytes.
     ///
     /// // Calling `reserve_capacity` with `100` again essentially requests an
