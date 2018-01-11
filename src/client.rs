@@ -28,6 +28,13 @@ pub struct SendRequest<B: IntoBuf> {
     pending: Option<proto::StreamKey>,
 }
 
+/// Returns a `SendRequest` instance once it is ready to send at least one
+/// request.
+#[derive(Debug)]
+pub struct ReadySendRequest<B: IntoBuf> {
+    inner: Option<SendRequest<B>>,
+}
+
 /// A future to drive the H2 protocol on a connection.
 ///
 /// This must be placed in an executor to ensure proper connection management.
@@ -76,6 +83,12 @@ where
         try_ready!(self.inner.poll_pending_open(self.pending.as_ref()));
         self.pending = None;
         Ok(().into())
+    }
+
+    /// Consumes `self`, returning a future that returns `self` back once it is
+    /// ready to send a request.
+    pub fn ready(self) -> ReadySendRequest<B> {
+        ReadySendRequest { inner: Some(self) }
     }
 
     /// Send a request on a new HTTP 2.0 stream
@@ -144,6 +157,27 @@ where
     /// userspace handles pointing to the slot.
     pub fn num_wired_streams(&self) -> usize {
         self.inner.num_wired_streams()
+    }
+}
+
+// ===== impl ReadySendRequest =====
+
+impl<B> Future for ReadySendRequest<B>
+where B: IntoBuf,
+      B::Buf: 'static,
+{
+    type Item = SendRequest<B>;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.inner {
+            Some(ref mut send_request) => {
+                let _ = try_ready!(send_request.poll_ready());
+            }
+            None => panic!("called `poll` after future completed"),
+        }
+
+        Ok(self.inner.take().unwrap().into())
     }
 }
 
