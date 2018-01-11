@@ -197,10 +197,20 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// connection state held by [`Connection`]. If the associated connection
 /// instance is dropped, all `SendRequest` functions will error.
 ///
+/// [`SendRequest`] instances are able to move to and operate on separate tasks
+/// / threads than their associated [`Connection`] instance. Internally, there
+/// is a buffer used to stage requests before they get written to the
+/// connection. There is no guarantee that requests get written to the
+/// connection in FIFO order as HTTP/2.0 prioritization logic can play a role.
+///
+/// [`SendRequest`] implements [`Clone`], enabling the creation of many
+/// instances that are backed by a single connection.
+///
 /// See [module] level documentation for more details.
 ///
 /// [module]: index.html
 /// [`Connection`]: struct.Connection.html
+/// [`Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 pub struct SendRequest<B: IntoBuf> {
     inner: proto::Streams<B::Buf, Peer>,
     pending: Option<proto::StreamKey>,
@@ -339,15 +349,60 @@ where
     B: IntoBuf,
     B::Buf: 'static,
 {
-    /// Returns `Ready` when the connection can initialize a new HTTP 2.0
+    /// Returns `Ready` when the connection can initialize a new HTTP/2.0
     /// stream.
+    ///
+    /// This function must return `Ready` before `send_request` is called. When
+    /// `NotReady` is returned, the task will be notified once the readiness
+    /// state changes.
+    ///
+    /// See [module] level docs for more details.
+    ///
+    /// [module]: index.html
     pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
         try_ready!(self.inner.poll_pending_open(self.pending.as_ref()));
         self.pending = None;
         Ok(().into())
     }
 
-    /// Send a request on a new HTTP 2.0 stream
+    /// Send a HTTP/2.0 request to the server.
+    ///
+    /// `send_request` initializes a new HTTP/2.0 stream on the associated
+    /// connection, then sends the given request using this new stream. Only the
+    /// request head is sent.
+    ///
+    /// On success, a [`ResponseFuture`] instance and [`SendStream`] instance
+    /// are returned. The [`ResponseFuture`] instance is used to get the
+    /// server's response and the [`SendStream`] instance is used to send a
+    /// request body or trailers to the server over the same HTTP/2.0 stream.
+    ///
+    /// To send a request body or trailers, set `end_of_stream` to `true`. Then,
+    /// use the returned [`SendStream`] instance to stream request body chunks
+    /// or send trailers. If `end_of_stream` is **not** set to `true` then
+    /// attempting to call [`SendStream::send_data`] or
+    /// [`SendStream::send_trailers`] will result in an error.
+    ///
+    /// If no request body or trailers are to be sent, set `end_of_stream` to
+    /// `false` and drop the returned [`SendStream`] instance.
+    ///
+    /// # A note on HTTP versions
+    ///
+    /// The provided `Request` will be encoded differently depending on the
+    /// value of its version field. If the version is set to 2.0, then the
+    /// request is encoded as per the specification recommends.
+    ///
+    /// If the version is set to a lower value, then the request is encoded to
+    /// preserve the characteristics of HTTP 1.1 and lower. Specifically, host
+    /// headers are permitted and the `:authority` pseudo header is not
+    /// included.
+    ///
+    /// The caller should always set the request's version field to 2.0 unless
+    /// specifically transmitting an HTTP 1.1 request over 2.0.
+    ///
+    /// [`ResponseFuture`]: struct.ResponseFuture.html
+    /// [`SendStream`]: ../struct.SendStream.html
+    /// [`SendStream::send_data`]: ../struct.SendStream.html#method.send_data
+    /// [`SendStream::send_trailers`]: ../struct.SendStream.html#method.send_trailers
     pub fn send_request(
         &mut self,
         request: Request<()>,
