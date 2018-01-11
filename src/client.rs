@@ -415,7 +415,7 @@ where
         ReadySendRequest { inner: Some(self) }
     }
 
-    /// Send a HTTP/2.0 request to the server.
+    /// Sends a HTTP/2.0 request to the server.
     ///
     /// `send_request` initializes a new HTTP/2.0 stream on the associated
     /// connection, then sends the given request using this new stream. Only the
@@ -635,7 +635,7 @@ where B: IntoBuf,
 // ===== impl Builder =====
 
 impl Builder {
-    /// Return a new client builder instance initialized with default
+    /// Returns a new client builder instance initialized with default
     /// configuration values.
     ///
     /// Configuration methods can be chained on the return value.
@@ -747,13 +747,43 @@ impl Builder {
         self
     }
 
-    /// Set the max size of received header frames.
+    /// Sets the max size of received header frames.
+    ///
+    /// This advisory setting informs a peer of the maximum size of header list
+    /// that the sender is prepared to accept, in octets. The value is based on
+    /// the uncompressed size of header fields, including the length of the name
+    /// and value in octets plus an overhead of 32 octets for each header field.
+    ///
+    /// This setting is also used to limit the maximum amount of data that is
+    /// buffered to decode HEADERS frames.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::client::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .max_header_list_size(16 * 1024)
+    ///     .client_fut(my_io);
+    /// # client_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_header_list_size(Some(max));
         self
     }
 
-    /// Set the maximum number of concurrent streams.
+    /// Sets the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
     /// of streams that can be initiated by the remote peer. In other words,
@@ -803,7 +833,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -900,7 +930,7 @@ impl Builder {
         self
     }
 
-    /// Enable or disable server push promises.
+    /// Enables or disables server push promises.
     ///
     /// This value is included in the initial SETTINGS handshake. When set, the
     /// server MUST NOT send a push promise. Setting this value to value to
@@ -950,7 +980,7 @@ impl Builder {
         self
     }
 
-    /// Create a new configured HTTP/2.0 client backed by `io`.
+    /// Creates a new configured HTTP/2.0 client backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
     /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
@@ -990,8 +1020,8 @@ impl Builder {
     /// # pub fn main() {}
     /// ```
     ///
-    /// Customizing the outbound data type. In this case, the outbound data type
-    /// will be `&'static [u8]`.
+    /// Configures the send-payload data type. In this case, the outbound data
+    /// type will be `&'static [u8]`.
     ///
     /// ```
     /// # extern crate h2;
@@ -1027,7 +1057,7 @@ impl Default for Builder {
     }
 }
 
-/// Create a new configured HTTP/2.0 client with default configuration
+/// Creates a new configured HTTP/2.0 client with default configuration
 /// values backed by `io`.
 ///
 /// It is expected that `io` already be in an appropriate state to commence

@@ -214,10 +214,9 @@ pub struct Connection<T, B: IntoBuf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
-/// Server connection factory, which can be used in order to configure the
-/// properties of the HTTP/2.0 server before it is created.
+/// Builds server connections with custom configuration values.
 ///
-/// Methods can be changed on it in order to configure it.
+/// Methods can be chained in order to set the configuration values.
 ///
 /// The server is constructed by calling [`handshake`] and passing the I/O
 /// handle that will back the HTTP/2.0 server.
@@ -311,7 +310,7 @@ pub(crate) struct Peer;
 
 const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-/// Create a new configured HTTP/2.0 server with default configuration
+/// Creates a new configured HTTP/2.0 server with default configuration
 /// values backed by `io`.
 ///
 /// It is expected that `io` already be in an appropriate state to commence
@@ -479,7 +478,7 @@ where
 // ===== impl Builder =====
 
 impl Builder {
-    /// Return a new server builder instance initialized with default
+    /// Returns a new server builder instance initialized with default
     /// configuration values.
     ///
     /// Configuration methods can be chained on the return value.
@@ -590,13 +589,43 @@ impl Builder {
         self
     }
 
-    /// Set the max size of received header frames.
+    /// Sets the max size of received header frames.
+    ///
+    /// This advisory setting informs a peer of the maximum size of header list
+    /// that the sender is prepared to accept, in octets. The value is based on
+    /// the uncompressed size of header fields, including the length of the name
+    /// and value in octets plus an overhead of 32 octets for each header field.
+    ///
+    /// This setting is also used to limit the maximum amount of data that is
+    /// buffered to decode HEADERS frames.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .max_header_list_size(16 * 1024)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
     pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_header_list_size(Some(max));
         self
     }
 
-    /// Set the maximum number of concurrent streams.
+    /// Sets the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
     /// of streams that can be initiated by the remote peer. In other words,
@@ -646,7 +675,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -694,7 +723,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -743,7 +772,7 @@ impl Builder {
         self
     }
 
-    /// Create a new configured HTTP/2.0 server backed by `io`.
+    /// Creates a new configured HTTP/2.0 server backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
     /// the [HTTP/2.0 handshake]. See [Handshake] for more details.
@@ -782,8 +811,8 @@ impl Builder {
     /// # pub fn main() {}
     /// ```
     ///
-    /// Customizing the outbound data type. In this case, the outbound data type
-    /// will be `&'static [u8]`.
+    /// Configures the send-payload data type. In this case, the outbound data
+    /// type will be `&'static [u8]`.
     ///
     /// ```
     /// # extern crate h2;
