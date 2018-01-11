@@ -884,7 +884,7 @@ impl Builder {
         self
     }
 
-    /// Set the maximum number of concurrent locally reset streams.
+    /// Sets the maximum number of concurrent locally reset streams.
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
@@ -972,7 +972,7 @@ impl Builder {
         self
     }
 
-    /// Set the first stream ID to something other than 1.
+    /// Sets the first stream ID to something other than 1.
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
         self.stream_id = stream_id.into();
