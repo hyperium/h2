@@ -3,6 +3,7 @@
 A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 [![Build Status](https://travis-ci.org/carllerche/h2.svg?branch=master)](https://travis-ci.org/carllerche/h2)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 <!-- [![Crates.io](https://img.shields.io/crates/v/h2.svg?maxAge=2592000)](https://crates.io/crates/h2) -->
 <!-- [![Documentation](https://docs.rs/h2/badge.svg)][dox] -->
 
@@ -54,6 +55,19 @@ fn main() {
 
 ## FAQ
 
+**How does h2 compare to [solicit] or [rust-http2]?**
+
+The h2 library has implemented more of the details of the HTTP/2.0 specification
+than any other Rust library. It also passes the [h2spec] set of tests. The h2
+library is rapidly approaching "production ready" quality.
+
+Besides the above, Solicit is built on blocking I/O and does not appear to be
+actively maintained.
+
 **Is this an embedded Java SQL database engine?**
 
 [No](http://www.h2database.com).
+
+[solicit]: https://github.com/mlalic/solicit
+[rust-http2]: https://github.com/stepancheg/rust-http2
+[h2spec]: https://github.com/summerwind/h2spec
