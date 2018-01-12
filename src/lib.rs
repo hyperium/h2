@@ -11,7 +11,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! h2 = { git = 'https://github.com/carllerche/h2' } # soon to be on crates.io!
+//! h2 = "0.1"
 //! ```
 //!
 //! Next, add this to your crate:
