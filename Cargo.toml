@@ -34,7 +34,7 @@ byteorder = "1.0"
 log = "0.3.8"
 fnv = "1.0.5"
 slab = "0.4.0"
-string = { git = "https://github.com/carllerche/string" }
+string = "0.1"
 ordermap = "0.2"
 
 [dev-dependencies]
