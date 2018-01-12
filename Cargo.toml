@@ -1,16 +1,19 @@
 [package]
 name = "h2"
-version = "0.1.0"
+version = "0.1.0" # remember to update html_root_url
+license = "MIT"
 authors = ["Carl Lerche <me@carllerche.com>"]
+description = "An HTTP/2.0 client and server"
+documentation = "https://docs.rs/h2"
+homepage = "https://github.com/carllerche/h2"
+repository = "https://github.com/carllerche/h2"
+readme = "README.md"
+keywords = ["http", "async", "non-blocking"]
+categories = ["asynchronous", "web-programming", "network-programming"]
 
 [badges.travis-ci]
 repository = "carllerche/h2"
 branch = "master"
-
-[badges.codecov]
-repository = "carllerche/h2"
-branch = "master"
-service = "github"
 
 [features]
 
