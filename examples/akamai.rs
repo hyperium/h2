@@ -2,10 +2,10 @@ extern crate env_logger;
 extern crate futures;
 extern crate h2;
 extern crate http;
-extern crate io_dump;
 extern crate rustls;
 extern crate tokio_core;
 extern crate tokio_rustls;
+extern crate webpki;
 extern crate webpki_roots;
 
 use h2::client;
@@ -18,6 +18,7 @@ use tokio_core::reactor;
 
 use rustls::Session;
 use tokio_rustls::ClientConfigExt;
+use webpki::DNSNameRef;
 
 use std::net::ToSocketAddrs;
 
@@ -47,21 +48,19 @@ pub fn main() {
     let handle = core.handle();
 
     let tcp = TcpStream::connect(&addr, &handle);
+    let dns_name = DNSNameRef::try_from_ascii_str("http2.akamai.com").unwrap();
 
     let tcp = tcp.then(|res| {
         let tcp = res.unwrap();
         tls_client_config
-            .connect_async("http2.akamai.com", tcp)
+            .connect_async(dns_name, tcp)
             .then(|res| {
                 let tls = res.unwrap();
-                let negotiated_protcol = {
+                {
                     let (_, session) = tls.get_ref();
-                    session.get_alpn_protocol()
-                };
-                assert_eq!(Some(ALPN_H2), negotiated_protcol.as_ref().map(|x| &**x));
-
-                // Dump output to stdout
-                let tls = io_dump::Dump::to_stdout(tls);
+                    let negotiated_protocol = session.get_alpn_protocol();
+                    assert_eq!(Some(ALPN_H2), negotiated_protocol.as_ref().map(|x| &**x));
+                }
 
                 println!("Starting client handshake");
                 client::handshake(tls)

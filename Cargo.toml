@@ -53,7 +53,7 @@ serde_json = "1.0.0"
 # Akamai example
 tokio-core = "0.1"
 env_logger = "0.4.3"
-io-dump = { git = "https://github.com/carllerche/io-dump" }
-rustls = "0.11"
-tokio-rustls = { git = "https://github.com/briansmith/tokio-rustls", tag = "b/p1" }
-webpki-roots = "0.13"
+rustls = "0.12"
+tokio-rustls = "0.5.0"
+webpki = "0.18.0-alpha"
+webpki-roots = "0.14"

@@ -2,7 +2,6 @@ extern crate env_logger;
 extern crate futures;
 extern crate h2;
 extern crate http;
-extern crate io_dump;
 extern crate tokio_core;
 
 use h2::client;
@@ -54,7 +53,7 @@ pub fn main() {
     let tcp = TcpStream::connect(&"127.0.0.1:5928".parse().unwrap(), &handle);
 
     let tcp = tcp.then(|res| {
-        let tcp = io_dump::Dump::to_stdout(res.unwrap());
+        let tcp = res.unwrap();
         client::handshake(tcp)
     }).then(|res| {
             let (mut client, h2) = res.unwrap();
