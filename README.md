@@ -7,7 +7,7 @@ A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 [![Crates.io](https://img.shields.io/crates/v/h2.svg?maxAge=2592000)](https://crates.io/crates/h2)
 [![Documentation](https://docs.rs/h2/badge.svg)][dox]
 
-More information about this crate can be found in the [crate documentation][dox]
+More information about this crate can be found in the [crate documentation][dox].
 
 [dox]: https://docs.rs/h2
 
@@ -38,7 +38,7 @@ To use `h2`, first add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-h2 = { git = 'https://github.com/carllerche/h2' } # soon to be on crates.io!
+h2 = "0.1"
 ```
 
 Next, add this to your crate:
