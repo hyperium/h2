@@ -3,14 +3,8 @@
 A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 [![Build Status](https://travis-ci.org/carllerche/h2.svg?branch=master)](https://travis-ci.org/carllerche/h2)
-[![Codecov](https://img.shields.io/codecov/c/github/carllerche/h2.svg)](https://codecov.io/gh/carllerche/h2)
 <!-- [![Crates.io](https://img.shields.io/crates/v/h2.svg?maxAge=2592000)](https://crates.io/crates/h2) -->
 <!-- [![Documentation](https://docs.rs/h2/badge.svg)][dox] -->
-
-**This library is not production ready. Do not try to use it in a production
-environment or you will regret it!** This crate is still under active
-development and there has not yet been any focus on documentation (because you
-shouldn't be using it yet!).
 
 More information about this crate can be found in the [crate documentation][dox]
 
