@@ -11,7 +11,6 @@ pub extern crate env_logger;
 pub extern crate futures;
 pub extern crate h2;
 pub extern crate http;
-pub extern crate mock_io;
 pub extern crate string;
 pub extern crate tokio_io;
 
@@ -52,6 +51,7 @@ pub mod raw;
 pub mod frames;
 pub mod prelude;
 pub mod mock;
+pub mod mock_io;
 pub mod notify;
 pub mod util;
 

@@ -38,7 +38,7 @@ string = "0.1"
 ordermap = "0.2"
 
 [dev-dependencies]
-mock-io = { git = "https://github.com/carllerche/mock-io", branch = "experiments" }
+tokio-timer = "0.1"
 
 # Fuzzing
 quickcheck = "0.4.1"
