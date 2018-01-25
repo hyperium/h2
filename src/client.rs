@@ -429,14 +429,14 @@ where
     /// server's response and the [`SendStream`] instance is used to send a
     /// request body or trailers to the server over the same HTTP/2.0 stream.
     ///
-    /// To send a request body or trailers, set `end_of_stream` to `true`. Then,
-    /// use the returned [`SendStream`] instance to stream request body chunks
-    /// or send trailers. If `end_of_stream` is **not** set to `true` then
-    /// attempting to call [`SendStream::send_data`] or
+    /// To send a request body or trailers, set `end_of_stream` to `false`.
+    /// Then, use the returned [`SendStream`] instance to stream request body
+    /// chunks or send trailers. If `end_of_stream` is **not** set to `false`
+    /// then attempting to call [`SendStream::send_data`] or
     /// [`SendStream::send_trailers`] will result in an error.
     ///
     /// If no request body or trailers are to be sent, set `end_of_stream` to
-    /// `false` and drop the returned [`SendStream`] instance.
+    /// `true` and drop the returned [`SendStream`] instance.
     ///
     /// # A note on HTTP versions
     ///
