@@ -10,7 +10,10 @@ fn recv_single_ping() {
     // Create the handshake
     let h2 = client::handshake(m)
         .unwrap()
-        .and_then(|(_, conn)| conn.unwrap());
+        .and_then(|(client, conn)| {
+            conn.unwrap()
+                .map(|c| (client, c))
+        });
 
     let mock = mock.assert_client_handshake()
         .unwrap()
