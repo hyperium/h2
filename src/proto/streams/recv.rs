@@ -119,6 +119,7 @@ impl Recv {
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
+            trace!("id ({:?}) < next_id ({:?}), PROTOCOL_ERROR", id, next_id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
