@@ -54,6 +54,8 @@ fn write_continuation_frames() {
             conn.drive(req)
                 .and_then(move |(h2, _)| {
                     h2.unwrap()
+                }).map(|c| {
+                    (c, client)
                 })
         });
 

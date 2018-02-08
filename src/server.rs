@@ -140,9 +140,9 @@ use proto::{self, Config, Prioritized};
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{Request, Response};
-use tokio_io::{AsyncRead, AsyncWrite};
 use std::{convert, fmt, mem};
 use std::time::Duration;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -423,6 +423,14 @@ where
     /// [`SendStream`]: ../struct.SendStream.html
     pub fn poll_close(&mut self) -> Poll<(), ::Error> {
         self.connection.poll().map_err(Into::into)
+    }
+
+    /// Sets the connection to a GOAWAY state. Does not close connection immediately.
+    ///
+    /// This closes the stream after sending a GOAWAY frame
+    /// and flushing the codec. Must continue being polled to close connection.
+    pub fn close_connection(&mut self) {
+        self.connection.close_connection();
     }
 }
 

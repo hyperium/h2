@@ -127,6 +127,22 @@ where
         self.state = State::GoAway(goaway);
     }
 
+    /// Closes the connection by transitioning to a GOAWAY state
+    /// iff there are no streams or references
+    pub fn maybe_close_connection_if_no_streams(&mut self) {
+        // If we poll() and realize that there are no streams or references
+        // then we can close the connection by transitioning to GOAWAY
+        if self.streams.num_active_streams() == 0 && !self.streams.has_streams_or_other_references() {
+            self.close_connection();
+        }
+    }
+
+    /// Closes the connection by transitioning to a GOAWAY state
+    pub fn close_connection(&mut self) {
+        let last_processed_id = self.streams.last_processed_id();
+        self.transition_to_go_away(last_processed_id, Reason::NO_ERROR);
+    }
+
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
         use codec::RecvError::*;
@@ -145,14 +161,6 @@ where
                             //
                             // This will also handle flushing `self.codec`
                             try_ready!(self.streams.poll_complete(&mut self.codec));
-
-                            // If we poll() and realize that the num_active_streams is 0
-                            // then we can close the connection by transitioning to GOAWAY
-                            if self.streams.num_active_streams() == 0 && !self.streams.has_streams_or_other_references() {
-                                let last_processed_id = self.streams.last_processed_id();
-                                self.transition_to_go_away(last_processed_id, Reason::NO_ERROR);
-                                continue;
-                            }
 
                             if self.error.is_some() {
                                 if self.streams.num_active_streams() == 0 {

@@ -205,6 +205,32 @@ fn sends_reset_cancel_when_req_body_is_dropped() {
 }
 
 #[test]
+fn sends_goaway_when_serv_closes_connection() {
+    let _ = ::env_logger::init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+        )
+        .recv_frame(frames::go_away(1))
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(_, mut srv)| {
+            srv.close_connection();
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
 fn sends_reset_cancel_when_res_body_is_dropped() {
     let _ = ::env_logger::init();
     let (io, client) = mock::new();

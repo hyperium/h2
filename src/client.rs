@@ -1162,6 +1162,7 @@ where
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<(), ::Error> {
+        self.inner.maybe_close_connection_if_no_streams();
         self.inner.poll().map_err(Into::into)
     }
 }

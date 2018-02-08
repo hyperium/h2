@@ -343,7 +343,11 @@ fn http_2_request_without_scheme_or_authority() {
 
             // first request is allowed
             assert!(client.send_request(request, true).is_err());
-            h2.expect("h2")
+            h2.expect("h2").map(|ret| {
+                // Hold on to the `client` handle to avoid sending a GO_AWAY frame.
+                drop(client);
+                ret
+            })
         });
 
     h2.join(srv).wait().expect("wait");

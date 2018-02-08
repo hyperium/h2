@@ -621,6 +621,7 @@ fn rst_stream_expires() {
                         err.to_string(),
                         "protocol error: unspecific protocol error detected"
                     );
+                    drop(client);
                 })
         });
 
