@@ -341,7 +341,7 @@ impl Recv {
     ///
     /// Setting a target means that we will try to tell the peer about
     /// WINDOW_UPDATEs so the peer knows it has about `target` window to use
-    /// for the whole conection.
+    /// for the whole connection.
     ///
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.

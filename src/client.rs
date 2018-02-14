@@ -17,7 +17,7 @@
 //! [`handshake`] uses default configuration values. There are a number of
 //! settings that can be changed by using [`Builder`] instead.
 //!
-//! Once the the handshake future completes, the caller is provided with a
+//! Once the handshake future completes, the caller is provided with a
 //! [`Connection`] instance and a [`SendRequest`] instance. The [`Connection`]
 //! instance is used to drive the connection (see [Managing the connection]).
 //! The [`SendRequest`] instance is used to initialize new streams (see [Making
@@ -840,7 +840,7 @@ impl Builder {
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// before completing the stream, the HTTP/2.0 specification requires that
     /// any further frames received for that stream must be ignored for "some
     /// time".
     ///
@@ -888,7 +888,7 @@ impl Builder {
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// before completing the stream, the HTTP/2.0 specification requires that
     /// any further frames received for that stream must be ignored for "some
     /// time".
     ///
@@ -937,7 +937,7 @@ impl Builder {
     ///
     /// This value is included in the initial SETTINGS handshake. When set, the
     /// server MUST NOT send a push promise. Setting this value to value to
-    /// false in the intial SETTINGS handshake guarantees that the remote server
+    /// false in the initial SETTINGS handshake guarantees that the remote server
     /// will never send a push promise.
     ///
     /// This setting can be changed during the life of a single HTTP/2.0
