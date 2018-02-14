@@ -46,7 +46,7 @@ use std::fmt;
 /// The implications for sending data are that the caller **should** ensure that
 /// both the stream and the connection has available window capacity before
 /// loading the data to send into memory. The `SendStream` instance provides the
-/// necessary APIs to perform this logic. This, however, is not an oblication.
+/// necessary APIs to perform this logic. This, however, is not an obligation.
 /// If the caller attempts to send data on a stream when there is no available
 /// window capacity, the library will buffer the data until capacity becomes
 /// available, at which point the buffer will be flushed to the connection.
@@ -220,7 +220,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// ```
     ///
     /// After the second call to `reserve_capacity`, the *total* requested
-    /// capcaity will be 0, i.e. there is no requested capacity for the stream.
+    /// capacity will be 0, i.e. there is no requested capacity for the stream.
     ///
     /// If `reserve_capacity` is called with a lower value than the amount of
     /// capacity **currently** assigned to the stream, this capacity will be
@@ -246,7 +246,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// # }
     /// ```
     ///
-    /// See [Flow contro](struct.SendStream.html#flow-control) for an overview
+    /// See [Flow control](struct.SendStream.html#flow-control) for an overview
     /// of how send flow control works.
     pub fn reserve_capacity(&mut self, capacity: usize) {
         // TODO: Check for overflow
@@ -312,7 +312,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// Resets the stream.
     ///
     /// This cancels the request / response exchange. If the response has not
-    /// yet been received, the associatd `ResponseFuture` will return an
+    /// yet been received, the associated `ResponseFuture` will return an
     /// [`Error`] to reflect the canceled exchange.
     ///
     /// [`Error`]: struct.Error.html

@@ -13,7 +13,7 @@ use std::io;
 
 /// # Warning
 ///
-/// Queued streans are ordered by stream ID, as we need to ensure that
+/// Queued streams are ordered by stream ID, as we need to ensure that
 /// lower-numbered streams are sent headers before higher-numbered ones.
 /// This is because "idle" stream IDs – those which have been initiated but
 /// have yet to receive frames – will be implicitly closed on receipt of a
@@ -164,7 +164,7 @@ impl Prioritize {
         // queued data), it gets sent out immediately even if there is no
         // available send window.
         //
-        // Sending out zero length data frames can be done to singal
+        // Sending out zero length data frames can be done to signal
         // end-of-stream.
         //
         if stream.send_flow.available() > 0 || stream.buffered_send_data == 0 {
@@ -173,7 +173,7 @@ impl Prioritize {
             self.queue_frame(frame.into(), buffer, stream, task);
         } else {
             // The stream has no capacity to send the frame now, save it but
-            // don't notify the conneciton task. Once additional capacity
+            // don't notify the connection task. Once additional capacity
             // becomes available, the frame will be flushed.
             stream
                 .pending_send
@@ -380,7 +380,7 @@ impl Prioritize {
         if stream.send_flow.available() < stream.requested_send_capacity {
             if stream.send_flow.has_unavailable() {
                 // The stream requires additional capacity and the stream's
-                // window has availablel capacity, but the connection window
+                // window has available capacity, but the connection window
                 // does not.
                 //
                 // In this case, the stream needs to be queued up for when the
@@ -512,7 +512,7 @@ impl Prioritize {
     }
 
     /// Push the frame to the front of the stream's deque, scheduling the
-    /// steream if needed.
+    /// stream if needed.
     fn push_back_frame<B>(&mut self,
                           frame: Frame<B>,
                           buffer: &mut Buffer<Frame<B>>,

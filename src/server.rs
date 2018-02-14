@@ -16,7 +16,7 @@
 //! completes once the handshake process is performed and HTTP/2.0 streams may
 //! be received.
 //!
-//! [`handshake`] uses default configuration values. THere are a number of
+//! [`handshake`] uses default configuration values. There are a number of
 //! settings that can be changed by using [`Builder`] instead.
 //!
 //! # Inbound streams
@@ -679,7 +679,7 @@ impl Builder {
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// before completing the stream, the HTTP/2.0 specification requires that
     /// any further frames received for that stream must be ignored for "some
     /// time".
     ///
@@ -727,7 +727,7 @@ impl Builder {
     ///
     /// When a stream is explicitly reset by either calling
     /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing te stream, the HTTP/2.0 specification requires that
+    /// before completing the stream, the HTTP/2.0 specification requires that
     /// any further frames received for that stream must be ignored for "some
     /// time".
     ///

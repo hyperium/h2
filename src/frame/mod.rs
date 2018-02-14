@@ -151,7 +151,7 @@ pub enum Error {
 
     /// An invalid stream dependency ID was provided
     ///
-    /// This is returend if a HEADERS or PRIORITY frame is received with an
+    /// This is returned if a HEADERS or PRIORITY frame is received with an
     /// invalid stream identifier.
     InvalidDependencyId,
 
