@@ -46,6 +46,10 @@ impl Counts {
         self.peer
     }
 
+    pub fn has_streams(&self) -> bool {
+        self.num_send_streams != 0 || self.num_recv_streams != 0
+    }
+
     /// Returns true if the receive stream concurrency can be incremented
     pub fn can_inc_num_recv_streams(&self) -> bool {
         self.max_recv_streams > self.num_recv_streams

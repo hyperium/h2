@@ -63,6 +63,7 @@ impl Dyn {
     /// Returns true if the remote peer can initiate a stream with the given ID.
     pub fn ensure_can_open(&self, id: StreamId) -> Result<(), RecvError> {
         if !self.is_server() {
+            trace!("Cannot open stream {:?} - not server, PROTOCOL_ERROR", id);
             // Remote is a server and cannot open streams. PushPromise is
             // registered by reserving, so does not go through this path.
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
@@ -70,6 +71,7 @@ impl Dyn {
 
         // Ensure that the ID is a valid server initiated ID
         if !id.is_client_initiated() {
+            trace!("Cannot open stream {:?} - not client initiated, PROTOCOL_ERROR", id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 

@@ -122,6 +122,27 @@ where
         Ok(().into())
     }
 
+    fn transition_to_go_away(&mut self, id: StreamId, e: Reason) {
+        let goaway = frame::GoAway::new(id, e);
+        self.state = State::GoAway(goaway);
+    }
+
+    /// Closes the connection by transitioning to a GOAWAY state
+    /// iff there are no streams or references
+    pub fn maybe_close_connection_if_no_streams(&mut self) {
+        // If we poll() and realize that there are no streams or references
+        // then we can close the connection by transitioning to GOAWAY
+        if self.streams.num_active_streams() == 0 && !self.streams.has_streams_or_other_references() {
+            self.close_connection();
+        }
+    }
+
+    /// Closes the connection by transitioning to a GOAWAY state
+    pub fn close_connection(&mut self) {
+        let last_processed_id = self.streams.last_processed_id();
+        self.transition_to_go_away(last_processed_id, Reason::NO_ERROR);
+    }
+
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
         use codec::RecvError::*;
@@ -143,9 +164,8 @@ where
 
                             if self.error.is_some() {
                                 if self.streams.num_active_streams() == 0 {
-                                    let id = self.streams.last_processed_id();
-                                    let goaway = frame::GoAway::new(id, Reason::NO_ERROR);
-                                    self.state = State::GoAway(goaway);
+                                    let last_processed_id = self.streams.last_processed_id();
+                                    self.transition_to_go_away(last_processed_id, Reason::NO_ERROR);
                                     continue;
                                 }
                             }
@@ -160,12 +180,7 @@ where
 
                             // Reset all active streams
                             let last_processed_id = self.streams.recv_err(&e.into());
-
-                            // Create the GO_AWAY frame with the last_processed_id
-                            let frame = frame::GoAway::new(last_processed_id, e);
-
-                            // Transition to the going away state.
-                            self.state = State::GoAway(frame);
+                            self.transition_to_go_away(last_processed_id, e);
                         },
                         // Attempting to read a frame resulted in a stream level error.
                         // This is handled by resetting the frame then trying to read

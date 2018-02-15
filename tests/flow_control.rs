@@ -307,7 +307,9 @@ fn recv_data_overflows_stream_window() {
                     })
                 });
 
-            conn.unwrap().join(req)
+            conn.unwrap()
+                .join(req)
+                .map(|c| (c, client))
         });
     h2.join(mock).wait().unwrap();
 }
@@ -385,6 +387,7 @@ fn stream_error_release_connection_capacity() {
                 });
             conn.drive(req.expect("response"))
                 .and_then(|(conn, _)| conn.expect("client"))
+                .map(|c| (c, client))
         });
 
     srv.join(client).wait().unwrap();
@@ -620,19 +623,19 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
 
             h2.drive(
                 util::wait_for_capacity(stream, 5)
-                    .map(|stream| (response, stream)))
+                    .map(|stream| (response, client, stream)))
         })
-        .and_then(|(h2, (response, mut stream))| {
+        .and_then(|(h2, (response, client, mut stream))| {
             stream.send_data("hello".into(), false).unwrap();
             stream.send_data("world".into(), true).unwrap();
 
-            h2.drive(response)
+            h2.drive(response).map(|c| (c, client))
         })
-        .and_then(|(h2, response)| {
+        .and_then(|((h2, response), client)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // Wait for the connection to close
-            h2.unwrap()
+            h2.unwrap().map(|c| (c, client))
         });
 
     let srv = srv.assert_client_handshake().unwrap()
@@ -820,20 +823,21 @@ fn recv_settings_removes_available_capacity() {
 
             stream.reserve_capacity(11);
 
-            h2.drive(util::wait_for_capacity(stream, 11).map(|s| (response, s)))
+            h2.drive(util::wait_for_capacity(stream, 11).map(|s| (response, client, s)))
         })
-        .and_then(|(h2, (response, mut stream))| {
+        .and_then(|(h2, (response, client, mut stream))| {
             assert_eq!(stream.capacity(), 11);
 
             stream.send_data("hello world".into(), true).unwrap();
 
-            h2.drive(response)
+            h2.drive(response).map(|c| (c, client))
         })
-        .and_then(|(h2, response)| {
+        .and_then(|((h2, response), client)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // Wait for the connection to close
-            h2.unwrap()
+            // Hold on to the `client` handle to avoid sending a GO_AWAY frame.
+            h2.unwrap().map(|c| (c, client))
         });
 
     let _ = h2.join(srv)
@@ -881,20 +885,21 @@ fn recv_no_init_window_then_receive_some_init_window() {
 
             stream.reserve_capacity(11);
 
-            h2.drive(util::wait_for_capacity(stream, 11).map(|s| (response, s)))
+            h2.drive(util::wait_for_capacity(stream, 11).map(|s| (response, client, s)))
         })
-        .and_then(|(h2, (response, mut stream))| {
+        .and_then(|(h2, (response, client, mut stream))| {
             assert_eq!(stream.capacity(), 11);
 
             stream.send_data("hello world".into(), true).unwrap();
 
-            h2.drive(response)
+            h2.drive(response).map(|c| (c, client))
         })
-        .and_then(|(h2, response)| {
+        .and_then(|((h2, response), client)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
             // Wait for the connection to close
-            h2.unwrap()
+            // Hold on to the `client` handle to avoid sending a GO_AWAY frame.
+            h2.unwrap().map(|c| (c, client))
         });
 
     let _ = h2.join(srv)
@@ -903,8 +908,8 @@ fn recv_no_init_window_then_receive_some_init_window() {
 
 #[test]
 fn settings_lowered_capacity_returns_capacity_to_connection() {
-    use std::thread;
     use std::sync::mpsc;
+    use std::thread;
 
     let _ = ::env_logger::init();
     let (io, srv) = mock::new();
@@ -1038,7 +1043,7 @@ fn client_increase_target_window_size() {
         .and_then(|(_client, mut conn)| {
             conn.set_target_window_size(2 << 20);
 
-            conn.unwrap()
+            conn.unwrap().map(|c| (c, _client))
         });
 
     srv.join(client).wait().unwrap();
@@ -1078,7 +1083,7 @@ fn increase_target_window_size_after_using_some() {
                 .and_then(|(mut conn, _bytes)| {
                     conn.set_target_window_size(2 << 20);
                     conn.unwrap()
-                })
+                }).map(|c| (c, client))
         });
 
     srv.join(client).wait().unwrap();
@@ -1113,18 +1118,19 @@ fn decrease_target_window_size() {
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
             let (resp, _) = client.send_request(request, true).unwrap();
-            conn.drive(resp.expect("response"))
+            conn.drive(resp.expect("response")).map(|c| (c, client))
         })
-        .and_then(|(mut conn, res)| {
+        .and_then(|((mut conn, res), client)| {
             conn.set_target_window_size(16_384);
             let mut body = res.into_parts().1;
             let mut cap = body.release_capacity().clone();
 
             conn.drive(body.concat2().expect("concat"))
-                .and_then(move |(conn, bytes)| {
+                .map(|c| (c, client))
+                .and_then(move |((conn, bytes), client)| {
                     assert_eq!(bytes.len(), 65_535);
                     cap.release_capacity(bytes.len()).unwrap();
-                    conn.expect("conn")
+                    conn.expect("conn").map(|c| (c, client))
                 })
         });
 
@@ -1188,10 +1194,10 @@ fn recv_settings_increase_window_size_after_using_some() {
                 .body(()).unwrap();
             let (resp, mut req_body) = client.send_request(request, false).unwrap();
             req_body.send_data(vec![0; new_win_size].into(), true).unwrap();
-            conn.drive(resp.expect("response"))
+            conn.drive(resp.expect("response")).map(|c| (c, client))
         })
-        .and_then(|(conn, _res)| {
-            conn.expect("client")
+        .and_then(|((conn, _res), client)| {
+            conn.expect("client").map(|c| (c, client))
         });
 
     srv.join(client).wait().unwrap();

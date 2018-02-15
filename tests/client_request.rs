@@ -13,7 +13,7 @@ fn handshake() {
         .write(SETTINGS_ACK)
         .build();
 
-    let (_, h2) = client::handshake(mock).wait().unwrap();
+    let (_client, h2) = client::handshake(mock).wait().unwrap();
 
     trace!("hands have been shook");
 
@@ -129,7 +129,12 @@ fn request_stream_id_overflows() {
                 let err = client.send_request(request, true).unwrap_err();
                 assert_eq!(err.to_string(), "user error: stream ID overflowed");
 
-                h2.expect("h2")
+                h2.expect("h2").map(|ret| {
+                    // Hold on to the `client` handle to avoid sending a GO_AWAY
+                    // frame.
+                    drop(client);
+                    ret
+                })
             })
         });
 
@@ -338,7 +343,11 @@ fn http_2_request_without_scheme_or_authority() {
 
             // first request is allowed
             assert!(client.send_request(request, true).is_err());
-            h2.expect("h2")
+            h2.expect("h2").map(|ret| {
+                // Hold on to the `client` handle to avoid sending a GO_AWAY frame.
+                drop(client);
+                ret
+            })
         });
 
     h2.join(srv).wait().expect("wait");
@@ -614,6 +623,7 @@ fn recv_too_big_headers() {
 
             conn.drive(req1.join(req2))
                 .and_then(|(conn, _)| conn.expect("client"))
+                .map(|c| (c, client))
         });
 
     client.join(srv).wait().expect("wait");

@@ -1,10 +1,10 @@
-use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
-use super::recv::RecvHeaderBlockError;
-use super::store::{self, Entry, Resolve, Store};
 use {client, proto, server};
 use codec::{Codec, RecvError, SendError, UserError};
 use frame::{self, Frame, Reason};
 use proto::{peer, Peer, WindowSize};
+use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
+use super::recv::RecvHeaderBlockError;
+use super::store::{self, Entry, Resolve, Store};
 
 use bytes::{Buf, Bytes};
 use futures::{task, Async, Poll};
@@ -520,8 +520,8 @@ where
         end_of_stream: bool,
         pending: Option<&store::Key>,
     ) -> Result<StreamRef<B>, SendError> {
-        use super::stream::ContentLength;
         use http::Method;
+        use super::stream::ContentLength;
 
         // TODO: There is a hazard with assigning a stream ID before the
         // prioritize layer. If prioritization reorders new streams, this
@@ -659,6 +659,19 @@ where
     pub fn num_active_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_active_streams()
+    }
+
+    pub fn has_streams_or_other_references(&self) -> bool {
+        if Arc::strong_count(&self.inner) > 1 {
+            return true;
+        }
+
+        if Arc::strong_count(&self.send_buffer) > 1 {
+            return true;
+        }
+
+        let me = self.inner.lock().unwrap();
+        me.counts.has_streams()
     }
 
     #[cfg(feature = "unstable")]
@@ -950,6 +963,16 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     stream.ref_dec();
 
     let actions = &mut me.actions;
+
+    // If the stream is not referenced and it is already
+    // closed (does not have to go through logic below
+    // of canceling the stream), we should notify the task
+    // (connection) so that it can close properly
+    if stream.ref_count == 0 && stream.is_closed() {
+        if let Some(task) = actions.task.take() {
+            task.notify();
+        }
+    }
 
     me.counts.transition(stream, |counts, stream| {
         maybe_cancel(stream, actions, counts);

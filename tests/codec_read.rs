@@ -161,7 +161,7 @@ fn read_continuation_frames() {
             conn.drive(req)
                 .and_then(move |(h2, _)| {
                     h2.expect("client")
-                })
+                }).map(|c| (client, c))
         });
 
     client.join(srv).wait().expect("wait");
