@@ -47,7 +47,7 @@ impl Counts {
     }
 
     pub fn has_streams(&self) -> bool {
-        self.num_send_streams != 0 || self.num_recv_streams != 0 || self.num_reset_streams != 0
+        self.num_recv_streams != 0 || self.num_reset_streams != 0
     }
 
     /// Returns true if the receive stream concurrency can be incremented
