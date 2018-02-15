@@ -969,7 +969,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     // of canceling the stream), we should notify the task
     // (connection) so that it can close properly
     if stream.ref_count == 0 && stream.is_closed() {
-        if let Some(ref task) = actions.task.as_ref() {
+        if let Some(task) = actions.task.take() {
             task.notify();
         }
     }
