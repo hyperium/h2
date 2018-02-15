@@ -307,7 +307,9 @@ fn recv_data_overflows_stream_window() {
                     })
                 });
 
-            conn.unwrap().join(req)
+            conn.unwrap()
+                .join(req)
+                .map(|c| (c, client))
         });
     h2.join(mock).wait().unwrap();
 }
@@ -385,6 +387,7 @@ fn stream_error_release_connection_capacity() {
                 });
             conn.drive(req.expect("response"))
                 .and_then(|(conn, _)| conn.expect("client"))
+                .map(|c| (c, client))
         });
 
     srv.join(client).wait().unwrap();

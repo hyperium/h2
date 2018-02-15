@@ -623,6 +623,7 @@ fn recv_too_big_headers() {
 
             conn.drive(req1.join(req2))
                 .and_then(|(conn, _)| conn.expect("client"))
+                .map(|c| (c, client))
         });
 
     client.join(srv).wait().expect("wait");
