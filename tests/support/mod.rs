@@ -29,8 +29,8 @@ macro_rules! try_ready {
 
 macro_rules! try_nb {
     ($e:expr) => ({
-        use $crate::support::futures::Async;
         use ::std::io::ErrorKind::WouldBlock;
+        use $crate::support::futures::Async;
 
         match $e {
             Ok(t) => t,
@@ -59,9 +59,11 @@ mod future_ext;
 
 pub use self::future_ext::{FutureExt, Unwrap};
 
+pub type WindowSize = usize;
+pub const DEFAULT_WINDOW_SIZE: WindowSize = (1 << 16) - 1;
+
 // This is our test Codec type
 pub type Codec<T> = h2::Codec<T, ::std::io::Cursor<::bytes::Bytes>>;
 
 // This is the frame type that is sent
 pub type SendFrame = h2::frame::Frame<::std::io::Cursor<::bytes::Bytes>>;
-

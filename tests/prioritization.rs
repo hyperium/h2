@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod support;
+use support::{DEFAULT_WINDOW_SIZE};
 use support::prelude::*;
 
 #[test]
@@ -60,6 +61,120 @@ fn single_stream_send_large_body() {
 
     // Get the response
     let resp = h2.run(response).unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    h2.wait().unwrap();
+}
+
+#[test]
+fn multiple_streams_with_payload_greater_than_default_window() {
+    let _ = ::env_logger::init();
+
+    let payload = vec![0; 16384*5-1];
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(frames::SETTINGS_ACK)
+        .write(&[
+            // POST /
+            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
+            172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
+        ])
+        .write(&[
+            // SETTINGS_ACK for id 3
+            0, 0, 4, 1, 4, 0, 0, 0, 3,
+        ])
+        .write(&[
+            // SETTINGS_ACK for id 4 (??)
+            131, 135, 190, 132, 0, 0, 4, 1, 4,
+        ])
+        .write(&[
+            // (????)
+            0, 0, 0, 5, 131, 135, 190, 132,
+        ])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[0..16_384])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[16_384..(16_384*2)])
+        .write(&[
+            // DATA
+            0, 64, 0, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[(16_384*2)..(16_384*3)])
+        .write(&[
+            // DATA
+            0, 63, 255, 0, 0, 0, 0, 0, 1,
+        ])
+        .write(&payload[(16_384*3)..(16_384*4-1)])
+
+        // Read window update
+        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 64, 0])
+        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 1, 0, 0, 64, 0])
+
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
+        .build();
+
+    let notify = MockNotify::new();
+    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
+
+    // Poll h2 once to get notifications
+    loop {
+        // Run the connection until all work is done, this handles processing
+        // the handshake.
+        notify.with(|| h2.poll()).unwrap();
+
+        if !notify.is_notified() {
+            break;
+        }
+    }
+
+    let request1 = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    let (response1, mut stream1) = client.send_request(request1, false).unwrap();
+
+    let request2 = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+    let (_response2, mut stream2) = client.send_request(request2, false).unwrap();
+
+    let request3 = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+    let (_response3, mut stream3) = client.send_request(request3, false).unwrap();
+
+    // The capacity should be immediately
+    // allocated to default window size (smaller than payload)
+    stream1.reserve_capacity(payload.len());
+    assert_eq!(stream1.capacity(), DEFAULT_WINDOW_SIZE);
+
+    stream2.reserve_capacity(payload.len());
+    assert_eq!(stream2.capacity(), 0);
+
+    stream3.reserve_capacity(payload.len());
+    assert_eq!(stream3.capacity(), 0);
+
+    // Send the data
+    stream1.send_data(payload[..].into(), true).unwrap();
+
+    assert!(notify.is_notified());
+
+    // Get the response
+    let resp = h2.run(response1).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();

@@ -353,6 +353,9 @@ impl Prioritize {
 
         // First check if capacity is immediately available
         if conn_available > 0 {
+            // There should be no streams pending capacity
+            debug_assert!(self.pending_capacity.is_empty());
+
             // The amount of capacity to assign to the stream
             // TODO: Should prioritization factor into this?
             let assign = cmp::min(conn_available, additional);
