@@ -6,7 +6,7 @@ use support::prelude::*;
 
 #[test]
 fn send_recv_headers_only() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -39,7 +39,7 @@ fn send_recv_headers_only() {
 
 #[test]
 fn send_recv_data() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -102,7 +102,7 @@ fn send_recv_data() {
 
 #[test]
 fn send_headers_recv_data_single_frame() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -151,7 +151,7 @@ fn send_headers_recv_data_single_frame() {
 
 #[test]
 fn closed_streams_are_released() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
@@ -196,7 +196,7 @@ fn closed_streams_are_released() {
 
 #[test]
 fn errors_if_recv_frame_exceeds_max_frame_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, mut srv) = mock::new();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
@@ -251,7 +251,7 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
 
 #[test]
 fn configure_max_frame_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, mut srv) = mock::new();
 
     let h2 = client::Builder::new()
@@ -302,7 +302,7 @@ fn configure_max_frame_size() {
 
 #[test]
 fn recv_goaway_finishes_processed_streams() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -371,7 +371,7 @@ fn recv_goaway_finishes_processed_streams() {
 
 #[test]
 fn recv_next_stream_id_updated_by_malformed_headers() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
 
@@ -414,7 +414,7 @@ fn recv_next_stream_id_updated_by_malformed_headers() {
 
 #[test]
 fn skipped_stream_ids_are_implicitly_closed() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv
@@ -468,7 +468,7 @@ fn skipped_stream_ids_are_implicitly_closed() {
 
 #[test]
 fn send_rst_stream_allows_recv_data() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -520,7 +520,7 @@ fn send_rst_stream_allows_recv_data() {
 
 #[test]
 fn send_rst_stream_allows_recv_trailers() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -569,7 +569,7 @@ fn send_rst_stream_allows_recv_trailers() {
 
 #[test]
 fn rst_stream_expires() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -631,7 +631,7 @@ fn rst_stream_expires() {
 
 #[test]
 fn rst_stream_max() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -721,7 +721,7 @@ fn rst_stream_max() {
 
 #[test]
 fn reserved_state_recv_window_update() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -773,7 +773,7 @@ fn reserved_state_recv_window_update() {
 /*
 #[test]
 fn send_data_after_headers_eos() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()

@@ -6,7 +6,7 @@ const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 #[test]
 fn read_preface_in_multiple_frames() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .read(b"PRI * HTTP/2.0")
@@ -24,7 +24,7 @@ fn read_preface_in_multiple_frames() {
 
 #[test]
 fn server_builder_set_max_concurrent_streams() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -74,7 +74,7 @@ fn server_builder_set_max_concurrent_streams() {
 
 #[test]
 fn serve_request() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -111,7 +111,7 @@ fn accept_with_pending_connections_after_socket_close() {}
 
 #[test]
 fn recv_invalid_authority() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let bad_auth = util::byte_str("not:a/good authority");
@@ -138,7 +138,7 @@ fn recv_invalid_authority() {
 
 #[test]
 fn recv_connection_header() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let req = |id, name, val| {
@@ -173,7 +173,7 @@ fn recv_connection_header() {
 
 #[test]
 fn sends_reset_cancel_when_req_body_is_dropped() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -206,7 +206,7 @@ fn sends_reset_cancel_when_req_body_is_dropped() {
 
 #[test]
 fn sends_goaway_when_serv_closes_connection() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -232,7 +232,7 @@ fn sends_goaway_when_serv_closes_connection() {
 
 #[test]
 fn serve_request_then_serv_closes_connection() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -278,7 +278,7 @@ fn serve_request_then_serv_closes_connection() {
 
 #[test]
 fn sends_reset_cancel_when_res_body_is_dropped() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -336,7 +336,7 @@ fn sends_reset_cancel_when_res_body_is_dropped() {
 
 #[test]
 fn too_big_headers_sends_431() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -373,7 +373,7 @@ fn too_big_headers_sends_431() {
 
 #[test]
 fn too_big_headers_sends_reset_after_431_if_not_eos() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client

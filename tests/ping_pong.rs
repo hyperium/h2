@@ -4,7 +4,7 @@ use support::prelude::*;
 
 #[test]
 fn recv_single_ping() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (m, mock) = mock::new();
 
     // Create the handshake
@@ -40,7 +40,7 @@ fn recv_single_ping() {
 
 #[test]
 fn recv_multiple_pings() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client.assert_server_handshake()
@@ -64,7 +64,7 @@ fn recv_multiple_pings() {
 
 #[test]
 fn pong_has_highest_priority() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let data = Bytes::from(vec![0; 16_384]);

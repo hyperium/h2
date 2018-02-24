@@ -6,7 +6,7 @@ use support::prelude::*;
 
 #[test]
 fn recv_trailers_only() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -52,7 +52,7 @@ fn recv_trailers_only() {
 
 #[test]
 fn send_trailers_immediately() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
