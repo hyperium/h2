@@ -5,7 +5,7 @@ use support::prelude::*;
 fn recv_push_works() {
     // tests that by default, received push promises work
     // TODO: once API exists, read the pushed response
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -43,7 +43,7 @@ fn recv_push_works() {
 
 #[test]
 fn recv_push_when_push_disabled_is_conn_error() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -96,7 +96,7 @@ fn recv_push_when_push_disabled_is_conn_error() {
 
 #[test]
 fn pending_push_promises_reset_when_dropped() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
     let srv = srv.assert_client_handshake()
@@ -139,7 +139,7 @@ fn pending_push_promises_reset_when_dropped() {
 
 #[test]
 fn recv_push_promise_over_max_header_list_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()

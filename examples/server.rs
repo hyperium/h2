@@ -15,7 +15,7 @@ use tokio_core::net::TcpListener;
 use tokio_core::reactor;
 
 pub fn main() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mut core = reactor::Core::new().unwrap();
     let handle = core.handle();

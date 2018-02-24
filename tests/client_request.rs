@@ -6,7 +6,7 @@ use support::prelude::*;
 
 #[test]
 fn handshake() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -23,7 +23,7 @@ fn handshake() {
 
 #[test]
 fn client_other_thread() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -60,7 +60,7 @@ fn client_other_thread() {
 
 #[test]
 fn recv_invalid_server_stream_id() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -96,7 +96,7 @@ fn recv_invalid_server_stream_id() {
 
 #[test]
 fn request_stream_id_overflows() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -159,7 +159,7 @@ fn request_stream_id_overflows() {
 
 #[test]
 fn client_builder_max_concurrent_streams() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -199,7 +199,7 @@ fn client_builder_max_concurrent_streams() {
 
 #[test]
 fn request_over_max_concurrent_streams_errors() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -284,7 +284,7 @@ fn request_over_max_concurrent_streams_errors() {
 
 #[test]
 fn http_11_request_without_scheme_or_authority() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -321,7 +321,7 @@ fn http_11_request_without_scheme_or_authority() {
 
 #[test]
 fn http_2_request_without_scheme_or_authority() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -359,7 +359,7 @@ fn request_with_h1_version() {}
 
 #[test]
 fn request_with_connection_headers() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -397,7 +397,7 @@ fn request_with_connection_headers() {
 
 #[test]
 fn connection_close_notifies_response_future() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -440,7 +440,7 @@ fn connection_close_notifies_response_future() {
 
 #[test]
 fn connection_close_notifies_client_poll_ready() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -490,7 +490,7 @@ fn connection_close_notifies_client_poll_ready() {
 
 #[test]
 fn sending_request_on_closed_connection() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -555,7 +555,7 @@ fn sending_request_on_closed_connection() {
 
 #[test]
 fn recv_too_big_headers() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()

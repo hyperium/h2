@@ -114,7 +114,7 @@ fn read_headers_empty_payload() {}
 
 #[test]
 fn read_continuation_frames() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let large = build_large_headers();
@@ -170,7 +170,7 @@ fn read_continuation_frames() {
 
 #[test]
 fn update_max_frame_len_at_rest() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     // TODO: add test for updating max frame length in flight as well?
     let mut codec = raw_codec! {
         read => [

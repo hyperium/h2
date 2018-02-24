@@ -45,7 +45,7 @@ impl Future for Process {
 }
 
 pub fn main() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let mut core = reactor::Core::new().unwrap();
     let handle = core.handle();

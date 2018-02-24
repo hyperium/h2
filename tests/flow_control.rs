@@ -6,7 +6,7 @@ use support::prelude::*;
 // explicitly requested.
 #[test]
 fn send_data_without_requesting_capacity() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = [0; 1024];
 
@@ -52,7 +52,7 @@ fn send_data_without_requesting_capacity() {
 
 #[test]
 fn release_capacity_sends_window_update() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = vec![0u8; 16_384];
 
@@ -126,7 +126,7 @@ fn release_capacity_sends_window_update() {
 
 #[test]
 fn release_capacity_of_small_amount_does_not_send_window_update() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = [0; 16];
 
@@ -190,7 +190,7 @@ fn expand_window_calls_are_coalesced() {}
 
 #[test]
 fn recv_data_overflows_connection_window() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
 
@@ -257,7 +257,7 @@ fn recv_data_overflows_connection_window() {
 #[test]
 fn recv_data_overflows_stream_window() {
     // this tests for when streams have smaller windows than their connection
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
 
@@ -324,7 +324,7 @@ fn recv_window_update_causes_overflow() {
 
 #[test]
 fn stream_error_release_connection_capacity() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -395,7 +395,7 @@ fn stream_error_release_connection_capacity() {
 
 #[test]
 fn stream_close_by_data_frame_releases_capacity() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -466,7 +466,7 @@ fn stream_close_by_data_frame_releases_capacity() {
 
 #[test]
 fn stream_close_by_trailers_frame_releases_capacity() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -551,7 +551,7 @@ fn stream_close_by_recv_reset_frame_releases_capacity() {}
 
 #[test]
 fn recv_window_update_on_stream_closed_by_data_frame() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let h2 = client::handshake(io)
@@ -600,7 +600,7 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
 
 #[test]
 fn reserved_capacity_assigned_in_multi_window_updates() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let h2 = client::handshake(io)
@@ -685,7 +685,7 @@ fn connection_notified_on_released_capacity() {
     use std::sync::mpsc;
     use std::thread;
 
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     // We're going to run the connection on a thread in order to isolate task
@@ -788,7 +788,7 @@ fn connection_notified_on_released_capacity() {
 
 #[test]
 fn recv_settings_removes_available_capacity() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -846,7 +846,7 @@ fn recv_settings_removes_available_capacity() {
 
 #[test]
 fn recv_no_init_window_then_receive_some_init_window() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -911,7 +911,7 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
     use std::sync::mpsc;
     use std::thread;
 
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
     let (tx1, rx1) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
@@ -1029,7 +1029,7 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
 
 #[test]
 fn client_increase_target_window_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -1051,7 +1051,7 @@ fn client_increase_target_window_size() {
 
 #[test]
 fn increase_target_window_size_after_using_some() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -1091,7 +1091,7 @@ fn increase_target_window_size_after_using_some() {
 
 #[test]
 fn decrease_target_window_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -1139,7 +1139,7 @@ fn decrease_target_window_size() {
 
 #[test]
 fn server_target_window_size() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client.assert_server_handshake()
@@ -1161,7 +1161,7 @@ fn server_target_window_size() {
 #[test]
 fn recv_settings_increase_window_size_after_using_some() {
     // See https://github.com/carllerche/h2/issues/208
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
     let new_win_size = 16_384 * 4; // 1 bigger than default

@@ -25,7 +25,7 @@ use std::net::ToSocketAddrs;
 const ALPN_H2: &str = "h2";
 
 pub fn main() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let tls_client_config = std::sync::Arc::new({
         let mut c = rustls::ClientConfig::new();

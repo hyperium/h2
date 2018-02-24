@@ -4,7 +4,7 @@ use support::prelude::*;
 
 #[test]
 fn single_stream_send_large_body() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = [0; 1024];
 
@@ -67,7 +67,7 @@ fn single_stream_send_large_body() {
 
 #[test]
 fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = vec![0; 32_768];
 
@@ -134,7 +134,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
 #[test]
 fn single_stream_send_body_greater_than_default_window() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = vec![0; 16384*5-1];
 
@@ -227,7 +227,7 @@ fn single_stream_send_body_greater_than_default_window() {
 
 #[test]
 fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = vec![0; 32_768];
 
@@ -293,7 +293,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
 
 #[test]
 fn send_data_receive_window_update() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
     let (m, mock) = mock::new();
 
     let h2 = client::handshake(m)

@@ -31,7 +31,7 @@ tokio-io = "0.1.4"
 bytes = "0.4"
 http = "0.1"
 byteorder = "1.0"
-log = "0.3.8"
+log = "0.4.1"
 fnv = "1.0.5"
 slab = "0.4.0"
 string = "0.1"
@@ -41,7 +41,7 @@ ordermap = "0.2"
 tokio-timer = "0.1"
 
 # Fuzzing
-quickcheck = "0.4.1"
+quickcheck = { version = "0.4.1", default-features = false }
 rand = "0.3.15"
 
 # HPACK fixtures
@@ -52,7 +52,7 @@ serde_json = "1.0.0"
 
 # Akamai example
 tokio-core = "0.1"
-env_logger = "0.4.3"
+env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"
 webpki = "0.18.0-alpha"
