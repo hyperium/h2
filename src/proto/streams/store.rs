@@ -2,7 +2,7 @@ use super::*;
 
 use slab;
 
-use ordermap::{self, OrderMap};
+use indexmap::{self, IndexMap};
 
 use std::marker::PhantomData;
 use std::ops;
@@ -11,7 +11,7 @@ use std::ops;
 #[derive(Debug)]
 pub(super) struct Store {
     slab: slab::Slab<(StoreId, Stream)>,
-    ids: OrderMap<StreamId, (usize, StoreId)>,
+    ids: IndexMap<StreamId, (usize, StoreId)>,
     counter: StoreId,
 }
 
@@ -61,11 +61,11 @@ pub(super) enum Entry<'a> {
 }
 
 pub(super) struct OccupiedEntry<'a> {
-    ids: ordermap::OccupiedEntry<'a, StreamId, (usize, StoreId)>,
+    ids: indexmap::map::OccupiedEntry<'a, StreamId, (usize, StoreId)>,
 }
 
 pub(super) struct VacantEntry<'a> {
-    ids: ordermap::VacantEntry<'a, StreamId, (usize, StoreId)>,
+    ids: indexmap::map::VacantEntry<'a, StreamId, (usize, StoreId)>,
     slab: &'a mut slab::Slab<(StoreId, Stream)>,
     counter: &'a mut usize,
 }
@@ -80,7 +80,7 @@ impl Store {
     pub fn new() -> Self {
         Store {
             slab: slab::Slab::new(),
-            ids: OrderMap::new(),
+            ids: IndexMap::new(),
             counter: 0,
         }
     }
@@ -116,7 +116,7 @@ impl Store {
     }
 
     pub fn find_entry(&mut self, id: StreamId) -> Entry {
-        use self::ordermap::Entry::*;
+        use self::indexmap::map::Entry::*;
 
         match self.ids.entry(id) {
             Occupied(e) => Entry::Occupied(OccupiedEntry {

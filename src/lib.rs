@@ -108,7 +108,7 @@ extern crate slab;
 #[macro_use]
 extern crate log;
 extern crate string;
-extern crate ordermap;
+extern crate indexmap;
 
 mod error;
 #[cfg_attr(feature = "unstable", allow(missing_docs))]
