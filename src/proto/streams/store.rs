@@ -215,10 +215,6 @@ where
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.indices.is_none()
-    }
-
     pub fn take(&mut self) -> Self {
         Queue {
             indices: self.indices.take(),

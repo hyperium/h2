@@ -72,112 +72,61 @@ fn multiple_streams_with_payload_greater_than_default_window() {
 
     let payload = vec![0; 16384*5-1];
 
-    let mock = mock_io::Builder::new()
-        .handshake()
-        .write(frames::SETTINGS_ACK)
-        .write(&[
-            // POST /
-            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41,
-            172, 75, 143, 168, 233, 25, 151, 33, 233, 132,
-        ])
-        .write(&[
-            // SETTINGS_ACK for id 3
-            0, 0, 4, 1, 4, 0, 0, 0, 3,
-        ])
-        .write(&[
-            // SETTINGS_ACK for id 4 (??)
-            131, 135, 190, 132, 0, 0, 4, 1, 4,
-        ])
-        .write(&[
-            // (????)
-            0, 0, 0, 5, 131, 135, 190, 132,
-        ])
-        .write(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .write(&payload[0..16_384])
-        .write(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .write(&payload[16_384..(16_384*2)])
-        .write(&[
-            // DATA
-            0, 64, 0, 0, 0, 0, 0, 0, 1,
-        ])
-        .write(&payload[(16_384*2)..(16_384*3)])
-        .write(&[
-            // DATA
-            0, 63, 255, 0, 0, 0, 0, 0, 1,
-        ])
-        .write(&payload[(16_384*3)..(16_384*4-1)])
+    let (io, srv) = mock::new();
 
-        // Read window update
-        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 64, 0])
-        .read(&[0, 0, 4, 8, 0, 0, 0, 0, 1, 0, 0, 64, 0])
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(
+            frames::headers(3).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(
+            frames::headers(5).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(frames::data(1, &payload[0..16_384]))
+        .recv_frame(frames::data(1, &payload[16_384..(16_384*2)]))
+        .recv_frame(frames::data(1, &payload[(16_384*2)..(16_384*3)]))
+        .recv_frame(frames::data(1, &payload[(16_384*3)..(16_384*4-1)]))
+        .send_frame(frames::settings())
+        .recv_frame(frames::settings_ack())
+        .send_frame(frames::headers(1).response(200).eos())
+        .send_frame(frames::headers(3).response(200).eos())
+        .send_frame(frames::headers(5).response(200).eos())
+        .close();
 
-        // Read response
-        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
-        .build();
+    let client = client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request1 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let request2 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let request3 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let (response1, mut stream1) = client.send_request(request1, false).unwrap();
+            let (_response2, mut stream2) = client.send_request(request2, false).unwrap();
+            let (_response3, mut stream3) = client.send_request(request3, false).unwrap();
 
-    let notify = MockNotify::new();
-    let (mut client, mut h2) = client::handshake(mock).wait().unwrap();
+            // The capacity should be immediately
+            // allocated to default window size (smaller than payload)
+            stream1.reserve_capacity(payload.len());
+            assert_eq!(stream1.capacity(), DEFAULT_WINDOW_SIZE);
 
-    // Poll h2 once to get notifications
-    loop {
-        // Run the connection until all work is done, this handles processing
-        // the handshake.
-        notify.with(|| h2.poll()).unwrap();
+            stream2.reserve_capacity(payload.len());
+            assert_eq!(stream2.capacity(), 0);
 
-        if !notify.is_notified() {
-            break;
-        }
-    }
+            stream3.reserve_capacity(payload.len());
+            assert_eq!(stream3.capacity(), 0);
 
-    let request1 = Request::builder()
-        .method(Method::POST)
-        .uri("https://http2.akamai.com/")
-        .body(())
-        .unwrap();
+            stream1.send_data(payload[..].into(), true).unwrap();
 
-    let (response1, mut stream1) = client.send_request(request1, false).unwrap();
+            // hold onto streams so they don't close
+            // stream1 doesn't close because response1 is used
+            conn.drive(response1.expect("response")).map(|c| (c, client, stream2, stream3))
+        })
+        .and_then(|((conn, _res), client, stream2, stream3)| {
+            conn.expect("client").map(|c| (c, client, stream2, stream3))
+        });
 
-    let request2 = Request::builder()
-        .method(Method::POST)
-        .uri("https://http2.akamai.com/")
-        .body(())
-        .unwrap();
-    let (_response2, mut stream2) = client.send_request(request2, false).unwrap();
-
-    let request3 = Request::builder()
-        .method(Method::POST)
-        .uri("https://http2.akamai.com/")
-        .body(())
-        .unwrap();
-    let (_response3, mut stream3) = client.send_request(request3, false).unwrap();
-
-    // The capacity should be immediately
-    // allocated to default window size (smaller than payload)
-    stream1.reserve_capacity(payload.len());
-    assert_eq!(stream1.capacity(), DEFAULT_WINDOW_SIZE);
-
-    stream2.reserve_capacity(payload.len());
-    assert_eq!(stream2.capacity(), 0);
-
-    stream3.reserve_capacity(payload.len());
-    assert_eq!(stream3.capacity(), 0);
-
-    // Send the data
-    stream1.send_data(payload[..].into(), true).unwrap();
-
-    assert!(notify.is_notified());
-
-    // Get the response
-    let resp = h2.run(response1).unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-
-    h2.wait().unwrap();
+    srv.join(client).wait().unwrap();
 }
 
 #[test]
