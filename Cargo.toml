@@ -35,7 +35,7 @@ log = "0.4.1"
 fnv = "1.0.5"
 slab = "0.4.0"
 string = "0.1"
-ordermap = "0.2"
+indexmap = "0.4"
 
 [dev-dependencies]
 tokio-timer = "0.1"
