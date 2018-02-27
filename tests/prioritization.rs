@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod support;
+use support::{DEFAULT_WINDOW_SIZE};
 use support::prelude::*;
 
 #[test]
@@ -63,6 +64,69 @@ fn single_stream_send_large_body() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     h2.wait().unwrap();
+}
+
+#[test]
+fn multiple_streams_with_payload_greater_than_default_window() {
+    let _ = ::env_logger::init();
+
+    let payload = vec![0; 16384*5-1];
+
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(
+            frames::headers(3).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(
+            frames::headers(5).request("POST", "https://http2.akamai.com/")
+        )
+        .recv_frame(frames::data(1, &payload[0..16_384]))
+        .recv_frame(frames::data(1, &payload[16_384..(16_384*2)]))
+        .recv_frame(frames::data(1, &payload[(16_384*2)..(16_384*3)]))
+        .recv_frame(frames::data(1, &payload[(16_384*3)..(16_384*4-1)]))
+        .send_frame(frames::settings())
+        .recv_frame(frames::settings_ack())
+        .send_frame(frames::headers(1).response(200).eos())
+        .send_frame(frames::headers(3).response(200).eos())
+        .send_frame(frames::headers(5).response(200).eos())
+        .close();
+
+    let client = client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request1 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let request2 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let request3 = Request::post("https://http2.akamai.com/").body(()).unwrap();
+            let (response1, mut stream1) = client.send_request(request1, false).unwrap();
+            let (_response2, mut stream2) = client.send_request(request2, false).unwrap();
+            let (_response3, mut stream3) = client.send_request(request3, false).unwrap();
+
+            // The capacity should be immediately
+            // allocated to default window size (smaller than payload)
+            stream1.reserve_capacity(payload.len());
+            assert_eq!(stream1.capacity(), DEFAULT_WINDOW_SIZE);
+
+            stream2.reserve_capacity(payload.len());
+            assert_eq!(stream2.capacity(), 0);
+
+            stream3.reserve_capacity(payload.len());
+            assert_eq!(stream3.capacity(), 0);
+
+            stream1.send_data(payload[..].into(), true).unwrap();
+
+            // hold onto streams so they don't close
+            // stream1 doesn't close because response1 is used
+            conn.drive(response1.expect("response")).map(|c| (c, client, stream2, stream3))
+        })
+        .and_then(|((conn, _res), client, stream2, stream3)| {
+            conn.expect("client").map(|c| (c, client, stream2, stream3))
+        });
+
+    srv.join(client).wait().unwrap();
 }
 
 #[test]
