@@ -641,13 +641,6 @@ where
         me.actions.send.ensure_next_stream_id()?;
 
         if let Some(key) = key {
-            // Because the key does not hold a reference to this stream
-            // it is possible for the stream not to exist here (stream closed)
-            // therefore, we can return Ok(Async::Ready)
-            if !me.store.contains_key(key) {
-                return Ok(().into());
-            }
-
             let mut stream = me.store.resolve(*key);
             trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
             if stream.is_pending_open {

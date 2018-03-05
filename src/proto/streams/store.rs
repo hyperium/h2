@@ -85,10 +85,6 @@ impl Store {
         }
     }
 
-    pub fn contains_key(&mut self, key: &Key) -> bool {
-        self.slab.contains(key.index)
-    }
-
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr> {
         let key = match self.ids.get(id) {
             Some(key) => *key,
