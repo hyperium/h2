@@ -699,9 +699,6 @@ impl Prioritize {
 
                 counts.inc_num_send_streams();
                 self.pending_send.push(&mut stream);
-                if let Some(task) = stream.open_task.take() {
-                    task.notify();
-                }
             } else {
                 return;
             }

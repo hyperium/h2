@@ -64,9 +64,6 @@ pub(super) struct Stream {
     /// Set to true when the stream is pending to be opened
     pub is_pending_open: bool,
 
-    /// Task tracking when stream can be "opened", or initially sent to socket.
-    pub open_task: Option<task::Task>,
-
     // ===== Fields related to receiving =====
     /// Next node in the accept linked list
     pub next_pending_accept: Option<store::Key>,
@@ -168,7 +165,6 @@ impl Stream {
             send_capacity_inc: false,
             is_pending_open: false,
             next_open: None,
-            open_task: None,
 
             // ===== Fields related to receiving =====
             next_pending_accept: None,
