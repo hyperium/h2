@@ -554,12 +554,6 @@ impl Prioritize {
         while let Some(frame) = stream.pending_send.pop_front(buffer) {
             trace!("dropping; frame={:?}", frame);
         }
-
-        // If the stream is dropping pending_send frames, we should
-        // also clear out the buffered_send_data / requested_send_capacity
-        // to mimic the functionality in `pop_frame` as they get decremented
-        stream.buffered_send_data = 0;
-        stream.requested_send_capacity = 0;
     }
 
     fn pop_frame<B>(
@@ -578,16 +572,6 @@ impl Prioritize {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
-
-                    // Streams that are reset should not be sending frames
-                    //
-                    // Why are they still present in pending_send? They already
-                    // have a flag from being reset and it's more efficient
-                    // to ignore the stream here isntead of traversing the queue
-                    // to remove each element one-by-one
-                    if stream.state.is_reset() {
-                        continue;
-                    }
 
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
