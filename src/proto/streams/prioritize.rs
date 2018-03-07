@@ -29,6 +29,18 @@ pub(super) struct Prioritize {
     pending_capacity: store::Queue<stream::NextSendCapacity>,
 
     /// Streams waiting for capacity due to max concurrency
+    ///
+    /// The `SendRequest` handle is `Clone`. This enables initiating requests
+    /// from many tasks. However, offering this capability while supporting
+    /// backpressure at some level is tricky. If there are many `SendRequest`
+    /// handles and a single stream becomes available, which handle gets
+    /// assigned that stream? Maybe that handle is no longer ready to send a
+    /// request.
+    ///
+    /// The strategy used is to allow each `SendRequest` handle one buffered
+    /// request. A `SendRequest` handle is ready to send a request if it has no
+    /// associated buffered requests. This is the same strategy as `mpsc` in the
+    /// futures library.
     pending_open: store::Queue<stream::NextOpen>,
 
     /// Connection level flow control governing sent data
