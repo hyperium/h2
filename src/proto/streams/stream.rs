@@ -208,6 +208,12 @@ impl Stream {
 
     /// Returns true if the stream is closed
     pub fn is_closed(&self) -> bool {
+        // If the stream has been reset by the peer then it will
+        // still have frames to send, but should count as closed
+        if self.state.is_non_local_reset() {
+            return true;
+        }
+
         // The state has fully transitioned to closed.
         self.state.is_closed() &&
             // Because outbound frames transition the stream state before being
