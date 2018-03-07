@@ -407,8 +407,9 @@ impl Prioritize {
         // if there is no room according to the concurrency limit (max_send_streams), and we
         // also allow data to be buffered for send with send_data() if there is no capacity for
         // the stream to send the data, which attempts to place the stream in pending_send.
-        // If the stream is not open, we don't want the stream to be
-        // scheduled for execution (pending_send)
+        // If the stream is not open, we don't want the stream to be scheduled for
+        // execution (pending_send). Note that if the stream is in pending_open, it will be
+        // pushed to pending_send when there is room for an open stream.
         if stream.buffered_send_data > 0 && !stream.is_pending_open {
             // TODO: This assertion isn't *exactly* correct. There can still be
             // buffered send data while the stream's pending send queue is
