@@ -68,7 +68,7 @@ fn single_stream_send_large_body() {
 
 #[test]
 fn multiple_streams_with_payload_greater_than_default_window() {
-    let _ = ::env_logger::init();
+    let _ = ::env_logger::try_init();
 
     let payload = vec![0; 16384*5-1];
 
