@@ -595,6 +595,7 @@ impl Recv {
     ) -> Result<(), RecvError> {
         // Notify the stream
         stream.state.recv_reset(frame.reason());
+        stream.notify_send();
         stream.notify_recv();
         Ok(())
     }
@@ -605,6 +606,7 @@ impl Recv {
         stream.state.recv_err(err);
 
         // If a receiver is waiting, notify it
+        stream.notify_send();
         stream.notify_recv();
     }
 

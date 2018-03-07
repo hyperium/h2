@@ -283,6 +283,84 @@ fn request_over_max_concurrent_streams_errors() {
 }
 
 #[test]
+fn send_request_poll_ready_when_connection_error() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+
+    let srv = srv.assert_client_handshake_with_settings(frames::settings()
+                // super tiny server
+                .max_concurrent_streams(1))
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200).eos())
+        .recv_frame(frames::headers(3).request("POST", "https://example.com/").eos())
+        .send_frame(frames::headers(8).response(200).eos())
+        //.recv_frame(frames::headers(5).request("POST", "https://example.com/").eos())
+        .close();
+
+    let h2 = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            // we send a simple req here just to drive the connection so we can
+            // receive the server settings.
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let (response, _) = client.send_request(request, true).unwrap();
+            h2.drive(response).map(move |(h2, _)| (client, h2))
+        })
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let (resp1, _) = client.send_request(request, true).unwrap();
+
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // second request is put into pending_open
+            let (resp2, _) = client.send_request(request, true).unwrap();
+
+            // third stream is over max concurrent
+            let until_ready = futures::future::poll_fn(move || {
+                client.poll_ready()
+            }).expect_err("client poll_ready").then(|_| Ok(()));
+
+            // a FuturesUnordered is used on purpose!
+            //
+            // We don't want a join, since any of the other futures notifying
+            // will make the until_ready future polled again, but we are
+            // specifically testing that until_ready gets notified on its own.
+            let mut unordered = futures::stream::FuturesUnordered::<Box<Future<Item=(), Error=()>>>::new();
+            unordered.push(Box::new(until_ready));
+            unordered.push(Box::new(h2.expect_err("client conn").then(|_| Ok(()))));
+            unordered.push(Box::new(resp1.expect_err("req1").then(|_| Ok(()))));
+            unordered.push(Box::new(resp2.expect_err("req2").then(|_| Ok(()))));
+
+            unordered.for_each(|_| Ok(()))
+        });
+
+    h2.join(srv).wait().expect("wait");
+}
+
+#[test]
 fn http_11_request_without_scheme_or_authority() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
