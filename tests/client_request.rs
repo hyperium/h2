@@ -663,6 +663,7 @@ fn request_options_with_star() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
+    // Note the lack of trailing slash.
     let uri = uri::Uri::from_parts({
         let mut parts = uri::Parts::default();
         parts.scheme = Some(uri::Scheme::HTTP);
@@ -681,7 +682,6 @@ fn request_options_with_star() {
     let client = client::handshake(io)
         .expect("handshake")
         .and_then(move |(mut client, conn)| {
-            // Note the lack of trailing slash.
             let request = Request::builder()
                 .method(Method::OPTIONS)
                 .uri(uri)
