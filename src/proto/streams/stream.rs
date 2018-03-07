@@ -336,6 +336,11 @@ impl store::Next for NextSend {
     }
 
     fn set_queued(stream: &mut Stream, val: bool) {
+        if val {
+            // ensure that stream is not queued for being opened
+            // if it's being put into queue for sending data
+            debug_assert_eq!(stream.is_pending_open, false);
+        }
         stream.is_pending_send = val;
     }
 }
@@ -402,6 +407,11 @@ impl store::Next for NextOpen {
     }
 
     fn set_queued(stream: &mut Stream, val: bool) {
+        if val {
+            // ensure that stream is not queued for being sent
+            // if it's being put into queue for opening the stream
+            debug_assert_eq!(stream.is_pending_send, false);
+        }
         stream.is_pending_open = val;
     }
 }

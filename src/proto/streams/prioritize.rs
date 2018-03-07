@@ -398,8 +398,18 @@ impl Prioritize {
             }
         }
 
-        // If data is buffered, then schedule the stream for execution
-        if stream.buffered_send_data > 0 {
+        // If data is buffered and the stream is not pending open, then
+        // schedule the stream for execution
+        //
+        // Why do we not push into pending_send when the stream is in pending_open?
+        //
+        // We allow users to call send_request() which schedules a stream to be pending_open
+        // if there is no room according to the concurrency limit (max_send_streams), and we
+        // also allow data to be buffered for send with send_data() if there is no capacity for
+        // the stream to send the data, which attempts to place the stream in pending_send.
+        // If the stream is not open, we don't want the stream to be
+        // scheduled for execution (pending_send)
+        if stream.buffered_send_data > 0 && !stream.is_pending_open {
             // TODO: This assertion isn't *exactly* correct. There can still be
             // buffered send data while the stream's pending send queue is
             // empty. This can happen when a large data frame is in the process
@@ -544,6 +554,12 @@ impl Prioritize {
         while let Some(frame) = stream.pending_send.pop_front(buffer) {
             trace!("dropping; frame={:?}", frame);
         }
+
+        // If the stream is dropping pending_send frames, we should
+        // also clear out the buffered_send_data / requested_send_capacity
+        // to mimic the functionality in `pop_frame` as they get decremented
+        stream.buffered_send_data = 0;
+        stream.requested_send_capacity = 0;
     }
 
     fn pop_frame<B>(
@@ -562,6 +578,16 @@ impl Prioritize {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
+
+                    // Streams that are reset should not be sending frames
+                    //
+                    // Why are they still present in pending_send? They already
+                    // have a flag from being reset and it's more efficient
+                    // to ignore the stream here isntead of traversing the queue
+                    // to remove each element one-by-one
+                    if stream.state.is_reset() {
+                        continue;
+                    }
 
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
