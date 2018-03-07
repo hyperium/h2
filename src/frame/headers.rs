@@ -273,7 +273,6 @@ impl fmt::Debug for Headers {
             .field("stream_id", &self.stream_id)
             .field("stream_dep", &self.stream_dep)
             .field("flags", &self.flags)
-            .field("header_block", &self.header_block)
             // `fields` and `pseudo` purposefully not included
             .finish()
     }
