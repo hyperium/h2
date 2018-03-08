@@ -1,8 +1,8 @@
-use http;
-use super::*;
 use codec::{RecvError, UserError};
 use codec::UserError::*;
 use frame::{self, Reason};
+use http;
+use super::*;
 
 use bytes::Buf;
 
