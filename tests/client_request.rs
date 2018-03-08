@@ -708,6 +708,72 @@ fn recv_too_big_headers() {
 
 }
 
+#[test]
+fn request_without_path() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(frames::headers(1).request("GET", "http://example.com/").eos())
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(move |(mut client, conn)| {
+            // Note the lack of trailing slash.
+            let request = Request::get("http://example.com")
+                .body(())
+                .unwrap();
+
+            let (response, _) = client.send_request(request, true).unwrap();
+
+            conn.drive(response)
+        });
+
+    client.join(srv).wait().unwrap();
+}
+
+#[test]
+fn request_options_with_star() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    // Note the lack of trailing slash.
+    let uri = uri::Uri::from_parts({
+        let mut parts = uri::Parts::default();
+        parts.scheme = Some(uri::Scheme::HTTP);
+        parts.authority = Some(uri::Authority::from_shared("example.com".into()).unwrap());
+        parts.path_and_query = Some(uri::PathAndQuery::from_static("*"));
+        parts
+    }).unwrap();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(frames::headers(1).request("OPTIONS", uri.clone()).eos())
+        .send_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(move |(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::OPTIONS)
+                .uri(uri)
+                .body(())
+                .unwrap();
+
+            let (response, _) = client.send_request(request, true).unwrap();
+
+            conn.drive(response)
+        });
+
+    client.join(srv).wait().unwrap();
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 

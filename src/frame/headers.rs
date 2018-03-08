@@ -440,10 +440,14 @@ impl Pseudo {
     pub fn request(method: Method, uri: Uri) -> Self {
         let parts = uri::Parts::from(uri);
 
-        let path = parts
+        let mut path = parts
             .path_and_query
             .map(|v| v.into())
-            .unwrap_or_else(|| Bytes::from_static(b"/"));
+            .unwrap_or_else(|| Bytes::new());
+
+        if path.is_empty() && method != Method::OPTIONS {
+            path = Bytes::from_static(b"/");
+        }
 
         let mut pseudo = Pseudo {
             method: Some(method),
