@@ -709,6 +709,69 @@ fn recv_too_big_headers() {
 }
 
 #[test]
+fn pending_send_request_gets_reset_by_peer_properly() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let payload = [0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize];
+    let max_frame_size = frame::DEFAULT_MAX_FRAME_SIZE as usize;
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/"),
+        )
+        // Note that we can only send up to ~4 frames of data by default
+        .recv_frame(frames::data(1, &payload[0..max_frame_size]))
+        .recv_frame(frames::data(1, &payload[max_frame_size..(max_frame_size*2)]))
+        .recv_frame(frames::data(1, &payload[(max_frame_size*2)..(max_frame_size*3)]))
+        .recv_frame(frames::data(1, &payload[(max_frame_size*3)..(max_frame_size*4-1)]))
+
+        .idle_ms(100)
+
+        .send_frame(frames::reset(1).refused())
+        // Because all active requests are finished, connection should shutdown
+        // and send a GO_AWAY frame. If the reset stream is bugged (and doesn't
+        // count towards concurrency limit), then connection will not send
+        // a GO_AWAY and this test will fail.
+        .recv_frame(frames::go_away(0))
+
+        .close();
+
+    let client = client::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            let (response, mut stream) = client
+                .send_request(request, false)
+                .expect("send_request");
+
+            let response = response.expect_err("response")
+                .map(|err| {
+                    assert_eq!(
+                        err.reason(),
+                        Some(Reason::REFUSED_STREAM)
+                    );
+                });
+
+            // Send the data
+            stream.send_data(payload[..].into(), true).unwrap();
+
+            conn.drive(response)
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
 fn request_without_path() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
