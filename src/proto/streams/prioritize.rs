@@ -555,6 +555,9 @@ impl Prioritize {
         while let Some(frame) = stream.pending_send.pop_front(buffer) {
             trace!("dropping; frame={:?}", frame);
         }
+
+        stream.buffered_send_data = 0;
+        stream.requested_send_capacity = 0;
     }
 
     fn pop_frame<B>(
@@ -573,6 +576,14 @@ impl Prioritize {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
                     trace!("pop_frame; stream={:?}", stream.id);
+
+                    // If the stream receives a RESET from the peer, it may have
+                    // had data buffered to be sent, but all the frames are cleared
+                    // in clear_queue(). Instead of doing O(N) traversal through queue
+                    // to remove, lets just ignore peer_reset streams here.
+                    if stream.state.is_peer_reset() {
+                        continue;
+                    }
 
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
