@@ -86,6 +86,7 @@
 //!     let addr = "127.0.0.1:5928".parse().unwrap();
 //!
 //!     core.run({
+//! # let _ =
 //!         // Establish TCP connection to the server.
 //!         TcpStream::connect(&addr, &handle)
 //!             .map_err(|_| {
@@ -138,7 +139,8 @@
 //!                     })
 //!                 })
 //!             })
-//!             # .select(ok(()))
+//! # ;
+//! # ok::<_, ()>(())
 //!     }).ok().expect("failed to perform HTTP/2.0 request");
 //! }
 //! ```
