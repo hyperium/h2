@@ -255,10 +255,14 @@ where
             },
         };
 
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
         let actions = &mut me.actions;
 
         me.counts.transition(stream, |_, stream| {
-            actions.recv.recv_reset(frame, stream)?;
+            actions.recv.recv_reset(frame, stream);
+            actions.send.recv_reset(send_buffer, stream);
             assert!(stream.state.is_closed());
             Ok(())
         })

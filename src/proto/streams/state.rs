@@ -301,6 +301,13 @@ impl State {
         }
     }
 
+    pub fn is_peer_reset(&self) -> bool {
+        match self.inner {
+            Closed(Cause::Proto(_)) => true,
+            _ => false,
+        }
+    }
+
     /// Returns true if the stream is already reset.
     pub fn is_reset(&self) -> bool {
         match self.inner {

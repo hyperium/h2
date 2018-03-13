@@ -588,16 +588,12 @@ impl Recv {
     }
 
     /// Handle remote sending an explicit RST_STREAM.
-    pub fn recv_reset(
-        &mut self,
-        frame: frame::Reset,
-        stream: &mut Stream,
-    ) -> Result<(), RecvError> {
+    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
         // Notify the stream
         stream.state.recv_reset(frame.reason());
+
         stream.notify_send();
         stream.notify_recv();
-        Ok(())
     }
 
     /// Handle a received error
