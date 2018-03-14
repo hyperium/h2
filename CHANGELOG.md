@@ -1,3 +1,8 @@
+# 0.1.2 (March 13, 2018)
+
+* Fix another bug relating to resetting connections and reaching
+  max concurrency (#238).
+
 # 0.1.1 (March 8, 2018)
 
 * When streams are dropped, close the connection (#222).
