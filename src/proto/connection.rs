@@ -46,6 +46,7 @@ where
 #[derive(Debug, Clone)]
 pub(crate) struct Config {
     pub next_stream_id: StreamId,
+    pub initial_max_send_streams: usize,
     pub reset_stream_duration: Duration,
     pub reset_stream_max: usize,
     pub settings: frame::Settings,
@@ -80,7 +81,7 @@ where
             local_init_window_sz: config.settings
                 .initial_window_size()
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
-            local_max_initiated: None,
+            initial_max_send_streams: config.initial_max_send_streams,
             local_next_stream_id: config.next_stream_id,
             local_push_enabled: config.settings.is_push_enabled(),
             local_reset_duration: config.reset_stream_duration,
