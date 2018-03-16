@@ -32,7 +32,7 @@ impl Counts {
     pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         Counts {
             peer,
-            max_send_streams: config.local_max_initiated.unwrap_or(usize::MAX),
+            max_send_streams: config.initial_max_send_streams,
             num_send_streams: 0,
             max_recv_streams: config.remote_max_initiated.unwrap_or(usize::MAX),
             num_recv_streams: 0,

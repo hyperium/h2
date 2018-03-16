@@ -26,17 +26,20 @@ use self::stream::Stream;
 use frame::{StreamId, StreamIdOverflow};
 use proto::*;
 
-use std::time::Duration;
 use bytes::Bytes;
 use http::{Request, Response};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Config {
     /// Initial window size of locally initiated streams
     pub local_init_window_sz: WindowSize,
 
-    /// Maximum number of locally initiated streams
-    pub local_max_initiated: Option<usize>,
+    /// Initial maximum number of locally initiated streams.
+    /// After receiving a Settings frame from the remote peer,
+    /// the connection will overwrite this value with the
+    /// MAX_CONCURRENT_STREAMS specified in the frame.
+    pub initial_max_send_streams: usize,
 
     /// The stream ID to start the next local stream with
     pub local_next_stream_id: StreamId,

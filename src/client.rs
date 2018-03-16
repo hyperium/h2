@@ -177,6 +177,7 @@ use tokio_io::io::WriteAll;
 use std::fmt;
 use std::marker::PhantomData;
 use std::time::Duration;
+use std::usize;
 
 /// Performs the HTTP/2.0 connection handshake.
 ///
@@ -343,6 +344,12 @@ pub struct ResponseFuture {
 pub struct Builder {
     /// Time to keep locally reset streams around before reaping.
     reset_stream_duration: Duration,
+
+    /// Initial maximum number of locally initiated (send) streams.
+    /// After receiving a Settings frame from the remote peer,
+    /// the connection will overwrite this value with the
+    /// MAX_CONCURRENT_STREAMS specified in the frame.
+    initial_max_send_streams: usize,
 
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
@@ -671,6 +678,7 @@ impl Builder {
         Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            initial_max_send_streams: usize::MAX,
             settings: Default::default(),
             stream_id: 1.into(),
         }
@@ -835,6 +843,48 @@ impl Builder {
     /// ```
     pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_concurrent_streams(Some(max));
+        self
+    }
+
+    /// Sets the initial maximum of locally initiated (send) streams.
+    ///
+    /// The initial settings will be overwritten by the remote peer when
+    /// the Settings frame is received. The new value will be set to the
+    /// `max_concurrent_streams()` from the frame.
+    ///
+    /// This setting prevents the caller from exceeding this number of
+    /// streams that are counted towards the concurrency limit.
+    ///
+    /// Sending streams past the limit returned by the peer will be treated
+    /// as a stream error of type PROTOCOL_ERROR or REFUSED_STREAM.
+    ///
+    /// See [Section 5.1.2] in the HTTP/2.0 spec for more details.
+    ///
+    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::client::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .initial_max_send_streams(1000)
+    ///     .handshake(my_io);
+    /// # client_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn initial_max_send_streams(&mut self, initial: usize) -> &mut Self {
+        self.initial_max_send_streams = initial;
         self
     }
 
@@ -1218,6 +1268,7 @@ where
 
         let connection = proto::Connection::new(codec, proto::Config {
             next_stream_id: self.builder.stream_id,
+            initial_max_send_streams: self.builder.initial_max_send_streams,
             reset_stream_duration: self.builder.reset_stream_duration,
             reset_stream_max: self.builder.reset_stream_max,
             settings: self.builder.settings.clone(),

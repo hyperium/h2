@@ -1026,6 +1026,8 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
         let server = poll?.map(|codec| {
             let connection = proto::Connection::new(codec, Config {
                 next_stream_id: 2.into(),
+                // Server does not need to locally initiate any streams
+                initial_max_send_streams: 0,
                 reset_stream_duration: self.builder.reset_stream_duration,
                 reset_stream_max: self.builder.reset_stream_max,
                 settings: self.builder.settings.clone(),
