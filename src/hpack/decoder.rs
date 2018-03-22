@@ -482,10 +482,12 @@ impl Table {
 
         self.reserve(len);
 
-        self.size += len;
+        if self.size + len <= self.max_size {
+            self.size += len;
 
-        // Track the entry
-        self.entries.push_front(entry);
+            // Track the entry
+            self.entries.push_front(entry);
+        }
     }
 
     fn set_max_size(&mut self, size: usize) {
@@ -495,14 +497,13 @@ impl Table {
     }
 
     fn reserve(&mut self, size: usize) {
-        debug_assert!(size <= self.max_size);
-
         while self.size + size > self.max_size {
-            let last = self.entries
-                .pop_back()
-                .expect("size of table != 0, but no headers left!");
-
-            self.size -= last.len();
+            match self.entries.pop_back() {
+                Some(last) => {
+                    self.size -= last.len();
+                }
+                None => return,
+            }
         }
     }
 
@@ -785,27 +786,67 @@ fn from_static(s: &'static str) -> String<Bytes> {
     unsafe { String::from_utf8_unchecked(Bytes::from_static(s.as_bytes())) }
 }
 
-#[test]
-fn test_peek_u8() {
-    let b = 0xff;
-    let mut buf = Cursor::new(vec![b]);
-    assert_eq!(peek_u8(&mut buf), Some(b));
-    assert_eq!(buf.get_u8(), b);
-    assert_eq!(peek_u8(&mut buf), None);
-}
+#[cfg(test)]
+mod test {
+    use super::*;
+    use hpack::Header;
 
-#[test]
-fn test_decode_string_empty() {
-    let mut de = Decoder::new(0);
-    let mut buf = BytesMut::new();
-    let err = de.decode_string(&mut Cursor::new(&mut buf)).unwrap_err();
-    assert_eq!(err, DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream));
-}
+    #[test]
+    fn test_peek_u8() {
+        let b = 0xff;
+        let mut buf = Cursor::new(vec![b]);
+        assert_eq!(peek_u8(&mut buf), Some(b));
+        assert_eq!(buf.get_u8(), b);
+        assert_eq!(peek_u8(&mut buf), None);
+    }
 
-#[test]
-fn test_decode_empty() {
-    let mut de = Decoder::new(0);
-    let mut buf = BytesMut::new();
-    let empty = de.decode(&mut Cursor::new(&mut buf), |_| {}).unwrap();
-    assert_eq!(empty, ());
+    #[test]
+    fn test_decode_string_empty() {
+        let mut de = Decoder::new(0);
+        let mut buf = BytesMut::new();
+        let err = de.decode_string(&mut Cursor::new(&mut buf)).unwrap_err();
+        assert_eq!(err, DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream));
+    }
+
+    #[test]
+    fn test_decode_empty() {
+        let mut de = Decoder::new(0);
+        let mut buf = BytesMut::new();
+        let empty = de.decode(&mut Cursor::new(&mut buf), |_| {}).unwrap();
+        assert_eq!(empty, ());
+    }
+
+    #[test]
+    fn test_decode_indexed_larger_than_table() {
+        let mut de = Decoder::new(0);
+
+        let mut buf = vec![0b01000000, 0x80 | 2];
+        buf.extend(huff_encode(b"foo"));
+        buf.extend(&[0x80 | 3]);
+        buf.extend(huff_encode(b"bar"));
+
+        let mut buf = buf.into();
+
+        let mut res = vec![];
+        let _ = de.decode(&mut Cursor::new(&mut buf), |h| {
+            res.push(h);
+        }).unwrap();
+
+        assert_eq!(res.len(), 1);
+        assert_eq!(de.table.size(), 0);
+
+        match res[0] {
+            Header::Field { ref name, ref value } => {
+                assert_eq!(name, "foo");
+                assert_eq!(value, "bar");
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn huff_encode(src: &[u8]) -> BytesMut {
+        let mut buf = BytesMut::new();
+        huffman::encode(src, &mut buf).unwrap();
+        buf
+    }
 }
