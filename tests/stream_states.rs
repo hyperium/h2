@@ -808,3 +808,75 @@ fn send_data_after_headers_eos() {
 fn exceed_max_streams() {
 }
 */
+
+
+#[test]
+fn rst_while_closing() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+        )
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+        )
+        .send_frame(frames::headers(3).response(200))
+        .send_frame(frames::headers(3).eos())
+        .send_frame(frames::reset(3).cancel())
+        .send_frame(frames::headers(1).response(200).eos())
+        .send_frame(frames::reset(1).cancel())
+        .recv_frame(frames::go_away(0))
+        .close();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req1 = client.send_request(request, false)
+                .unwrap()
+                .0.expect("response1")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                })
+                .map_err(|()| -> Error {
+                    unreachable!()
+                });
+
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let req2 = client.send_request(request, false)
+                .unwrap()
+                .0.expect("response2")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    // drop resp will send a reset
+                    Ok(())
+                })
+                .map_err(|()| -> Error {
+                    unreachable!()
+                });
+
+            conn.drive(req1.join(req2))
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
