@@ -812,6 +812,7 @@ fn exceed_max_streams() {
 
 #[test]
 fn rst_while_closing() {
+    // Test to reproduce panic in issue #246.
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
@@ -822,15 +823,11 @@ fn rst_while_closing() {
             frames::headers(1)
                 .request("GET", "https://example.com/")
         )
-        .recv_frame(
-            frames::headers(3)
-                .request("GET", "https://example.com/")
-        )
-        .send_frame(frames::headers(3).response(200))
-        .send_frame(frames::headers(3).eos())
-        .send_frame(frames::reset(3).cancel())
-        .send_frame(frames::headers(1).response(200).eos())
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::headers(1).eos())
+        .idle_ms(1)
         .send_frame(frames::reset(1).cancel())
+        .recv_frame(frames::headers(1).eos())
         .recv_frame(frames::go_away(0))
         .close();
 
@@ -843,37 +840,19 @@ fn rst_while_closing() {
                 .body(())
                 .unwrap();
 
-            let req1 = client.send_request(request, false)
-                .unwrap()
-                .0.expect("response1")
-                .and_then(|resp| {
-                    assert_eq!(resp.status(), StatusCode::OK);
-                    // drop resp will send a reset
-                    Ok(())
-                })
-                .map_err(|()| -> Error {
-                    unreachable!()
-                });
-
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
+            let (resp, mut stream) = client.send_request(request, false)
                 .unwrap();
-
-            let req2 = client.send_request(request, false)
-                .unwrap()
-                .0.expect("response2")
-                .and_then(|resp| {
+            let req = resp.expect("response2")
+                .and_then(move |resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
-                    // drop resp will send a reset
+                    let _ = stream.send_trailers(HeaderMap::new());
                     Ok(())
                 })
                 .map_err(|()| -> Error {
                     unreachable!()
                 });
 
-            conn.drive(req1.join(req2))
+            conn.drive(req)
                 .and_then(|(conn, _)| conn.expect("client"))
         });
 
