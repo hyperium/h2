@@ -214,8 +214,15 @@ impl State {
     }
 
     /// The remote explicitly sent a RST_STREAM.
-    pub fn recv_reset(&mut self, reason: Reason) {
+    pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
+
         match self.inner {
+            Closed(Cause::EndStream) if queued => {
+                // If the stream has a queued EOS frame, reschedule it to
+                // drain the queue and reset, instead.
+                trace!("recv_reset: reason={:?}; queued=true", reason);
+                self.inner = Closed(Cause::Scheduled(reason));
+            },
             Closed(..) => {},
             _ => {
                 trace!("recv_reset; reason={:?}", reason);
@@ -316,6 +323,14 @@ impl State {
             _ => false,
         }
     }
+
+    // /// Returns true if the stream was closed by sending an EOS.
+    // pub fn is_eos(&self) -> bool {
+    //     match self.inner {
+    //         Closed(Cause::EndStream) => true,
+    //         _ => false,
+    //     }
+    // }
 
     /// Returns true if a stream is open or half-closed.
     pub fn is_at_least_half_open(&self) -> bool {
