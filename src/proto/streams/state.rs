@@ -324,14 +324,6 @@ impl State {
         }
     }
 
-    // /// Returns true if the stream was closed by sending an EOS.
-    // pub fn is_eos(&self) -> bool {
-    //     match self.inner {
-    //         Closed(Cause::EndStream) => true,
-    //         _ => false,
-    //     }
-    // }
-
     /// Returns true if a stream is open or half-closed.
     pub fn is_at_least_half_open(&self) -> bool {
         match self.inner {
