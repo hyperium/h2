@@ -812,7 +812,9 @@ fn exceed_max_streams() {
 
 #[test]
 fn rst_while_closing() {
-    // Test to reproduce panic in issue #246.
+    // Test to reproduce panic in issue #246 --- receipt of a RST_STREAM frame
+    // on a stream in the Half Closed (remote) state with a queued EOS causes
+    // a panic.
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
@@ -825,7 +827,11 @@ fn rst_while_closing() {
         )
         .send_frame(frames::headers(1).response(200))
         .send_frame(frames::headers(1).eos())
+        // Idling for a moment here is necessary to ensure that the client
+        // enqueues its TRAILERS frame *before* we send the RST_STREAM frame
+        // which causes the panic.
         .idle_ms(1)
+        // Send the RST_STREAM frame which causes the client to panic.
         .send_frame(frames::reset(1).cancel())
         .recv_frame(frames::headers(1).eos())
         .recv_frame(frames::go_away(0))
@@ -840,12 +846,18 @@ fn rst_while_closing() {
                 .body(())
                 .unwrap();
 
+            // The request should be left streaming.
             let (resp, mut stream) = client.send_request(request, false)
-                .unwrap();
-            let req = resp.expect("response2")
+                .expect("send_request");
+            let req = resp
+                // on receipt of an EOS response from the server, transition
+                // the stream Open => Half Closed (remote).
+                .expect("response")
                 .and_then(move |resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
-                    let _ = stream.send_trailers(HeaderMap::new());
+                    // Enqueue trailers frame.
+                    let _ = stream.send_trailers(HeaderMap::new())
+                        .expect("send_trailers");
                     Ok(())
                 })
                 .map_err(|()| -> Error {
