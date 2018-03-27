@@ -833,8 +833,9 @@ fn rst_while_closing() {
         .idle_ms(1)
         // Send the RST_STREAM frame which causes the client to panic.
         .send_frame(frames::reset(1).cancel())
-        .recv_frame(frames::reset(1).cancel())
+        .ping_pong([1; 8])
         .close();
+        ;
 
     let client = client::handshake(io)
         .expect("handshake")
@@ -855,8 +856,7 @@ fn rst_while_closing() {
                 .and_then(move |resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // Enqueue trailers frame.
-                    let _ = stream.send_trailers(HeaderMap::new())
-                        .expect("send_trailers");
+                    let _ = stream.send_trailers(HeaderMap::new());
                     Ok(())
                 })
                 .map_err(|()| -> Error {

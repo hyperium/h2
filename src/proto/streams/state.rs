@@ -218,10 +218,10 @@ impl State {
 
         match self.inner {
             Closed(Cause::EndStream) if queued => {
-                // If the stream has a queued EOS frame, reschedule it to
-                // drain the queue and reset, instead.
+                // If the stream has a queued EOS frame, transition to peer
+                // reset.
                 trace!("recv_reset: reason={:?}; queued=true", reason);
-                self.inner = Closed(Cause::Scheduled(reason));
+                self.inner = Closed(Cause::Proto(reason));
             },
             Closed(..) => {},
             _ => {
