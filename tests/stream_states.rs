@@ -833,8 +833,7 @@ fn rst_while_closing() {
         .idle_ms(1)
         // Send the RST_STREAM frame which causes the client to panic.
         .send_frame(frames::reset(1).cancel())
-        .recv_frame(frames::headers(1).eos())
-        .recv_frame(frames::go_away(0))
+        .recv_frame(frames::reset(1).cancel())
         .close();
 
     let client = client::handshake(io)
