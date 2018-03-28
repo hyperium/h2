@@ -1020,7 +1020,8 @@ where
 
 impl<T, B: IntoBuf> Future for Handshake<T, B>
     where T: AsyncRead + AsyncWrite,
-          B: IntoBuf + 'static,
+          B: IntoBuf,
+          B::Buf: 'static,
 {
     type Item = Connection<T, B>;
     type Error = ::Error;
