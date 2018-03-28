@@ -214,8 +214,15 @@ impl State {
     }
 
     /// The remote explicitly sent a RST_STREAM.
-    pub fn recv_reset(&mut self, reason: Reason) {
+    pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
+
         match self.inner {
+            Closed(Cause::EndStream) if queued => {
+                // If the stream has a queued EOS frame, transition to peer
+                // reset.
+                trace!("recv_reset: reason={:?}; queued=true", reason);
+                self.inner = Closed(Cause::Proto(reason));
+            },
             Closed(..) => {},
             _ => {
                 trace!("recv_reset; reason={:?}", reason);

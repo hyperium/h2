@@ -590,7 +590,7 @@ impl Recv {
     /// Handle remote sending an explicit RST_STREAM.
     pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
         // Notify the stream
-        stream.state.recv_reset(frame.reason());
+        stream.state.recv_reset(frame.reason(), stream.is_pending_send);
 
         stream.notify_send();
         stream.notify_recv();

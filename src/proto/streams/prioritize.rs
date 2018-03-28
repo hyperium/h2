@@ -575,7 +575,8 @@ impl Prioritize {
         loop {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
-                    trace!("pop_frame; stream={:?}", stream.id);
+                    trace!("pop_frame; stream={:?}; stream.state={:?}",
+                        stream.id, stream.state);
 
                     // If the stream receives a RESET from the peer, it may have
                     // had data buffered to be sent, but all the frames are cleared
