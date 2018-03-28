@@ -364,7 +364,6 @@ impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
-    B::Buf: 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -1021,7 +1020,6 @@ where
 impl<T, B: IntoBuf> Future for Handshake<T, B>
     where T: AsyncRead + AsyncWrite,
           B: IntoBuf,
-          B::Buf: 'static,
 {
     type Item = Connection<T, B>;
     type Error = ::Error;
