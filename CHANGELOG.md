@@ -1,3 +1,10 @@
+# 0.1.3 (March 28, 2018)
+
+* Allow configuring max streams before the peer's settings frame is
+  received (#242).
+* Fix HPACK decoding bug with regards to large literals (#244).
+* Fix state transition bug triggered by receiving a RST_STREAM frame (#247).
+
 # 0.1.2 (March 13, 2018)
 
 * Fix another bug relating to resetting connections and reaching
