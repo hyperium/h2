@@ -351,6 +351,9 @@ pub struct Builder {
     /// MAX_CONCURRENT_STREAMS specified in the frame.
     initial_max_send_streams: usize,
 
+    /// Initial target window size for new connections.
+    initial_target_connection_window_size: Option<u32>,
+
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
 
@@ -678,6 +681,7 @@ impl Builder {
         Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
             stream_id: 1.into(),
@@ -717,6 +721,42 @@ impl Builder {
     /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
+        self
+    }
+
+    /// Indicates the initial window size (in octets) for connection-level flow control
+    /// for received data.
+    ///
+    /// The initial window of a connection is used as part of flow control. For more details,
+    /// see [`ReleaseCapacity`].
+    ///
+    /// The default value is 65,535.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::client::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .initial_connection_window_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # client_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn initial_connection_window_size(&mut self, size: u32) -> &mut Self {
+        self.initial_target_connection_window_size = Some(size);
         self
     }
 
@@ -1266,7 +1306,7 @@ where
             .buffer(self.builder.settings.clone().into())
             .expect("invalid SETTINGS frame");
 
-        let connection = proto::Connection::new(codec, proto::Config {
+        let inner = proto::Connection::new(codec, proto::Config {
             next_stream_id: self.builder.stream_id,
             initial_max_send_streams: self.builder.initial_max_send_streams,
             reset_stream_duration: self.builder.reset_stream_duration,
@@ -1274,12 +1314,15 @@ where
             settings: self.builder.settings.clone(),
         });
         let send_request = SendRequest {
-            inner: connection.streams().clone(),
+            inner: inner.streams().clone(),
             pending: None,
         };
-        let connection = Connection {
-            inner: connection,
-        };
+
+        let mut connection = Connection { inner };
+        if let Some(sz) = self.builder.initial_target_connection_window_size {
+            connection.set_target_window_size(sz);
+        }
+
         Ok(Async::Ready((send_request, connection)))
     }
 }

@@ -261,6 +261,9 @@ pub struct Builder {
 
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
+
+    /// Initial target window size for new connections.
+    initial_target_connection_window_size: Option<u32>,
 }
 
 /// Send a response back to the client
@@ -361,7 +364,6 @@ impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
-    B::Buf: 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -518,6 +520,7 @@ impl Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Settings::default(),
+            initial_target_connection_window_size: None,
         }
     }
 
@@ -554,6 +557,42 @@ impl Builder {
     /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
+        self
+    }
+
+    /// Indicates the initial window size (in octets) for connection-level flow control
+    /// for received data.
+    ///
+    /// The initial window of a connection is used as part of flow control. For more details,
+    /// see [`ReleaseCapacity`].
+    ///
+    /// The default value is 65,535.
+    ///
+    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate h2;
+    /// # extern crate tokio_io;
+    /// # use tokio_io::*;
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .initial_connection_window_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn initial_connection_window_size(&mut self, size: u32) -> &mut Self {
+        self.initial_target_connection_window_size = Some(size);
         self
     }
 
@@ -1032,8 +1071,13 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
                 reset_stream_max: self.builder.reset_stream_max,
                 settings: self.builder.settings.clone(),
             });
+
             trace!("Handshake::poll(); connection established!");
-            Connection { connection }
+            let mut c = Connection { connection };
+            if let Some(sz) = self.builder.initial_target_connection_window_size {
+                c.set_target_window_size(sz);
+            }
+            c
         });
         Ok(server)
     }
