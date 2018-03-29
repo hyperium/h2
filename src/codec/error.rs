@@ -40,6 +40,7 @@ pub enum UserError {
 
     /// The released capacity is larger than claimed capacity.
     ReleaseCapacityTooBig,
+
     /// The stream ID space is overflowed.
     ///
     /// A new connection is needed.

@@ -1,5 +1,6 @@
 mod connection;
 mod error;
+mod go_away;
 mod peer;
 mod ping_pong;
 mod settings;
@@ -13,6 +14,7 @@ pub(crate) use self::streams::Prioritized;
 
 use codec::Codec;
 
+use self::go_away::GoAway;
 use self::ping_pong::PingPong;
 use self::settings::Settings;
 

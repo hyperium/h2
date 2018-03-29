@@ -427,12 +427,40 @@ where
         self.connection.poll().map_err(Into::into)
     }
 
-    /// Sets the connection to a GOAWAY state. Does not close connection immediately.
-    ///
-    /// This closes the stream after sending a GOAWAY frame
-    /// and flushing the codec. Must continue being polled to close connection.
+    #[deprecated(note="use abrupt_shutdown or graceful_shutdown instead", since="0.1.4")]
+    #[doc(hidden)]
     pub fn close_connection(&mut self) {
-        self.connection.close_connection();
+        self.graceful_shutdown();
+    }
+
+    /// Sets the connection to a GOAWAY state.
+    ///
+    /// Does not terminate the connection. Must continue being polled to close
+    /// connection.
+    ///
+    /// After flushing the GOAWAY frame, the connection is closed. Any
+    /// outstanding streams do not prevent the connection from closing. This
+    /// should usually be reserved for shutting down when something bad
+    /// external to `h2` has happened, and open streams cannot be properly
+    /// handled.
+    ///
+    /// For graceful shutdowns, see [`graceful_shutdown`](Connection::graceful_shutdown).
+    pub fn abrupt_shutdown(&mut self, reason: Reason) {
+        self.connection.go_away_now(reason);
+    }
+
+    /// Starts a [graceful shutdown][1] process.
+    ///
+    /// Must continue being polled to close connection.
+    ///
+    /// It's possible to receive more requests after calling this method, since
+    /// they might have been in-flight from the client already. After about
+    /// 1 RTT, no new requests should be accepted. Once all active streams
+    /// have completed, the connection is closed.
+    ///
+    /// [1]: http://httpwg.org/specs/rfc7540.html#GOAWAY
+    pub fn graceful_shutdown(&mut self) {
+        self.connection.go_away_gracefully();
     }
 }
 

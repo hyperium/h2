@@ -127,6 +127,11 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        if id > me.actions.recv.max_stream_id() {
+            trace!("id ({:?}) > max_stream_id ({:?}), ignoring HEADERS", id, me.actions.recv.max_stream_id());
+            return Ok(());
+        }
+
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => match me.actions.recv.open(id, &mut me.counts)? {
@@ -209,6 +214,11 @@ where
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => {
+                if id > me.actions.recv.max_stream_id() {
+                    trace!("id ({:?}) > max_stream_id ({:?}), ignoring DATA", id, me.actions.recv.max_stream_id());
+                    return Ok(());
+                }
+
                 trace!("recv_data; stream not found: {:?}", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             },
@@ -241,6 +251,11 @@ where
 
         if id.is_zero() {
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
+
+        if id > me.actions.recv.max_stream_id() {
+            trace!("id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM", id, me.actions.recv.max_stream_id());
+            return Ok(());
         }
 
         let stream = match me.store.find_mut(&id) {
@@ -295,7 +310,7 @@ where
         last_processed_id
     }
 
-    pub fn recv_goaway(&mut self, frame: &frame::GoAway) {
+    pub fn recv_go_away(&mut self, frame: &frame::GoAway) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -306,6 +321,8 @@ where
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
+
+        actions.recv.go_away(last_stream_id);
 
         me.store
             .for_each(|stream| if stream.id > last_stream_id {
@@ -630,6 +647,13 @@ where
                 reason, send_buffer, stream, &mut actions.task);
             actions.recv.enqueue_reset_expiration(stream, counts)
         })
+    }
+
+    pub fn send_go_away(&mut self, last_processed_id: StreamId) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+        let actions = &mut me.actions;
+        actions.recv.go_away(last_processed_id);
     }
 }
 
