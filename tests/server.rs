@@ -1,3 +1,4 @@
+#![deny(warnings)]
 pub mod support;
 use support::prelude::*;
 
@@ -205,7 +206,7 @@ fn sends_reset_cancel_when_req_body_is_dropped() {
 }
 
 #[test]
-fn sends_goaway_when_serv_closes_connection() {
+fn abrupt_shutdown() {
     let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
@@ -222,7 +223,7 @@ fn sends_goaway_when_serv_closes_connection() {
 
     let srv = server::handshake(io).expect("handshake").and_then(|srv| {
         srv.into_future().unwrap().and_then(|(_, mut srv)| {
-            srv.close_connection();
+            srv.abrupt_shutdown(Reason::NO_ERROR);
             srv.into_future().unwrap()
         })
     });
@@ -231,7 +232,7 @@ fn sends_goaway_when_serv_closes_connection() {
 }
 
 #[test]
-fn serve_request_then_serv_closes_connection() {
+fn graceful_shutdown() {
     let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
@@ -241,37 +242,74 @@ fn serve_request_then_serv_closes_connection() {
         .recv_settings()
         .send_frame(
             frames::headers(1)
-                .request("GET", "https://example.com/"),
+                .request("GET", "https://example.com/")
+                .eos(),
         )
+        .recv_frame(frames::go_away(StreamId::MAX_CLIENT))
+        .recv_frame(frames::ping(frame::Ping::SHUTDOWN))
         .recv_frame(frames::headers(1).response(200).eos())
-        .recv_frame(frames::reset(1).cancel())
+        // Pretend this stream was sent while the GOAWAY was in flight
         .send_frame(
             frames::headers(3)
-                .request("GET", "https://example.com/"),
+                .request("POST", "https://example.com/"),
         )
+        .send_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
         .recv_frame(frames::go_away(3))
         // streams sent after GOAWAY receive no response
         .send_frame(
-            frames::headers(5)
+            frames::headers(7)
                 .request("GET", "https://example.com/"),
         )
-        .close();
+        .send_frame(frames::data(7, "").eos())
+        .send_frame(frames::data(3, "").eos())
+        .recv_frame(frames::headers(3).response(200).eos())
+        .close(); //TODO: closed()?
 
-    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
-        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+    let srv = server::handshake(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future().unwrap()
+        })
+        .and_then(|(reqstream, mut srv)| {
             let (req, mut stream) = reqstream.unwrap();
 
             assert_eq!(req.method(), &http::Method::GET);
 
-            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            srv.graceful_shutdown();
+
+            let rsp = http::Response::builder()
+                .status(200)
+                .body(())
+                .unwrap();
             stream.send_response(rsp, true).unwrap();
 
-            srv.into_future().unwrap().and_then(|(_reqstream, mut srv)| {
-                srv.close_connection();
-                srv.into_future().unwrap()
-            })
+            srv.into_future().unwrap()
         })
-    });
+        .and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+            assert_eq!(req.method(), &http::Method::POST);
+            let body = req.into_parts().1;
+
+            let body = body.concat2().and_then(move |buf| {
+                assert!(buf.is_empty());
+
+                let rsp = http::Response::builder()
+                    .status(200)
+                    .body(())
+                    .unwrap();
+                stream.send_response(rsp, true).unwrap();
+                Ok(())
+            });
+
+            srv.into_future()
+                .map(|(req, _srv)| {
+                    assert!(req.is_none(), "unexpected request");
+                })
+                .drive(body)
+                .and_then(|(srv, ())| {
+                    srv.expect("srv")
+                })
+        });
 
     srv.join(client).wait().expect("wait");
 }

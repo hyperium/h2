@@ -26,6 +26,15 @@ pub(super) struct Recv {
     /// The stream ID of the last processed stream
     last_processed_id: StreamId,
 
+    /// Any streams with a higher ID are ignored.
+    ///
+    /// This starts as MAX, but is lowered when a GOAWAY is received.
+    ///
+    /// > After sending a GOAWAY frame, the sender can discard frames for
+    /// > streams initiated by the receiver with identifiers higher than
+    /// > the identified last stream.
+    max_stream_id: StreamId,
+
     /// Streams that have pending window updates
     pending_window_updates: store::Queue<stream::NextWindowUpdate>,
 
@@ -85,7 +94,8 @@ impl Recv {
             in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),
             pending_window_updates: store::Queue::new(),
-            last_processed_id: StreamId::zero(),
+            last_processed_id: StreamId::ZERO,
+            max_stream_id: StreamId::MAX,
             pending_accept: store::Queue::new(),
             pending_reset_expired: store::Queue::new(),
             reset_duration: config.local_reset_duration,
@@ -606,10 +616,23 @@ impl Recv {
         stream.notify_recv();
     }
 
+    pub fn go_away(&mut self, last_processed_id: StreamId) {
+        assert!(self.max_stream_id >= last_processed_id);
+
+        self.max_stream_id = last_processed_id;
+    }
+
     pub fn recv_eof(&mut self, stream: &mut Stream) {
         stream.state.recv_eof();
         stream.notify_send();
         stream.notify_recv();
+    }
+
+    /// Get the max ID of streams we can receive.
+    ///
+    /// This gets lowered if we send a GOAWAY frame.
+    pub fn max_stream_id(&self) -> StreamId {
+        self.max_stream_id
     }
 
     fn next_stream_id(&self) -> Result<StreamId, RecvError> {
