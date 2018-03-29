@@ -818,6 +818,9 @@ fn rst_while_closing() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
+    // Rendevous when we've queued a trailers frame
+    let (tx, rx) = ::futures::sync::oneshot::channel();
+
     let srv = srv.assert_client_handshake()
         .unwrap()
         .recv_settings()
@@ -830,7 +833,7 @@ fn rst_while_closing() {
         // Idling for a moment here is necessary to ensure that the client
         // enqueues its TRAILERS frame *before* we send the RST_STREAM frame
         // which causes the panic.
-        .idle_ms(1)
+        .wait_for(rx)
         // Send the RST_STREAM frame which causes the client to panic.
         .send_frame(frames::reset(1).cancel())
         .ping_pong([1; 8])
@@ -847,24 +850,29 @@ fn rst_while_closing() {
                 .unwrap();
 
             // The request should be left streaming.
-            let (resp, mut stream) = client.send_request(request, false)
+            let (resp, stream) = client.send_request(request, false)
                 .expect("send_request");
             let req = resp
                 // on receipt of an EOS response from the server, transition
                 // the stream Open => Half Closed (remote).
-                .expect("response")
-                .and_then(move |resp| {
-                    assert_eq!(resp.status(), StatusCode::OK);
-                    // Enqueue trailers frame.
-                    let _ = stream.send_trailers(HeaderMap::new());
-                    Ok(())
-                })
-                .map_err(|()| -> Error {
-                    unreachable!()
-                });
-
+                .expect("response");
             conn.drive(req)
-                .and_then(|(conn, _)| conn.expect("client"))
+                .map(move |(conn, resp)| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    (conn, stream)
+                })
+        })
+        .and_then(|(conn, mut stream)| {
+            // Enqueue trailers frame.
+            let _ = stream.send_trailers(HeaderMap::new());
+            // Signal the server mock to send RST_FRAME
+            let _ = tx.send(());
+
+            conn
+                // yield once to allow the server mock to be polled
+                // before the conn flushes its buffer
+                .yield_once()
+                .expect("client")
         });
 
 

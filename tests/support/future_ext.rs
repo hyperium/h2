@@ -67,6 +67,26 @@ pub trait FutureExt: Future {
             future: other,
         }
     }
+
+    /// Wrap this future in one that will yield NotReady once before continuing.
+    ///
+    /// This allows the executor to poll other futures before trying this one
+    /// again.
+    fn yield_once(self) -> Box<Future<Item = Self::Item, Error = Self::Error>>
+    where
+        Self: Future + Sized + 'static,
+    {
+        let mut ready = false;
+        Box::new(::futures::future::poll_fn(move || {
+            if ready {
+                Ok::<_, ()>(().into())
+            } else {
+                ready = true;
+                ::futures::task::current().notify();
+                Ok(::futures::Async::NotReady)
+            }
+        }).then(|_| self))
+    }
 }
 
 impl<T: Future> FutureExt for T {}

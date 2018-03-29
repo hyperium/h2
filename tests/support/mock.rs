@@ -477,6 +477,16 @@ pub trait HandleFutureExt {
         }))
     }
 
+    fn wait_for<F>(self, other: F) -> Box<Future<Item = Self::Item, Error = Self::Error>>
+    where
+        F: Future + 'static,
+        Self: Future + Sized + 'static
+    {
+        Box::new(self.then(move |result| {
+            other.then(move |_| result)
+        }))
+    }
+
     fn close(self) -> Box<Future<Item = (), Error = ()>>
     where
         Self: Future<Error = ()> + Sized + 'static,
