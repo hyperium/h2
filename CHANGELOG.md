@@ -1,3 +1,9 @@
+# 0.1.4 (April 5, 2018)
+
+* Add `initial_connection_window_size` to client and server `Builder`s (#249).
+* Add `graceful_shutdown` and `abrupt_shutdown` to `server::Connection`,
+  deprecating `close_connection` (#250).
+
 # 0.1.3 (March 28, 2018)
 
 * Allow configuring max streams before the peer's settings frame is
