@@ -4,7 +4,7 @@ name = "h2"
 # - Update html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.1.3"
+version = "0.1.4"
 license = "MIT"
 authors = ["Carl Lerche <me@carllerche.com>"]
 description = "An HTTP/2.0 client and server"
@@ -33,7 +33,7 @@ unstable = []
 futures = "0.1"
 tokio-io = "0.1.4"
 bytes = "0.4"
-http = "0.1"
+http = "0.1.3"
 byteorder = "1.0"
 log = "0.4.1"
 fnv = "1.0.5"

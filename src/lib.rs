@@ -84,7 +84,7 @@
 //! [`Server::handshake`]: server/struct.Server.html#method.handshake
 //! [`Client::handshake`]: client/struct.Client.html#method.handshake
 
-#![doc(html_root_url = "https://docs.rs/h2/0.1.3")]
+#![doc(html_root_url = "https://docs.rs/h2/0.1.4")]
 #![deny(warnings, missing_debug_implementations, missing_docs)]
 
 #[macro_use]
