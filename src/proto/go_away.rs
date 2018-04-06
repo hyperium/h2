@@ -103,7 +103,7 @@ impl GoAway {
     pub fn should_close_on_idle(&self) -> bool {
         !self.close_now && self.going_away
             .as_ref()
-            .map(|g| g.last_processed_id != StreamId::MAX_CLIENT)
+            .map(|g| g.last_processed_id != StreamId::MAX)
             .unwrap_or(false)
     }
 

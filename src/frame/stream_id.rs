@@ -14,8 +14,6 @@ impl StreamId {
 
     pub const MAX: StreamId = StreamId(u32::MAX >> 1);
 
-    pub const MAX_CLIENT: StreamId = StreamId((u32::MAX >> 1) - 1);
-
     /// Parse the stream ID
     #[inline]
     pub fn parse(buf: &[u8]) -> (StreamId, bool) {
