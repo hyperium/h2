@@ -383,14 +383,14 @@ where
         //
         // > A server that is attempting to gracefully shut down a connection
         // > SHOULD send an initial GOAWAY frame with the last stream
-        // > identifier set to 231-1 and a NO_ERROR code. This signals to the
+        // > identifier set to 2^31-1 and a NO_ERROR code. This signals to the
         // > client that a shutdown is imminent and that initiating further
         // > requests is prohibited. After allowing time for any in-flight
         // > stream creation (at least one round-trip time), the server can
         // > send another GOAWAY frame with an updated last stream identifier.
         // > This ensures that a connection can be cleanly shut down without
         // > losing requests.
-        self.go_away(StreamId::MAX_CLIENT, Reason::NO_ERROR);
+        self.go_away(StreamId::MAX, Reason::NO_ERROR);
 
         // We take the advice of waiting 1 RTT literally, and wait
         // for a pong before proceeding.

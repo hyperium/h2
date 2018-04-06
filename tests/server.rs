@@ -245,7 +245,10 @@ fn graceful_shutdown() {
                 .request("GET", "https://example.com/")
                 .eos(),
         )
-        .recv_frame(frames::go_away(StreamId::MAX_CLIENT))
+        // 2^31 - 1 = 2147483647
+        // Note: not using a constant in the library because library devs
+        // can be unsmart.
+        .recv_frame(frames::go_away(2147483647))
         .recv_frame(frames::ping(frame::Ping::SHUTDOWN))
         .recv_frame(frames::headers(1).response(200).eos())
         // Pretend this stream was sent while the GOAWAY was in flight
