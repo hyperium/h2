@@ -1,3 +1,7 @@
+# 0.1.5 (April 6, 2018)
+
+* Fix the `last_stream_id` sent during graceful GOAWAY (#254).
+
 # 0.1.4 (April 5, 2018)
 
 * Add `initial_connection_window_size` to client and server `Builder`s (#249).
