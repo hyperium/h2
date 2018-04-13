@@ -217,10 +217,11 @@ impl State {
     pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
 
         match self.inner {
-            Closed(Cause::EndStream) if queued => {
+            Closed(prior_reason) if queued => {
                 // If the stream has a queued EOS frame, transition to peer
                 // reset.
-                trace!("recv_reset: reason={:?}; queued=true", reason);
+                trace!("recv_reset: Closed({:?}) => Closed({:?}); queued=true",
+                    prior_reason, reason);
                 self.inner = Closed(Cause::Proto(reason));
             },
             Closed(..) => {},
