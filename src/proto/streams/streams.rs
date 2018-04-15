@@ -310,7 +310,7 @@ where
         last_processed_id
     }
 
-    pub fn recv_go_away(&mut self, frame: &frame::GoAway) {
+    pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), RecvError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -321,6 +321,10 @@ where
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
+
+        if actions.recv.max_stream_id() < last_stream_id {
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
 
         actions.recv.go_away(last_stream_id);
 
@@ -337,6 +341,8 @@ where
             .unwrap();
 
         actions.conn_error = Some(err);
+
+        Ok(())
     }
 
     pub fn recv_eof(&mut self) {
