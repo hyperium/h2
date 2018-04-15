@@ -61,3 +61,5 @@ rustls = "0.12"
 tokio-rustls = "0.5.0"
 webpki = "0.18.0-alpha"
 webpki-roots = "0.14"
+
+h2-fuzz = { path = "./fuzz" }
