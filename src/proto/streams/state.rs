@@ -230,9 +230,9 @@ impl State {
             //   therefore, there may still be frames ahead of the EOS frame
             //   in the send queue.
             //
-            // In either of these cases, we want to honor the received
-            // RST_STREAM by resetting the stream immediately (and clearing
-            // the send queue).
+            // In either of these cases, we want to overwrite the stream's
+            // previous state with the received RST_STREAM, so that the queue
+            // will be cleared by `Prioritize::pop_frame`.
             state => {
                 trace!(
                     "recv_reset; reason={:?}; state={:?}; queued={:?}",
