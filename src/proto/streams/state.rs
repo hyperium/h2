@@ -214,20 +214,37 @@ impl State {
     }
 
     /// The remote explicitly sent a RST_STREAM.
+    ///
+    /// # Arguments
+    /// - `reason`: the reason field of the received RST_STREAM frame.
+    /// - `queued`: true if this stream has frames in the pending send queue.
     pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
-
         match self.inner {
-            Closed(Cause::EndStream) if queued => {
-                // If the stream has a queued EOS frame, transition to peer
-                // reset.
-                trace!("recv_reset: reason={:?}; queued=true", reason);
+            // If the stream is already in a `Closed` state, do nothing,
+            // provided that there are no frames still in the send queue.
+            Closed(..) if !queued => {},
+            // A notionally `Closed` stream may still have queued frames in
+            // the following cases:
+            //
+            // - if the cause is `Cause::Scheduled(..)` (i.e. we have not
+            //   actually closed the stream yet).
+            // - if the cause is `Cause::EndStream`: we transition to this
+            //   state when an EOS frame is *enqueued* (so that it's invalid
+            //   to enqueue more frames), not when the EOS frame is *sent*;
+            //   therefore, there may still be frames ahead of the EOS frame
+            //   in the send queue.
+            //
+            // In either of these cases, we want to overwrite the stream's
+            // previous state with the received RST_STREAM, so that the queue
+            // will be cleared by `Prioritize::pop_frame`.
+            state => {
+                trace!(
+                    "recv_reset; reason={:?}; state={:?}; queued={:?}",
+                    reason, state, queued
+                );
                 self.inner = Closed(Cause::Proto(reason));
             },
-            Closed(..) => {},
-            _ => {
-                trace!("recv_reset; reason={:?}", reason);
-                self.inner = Closed(Cause::Proto(reason));
-            },
+
         }
     }
 

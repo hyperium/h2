@@ -593,6 +593,8 @@ impl Prioritize {
                     // To be safe, we just always ask the stream.
                     let is_counted = stream.is_counted();
                     let is_pending_reset = stream.is_pending_reset_expiration();
+                    trace!(" --> stream={:?}; is_pending_reset={:?};",
+                        stream.id, is_pending_reset);
 
                     let frame = match stream.pending_send.pop_front(buffer) {
                         Some(Frame::Data(mut frame)) => {
@@ -603,13 +605,14 @@ impl Prioritize {
 
                             trace!(
                                 " --> data frame; stream={:?}; sz={}; eos={:?}; window={}; \
-                                 available={}; requested={}",
+                                 available={}; requested={}; buffered={};",
                                 frame.stream_id(),
                                 sz,
                                 frame.is_end_stream(),
                                 stream_capacity,
                                 stream.send_flow.available(),
-                                stream.requested_send_capacity
+                                stream.requested_send_capacity,
+                                stream.buffered_send_data,
                             );
 
                             // Zero length data frames always have capacity to
