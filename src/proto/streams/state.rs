@@ -214,6 +214,10 @@ impl State {
     }
 
     /// The remote explicitly sent a RST_STREAM.
+    ///
+    /// # Arguments
+    /// - `reason`: the reason field of the received RST_STREAM frame.
+    /// - `queued`: true if this stream has frames in the pending send queue.
     pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
         match self.inner {
             // If the stream is already in a `Closed` state, do nothing,
