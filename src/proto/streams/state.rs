@@ -215,20 +215,32 @@ impl State {
 
     /// The remote explicitly sent a RST_STREAM.
     pub fn recv_reset(&mut self, reason: Reason, queued: bool) {
-
         match self.inner {
-            Closed(prior_reason) if queued => {
-                // If the stream has a queued EOS frame, transition to peer
-                // reset.
-                trace!("recv_reset: Closed({:?}) => Closed({:?}); queued=true",
-                    prior_reason, reason);
+            // If the stream is already in a `Closed` state, do nothing,
+            // provided that there are no frames still in the send queue.
+            Closed(..) if !queued => {},
+            // A notionally `Closed` stream may still have queued frames in
+            // the following cases:
+            //
+            // - if the cause is `Cause::Scheduled(..)` (i.e. we have not
+            //   actually closed the stream yet).
+            // - if the cause is `Cause::EndStream`: we transition to this
+            //   state when an EOS frame is *enqueued* (so that it's invalid
+            //   to enqueue more frames), not when the EOS frame is *sent*;
+            //   therefore, there may still be frames ahead of the EOS frame
+            //   in the send queue.
+            //
+            // In either of these cases, we want to honor the received
+            // RST_STREAM by resetting the stream immediately (and clearing
+            // the send queue).
+            state => {
+                trace!(
+                    "recv_reset; reason={:?}; state={:?}; queued={:?}",
+                    reason, state, queued
+                );
                 self.inner = Closed(Cause::Proto(reason));
             },
-            Closed(..) => {},
-            _ => {
-                trace!("recv_reset; reason={:?}", reason);
-                self.inner = Closed(Cause::Proto(reason));
-            },
+
         }
     }
 
