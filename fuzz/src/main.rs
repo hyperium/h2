@@ -56,14 +56,18 @@ impl<'a> Read for MockIo<'a> {
     }
 }
 
-impl<'a> AsyncRead for MockIo<'a> {}
+impl<'a> AsyncRead for MockIo<'a> {
+    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [u8]) -> bool {
+        false
+    }
+}
 
 impl<'a> Write for MockIo<'a> {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
         let len = std::cmp::min(self.next_u32() as usize, buf.len());
         if len == 0 {
-            if false && self.input.is_empty() {
-                Ok(0)
+            if self.input.is_empty() {
+                Err(io::ErrorKind::BrokenPipe.into())
             } else {
                 task::current().notify();
                 Err(io::ErrorKind::WouldBlock.into())
