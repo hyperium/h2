@@ -578,14 +578,6 @@ impl Prioritize {
                     trace!("pop_frame; stream={:?}; stream.state={:?}",
                         stream.id, stream.state);
 
-                    // If the stream receives a RESET from the peer, it may have
-                    // had data buffered to be sent, but all the frames are cleared
-                    // in clear_queue(). Instead of doing O(N) traversal through queue
-                    // to remove, lets just ignore peer_reset streams here.
-                    if stream.state.is_peer_reset() {
-                        continue;
-                    }
-
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
                     // to wait for "some time" after a reset.
@@ -694,13 +686,20 @@ impl Prioritize {
                              )
                         ),
                         None => {
-                            let reason = stream.state.get_scheduled_reset()
-                                .expect("must be scheduled to reset");
+                            if let Some(reason) = stream.state.get_scheduled_reset() {
+                                stream.state.set_reset(reason);
 
-                            stream.state.set_reset(reason);
-
-                            let frame = frame::Reset::new(stream.id, reason);
-                            Frame::Reset(frame)
+                                let frame = frame::Reset::new(stream.id, reason);
+                                Frame::Reset(frame)
+                            } else {
+                                // If the stream receives a RESET from the peer, it may have
+                                // had data buffered to be sent, but all the frames are cleared
+                                // in clear_queue(). Instead of doing O(N) traversal through queue
+                                // to remove, lets just ignore the stream here.
+                                trace!("removing dangling stream from pending_send");
+                                counts.transition_after(stream, is_counted, is_pending_reset);
+                                continue;
+                            }
                         }
                     };
 
