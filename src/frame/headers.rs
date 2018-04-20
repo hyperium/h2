@@ -156,7 +156,6 @@ impl Headers {
             if src.len() < 1 {
                 return Err(Error::MalformedMessage);
             }
-            // TODO: Ensure payload is sized correctly
             pad = src[0] as usize;
 
             // Drop the padding
