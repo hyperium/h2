@@ -8,7 +8,7 @@ use codec::UserError::*;
 
 use bytes::buf::Take;
 
-use std::{cmp, fmt};
+use std::{cmp, fmt, mem};
 use std::io;
 
 /// # Warning
@@ -48,6 +48,19 @@ pub(super) struct Prioritize {
 
     /// Stream ID of the last stream opened.
     last_opened_id: StreamId,
+
+    /// What `DATA` frame is currently being sent in the codec.
+    in_flight_data_frame: InFlightData,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum InFlightData {
+    /// There is no `DATA` frame in flight.
+    Nothing,
+    /// There is a `DATA` frame in flight belonging to the given stream.
+    DataFrame(store::Key),
+    /// There was a `DATA` frame, but the stream's queue was since cleared.
+    Drop,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -79,7 +92,8 @@ impl Prioritize {
             pending_capacity: store::Queue::new(),
             pending_open: store::Queue::new(),
             flow: flow,
-            last_opened_id: StreamId::ZERO
+            last_opened_id: StreamId::ZERO,
+            in_flight_data_frame: InFlightData::Nothing,
         }
     }
 
@@ -456,6 +470,10 @@ impl Prioritize {
                 Some(frame) => {
                     trace!("writing frame={:?}", frame);
 
+                    debug_assert_eq!(self.in_flight_data_frame, InFlightData::Nothing);
+                    if let Frame::Data(ref frame) = frame {
+                        self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
+                    }
                     dst.buffer(frame).ok().expect("invalid frame");
 
                     // Ensure the codec is ready to try the loop again.
@@ -503,11 +521,22 @@ impl Prioritize {
             trace!(
                 "  -> reclaimed; frame={:?}; sz={}",
                 frame,
-                frame.payload().remaining()
+                frame.payload().inner.get_ref().remaining()
             );
 
             let mut eos = false;
             let key = frame.payload().stream;
+
+            match mem::replace(&mut self.in_flight_data_frame, InFlightData::Nothing) {
+                InFlightData::Nothing => panic!("wasn't expecting a frame to reclaim"),
+                InFlightData::Drop => {
+                    trace!("not reclaiming frame for cancelled stream");
+                    return false;
+                }
+                InFlightData::DataFrame(k) => {
+                    debug_assert_eq!(k, key);
+                }
+            }
 
             let mut frame = frame.map(|prioritized| {
                 // TODO: Ensure fully written
@@ -558,6 +587,12 @@ impl Prioritize {
 
         stream.buffered_send_data = 0;
         stream.requested_send_capacity = 0;
+        if let InFlightData::DataFrame(key) = self.in_flight_data_frame {
+            if stream.key() == key {
+                // This stream could get cleaned up now - don't allow the buffered frame to get reclaimed.
+                self.in_flight_data_frame = InFlightData::Drop;
+            }
+        }
     }
 
     fn pop_frame<B>(
