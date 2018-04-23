@@ -1,4 +1,4 @@
-use super::DecoderError;
+use super::{DecoderError, NeedMore};
 
 use bytes::Bytes;
 use http::{Method, StatusCode};
@@ -60,6 +60,9 @@ impl Header<Option<HeaderName>> {
 
 impl Header {
     pub fn new(name: Bytes, value: Bytes) -> Result<Header, DecoderError> {
+        if name.len() == 0 {
+            return Err(DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream));
+        }
         if name[0] == b':' {
             match &name[1..] {
                 b"authority" => {

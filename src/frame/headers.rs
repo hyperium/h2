@@ -153,7 +153,9 @@ impl Headers {
 
         // Read the padding length
         if flags.is_padded() {
-            // TODO: Ensure payload is sized correctly
+            if src.len() < 1 {
+                return Err(Error::MalformedMessage);
+            }
             pad = src[0] as usize;
 
             // Drop the padding
@@ -162,6 +164,9 @@ impl Headers {
 
         // Read the stream dependency
         let stream_dep = if flags.is_priority() {
+            if src.len() < 5 {
+                return Err(Error::MalformedMessage);
+            }
             let stream_dep = StreamDependency::load(&src[..5])?;
 
             if stream_dep.dependency_id() == head.stream_id() {
@@ -290,11 +295,19 @@ impl PushPromise {
 
         // Read the padding length
         if flags.is_padded() {
+            if src.len() < 1 {
+                return Err(Error::MalformedMessage);
+            }
+
             // TODO: Ensure payload is sized correctly
             pad = src[0] as usize;
 
             // Drop the padding
             let _ = src.split_to(1);
+        }
+
+        if src.len() < 5 {
+            return Err(Error::MalformedMessage);
         }
 
         let (promised_id, _) = StreamId::parse(&src[..4]);

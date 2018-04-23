@@ -310,7 +310,7 @@ where
         last_processed_id
     }
 
-    pub fn recv_go_away(&mut self, frame: &frame::GoAway) {
+    pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), RecvError> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -321,6 +321,17 @@ where
 
         let last_stream_id = frame.last_stream_id();
         let err = frame.reason().into();
+
+        if last_stream_id > actions.recv.max_stream_id() {
+            // The remote endpoint sent a `GOAWAY` frame indicating a stream
+            // that we never sent, or that we have already terminated on account
+            // of previous `GOAWAY` frame. In either case, that is illegal.
+            // (When sending multiple `GOAWAY`s, "Endpoints MUST NOT increase
+            // the value they send in the last stream identifier, since the
+            // peers might already have retried unprocessed requests on another
+            // connection.")
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
 
         actions.recv.go_away(last_stream_id);
 
@@ -337,6 +348,8 @@ where
             .unwrap();
 
         actions.conn_error = Some(err);
+
+        Ok(())
     }
 
     pub fn recv_eof(&mut self) {
