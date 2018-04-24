@@ -878,3 +878,70 @@ fn rst_while_closing() {
 
     client.join(srv).wait().expect("wait");
 }
+
+#[test]
+fn rst_with_buffered_data() {
+    use futures::future::lazy;
+
+    // Data is buffered in `FramedWrite` and the stream is reset locally before
+    // the data is fully flushed. Given that resetting a stream requires
+    // clearing all associated state for that stream, this test ensures that the
+    // buffered up frame is correctly handled.
+    let _ = ::env_logger::try_init();
+
+    // This allows the settings + headers frame through
+    let (io, srv) = mock::new_with_write_capacity(73);
+
+    // Synchronize the client / server on response
+    let (tx, rx) = ::futures::sync::oneshot::channel();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+        )
+        .buffer_bytes(128)
+        .send_frame(frames::headers(1).response(204).eos())
+        .send_frame(frames::reset(1).cancel())
+        .wait_for(rx)
+        .unbounded_bytes()
+        .recv_frame(
+            frames::data(1, vec![0; 16_384]))
+        .close()
+        ;
+
+    // A large body
+    let body = vec![0; 2 * frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // Send the request
+            let (resp, mut stream) = client.send_request(request, false)
+                .expect("send_request");
+
+            // Send the data
+            stream.send_data(body.into(), true).unwrap();
+
+            conn.drive({
+                resp.then(|res| {
+                    Ok::<_, ()>(())
+                })
+            })
+        })
+        .and_then(move |(conn, _)| {
+            tx.send(()).unwrap();
+            conn.unwrap()
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
