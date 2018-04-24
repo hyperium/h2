@@ -10,7 +10,7 @@ use futures::task::{self, Task};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::read_exact;
 
-use std::{cmp, fmt, io};
+use std::{cmp, fmt, io, usize};
 use std::io::ErrorKind::WouldBlock;
 use std::sync::{Arc, Mutex};
 
@@ -32,10 +32,25 @@ pub struct Pipe {
 
 #[derive(Debug)]
 struct Inner {
+    /// Data written by the test case to the h2 lib.
     rx: Vec<u8>,
+
+    /// Notify when data is ready to be received.
     rx_task: Option<Task>,
+
+    /// Data written by the `h2` library to be read by the test case.
     tx: Vec<u8>,
+
+    /// Notify when data is written. This notifies the test case waiters.
     tx_task: Option<Task>,
+
+    /// Number of bytes that can be written before `write` returns `NotReady`.
+    tx_rem: usize,
+
+    /// Task to notify when write capacity becomes available.
+    tx_rem_task: Option<Task>,
+
+    /// True when the pipe is closed.
     closed: bool,
 }
 
@@ -43,11 +58,18 @@ const PREFACE: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Create a new mock and handle
 pub fn new() -> (Mock, Handle) {
+    new_with_write_capacity(usize::MAX)
+}
+
+/// Create a new mock and handle allowing up to `cap` bytes to be written.
+pub fn new_with_write_capacity(cap: usize) -> (Mock, Handle) {
     let inner = Arc::new(Mutex::new(Inner {
         rx: vec![],
         rx_task: None,
         tx: vec![],
         tx_task: None,
+        tx_rem: cap,
+        tx_rem_task: None,
         closed: false,
     }));
 
@@ -303,14 +325,24 @@ impl io::Read for Mock {
 impl AsyncRead for Mock {}
 
 impl io::Write for Mock {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
         let mut me = self.pipe.inner.lock().unwrap();
 
         if me.closed {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "mock closed"));
         }
 
+        if me.tx_rem == 0 {
+            me.tx_rem_task = Some(task::current());
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+
+        if buf.len() > me.tx_rem {
+            buf = &buf[..me.tx_rem];
+        }
+
         me.tx.extend(buf);
+        me.tx_rem -= buf.len();
 
         if let Some(task) = me.tx_task.take() {
             task.notify();
@@ -474,6 +506,70 @@ pub trait HandleFutureExt {
                 handle: Some(handle),
                 timeout: rx,
             }.map_err(|_| unreachable!())
+        }))
+    }
+
+    fn buffer_bytes(self, num: usize) -> Box<Future<Item = Handle, Error = Self::Error>>
+    where Self: Sized + 'static,
+          Self: Future<Item = Handle>,
+          Self::Error: fmt::Debug,
+    {
+        use futures::future::poll_fn;
+
+        Box::new(self.and_then(move |mut handle| {
+            // Set tx_rem to num
+            {
+                let mut i = handle.codec.get_mut().inner.lock().unwrap();
+                i.tx_rem = num;
+            }
+
+            let mut handle = Some(handle);
+
+            poll_fn(move || {
+                {
+                    let mut inner = handle.as_mut().unwrap()
+                        .codec.get_mut().inner.lock().unwrap();
+
+                    if inner.tx_rem == 0 {
+                        inner.tx_rem = usize::MAX;
+                    } else {
+                        inner.tx_task = Some(task::current());
+                        return Ok(Async::NotReady);
+                    }
+                }
+
+                Ok(handle.take().unwrap().into())
+            })
+        }))
+    }
+
+    fn unbounded_bytes(self) -> Box<Future<Item = Handle, Error = Self::Error>>
+    where Self: Sized + 'static,
+          Self: Future<Item = Handle>,
+          Self::Error: fmt::Debug,
+    {
+        Box::new(self.and_then(|mut handle| {
+            {
+                let mut i = handle.codec.get_mut().inner.lock().unwrap();
+                i.tx_rem = usize::MAX;
+
+                if let Some(task) = i.tx_rem_task.take() {
+                    task.notify();
+                }
+            }
+
+            Ok(handle.into())
+        }))
+    }
+
+    fn then_notify(self, tx: oneshot::Sender<()>) -> Box<Future<Item = Handle, Error = Self::Error>>
+    where Self: Sized + 'static,
+          Self: Future<Item = Handle>,
+          Self::Error: fmt::Debug,
+    {
+        Box::new(self.map(move |handle| {
+            tx.send(()).unwrap();
+            handle
         }))
     }
 
