@@ -43,7 +43,7 @@
 //!   HTTP/2.0 handshake once opened.
 //!
 //! Once the connection is ready to start the HTTP/2.0 handshake, it can be
-//! passed to [`Server::handshake`] or [`Client::handshake`]. At this point, the
+//! passed to [`server::handshake`] or [`client::handshake`]. At this point, the
 //! library will start the handshake process, which consists of:
 //!
 //! * The client sends the connection preface (a predefined sequence of 24
@@ -81,8 +81,8 @@
 //! [`SendStream`]: struct.SendStream.html
 //! [Starting HTTP/2]: http://httpwg.org/specs/rfc7540.html#starting
 //! [upgrade]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism
-//! [`Server::handshake`]: server/struct.Server.html#method.handshake
-//! [`Client::handshake`]: client/struct.Client.html#method.handshake
+//! [`server::handshake`]: server/fn.handshake.html
+//! [`client::handshake`]: client/fn.handshake.html
 
 #![doc(html_root_url = "https://docs.rs/h2/0.1.5")]
 #![deny(warnings, missing_debug_implementations, missing_docs)]
