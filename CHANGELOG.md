@@ -1,3 +1,7 @@
+# 0.1.6 (April 24, 2018)
+
+* Misc bug fixes related to stream management (#258, #260, #262).
+
 # 0.1.5 (April 6, 2018)
 
 * Fix the `last_stream_id` sent during graceful GOAWAY (#254).
