@@ -1,6 +1,6 @@
 use frame::{self, Error, Head, Kind, Reason, StreamId};
 
-use bytes::{BigEndian, BufMut};
+use bytes::{BufMut};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct GoAway {
@@ -42,8 +42,8 @@ impl GoAway {
         trace!("encoding GO_AWAY; code={:?}", self.error_code);
         let head = Head::new(Kind::GoAway, 0, StreamId::zero());
         head.encode(8, dst);
-        dst.put_u32::<BigEndian>(self.last_stream_id.into());
-        dst.put_u32::<BigEndian>(self.error_code.into());
+        dst.put_u32_be(self.last_stream_id.into());
+        dst.put_u32_be(self.error_code.into());
     }
 }
 
