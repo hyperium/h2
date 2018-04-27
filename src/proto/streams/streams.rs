@@ -607,13 +607,21 @@ where
 
             let mut stream = me.store.insert(stream.id, stream);
 
-            me.actions.send.send_headers(
+            let sent = me.actions.send.send_headers(
                 headers,
                 send_buffer,
                 &mut stream,
                 &mut me.counts,
                 &mut me.actions.task,
-            )?;
+            );
+
+            // send_headers can return a UserError, if it does,
+            // we should forget about this stream.
+            if let Err(err) = sent {
+                stream.unlink();
+                stream.remove();
+                return Err(err.into());
+            }
 
             // Given that the stream has been initialized, it should not be in the
             // closed state.

@@ -440,9 +440,14 @@ fn request_with_connection_headers() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
-    let srv = srv.assert_client_handshake()
+    // can't assert full handshake, since client never sends a request, and
+    // thus never bothers to ack the settings...
+    let srv = srv.read_preface()
         .unwrap()
-        .recv_settings()
+        .recv_frame(frames::settings())
+        // goaway is required to make sure the connection closes because
+        // of no active streams
+        .recv_frame(frames::go_away(0))
         .close();
 
     let headers = vec![
