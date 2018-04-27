@@ -1,3 +1,4 @@
+#![deny(warnings)]
 #[macro_use]
 extern crate log;
 
@@ -881,8 +882,6 @@ fn rst_while_closing() {
 
 #[test]
 fn rst_with_buffered_data() {
-    use futures::future::lazy;
-
     // Data is buffered in `FramedWrite` and the stream is reset locally before
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
@@ -932,7 +931,7 @@ fn rst_with_buffered_data() {
             stream.send_data(body.into(), true).unwrap();
 
             conn.drive({
-                resp.then(|res| {
+                resp.then(|_res| {
                     Ok::<_, ()>(())
                 })
             })

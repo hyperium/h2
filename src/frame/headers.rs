@@ -371,7 +371,7 @@ impl PushPromise {
 
         self.header_block.into_encoding()
             .encode(&head, encoder, dst, |dst| {
-                dst.put_u32::<BigEndian>(promised_id.into());
+                dst.put_u32_be(promised_id.into());
             })
     }
 
