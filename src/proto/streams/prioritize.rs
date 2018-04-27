@@ -697,6 +697,9 @@ impl Prioritize {
                                 // in clear_queue(). Instead of doing O(N) traversal through queue
                                 // to remove, lets just ignore the stream here.
                                 trace!("removing dangling stream from pending_send");
+                                // Since this should only happen as a consequence of `clear_queue`,
+                                // we must be in a closed state of some kind.
+                                debug_assert!(stream.state.is_closed());
                                 counts.transition_after(stream, is_counted, is_pending_reset);
                                 continue;
                             }
