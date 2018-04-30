@@ -1,0 +1,15 @@
+[package]
+name = "h2-support"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[dependencies]
+h2 = { path = "../..", features = ["unstable"] }
+
+bytes = "0.4.7"
+env_logger = "0.5.9"
+futures = "0.1.21"
+http = "0.1.5"
+string = "0.1.0"
+tokio-io = "0.1.6"
+tokio-timer = "0.1.2"

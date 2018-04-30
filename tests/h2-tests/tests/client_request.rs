@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate log;
+extern crate h2_support;
 
-pub mod support;
-use support::prelude::*;
+use h2_support::prelude::*;
 
 #[test]
 fn handshake() {

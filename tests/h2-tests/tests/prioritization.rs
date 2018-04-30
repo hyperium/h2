@@ -1,7 +1,8 @@
 #[macro_use]
-pub mod support;
-use support::{DEFAULT_WINDOW_SIZE};
-use support::prelude::*;
+extern crate h2_support;
+
+use h2_support::{DEFAULT_WINDOW_SIZE};
+use h2_support::prelude::*;
 
 #[test]
 fn single_stream_send_large_body() {

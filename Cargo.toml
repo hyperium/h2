@@ -28,6 +28,12 @@ branch = "master"
 unstable = []
 
 [workspace]
+members = [
+    "tests/h2-tests",
+    "tests/h2-support",
+    "util/genfixture",
+    "util/genhuff",
+]
 
 [dependencies]
 futures = "0.1"
@@ -42,7 +48,6 @@ string = "0.1"
 indexmap = "1.0"
 
 [dev-dependencies]
-tokio-timer = "0.1"
 
 # Fuzzing
 quickcheck = { version = "0.4.1", default-features = false }
