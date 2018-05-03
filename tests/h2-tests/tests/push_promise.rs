@@ -1,5 +1,6 @@
-pub mod support;
-use support::prelude::*;
+extern crate h2_support;
+
+use h2_support::prelude::*;
 
 #[test]
 fn recv_push_works() {

@@ -33,11 +33,11 @@ script:
   # Check with unstable flag
   - cargo check --features unstable
 
-  # Build the test executables
-  - cargo build --tests --features unstable
+  # Run tests, this includes lib tests and doc tests
+  - RUST_TEST_THREADS=1 cargo test
 
-  # Run tests
-  - RUST_TEST_THREADS=1 cargo test --features unstable
+  # Run integration tests
+  - cargo test -p h2-tests
 
   # Run h2spec on stable
   - if [ "${TRAVIS_RUST_VERSION}" = "stable" ]; then ./ci/h2spec.sh; fi

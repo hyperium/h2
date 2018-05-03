@@ -605,11 +605,25 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        use self::Frame::Data;
+
         let (frame, handle) = match self.inner.poll().unwrap() {
             Async::Ready((frame, handle)) => (frame, handle),
             Async::NotReady => return Ok(Async::NotReady),
         };
-        assert_eq!(frame.unwrap(), self.frame, "recv_frame");
+
+        let frame = frame.unwrap();
+
+        match (frame, &self.frame) {
+            (Data(ref a), &Data(ref b)) => {
+                assert_eq!(a.payload().len(), b.payload().len(), "recv_frame data payload len");
+                assert_eq!(a, b, "recv_frame");
+            }
+            (ref a, b) => {
+                assert_eq!(a, b, "recv_frame");
+            }
+        }
+
         Ok(Async::Ready(handle))
     }
 }

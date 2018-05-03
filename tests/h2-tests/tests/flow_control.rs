@@ -1,6 +1,6 @@
-#[macro_use]
-pub mod support;
-use support::prelude::*;
+extern crate h2_support;
+
+use h2_support::prelude::*;
 
 // In this case, the stream & connection both have capacity, but capacity is not
 // explicitly requested.
