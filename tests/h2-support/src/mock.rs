@@ -474,6 +474,36 @@ pub trait HandleFutureExt {
         }
     }
 
+    fn send_bytes(self, data: &[u8]) -> Box<Future<Item = Handle, Error = Self::Error>>
+    where
+        Self: Future<Item = Handle> + Sized + 'static,
+        Self::Error: fmt::Debug,
+    {
+        use bytes::Buf;
+        use futures::future::poll_fn;
+        use std::io::Cursor;
+
+        let buf: Vec<_> = data.into();
+        let mut buf = Cursor::new(buf);
+
+        Box::new(self.and_then(move |handle| {
+            let mut handle = Some(handle);
+
+            poll_fn(move || {
+                while buf.has_remaining() {
+                    let res = handle.as_mut().unwrap()
+                        .codec.get_mut()
+                        .write_buf(&mut buf)
+                        .map_err(|e| panic!("write err={:?}", e));
+
+                    try_ready!(res);
+                }
+
+                Ok(handle.take().unwrap().into())
+            })
+        }))
+    }
+
     fn ping_pong(self, payload: [u8; 8]) -> RecvFrame<<SendFrameFut<Self> as IntoRecvFrame>::Future>
     where
         Self: Future<Item=Handle> + Sized + 'static,
