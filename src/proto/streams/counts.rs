@@ -114,11 +114,21 @@ impl Counts {
     where
         F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
-        let is_counted = stream.is_counted();
+        let mut is_counted = stream.is_counted();
         let is_pending_reset = stream.is_pending_reset_expiration();
+
+        let num_send_streams = self.num_send_streams;
+        let num_recv_streams = self.num_recv_streams;
 
         // Run the action
         let ret = f(self, &mut stream);
+
+        // When in the reserved state, `is_counted` is false, however if the
+        // supplied closure increments the number of streams, then that means
+        // the stream went from counted to not counted.
+        if self.num_send_streams > num_send_streams || self.num_recv_streams > num_recv_streams {
+            is_counted = true;
+        }
 
         self.transition_after(stream, is_counted, is_pending_reset);
 
