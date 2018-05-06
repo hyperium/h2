@@ -197,7 +197,24 @@ impl Stream {
     /// Returns true if a stream with the current state counts against the
     /// concurrency limit.
     pub fn is_counted(&self) -> bool {
-        !self.is_pending_open && self.state.is_at_least_half_open()
+        !self.is_pending_open &&
+            (self.state.is_at_least_half_open() || self.is_closing())
+    }
+
+    /// Called by `is_counted`, which attempts to determine if a stream
+    /// currently counts towards the connections active stream counts.
+    ///
+    /// In theory, when a stream enters the closed state, it is no longer
+    /// counted. However, stream transitions are applied when the frame is
+    /// queued, not when it is sent. Because there is no guarantee that queued
+    /// frames are sent in FIFO order additional care must be taken.
+    ///
+    /// `is_closing` represents a stream that has transitioned to the closing
+    /// state, but the frame that has triggered this transition is still in the
+    /// frame queue waiting to be sent.
+    fn is_closing(&self) -> bool {
+        self.state.is_closed() &&
+            (!self.pending_send.is_empty() || self.buffered_send_data > 0)
     }
 
     /// Returns true if stream is currently being held for some time because of
