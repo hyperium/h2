@@ -60,11 +60,13 @@ impl Counts {
     /// # Panics
     ///
     /// Panics on failure as this should have been validated before hand.
-    pub fn inc_num_recv_streams(&mut self) {
+    pub fn inc_num_recv_streams(&mut self, stream: &mut store::Ptr) {
         assert!(self.can_inc_num_recv_streams());
+        assert!(!stream.is_counted);
 
         // Increment the number of remote initiated streams
         self.num_recv_streams += 1;
+        stream.is_counted = true;
     }
 
     /// Returns true if the send stream concurrency can be incremented
@@ -77,11 +79,13 @@ impl Counts {
     /// # Panics
     ///
     /// Panics on failure as this should have been validated before hand.
-    pub fn inc_num_send_streams(&mut self) {
+    pub fn inc_num_send_streams(&mut self, stream: &mut store::Ptr) {
         assert!(self.can_inc_num_send_streams());
+        assert!(!stream.is_counted);
 
         // Increment the number of remote initiated streams
         self.num_send_streams += 1;
+        stream.is_counted = true;
     }
 
     /// Returns true if the number of pending reset streams can be incremented.
@@ -110,42 +114,33 @@ impl Counts {
     ///
     /// If the stream state transitions to closed, this function will perform
     /// all necessary cleanup.
+    ///
+    /// TODO: Is this function still needed?
     pub fn transition<F, U>(&mut self, mut stream: store::Ptr, f: F) -> U
     where
         F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
-        let mut is_counted = stream.is_counted();
+        // TODO: Does this need to be computed before performing the action?
         let is_pending_reset = stream.is_pending_reset_expiration();
-
-        let num_send_streams = self.num_send_streams;
-        let num_recv_streams = self.num_recv_streams;
 
         // Run the action
         let ret = f(self, &mut stream);
 
-        // When in the reserved state, `is_counted` is false, however if the
-        // supplied closure increments the number of streams, then that means
-        // the stream went from counted to not counted.
-        if self.num_send_streams > num_send_streams || self.num_recv_streams > num_recv_streams {
-            is_counted = true;
-        }
-
-        self.transition_after(stream, is_counted, is_pending_reset);
+        self.transition_after(stream, is_pending_reset);
 
         ret
     }
 
     // TODO: move this to macro?
-    pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool, is_reset_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
         trace!("transition_after; stream={:?}; state={:?}; is_closed={:?}; \
-               pending_send_empty={:?}; buffered_send_data={}; is_counted={:?}; \
+               pending_send_empty={:?}; buffered_send_data={}; \
                num_recv={}; num_send={}",
                stream.id,
                stream.state,
                stream.is_closed(),
                stream.pending_send.is_empty(),
                stream.buffered_send_data,
-               is_counted,
                self.num_recv_streams,
                self.num_send_streams);
 
@@ -158,10 +153,10 @@ impl Counts {
                 }
             }
 
-            if is_counted {
+            if stream.is_counted {
                 trace!("dec_num_streams; stream={:?}", stream.id);
                 // Decrement the number of active streams.
-                self.dec_num_streams(stream.id);
+                self.dec_num_streams(&mut stream);
             }
         }
 
@@ -171,13 +166,17 @@ impl Counts {
         }
     }
 
-    fn dec_num_streams(&mut self, id: StreamId) {
-        if self.peer.is_local_init(id) {
+    fn dec_num_streams(&mut self, stream: &mut store::Ptr) {
+        assert!(stream.is_counted);
+
+        if self.peer.is_local_init(stream.id) {
             assert!(self.num_send_streams > 0);
             self.num_send_streams -= 1;
+            stream.is_counted = false;
         } else {
             assert!(self.num_recv_streams > 0);
             self.num_recv_streams -= 1;
+            stream.is_counted = false;
         }
     }
 

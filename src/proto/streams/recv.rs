@@ -162,7 +162,7 @@ impl Recv {
             }
 
             // Increment the number of concurrent streams
-            counts.inc_num_recv_streams();
+            counts.inc_num_recv_streams(stream);
         }
 
         if !stream.content_length.is_head() {
@@ -680,12 +680,7 @@ impl Recv {
             // if max allow is 0, this won't be able to evict,
             // and then we'll just bail after
             if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
-                // It's possible that this stream is still sitting in a send queue,
-                // such as if some data is to be sent and then a CANCEL. In this case,
-                // it could still be "counted", so we just make sure to always ask the
-                // stream instead of assuming.
-                let is_counted = evicted.is_counted();
-                counts.transition_after(evicted, is_counted, true);
+                counts.transition_after(evicted, true);
             }
         }
 
@@ -728,8 +723,7 @@ impl Recv {
             let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
             now - reset_at > reset_duration
         }) {
-            let is_counted = stream.is_counted();
-            counts.transition_after(stream, is_counted, true);
+            counts.transition_after(stream, true);
         }
     }
 

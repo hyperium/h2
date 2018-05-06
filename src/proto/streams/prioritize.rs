@@ -626,8 +626,8 @@ impl Prioritize {
                     // to wait for "some time" after a reset.
                     //
                     // To be safe, we just always ask the stream.
-                    let is_counted = stream.is_counted();
                     let is_pending_reset = stream.is_pending_reset_expiration();
+
                     trace!(" --> stream={:?}; is_pending_reset={:?};",
                         stream.id, is_pending_reset);
 
@@ -754,7 +754,7 @@ impl Prioritize {
                         self.pending_send.push(&mut stream);
                     }
 
-                    counts.transition_after(stream, is_counted, is_pending_reset);
+                    counts.transition_after(stream, is_pending_reset);
 
                     return Some(frame);
                 },
@@ -770,7 +770,7 @@ impl Prioritize {
             if let Some(mut stream) = self.pending_open.pop(store) {
                 trace!("schedule_pending_open; stream={:?}", stream.id);
 
-                counts.inc_num_send_streams();
+                counts.inc_num_send_streams(&mut stream);
                 self.pending_send.push(&mut stream);
             } else {
                 return;

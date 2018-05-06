@@ -80,7 +80,7 @@ impl Send {
 
         if counts.peer().is_local_init(frame.stream_id()) {
             if counts.can_inc_num_send_streams() {
-                counts.inc_num_send_streams();
+                counts.inc_num_send_streams(stream);
             } else {
                 self.prioritize.queue_open(stream);
             }
