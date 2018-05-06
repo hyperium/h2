@@ -85,6 +85,10 @@ impl Store {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
+
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr> {
         let key = match self.ids.get(id) {
             Some(key) => *key,
