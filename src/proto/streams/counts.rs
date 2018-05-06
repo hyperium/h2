@@ -127,6 +127,18 @@ impl Counts {
 
     // TODO: move this to macro?
     pub fn transition_after(&mut self, mut stream: store::Ptr, is_counted: bool, is_reset_counted: bool) {
+        trace!("transition_after; stream={:?}; state={:?}; is_closed={:?}; \
+               pending_send_empty={:?}; buffered_send_data={}; is_counted={:?}; \
+               num_recv={}; num_send={}",
+               stream.id,
+               stream.state,
+               stream.is_closed(),
+               stream.pending_send.is_empty(),
+               stream.buffered_send_data,
+               is_counted,
+               self.num_recv_streams,
+               self.num_send_streams);
+
         if stream.is_closed() {
             if !stream.is_pending_reset_expiration() {
                 stream.unlink();
@@ -137,6 +149,7 @@ impl Counts {
             }
 
             if is_counted {
+                trace!("dec_num_streams; stream={:?}", stream.id);
                 // Decrement the number of active streams.
                 self.dec_num_streams(stream.id);
             }
@@ -161,5 +174,15 @@ impl Counts {
     fn dec_num_reset_streams(&mut self) {
         assert!(self.num_reset_streams > 0);
         self.num_reset_streams -= 1;
+    }
+}
+
+impl Drop for Counts {
+    fn drop(&mut self) {
+        use std::thread;
+
+        if !thread::panicking() {
+            debug_assert!(!self.has_streams());
+        }
     }
 }

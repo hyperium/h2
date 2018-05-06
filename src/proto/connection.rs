@@ -178,7 +178,6 @@ where
         }
     }
 
-
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
         use codec::RecvError::*;
