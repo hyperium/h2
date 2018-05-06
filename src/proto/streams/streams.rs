@@ -358,6 +358,8 @@ where
 
         let actions = &mut me.actions;
         let counts = &mut me.counts;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
 
         if actions.conn_error.is_none() {
             actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
@@ -367,6 +369,10 @@ where
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
                     actions.recv.recv_eof(stream);
+
+                    // This handles resetting send state associated with the
+                    // stream
+                    actions.send.recv_err(send_buffer, stream);
                     Ok::<_, ()>(())
                 })
             })
