@@ -1120,13 +1120,3 @@ impl Actions {
         }
     }
 }
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        use std::thread;
-
-        if !thread::panicking() {
-            debug_assert!(self.store.is_empty());
-        }
-    }
-}

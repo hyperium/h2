@@ -86,10 +86,6 @@ impl Store {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.slab.is_empty()
-    }
-
     pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr> {
         let key = match self.ids.get(id) {
             Some(key) => *key,
@@ -204,6 +200,16 @@ impl Store {
     #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
         self.slab.len()
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        use std::thread;
+
+        if !thread::panicking() {
+            debug_assert!(self.slab.is_empty());
+        }
     }
 }
 
