@@ -353,39 +353,6 @@ where
         Ok(())
     }
 
-    pub fn recv_eof(&mut self) {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let actions = &mut me.actions;
-        let counts = &mut me.counts;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        if actions.conn_error.is_none() {
-            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
-        }
-
-        trace!("Streams::recv_eof");
-
-        me.store
-            .for_each(|stream| {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.recv_eof(stream);
-
-                    // This handles resetting send state associated with the
-                    // stream
-                    actions.send.recv_err(send_buffer, stream, counts);
-                    Ok::<_, ()>(())
-                })
-            })
-            .expect("recv_eof");
-
-        actions.recv.clear_stream_window_update_queue(&mut me.store, counts);
-        actions.recv.clear_all_reset_streams(&mut me.store, counts);
-        actions.send.clear_pending_capacity(&mut me.store, counts);
-    }
-
     pub fn last_processed_id(&self) -> StreamId {
         self.inner.lock().unwrap().actions.recv.last_processed_id()
     }
@@ -723,6 +690,38 @@ impl<B, P> Streams<B, P>
 where
     P: Peer,
 {
+    /// This function is safe to call multiple times.
+    pub fn recv_eof(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let actions = &mut me.actions;
+        let counts = &mut me.counts;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
+        if actions.conn_error.is_none() {
+            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
+        }
+
+        trace!("Streams::recv_eof");
+
+        me.store
+            .for_each(|stream| {
+                counts.transition(stream, |counts, stream| {
+                    actions.recv.recv_eof(stream);
+
+                    // This handles resetting send state associated with the
+                    // stream
+                    actions.send.recv_err(send_buffer, stream, counts);
+                    Ok::<_, ()>(())
+                })
+            })
+            .expect("recv_eof");
+
+        actions.clear_queues(&mut me.store, counts);
+    }
+
     pub fn num_active_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_active_streams()
@@ -759,6 +758,16 @@ where
             send_buffer: self.send_buffer.clone(),
             _p: ::std::marker::PhantomData,
         }
+    }
+}
+
+impl<B, P> Drop for Streams<B, P>
+where
+    P: Peer,
+{
+    fn drop(&mut self) {
+        // Handle a drop like an EOF.
+        self.recv_eof();
     }
 }
 
@@ -1119,5 +1128,11 @@ impl Actions {
         } else {
             Ok(())
         }
+    }
+
+    fn clear_queues(&mut self, store: &mut Store, counts: &mut Counts) {
+        self.recv.clear_stream_window_update_queue(store, counts);
+        self.recv.clear_all_reset_streams(store, counts);
+        self.send.clear_queues(store, counts);
     }
 }

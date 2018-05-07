@@ -388,8 +388,9 @@ impl Send {
         Ok(())
     }
 
-    pub fn clear_pending_capacity(&mut self, store: &mut Store, counts: &mut Counts) {
+    pub fn clear_queues(&mut self, store: &mut Store, counts: &mut Counts) {
         self.prioritize.clear_pending_capacity(store, counts);
+        self.prioritize.clear_pending_send(store, counts);
     }
 
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
