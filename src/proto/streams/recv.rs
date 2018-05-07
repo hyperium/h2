@@ -727,6 +727,13 @@ impl Recv {
         }
     }
 
+    /// Called on EOF
+    pub fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_reset_expired.pop(store) {
+            counts.transition_after(stream, true);
+        }
+    }
+
     pub fn poll_complete<T, B>(
         &mut self,
         store: &mut Store,

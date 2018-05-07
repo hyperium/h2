@@ -382,6 +382,7 @@ where
             .expect("recv_eof");
 
         actions.recv.clear_stream_window_update_queue(&mut me.store, counts);
+        actions.recv.clear_all_reset_streams(&mut me.store, counts);
         actions.send.clear_pending_capacity(&mut me.store, counts);
     }
 
