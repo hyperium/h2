@@ -396,3 +396,13 @@ where
         self.ping_pong.ping_shutdown();
     }
 }
+
+impl<T, P, B> Drop for Connection<T, P, B>
+where
+    P: Peer,
+    B: IntoBuf,
+{
+    fn drop(&mut self) {
+        self.streams.recv_eof();
+    }
+}

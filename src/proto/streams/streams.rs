@@ -761,16 +761,6 @@ where
     }
 }
 
-impl<B, P> Drop for Streams<B, P>
-where
-    P: Peer,
-{
-    fn drop(&mut self) {
-        // Handle a drop like an EOF.
-        self.recv_eof();
-    }
-}
-
 // ===== impl StreamRef =====
 
 impl<B> StreamRef<B> {
