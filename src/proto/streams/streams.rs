@@ -365,6 +365,9 @@ where
             actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
         }
 
+        trace!("Streams::recv_eof");
+        actions.recv.clear_stream_window_update_queue(&mut me.store, counts);
+
         me.store
             .for_each(|stream| {
                 counts.transition(stream, |_, stream| {
@@ -525,7 +528,7 @@ where
         //
         // TODO: It would probably be better to interleave updates w/ data
         // frames.
-        try_ready!(me.actions.recv.poll_complete(&mut me.store, dst));
+        try_ready!(me.actions.recv.poll_complete(&mut me.store, &mut me.counts, dst));
 
         // Send any other pending frames
         try_ready!(me.actions.send.poll_complete(
@@ -1014,6 +1017,9 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     let me = &mut *me;
 
     let mut stream = me.store.resolve(key);
+
+    trace!("drop_stream_ref; stream={:?}", stream);
+
     // decrement the stream's ref count by 1.
     stream.ref_dec();
 
