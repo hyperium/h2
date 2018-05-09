@@ -691,8 +691,10 @@ where
     P: Peer,
 {
     /// This function is safe to call multiple times.
-    pub fn recv_eof(&mut self, clear_pending_accept: bool) {
-        let mut me = self.inner.lock().unwrap();
+    ///
+    /// A `Result` is returned to avoid panicking if the mutex is poisoned.
+    pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
+        let mut me = self.inner.lock().map_err(|_| ())?;
         let me = &mut *me;
 
         let actions = &mut me.actions;
@@ -720,6 +722,7 @@ where
             .expect("recv_eof");
 
         actions.clear_queues(clear_pending_accept, &mut me.store, counts);
+        Ok(())
     }
 
     pub fn num_active_streams(&self) -> usize {

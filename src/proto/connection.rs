@@ -340,7 +340,8 @@ where
                 },
                 None => {
                     trace!("codec closed");
-                    self.streams.recv_eof(false);
+                    self.streams.recv_eof(false)
+                        .ok().expect("mutex poisoned");
                     return Ok(Async::Ready(()));
                 },
             }
@@ -403,6 +404,7 @@ where
     B: IntoBuf,
 {
     fn drop(&mut self) {
-        self.streams.recv_eof(true);
+        // Ignore errors as this indicates that the mutex is poisoned.
+        let _ = self.streams.recv_eof(true);
     }
 }
