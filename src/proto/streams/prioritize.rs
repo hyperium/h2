@@ -134,6 +134,7 @@ impl Prioritize {
         frame: frame::Data<B>,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
+        counts: &mut Counts,
         task: &mut Option<Task>,
     ) -> Result<(), UserError>
     where
@@ -176,7 +177,7 @@ impl Prioritize {
 
         if frame.is_end_stream() {
             stream.state.send_close();
-            self.reserve_capacity(0, stream);
+            self.reserve_capacity(0, stream, counts);
         }
 
         trace!(
@@ -210,7 +211,11 @@ impl Prioritize {
     }
 
     /// Request capacity to send data
-    pub fn reserve_capacity(&mut self, capacity: WindowSize, stream: &mut store::Ptr) {
+    pub fn reserve_capacity(
+        &mut self,
+        capacity: WindowSize,
+        stream: &mut store::Ptr,
+        counts: &mut Counts) {
         trace!(
             "reserve_capacity; stream={:?}; requested={:?}; effective={:?}; curr={:?}",
             stream.id,
@@ -239,7 +244,7 @@ impl Prioritize {
 
                 stream.send_flow.claim_capacity(diff);
 
-                self.assign_connection_capacity(diff, stream);
+                self.assign_connection_capacity(diff, stream, counts);
             }
         } else {
             // Update the target requested capacity
@@ -284,36 +289,49 @@ impl Prioritize {
         &mut self,
         inc: WindowSize,
         store: &mut Store,
+        counts: &mut Counts,
     ) -> Result<(), Reason> {
         // Update the connection's window
         self.flow.inc_window(inc)?;
 
-        self.assign_connection_capacity(inc, store);
+        self.assign_connection_capacity(inc, store, counts);
         Ok(())
     }
 
     /// Reclaim all capacity assigned to the stream and re-assign it to the
     /// connection
-    pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr) {
+    pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         let available = stream.send_flow.available().as_size();
         stream.send_flow.claim_capacity(available);
         // Re-assign all capacity to the connection
-        self.assign_connection_capacity(available, stream);
+        self.assign_connection_capacity(available, stream, counts);
     }
 
     /// Reclaim just reserved capacity, not buffered capacity, and re-assign
     /// it to the connection
-    pub fn reclaim_reserved_capacity(&mut self, stream: &mut store::Ptr) {
+    pub fn reclaim_reserved_capacity(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         // only reclaim requested capacity that isn't already buffered
         if stream.requested_send_capacity > stream.buffered_send_data {
             let reserved = stream.requested_send_capacity - stream.buffered_send_data;
 
             stream.send_flow.claim_capacity(reserved);
-            self.assign_connection_capacity(reserved, stream);
+            self.assign_connection_capacity(reserved, stream, counts);
         }
     }
 
-    pub fn assign_connection_capacity<R>(&mut self, inc: WindowSize, store: &mut R)
+    pub fn clear_pending_capacity(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_capacity.pop(store) {
+            counts.transition(stream, |_, stream| {
+                trace!("clear_pending_capacity; stream={:?}", stream.id);
+            })
+        }
+    }
+
+    pub fn assign_connection_capacity<R>(
+        &mut self,
+        inc: WindowSize,
+        store: &mut R,
+        counts: &mut Counts)
     where
         R: Resolve,
     {
@@ -323,15 +341,17 @@ impl Prioritize {
 
         // Assign newly acquired capacity to streams pending capacity.
         while self.flow.available() > 0 {
-            let mut stream = match self.pending_capacity.pop(store) {
+            let stream = match self.pending_capacity.pop(store) {
                 Some(stream) => stream,
                 None => return,
             };
 
-            // Try to assign capacity to the stream. This will also re-queue the
-            // stream if there isn't enough connection level capacity to fulfill
-            // the capacity request.
-            self.try_assign_capacity(&mut stream);
+            counts.transition(stream, |_, mut stream| {
+                // Try to assign capacity to the stream. This will also re-queue the
+                // stream if there isn't enough connection level capacity to fulfill
+                // the capacity request.
+                self.try_assign_capacity(&mut stream);
+            })
         }
     }
 
@@ -595,6 +615,13 @@ impl Prioritize {
         }
     }
 
+    pub fn clear_pending_send(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_send.pop(store) {
+            let is_pending_reset = stream.is_pending_reset_expiration();
+            counts.transition_after(stream, is_pending_reset);
+        }
+    }
+
     fn pop_frame<B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
@@ -613,21 +640,22 @@ impl Prioritize {
                     trace!("pop_frame; stream={:?}; stream.state={:?}",
                         stream.id, stream.state);
 
-                    // If the stream receives a RESET from the peer, it may have
-                    // had data buffered to be sent, but all the frames are cleared
-                    // in clear_queue(). Instead of doing O(N) traversal through queue
-                    // to remove, lets just ignore peer_reset streams here.
-                    if stream.state.is_peer_reset() {
-                        continue;
-                    }
-
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
                     // to wait for "some time" after a reset.
                     //
                     // To be safe, we just always ask the stream.
-                    let is_counted = stream.is_counted();
                     let is_pending_reset = stream.is_pending_reset_expiration();
+
+                    // If the stream receives a RESET from the peer, it may have
+                    // had data buffered to be sent, but all the frames are cleared
+                    // in clear_queue(). Instead of doing O(N) traversal through queue
+                    // to remove, lets just ignore peer_reset streams here.
+                    if stream.state.is_peer_reset() {
+                        counts.transition_after(stream, is_pending_reset);
+                        continue;
+                    }
+
                     trace!(" --> stream={:?}; is_pending_reset={:?};",
                         stream.id, is_pending_reset);
 
@@ -754,7 +782,7 @@ impl Prioritize {
                         self.pending_send.push(&mut stream);
                     }
 
-                    counts.transition_after(stream, is_counted, is_pending_reset);
+                    counts.transition_after(stream, is_pending_reset);
 
                     return Some(frame);
                 },
@@ -770,7 +798,7 @@ impl Prioritize {
             if let Some(mut stream) = self.pending_open.pop(store) {
                 trace!("schedule_pending_open; stream={:?}", stream.id);
 
-                counts.inc_num_send_streams();
+                counts.inc_num_send_streams(&mut stream);
                 self.pending_send.push(&mut stream);
             } else {
                 return;

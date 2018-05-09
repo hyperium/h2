@@ -4,6 +4,7 @@ use slab;
 
 use indexmap::{self, IndexMap};
 
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
 
@@ -202,6 +203,16 @@ impl Store {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        use std::thread;
+
+        if !thread::panicking() {
+            debug_assert!(self.slab.is_empty());
+        }
+    }
+}
+
 // ===== impl Queue =====
 
 impl<N> Queue<N>
@@ -353,6 +364,12 @@ impl<'a> ops::Deref for Ptr<'a> {
 impl<'a> ops::DerefMut for Ptr<'a> {
     fn deref_mut(&mut self) -> &mut Stream {
         &mut self.store.slab[self.key.index].1
+    }
+}
+
+impl<'a> fmt::Debug for Ptr<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        (**self).fmt(fmt)
     }
 }
 

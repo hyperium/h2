@@ -341,18 +341,6 @@ impl State {
         }
     }
 
-    /// Returns true if a stream is open or half-closed.
-    pub fn is_at_least_half_open(&self) -> bool {
-        match self.inner {
-            Open {
-                ..
-            } => true,
-            HalfClosedLocal(..) => true,
-            HalfClosedRemote(..) => true,
-            _ => false,
-        }
-    }
-
     pub fn is_send_streaming(&self) -> bool {
         match self.inner {
             Open {

@@ -258,6 +258,13 @@ impl Mock<frame::GoAway> {
             frame::Reason::FRAME_SIZE_ERROR,
         ))
     }
+
+    pub fn no_error(self) -> Self {
+        Mock(frame::GoAway::new(
+            self.0.last_stream_id(),
+            frame::Reason::NO_ERROR,
+        ))
+    }
 }
 
 impl From<Mock<frame::GoAway>> for SendFrame {

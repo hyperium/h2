@@ -839,6 +839,7 @@ fn rst_while_closing() {
         // Send the RST_STREAM frame which causes the client to panic.
         .send_frame(frames::reset(1).cancel())
         .ping_pong([1; 8])
+        .recv_frame(frames::go_away(0).no_error())
         .close();
         ;
 
@@ -1038,6 +1039,7 @@ fn send_err_with_buffered_data() {
         .recv_frame(
             frames::data(1, vec![0; 16_384]))
         .recv_frame(frames::reset(1).cancel())
+        .recv_frame(frames::go_away(0).no_error())
         .close()
         ;
 
