@@ -1,6 +1,8 @@
 #![deny(warnings)]
-pub mod support;
-use support::prelude::*;
+
+extern crate h2_support;
+
+use h2_support::prelude::*;
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];

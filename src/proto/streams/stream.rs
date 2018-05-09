@@ -22,6 +22,10 @@ pub(super) struct Stream {
     /// Current state of the stream
     pub state: State,
 
+    /// Set to `true` when the stream is counted against the connection's max
+    /// concurrent streams.
+    pub is_counted: bool,
+
     /// Number of outstanding handles pointing to this stream
     pub ref_count: usize,
 
@@ -151,6 +155,7 @@ impl Stream {
             id,
             state: State::default(),
             ref_count: 0,
+            is_counted: false,
 
             // ===== Fields related to sending =====
             next_pending_send: None,
@@ -192,12 +197,6 @@ impl Stream {
     pub fn ref_dec(&mut self) {
         assert!(self.ref_count > 0);
         self.ref_count -= 1;
-    }
-
-    /// Returns true if a stream with the current state counts against the
-    /// concurrency limit.
-    pub fn is_counted(&self) -> bool {
-        !self.is_pending_open && self.state.is_at_least_half_open()
     }
 
     /// Returns true if stream is currently being held for some time because of

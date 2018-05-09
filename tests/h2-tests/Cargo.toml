@@ -1,7 +1,11 @@
 [package]
-name = "genhuff"
+name = "h2-tests"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 publish = false
 
 [dependencies]
+
+[dev-dependencies]
+h2-support = { path = "../h2-support" }
+log = "0.4.1"

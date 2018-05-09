@@ -1,6 +1,6 @@
 use frame::{self, Error, Head, Kind, StreamId};
 
-use bytes::{BigEndian, BufMut};
+use bytes::{BufMut};
 
 const SIZE_INCREMENT_MASK: u32 = 1 << 31;
 
@@ -51,7 +51,7 @@ impl WindowUpdate {
         trace!("encoding WINDOW_UPDATE; id={:?}", self.stream_id);
         let head = Head::new(Kind::WindowUpdate, 0, self.stream_id);
         head.encode(4, dst);
-        dst.put_u32::<BigEndian>(self.size_increment);
+        dst.put_u32_be(self.size_increment);
     }
 }
 

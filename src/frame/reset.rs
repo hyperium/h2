@@ -1,6 +1,6 @@
 use frame::{self, Error, Head, Kind, Reason, StreamId};
 
-use bytes::{BigEndian, BufMut};
+use bytes::{BufMut};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Reset {
@@ -45,7 +45,7 @@ impl Reset {
         );
         let head = Head::new(Kind::Reset, 0, self.stream_id);
         head.encode(4, dst);
-        dst.put_u32::<BigEndian>(self.error_code.into());
+        dst.put_u32_be(self.error_code.into());
     }
 }
 

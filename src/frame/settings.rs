@@ -1,4 +1,4 @@
-use bytes::{BigEndian, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use frame::{Error, Frame, FrameSize, Head, Kind, StreamId};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -280,8 +280,8 @@ impl Setting {
             MaxHeaderListSize(v) => (6, v),
         };
 
-        dst.put_u16::<BigEndian>(kind);
-        dst.put_u32::<BigEndian>(val);
+        dst.put_u16_be(kind);
+        dst.put_u32_be(val);
     }
 }
 

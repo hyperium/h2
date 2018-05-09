@@ -1,6 +1,7 @@
 #[macro_use]
-pub mod support;
-use support::prelude::*;
+extern crate h2_support;
+
+use h2_support::prelude::*;
 
 use std::error::Error;
 
@@ -151,7 +152,7 @@ fn read_continuation_frames() {
                     assert_eq!(res.status(), StatusCode::OK);
                     let (head, _body) = res.into_parts();
                     let expected = large.iter().fold(HeaderMap::new(), |mut map, &(name, ref value)| {
-                        use support::frames::HttpTryInto;
+                        use h2_support::frames::HttpTryInto;
                         map.append(name, value.as_str().try_into().unwrap());
                         map
                     });

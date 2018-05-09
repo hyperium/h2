@@ -178,7 +178,6 @@ where
         }
     }
 
-
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
         use codec::RecvError::*;
@@ -315,7 +314,7 @@ where
                     // but should allow continuing to process current streams
                     // until they are all EOS. Once they are, State should
                     // transition to GoAway.
-                    self.streams.recv_go_away(&frame);
+                    self.streams.recv_go_away(&frame)?;
                     self.error = Some(frame.reason());
                 },
                 Some(Ping(frame)) => {
@@ -341,7 +340,8 @@ where
                 },
                 None => {
                     trace!("codec closed");
-                    self.streams.recv_eof();
+                    self.streams.recv_eof(false)
+                        .ok().expect("mutex poisoned");
                     return Ok(Async::Ready(()));
                 },
             }
@@ -395,5 +395,16 @@ where
         // We take the advice of waiting 1 RTT literally, and wait
         // for a pong before proceeding.
         self.ping_pong.ping_shutdown();
+    }
+}
+
+impl<T, P, B> Drop for Connection<T, P, B>
+where
+    P: Peer,
+    B: IntoBuf,
+{
+    fn drop(&mut self) {
+        // Ignore errors as this indicates that the mutex is poisoned.
+        let _ = self.streams.recv_eof(true);
     }
 }

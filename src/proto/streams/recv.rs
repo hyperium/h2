@@ -162,7 +162,7 @@ impl Recv {
             }
 
             // Increment the number of concurrent streams
-            counts.inc_num_recv_streams();
+            counts.inc_num_recv_streams(stream);
         }
 
         if !stream.content_length.is_head() {
@@ -680,12 +680,7 @@ impl Recv {
             // if max allow is 0, this won't be able to evict,
             // and then we'll just bail after
             if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
-                // It's possible that this stream is still sitting in a send queue,
-                // such as if some data is to be sent and then a CANCEL. In this case,
-                // it could still be "counted", so we just make sure to always ask the
-                // stream instead of assuming.
-                let is_counted = evicted.is_counted();
-                counts.transition_after(evicted, is_counted, true);
+                counts.transition_after(evicted, true);
             }
         }
 
@@ -728,14 +723,48 @@ impl Recv {
             let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
             now - reset_at > reset_duration
         }) {
-            let is_counted = stream.is_counted();
-            counts.transition_after(stream, is_counted, true);
+            counts.transition_after(stream, true);
+        }
+    }
+
+    pub fn clear_queues(&mut self,
+                        clear_pending_accept: bool,
+                        store: &mut Store,
+                        counts: &mut Counts)
+    {
+        self.clear_stream_window_update_queue(store, counts);
+        self.clear_all_reset_streams(store, counts);
+
+        if clear_pending_accept {
+            self.clear_all_pending_accept(store, counts);
+        }
+    }
+
+    fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_window_updates.pop(store) {
+            counts.transition(stream, |_, stream| {
+                trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
+            })
+        }
+    }
+
+    /// Called on EOF
+    fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_reset_expired.pop(store) {
+            counts.transition_after(stream, true);
+        }
+    }
+
+    fn clear_all_pending_accept(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_accept.pop(store) {
+            counts.transition_after(stream, false);
         }
     }
 
     pub fn poll_complete<T, B>(
         &mut self,
         store: &mut Store,
+        counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -746,7 +775,7 @@ impl Recv {
         try_ready!(self.send_connection_window_update(dst));
 
         // Send any pending stream level window updates
-        try_ready!(self.send_stream_window_updates(store, dst));
+        try_ready!(self.send_stream_window_updates(store, counts, dst));
 
         Ok(().into())
     }
@@ -781,11 +810,11 @@ impl Recv {
         Ok(().into())
     }
 
-
     /// Send stream level window update
     pub fn send_stream_window_updates<T, B>(
         &mut self,
         store: &mut Store,
+        counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<(), io::Error>
     where
@@ -797,38 +826,43 @@ impl Recv {
             try_ready!(dst.poll_ready());
 
             // Get the next stream
-            let mut stream = match self.pending_window_updates.pop(store) {
+            let stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
                 None => return Ok(().into()),
             };
 
-            if !stream.state.is_recv_streaming() {
-                // No need to send window updates on the stream if the stream is
-                // no longer receiving data.
-                //
-                // TODO: is this correct? We could possibly send a window
-                // update on a ReservedRemote stream if we already know
-                // we want to stream the data faster...
-                continue;
-            }
+            counts.transition(stream, |_, stream| {
+                trace!("pending_window_updates -- pop; stream={:?}", stream.id);
+                debug_assert!(!stream.is_pending_window_update);
 
-            // TODO: de-dup
-            if let Some(incr) = stream.recv_flow.unclaimed_capacity() {
-                // Create the WINDOW_UPDATE frame
-                let frame = frame::WindowUpdate::new(stream.id, incr);
+                if !stream.state.is_recv_streaming() {
+                    // No need to send window updates on the stream if the stream is
+                    // no longer receiving data.
+                    //
+                    // TODO: is this correct? We could possibly send a window
+                    // update on a ReservedRemote stream if we already know
+                    // we want to stream the data faster...
+                    return;
+                }
 
-                // Buffer it
-                dst.buffer(frame.into())
-                    .ok()
-                    .expect("invalid WINDOW_UPDATE frame");
+                // TODO: de-dup
+                if let Some(incr) = stream.recv_flow.unclaimed_capacity() {
+                    // Create the WINDOW_UPDATE frame
+                    let frame = frame::WindowUpdate::new(stream.id, incr);
 
-                // Update flow control
-                stream
-                    .recv_flow
-                    .inc_window(incr)
-                    .ok()
-                    .expect("unexpected flow control state");
-            }
+                    // Buffer it
+                    dst.buffer(frame.into())
+                        .ok()
+                        .expect("invalid WINDOW_UPDATE frame");
+
+                    // Update flow control
+                    stream
+                        .recv_flow
+                        .inc_window(incr)
+                        .ok()
+                        .expect("unexpected flow control state");
+                }
+            })
         }
     }
 
