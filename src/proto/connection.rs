@@ -340,7 +340,7 @@ where
                 },
                 None => {
                     trace!("codec closed");
-                    self.streams.recv_eof();
+                    self.streams.recv_eof(false);
                     return Ok(Async::Ready(()));
                 },
             }
@@ -403,6 +403,6 @@ where
     B: IntoBuf,
 {
     fn drop(&mut self) {
-        self.streams.recv_eof();
+        self.streams.recv_eof(true);
     }
 }

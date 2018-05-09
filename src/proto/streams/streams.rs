@@ -691,7 +691,7 @@ where
     P: Peer,
 {
     /// This function is safe to call multiple times.
-    pub fn recv_eof(&mut self) {
+    pub fn recv_eof(&mut self, clear_pending_accept: bool) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -719,7 +719,7 @@ where
             })
             .expect("recv_eof");
 
-        actions.clear_queues(&mut me.store, counts);
+        actions.clear_queues(clear_pending_accept, &mut me.store, counts);
     }
 
     pub fn num_active_streams(&self) -> usize {
@@ -1120,9 +1120,12 @@ impl Actions {
         }
     }
 
-    fn clear_queues(&mut self, store: &mut Store, counts: &mut Counts) {
-        self.recv.clear_stream_window_update_queue(store, counts);
-        self.recv.clear_all_reset_streams(store, counts);
+    fn clear_queues(&mut self,
+                    clear_pending_accept: bool,
+                    store: &mut Store,
+                    counts: &mut Counts)
+    {
+        self.recv.clear_queues(clear_pending_accept, store, counts);
         self.send.clear_queues(store, counts);
     }
 }

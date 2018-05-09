@@ -727,10 +727,37 @@ impl Recv {
         }
     }
 
+    pub fn clear_queues(&mut self,
+                        clear_pending_accept: bool,
+                        store: &mut Store,
+                        counts: &mut Counts)
+    {
+        self.clear_stream_window_update_queue(store, counts);
+        self.clear_all_reset_streams(store, counts);
+
+        if clear_pending_accept {
+            self.clear_all_pending_accept(store, counts);
+        }
+    }
+
+    fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_window_updates.pop(store) {
+            counts.transition(stream, |_, stream| {
+                trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
+            })
+        }
+    }
+
     /// Called on EOF
-    pub fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
+    fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_reset_expired.pop(store) {
             counts.transition_after(stream, true);
+        }
+    }
+
+    fn clear_all_pending_accept(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_accept.pop(store) {
+            counts.transition_after(stream, false);
         }
     }
 
@@ -781,14 +808,6 @@ impl Recv {
         }
 
         Ok(().into())
-    }
-
-    pub fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
-        while let Some(stream) = self.pending_window_updates.pop(store) {
-            counts.transition(stream, |_, stream| {
-                trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
-            })
-        }
     }
 
     /// Send stream level window update
