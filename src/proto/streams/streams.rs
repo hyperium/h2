@@ -134,7 +134,7 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, &mut me.counts)? {
+            Entry::Vacant(e) => match me.actions.recv.open(id, false, &mut me.counts)? {
                 Some(stream_id) => {
                     let stream = Stream::new(
                         stream_id,
@@ -182,7 +182,9 @@ where
                                 Reason::REFUSED_STREAM,
                                 counts,
                                 &mut actions.task);
+
                             actions.recv.enqueue_reset_expiration(stream, counts);
+
                             Ok(())
                         } else {
                             Err(RecvError::Stream {
@@ -402,44 +404,61 @@ where
         let id = frame.stream_id();
         let promised_id = frame.promised_id();
 
-        let res = {
-            let stream = match me.store.find_mut(&id) {
-                Some(stream) => stream.key(),
-                None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
-            };
+        // First, ensure that the initiating stream is still in a valid state.
+        let parent_key = match me.store.find_mut(&id) {
+            Some(stream) => {
+                if id > me.actions.recv.max_stream_id() {
+                    trace!("id ({:?}) > max_stream_id ({:?}), ignoring PUSH_PROMISE", id, me.actions.recv.max_stream_id());
+                    return Ok(());
+                }
 
-            if me.counts.peer().is_server() {
-                // The remote is a client and cannot reserve
-                trace!("recv_push_promise; error remote is client");
-                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+                // The stream must be receive open
+                stream.state.ensure_recv_open()?;
+                stream.key()
             }
-
-            me.actions.recv.recv_push_promise(frame,
-                                              &me.actions.send,
-                                              stream,
-                                              &mut me.store)
+            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
-        if let Err(err) = res {
-            if let Some(ref mut new_stream) = me.store.find_mut(&promised_id) {
+        // Ensure that we can reserve streams
+        me.actions.recv.ensure_can_reserve()?;
+
+        // Next, open the stream.
+        if me.actions.recv.open(promised_id, true, &mut me.counts)?.is_none() {
+            return Ok(());
+        }
+
+        // Create a scope
+        let child_key = {
+            // Create state for the stream
+            let stream = me.store.insert(promised_id, {
+                Stream::new(
+                    promised_id,
+                    me.actions.send.init_window_sz(),
+                    me.actions.recv.init_window_sz())
+            });
+
+            let actions = &mut me.actions;
+
+            me.counts.transition(stream, |counts, stream| {
+                let res = actions.recv.recv_push_promise(frame, stream);
 
                 let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-                me.actions.reset_on_recv_stream_err(
-                    &mut *send_buffer,
-                    new_stream,
-                    &mut me.counts,
-                    Err(err))
-            } else {
-                // If there was a stream error, the stream should have been stored
-                // so we can track sending a reset.
-                //
-                // Otherwise, this MUST be an connection error.
-                assert!(!err.is_stream_error());
-                Err(err)
-            }
-        } else {
-            res
-        }
+                actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, res)
+                    .map(|_| stream.key())
+            })?
+        };
+
+        // Push the stream... this requires a bit of indirection to make
+        // the borrow checker happy.
+        let mut ppp = me.store[parent_key].pending_push_promises.take();
+        ppp.push(&mut me.store.resolve(child_key));
+
+        let parent = &mut me.store[parent_key];
+
+        parent.pending_push_promises = ppp;
+        parent.notify_recv();
+
+        Ok(())
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
@@ -633,7 +652,7 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, &mut me.counts) {
+            Entry::Vacant(e) => match me.actions.recv.open(id, false, &mut me.counts) {
                 Ok(Some(stream_id)) => {
                     let stream = Stream::new(stream_id, 0, 0);
 
