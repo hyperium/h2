@@ -535,7 +535,7 @@ impl Recv {
         store: &mut Store,
     ) -> Result<(), RecvError> {
         // First, make sure that the values are legit
-        self.ensure_can_reserve(frame.promised_id())?;
+        self.ensure_can_reserve(frame.promised_id(), store)?;
 
         // Make sure that the stream state is valid
         store[stream].state.ensure_recv_open()?;
@@ -644,7 +644,7 @@ impl Recv {
     }
 
     /// Returns true if the remote peer can reserve a stream with the given ID.
-    fn ensure_can_reserve(&self, promised_id: StreamId)
+    fn ensure_can_reserve(&self, promised_id: StreamId, store: &mut Store)
         -> Result<(), RecvError>
     {
         if !promised_id.is_server_initiated() {
@@ -657,6 +657,14 @@ impl Recv {
 
         if !self.is_push_enabled {
             trace!("recv_push_promise; error push is disabled");
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
+
+        if store.find_mut(&promised_id).is_some() {
+            trace!(
+                "recv_push_promise; error promised id is already in use {:?}",
+                promised_id
+            );
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
