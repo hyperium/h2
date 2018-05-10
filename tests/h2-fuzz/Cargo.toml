@@ -1,0 +1,14 @@
+[package]
+name = "h2-fuzz"
+version = "0.0.0"
+publish = false
+license = "MIT"
+
+[dependencies]
+h2 = { path = "../.." }
+
+env_logger = { version = "0.5.3", default-features = false }
+futures = "0.1.21"
+honggfuzz = "0.5"
+http = "0.1.3"
+tokio-io = "0.1.4"
