@@ -249,13 +249,22 @@ impl State {
     }
 
     /// We noticed a protocol error.
-    pub fn recv_err(&mut self, err: &proto::Error) {
+    ///
+    /// # Arguments
+    /// - `err`: the protocol error that occurred.
+    /// - `queued`: true if this stream has frames in the pending send queue.
+    pub fn recv_err(&mut self, err: &proto::Error, queued: bool) {
         use proto::Error::*;
 
         match self.inner {
-            Closed(..) => {},
-            _ => {
-                trace!("recv_err; err={:?}", err);
+            // If the stream is already in a `Closed` state, do nothing,
+            // provided that there are no frames still in the send queue.
+            Closed(..) if !queued => {},
+            state => {
+                trace!(
+                    "recv_err; err={:?}; state={:?}; queued={:?}",
+                    err, state, queued
+                );
                 self.inner = Closed(match *err {
                     Proto(reason) => Cause::LocallyReset(reason),
                     Io(..) => Cause::Io,

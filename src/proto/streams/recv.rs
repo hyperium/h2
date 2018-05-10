@@ -609,7 +609,7 @@ impl Recv {
     /// Handle a received error
     pub fn recv_err(&mut self, err: &proto::Error, stream: &mut Stream) {
         // Receive an error
-        stream.state.recv_err(err);
+        stream.state.recv_err(err, stream.is_pending_send);
 
         // If a receiver is waiting, notify it
         stream.notify_send();
