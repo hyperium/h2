@@ -127,6 +127,8 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
+        // The GOAWAY process has begun. All streams with a greater ID than
+        // specified as part of GOAWAY should be ignored.
         if id > me.actions.recv.max_stream_id() {
             trace!("id ({:?}) > max_stream_id ({:?}), ignoring HEADERS", id, me.actions.recv.max_stream_id());
             return Ok(());
@@ -217,6 +219,8 @@ where
         let stream = match me.store.find_mut(&id) {
             Some(stream) => stream,
             None => {
+                // The GOAWAY process has begun. All streams with a greater ID
+                // than specified as part of GOAWAY should be ignored.
                 if id > me.actions.recv.max_stream_id() {
                     trace!("id ({:?}) > max_stream_id ({:?}), ignoring DATA", id, me.actions.recv.max_stream_id());
                     return Ok(());
@@ -256,6 +260,8 @@ where
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
+        // The GOAWAY process has begun. All streams with a greater ID than
+        // specified as part of GOAWAY should be ignored.
         if id > me.actions.recv.max_stream_id() {
             trace!("id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM", id, me.actions.recv.max_stream_id());
             return Ok(());
@@ -407,6 +413,8 @@ where
         // First, ensure that the initiating stream is still in a valid state.
         let parent_key = match me.store.find_mut(&id) {
             Some(stream) => {
+                // The GOAWAY process has begun. All streams with a greater ID
+                // than specified as part of GOAWAY should be ignored.
                 if id > me.actions.recv.max_stream_id() {
                     trace!("id ({:?}) > max_stream_id ({:?}), ignoring PUSH_PROMISE", id, me.actions.recv.max_stream_id());
                     return Ok(());
@@ -423,6 +431,9 @@ where
         me.actions.recv.ensure_can_reserve()?;
 
         // Next, open the stream.
+        //
+        // If `None` is returned, then the stream is being refused. There is no
+        // further work to be done.
         if me.actions.recv.open(promised_id, Open::PushPromise, &mut me.counts)?.is_none() {
             return Ok(());
         }
