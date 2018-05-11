@@ -69,6 +69,12 @@ pub(super) enum RecvHeaderBlockError<T> {
     State(RecvError),
 }
 
+#[derive(Debug)]
+pub(crate) enum Open {
+    PushPromise,
+    Headers,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Indices {
     head: store::Key,
@@ -120,12 +126,12 @@ impl Recv {
     pub fn open(
         &mut self,
         id: StreamId,
-        push_promise: bool,
+        mode: Open,
         counts: &mut Counts,
     ) -> Result<Option<StreamId>, RecvError> {
         assert!(self.refused.is_none());
 
-        counts.peer().ensure_can_open(id, push_promise)?;
+        counts.peer().ensure_can_open(id, mode)?;
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
@@ -897,6 +903,19 @@ impl Event {
     fn is_data(&self) -> bool {
         match *self {
             Event::Data(..) => true,
+            _ => false,
+        }
+    }
+}
+
+// ===== impl Open =====
+
+impl Open {
+    pub fn is_push_promise(&self) -> bool {
+        use self::Open::*;
+
+        match *self {
+            PushPromise => true,
             _ => false,
         }
     }

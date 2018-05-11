@@ -1,13 +1,14 @@
 use codec::RecvError;
 use error::Reason;
 use frame::{Headers, StreamId};
+use proto::Open;
 
 use http::{Request, Response};
 
 use std::fmt;
 
 /// Either a Client or a Server
-pub trait Peer {
+pub(crate) trait Peer {
     /// Message type polled from the transport
     type Poll: fmt::Debug;
 
@@ -27,7 +28,7 @@ pub trait Peer {
 ///
 /// This is used internally to avoid incurring a generic on all internal types.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Dyn {
+pub(crate) enum Dyn {
     Client,
     Server,
 }
@@ -61,10 +62,10 @@ impl Dyn {
     }
 
     /// Returns true if the remote peer can initiate a stream with the given ID.
-    pub fn ensure_can_open(&self, id: StreamId, push_promise: bool) -> Result<(), RecvError> {
+    pub fn ensure_can_open(&self, id: StreamId, mode: Open) -> Result<(), RecvError> {
         if self.is_server() {
             // Ensure that the ID is a valid client initiated ID
-            if push_promise || !id.is_client_initiated() {
+            if mode.is_push_promise() || !id.is_client_initiated() {
                 trace!("Cannot open stream {:?} - not client initiated, PROTOCOL_ERROR", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
@@ -72,7 +73,7 @@ impl Dyn {
             Ok(())
         } else {
             // Ensure that the ID is a valid server initiated ID
-            if !push_promise || !id.is_server_initiated() {
+            if !mode.is_push_promise() || !id.is_server_initiated() {
                 trace!("Cannot open stream {:?} - not server initiated, PROTOCOL_ERROR", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }

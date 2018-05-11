@@ -1,7 +1,7 @@
 use {client, proto, server};
 use codec::{Codec, RecvError, SendError, UserError};
 use frame::{self, Frame, Reason};
-use proto::{peer, Peer, WindowSize};
+use proto::{peer, Peer, Open, WindowSize};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
@@ -134,7 +134,7 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, false, &mut me.counts)? {
+            Entry::Vacant(e) => match me.actions.recv.open(id, Open::Headers, &mut me.counts)? {
                 Some(stream_id) => {
                     let stream = Stream::new(
                         stream_id,
@@ -423,7 +423,7 @@ where
         me.actions.recv.ensure_can_reserve()?;
 
         // Next, open the stream.
-        if me.actions.recv.open(promised_id, true, &mut me.counts)?.is_none() {
+        if me.actions.recv.open(promised_id, Open::PushPromise, &mut me.counts)?.is_none() {
             return Ok(());
         }
 
@@ -652,7 +652,7 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, false, &mut me.counts) {
+            Entry::Vacant(e) => match me.actions.recv.open(id, Open::PushPromise, &mut me.counts) {
                 Ok(Some(stream_id)) => {
                     let stream = Stream::new(stream_id, 0, 0);
 
