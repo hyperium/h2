@@ -71,7 +71,7 @@ impl Dyn {
 
             Ok(())
         } else {
-            // Ensure that hte ID is a valid server initiated ID
+            // Ensure that the ID is a valid server initiated ID
             if !push_promise || !id.is_server_initiated() {
                 trace!("Cannot open stream {:?} - not server initiated, PROTOCOL_ERROR", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
