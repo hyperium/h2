@@ -663,7 +663,7 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, Open::PushPromise, &mut me.counts) {
+            Entry::Vacant(e) => match me.actions.recv.open(id, Open::Headers, &mut me.counts) {
                 Ok(Some(stream_id)) => {
                     let stream = Stream::new(stream_id, 0, 0);
 
