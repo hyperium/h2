@@ -199,3 +199,109 @@ fn recv_push_promise_with_unsafe_method_is_stream_error() {
 fn recv_push_promise_with_wrong_authority_is_stream_error() {
     // if server is foo.com, :authority = bar.com is stream error
 }
+
+#[test]
+fn recv_push_promise_skipped_stream_id() {
+    // tests that by default, received push promises work
+    // TODO: once API exists, read the pushed response
+    let _ = ::env_logger::try_init();
+
+    let (io, srv) = mock::new();
+    let mock = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style.css"))
+        .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::go_away(0).protocol_error())
+        .close()
+        ;
+
+    let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = client
+            .send_request(request, true)
+            .unwrap()
+            .0
+            .then(|res| {
+                assert!(res.is_err());
+                Ok::<_, ()>(())
+            });
+
+            // client should see a protocol error
+            let conn = h2.then(|res| {
+                let err = res.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    "protocol error: unspecific protocol error detected"
+                );
+                Ok::<(), ()>(())
+            });
+
+            conn.unwrap().join(req)
+    });
+
+    h2.join(mock).wait().unwrap();
+}
+
+#[test]
+fn recv_push_promise_dup_stream_id() {
+    // tests that by default, received push promises work
+    // TODO: once API exists, read the pushed response
+    let _ = ::env_logger::try_init();
+
+    let (io, srv) = mock::new();
+    let mock = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::go_away(0).protocol_error())
+        .close()
+        ;
+
+    let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = client
+            .send_request(request, true)
+            .unwrap()
+            .0
+            .then(|res| {
+                assert!(res.is_err());
+                Ok::<_, ()>(())
+            });
+
+            // client should see a protocol error
+            let conn = h2.then(|res| {
+                let err = res.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    "protocol error: unspecific protocol error detected"
+                );
+                Ok::<(), ()>(())
+            });
+
+            conn.unwrap().join(req)
+    });
+
+    h2.join(mock).wait().unwrap();
+}

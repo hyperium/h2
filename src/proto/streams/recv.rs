@@ -1,5 +1,4 @@
 use super::*;
-use super::store::Resolve;
 use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
@@ -70,6 +69,12 @@ pub(super) enum RecvHeaderBlockError<T> {
     State(RecvError),
 }
 
+#[derive(Debug)]
+pub(crate) enum Open {
+    PushPromise,
+    Headers,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Indices {
     head: store::Key,
@@ -121,11 +126,12 @@ impl Recv {
     pub fn open(
         &mut self,
         id: StreamId,
+        mode: Open,
         counts: &mut Counts,
     ) -> Result<Option<StreamId>, RecvError> {
         assert!(self.refused.is_none());
 
-        counts.peer().ensure_can_open(id)?;
+        counts.peer().ensure_can_open(id, mode)?;
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
@@ -530,56 +536,33 @@ impl Recv {
     pub fn recv_push_promise(
         &mut self,
         frame: frame::PushPromise,
-        send: &Send,
-        stream: store::Key,
-        store: &mut Store,
+        stream: &mut store::Ptr,
     ) -> Result<(), RecvError> {
-        // First, make sure that the values are legit
-        self.ensure_can_reserve(frame.promised_id())?;
-
-        // Make sure that the stream state is valid
-        store[stream].state.ensure_recv_open()?;
 
         // TODO: Streams in the reserved states do not count towards the concurrency
         // limit. However, it seems like there should be a cap otherwise this
         // could grow in memory indefinitely.
 
-        /*
-        if !self.inc_num_streams() {
-            self.refused = Some(frame.promised_id());
-            return Ok(());
-        }
-        */
-
-        // TODO: All earlier stream IDs should be implicitly closed.
-
-        // Now, create a new entry for the stream
-        let mut new_stream = Stream::new(
-            frame.promised_id(),
-            send.init_window_sz(),
-            self.init_window_sz,
-        );
-
-        new_stream.state.reserve_remote()?;
-        // Store the stream
-        let new_stream = store.insert(frame.promised_id(), new_stream).key();
-
+        stream.state.reserve_remote()?;
 
         if frame.is_over_size() {
+            // A frame is over size if the decoded header block was bigger than
+            // SETTINGS_MAX_HEADER_LIST_SIZE.
+            //
+            // > A server that receives a larger header block than it is willing
+            // > to handle can send an HTTP 431 (Request Header Fields Too
+            // > Large) status code [RFC6585]. A client can discard responses
+            // > that it cannot process.
+            //
+            // So, if peer is a server, we'll send a 431. In either case,
+            // an error is recorded, which will send a REFUSED_STREAM,
+            // since we don't want any of the data frames either.
             trace!("recv_push_promise; frame for {:?} is over size", frame.promised_id());
             return Err(RecvError::Stream {
                 id: frame.promised_id(),
                 reason: Reason::REFUSED_STREAM,
             });
         }
-
-        let mut ppp = store[stream].pending_push_promises.take();
-        ppp.push(&mut store.resolve(new_stream));
-
-        let stream = &mut store[stream];
-
-        stream.pending_push_promises = ppp;
-        stream.notify_recv();
 
         Ok(())
     }
@@ -618,7 +601,6 @@ impl Recv {
 
     pub fn go_away(&mut self, last_processed_id: StreamId) {
         assert!(self.max_stream_id >= last_processed_id);
-
         self.max_stream_id = last_processed_id;
     }
 
@@ -644,17 +626,9 @@ impl Recv {
     }
 
     /// Returns true if the remote peer can reserve a stream with the given ID.
-    fn ensure_can_reserve(&self, promised_id: StreamId)
+    pub fn ensure_can_reserve(&self)
         -> Result<(), RecvError>
     {
-        if !promised_id.is_server_initiated() {
-            trace!(
-                "recv_push_promise; error promised id is invalid {:?}",
-                promised_id
-            );
-            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
-        }
-
         if !self.is_push_enabled {
             trace!("recv_push_promise; error push is disabled");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
@@ -929,6 +903,19 @@ impl Event {
     fn is_data(&self) -> bool {
         match *self {
             Event::Data(..) => true,
+            _ => false,
+        }
+    }
+}
+
+// ===== impl Open =====
+
+impl Open {
+    pub fn is_push_promise(&self) -> bool {
+        use self::Open::*;
+
+        match *self {
+            PushPromise => true,
             _ => false,
         }
     }

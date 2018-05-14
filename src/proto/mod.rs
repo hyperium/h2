@@ -10,7 +10,7 @@ pub(crate) use self::connection::{Config, Connection};
 pub(crate) use self::error::Error;
 pub(crate) use self::peer::{Peer, Dyn as DynPeer};
 pub(crate) use self::streams::{Key as StreamKey, StreamRef, OpaqueStreamRef, Streams};
-pub(crate) use self::streams::Prioritized;
+pub(crate) use self::streams::{Prioritized, Open};
 
 use codec::Codec;
 
