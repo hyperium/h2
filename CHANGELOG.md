@@ -1,3 +1,7 @@
+# 0.1.7 (May 14, 2018)
+
+* Misc bug fixes (#266, #273, #261, #275).
+
 # 0.1.6 (April 24, 2018)
 
 * Misc bug fixes related to stream management (#258, #260, #262).
