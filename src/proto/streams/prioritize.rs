@@ -801,6 +801,7 @@ impl Prioritize {
 
                 counts.inc_num_send_streams(&mut stream);
                 self.pending_send.push(&mut stream);
+                stream.notify_send();
             } else {
                 return;
             }
