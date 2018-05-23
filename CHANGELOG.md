@@ -1,3 +1,7 @@
+# 0.1.8 (May 23, 2018)
+
+* Fix client bug when max streams is reached. (#277)
+
 # 0.1.7 (May 14, 2018)
 
 * Misc bug fixes (#266, #273, #261, #275).
