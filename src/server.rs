@@ -972,6 +972,17 @@ impl<B: IntoBuf> SendResponse<B> {
         self.inner.send_reset(reason)
     }
 
+    /// Polls to be notified when the client resets this stream.
+    ///
+    /// If stream is still open, this returns `Ok(Async::NotReady)`, and
+    /// registers the task to be notified if a `RST_STREAM` is received.
+    ///
+    /// If a `RST_STREAM` frame is received for this stream, calling this
+    /// method will yield the `Reason` for the reset.
+    pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
+        self.inner.poll_reset()
+    }
+
     // TODO: Support reserving push promises.
 }
 

@@ -1,3 +1,5 @@
+use std::io;
+
 use codec::{RecvError, UserError};
 use codec::UserError::*;
 use frame::Reason;
@@ -399,8 +401,6 @@ impl State {
     }
 
     pub fn ensure_recv_open(&self) -> Result<bool, proto::Error> {
-        use std::io;
-
         // TODO: Is this correct?
         match self.inner {
             Closed(Cause::Proto(reason)) |
@@ -410,6 +410,17 @@ impl State {
             Closed(Cause::EndStream) |
             HalfClosedRemote(..) => Ok(false),
             _ => Ok(true),
+        }
+    }
+
+    /// Returns a reason if the stream has been reset.
+    pub(super) fn ensure_reason(&self) -> Result<Option<Reason>, proto::Error> {
+        match self.inner {
+            Closed(Cause::Proto(reason)) |
+            Closed(Cause::LocallyReset(reason)) |
+            Closed(Cause::Scheduled(reason)) => Ok(Some(reason)),
+            Closed(Cause::Io) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
+            _ => Ok(None),
         }
     }
 }
