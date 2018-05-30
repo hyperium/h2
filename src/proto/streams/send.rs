@@ -30,7 +30,6 @@ pub(super) struct Send {
 #[derive(Debug)]
 pub(crate) enum PollReset {
     AwaitingHeaders,
-    #[allow(unused)]
     Streaming,
 }
 
