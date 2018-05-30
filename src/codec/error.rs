@@ -51,6 +51,9 @@ pub enum UserError {
 
     /// Request submitted with relative URI.
     MissingUriSchemeAndAuthority,
+
+    /// Calls `SendResponse::poll_reset` after having called `send_response`.
+    PollResetAfterSendResponse,
 }
 
 // ===== impl RecvError =====
@@ -130,6 +133,7 @@ impl error::Error for UserError {
             OverflowedStreamId => "stream ID overflowed",
             MalformedHeaders => "malformed headers",
             MissingUriSchemeAndAuthority => "request URI missing scheme and authority",
+            PollResetAfterSendResponse => "poll_reset after send_response is illegal",
         }
     }
 }

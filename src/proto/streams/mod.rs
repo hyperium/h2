@@ -11,6 +11,7 @@ mod streams;
 
 pub(crate) use self::prioritize::Prioritized;
 pub(crate) use self::recv::Open;
+pub(crate) use self::send::PollReset;
 pub(crate) use self::store::Key;
 pub(crate) use self::streams::{StreamRef, OpaqueStreamRef, Streams};
 

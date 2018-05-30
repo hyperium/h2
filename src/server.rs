@@ -979,8 +979,13 @@ impl<B: IntoBuf> SendResponse<B> {
     ///
     /// If a `RST_STREAM` frame is received for this stream, calling this
     /// method will yield the `Reason` for the reset.
+    ///
+    /// # Error
+    ///
+    /// Calling this method after having called `send_response` will return
+    /// a user error.
     pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
-        self.inner.poll_reset()
+        self.inner.poll_reset(proto::PollReset::AwaitingHeaders)
     }
 
     // TODO: Support reserving push promises.

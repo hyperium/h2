@@ -1,6 +1,5 @@
 use codec::{RecvError, UserError};
 use frame::{self, Reason};
-use proto;
 use super::{
     store, Buffer, Codec, Config, Counts, Frame, Prioritize,
     Prioritized, Store, Stream, StreamId, StreamIdOverflow, WindowSize,
@@ -25,6 +24,14 @@ pub(super) struct Send {
 
     /// Prioritization layer
     prioritize: Prioritize,
+}
+
+/// A value to detect which public API has called `poll_reset`.
+#[derive(Debug)]
+pub(crate) enum PollReset {
+    AwaitingHeaders,
+    #[allow(unused)]
+    Streaming,
 }
 
 impl Send {
@@ -272,8 +279,9 @@ impl Send {
     pub fn poll_reset(
         &self,
         stream: &mut Stream,
-    ) -> Poll<Reason, proto::Error> {
-        match stream.state.ensure_reason()? {
+        mode: PollReset,
+    ) -> Poll<Reason, ::Error> {
+        match stream.state.ensure_reason(mode)? {
             Some(reason) => Ok(reason.into()),
             None => {
                 stream.wait_send();

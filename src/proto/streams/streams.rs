@@ -931,13 +931,13 @@ impl<B> StreamRef<B> {
     }
 
     /// Request to be notified for if a `RST_STREAM` is received for this stream.
-    pub(crate) fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
+    pub(crate) fn poll_reset(&mut self, mode: proto::PollReset) -> Poll<Reason, ::Error> {
         let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.opaque.key);
 
-        me.actions.send.poll_reset(&mut stream)
+        me.actions.send.poll_reset(&mut stream, mode)
             .map_err(From::from)
     }
 

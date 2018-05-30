@@ -497,7 +497,7 @@ fn poll_reset() {
 }
 
 #[test]
-fn poll_reset_error() {
+fn poll_reset_io_error() {
     let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
@@ -527,6 +527,49 @@ fn poll_reset_error() {
             let conn = conn.into_future()
                 .map(|(req, _)| assert!(req.is_none(), "no second request"))
                 .expect("conn");
+            conn.join(
+                futures::future::poll_fn(move || {
+                    tx.poll_reset()
+                })
+                .expect_err("poll_reset should error")
+            )
+        });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn poll_reset_send_response_is_user_error() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .idle_ms(10)
+        .close();
+
+    let srv = server::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, conn)| {
+                    (req.expect("request"), conn)
+                })
+        })
+        .and_then(|((_req, mut tx), conn)| {
+            let conn = conn.into_future()
+                .map(|(req, _)| assert!(req.is_none(), "no second request"))
+                .expect("conn");
+            tx.send_response(Response::new(()), false).expect("response");
             conn.join(
                 futures::future::poll_fn(move || {
                     tx.poll_reset()
