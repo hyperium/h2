@@ -539,7 +539,7 @@ fn poll_reset_io_error() {
 }
 
 #[test]
-fn poll_reset_send_response_is_user_error() {
+fn poll_reset_after_send_response_is_user_error() {
     let _ = ::env_logger::try_init();
     let (io, client) = mock::new();
 
@@ -551,6 +551,15 @@ fn poll_reset_send_response_is_user_error() {
             frames::headers(1)
                 .request("GET", "https://example.com/")
                 .eos()
+        )
+        .recv_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        .recv_frame(
+            // After the error, our server will drop the handles,
+            // meaning we receive a RST_STREAM here.
+            frames::reset(1).cancel()
         )
         .idle_ms(10)
         .close();
