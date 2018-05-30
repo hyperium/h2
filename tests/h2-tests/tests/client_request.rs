@@ -926,6 +926,44 @@ fn notify_on_send_capacity() {
     done_rx.recv().unwrap();
 }
 
+#[test]
+fn send_stream_poll_reset() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv
+        .assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+        )
+        .send_frame(frames::reset(1).refused())
+        .close();
+
+    let client = client::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let (_response, mut tx) = client.send_request(request, false).unwrap();
+            conn.drive(futures::future::poll_fn(move || {
+                tx.poll_reset()
+            }))
+                .map(|(_, reason)| {
+                    assert_eq!(reason, Reason::REFUSED_STREAM);
+                })
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 

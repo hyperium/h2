@@ -708,7 +708,7 @@ where
             let mut stream = me.store.resolve(*key);
             trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
             if stream.is_pending_open {
-                stream.send_task = Some(task::current());
+                stream.wait_send();
                 return Ok(Async::NotReady);
             }
         }
@@ -928,6 +928,17 @@ impl<B> StreamRef<B> {
         let mut stream = me.store.resolve(self.opaque.key);
 
         me.actions.send.poll_capacity(&mut stream)
+    }
+
+    /// Request to be notified for if a `RST_STREAM` is received for this stream.
+    pub(crate) fn poll_reset(&mut self, mode: proto::PollReset) -> Poll<Reason, ::Error> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.poll_reset(&mut stream, mode)
+            .map_err(From::from)
     }
 
     pub(crate) fn key(&self) -> store::Key {

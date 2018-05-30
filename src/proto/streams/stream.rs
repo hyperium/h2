@@ -47,7 +47,7 @@ pub(super) struct Stream {
     pub buffered_send_data: WindowSize,
 
     /// Task tracking additional send capacity (i.e. window updates).
-    pub send_task: Option<task::Task>,
+    send_task: Option<task::Task>,
 
     /// Frames pending for this stream being sent to the socket
     pub pending_send: buffer::Deque,

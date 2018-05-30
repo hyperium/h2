@@ -1,10 +1,15 @@
 use codec::{RecvError, UserError};
-use codec::UserError::*;
 use frame::{self, Reason};
-use http;
-use super::*;
+use super::{
+    store, Buffer, Codec, Config, Counts, Frame, Prioritize,
+    Prioritized, Store, Stream, StreamId, StreamIdOverflow, WindowSize,
+};
 
 use bytes::Buf;
+use http;
+use futures::{Async, Poll};
+use futures::task::Task;
+use tokio_io::AsyncWrite;
 
 use std::{cmp, io};
 
@@ -19,6 +24,13 @@ pub(super) struct Send {
 
     /// Prioritization layer
     prioritize: Prioritize,
+}
+
+/// A value to detect which public API has called `poll_reset`.
+#[derive(Debug)]
+pub(crate) enum PollReset {
+    AwaitingHeaders,
+    Streaming,
 }
 
 impl Send {
@@ -196,7 +208,7 @@ impl Send {
     ) -> Result<(), UserError> {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
-            return Err(UnexpectedFrameType.into());
+            return Err(UserError::UnexpectedFrameType);
         }
 
         stream.state.send_close();
@@ -260,6 +272,20 @@ impl Send {
             0
         } else {
             available - buffered
+        }
+    }
+
+    pub fn poll_reset(
+        &self,
+        stream: &mut Stream,
+        mode: PollReset,
+    ) -> Poll<Reason, ::Error> {
+        match stream.state.ensure_reason(mode)? {
+            Some(reason) => Ok(reason.into()),
+            None => {
+                stream.wait_send();
+                Ok(Async::NotReady)
+            },
         }
     }
 
@@ -405,6 +431,6 @@ impl Send {
     }
 
     pub fn ensure_next_stream_id(&self) -> Result<StreamId, UserError> {
-        self.next_stream_id.map_err(|_| OverflowedStreamId)
+        self.next_stream_id.map_err(|_| UserError::OverflowedStreamId)
     }
 }

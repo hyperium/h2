@@ -449,3 +449,143 @@ fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
     srv.join(client).wait().expect("wait");
 }
+
+#[test]
+fn poll_reset() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .idle_ms(10)
+        .send_frame(frames::reset(1).cancel())
+        .close();
+
+    let srv = server::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, conn)| {
+                    (req.expect("request"), conn)
+                })
+        })
+        .and_then(|((_req, mut tx), conn)| {
+            let conn = conn.into_future()
+                .map(|(req, _)| assert!(req.is_none(), "no second request"))
+                .expect("conn");
+            conn.join(
+                futures::future::poll_fn(move || {
+                    tx.poll_reset()
+                })
+                .map(|reason| {
+                    assert_eq!(reason, Reason::CANCEL);
+                })
+                .expect("poll_reset")
+            )
+        });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn poll_reset_io_error() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .idle_ms(10)
+        .close();
+
+    let srv = server::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, conn)| {
+                    (req.expect("request"), conn)
+                })
+        })
+        .and_then(|((_req, mut tx), conn)| {
+            let conn = conn.into_future()
+                .map(|(req, _)| assert!(req.is_none(), "no second request"))
+                .expect("conn");
+            conn.join(
+                futures::future::poll_fn(move || {
+                    tx.poll_reset()
+                })
+                .expect_err("poll_reset should error")
+            )
+        });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn poll_reset_after_send_response_is_user_error() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .recv_frame(
+            frames::headers(1)
+                .response(200)
+        )
+        .recv_frame(
+            // After the error, our server will drop the handles,
+            // meaning we receive a RST_STREAM here.
+            frames::reset(1).cancel()
+        )
+        .idle_ms(10)
+        .close();
+
+    let srv = server::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future()
+                .expect("server")
+                .map(|(req, conn)| {
+                    (req.expect("request"), conn)
+                })
+        })
+        .and_then(|((_req, mut tx), conn)| {
+            let conn = conn.into_future()
+                .map(|(req, _)| assert!(req.is_none(), "no second request"))
+                .expect("conn");
+            tx.send_response(Response::new(()), false).expect("response");
+            conn.join(
+                futures::future::poll_fn(move || {
+                    tx.poll_reset()
+                })
+                .expect_err("poll_reset should error")
+            )
+        });
+
+    srv.join(client).wait().expect("wait");
+}
