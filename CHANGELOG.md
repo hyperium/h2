@@ -1,3 +1,7 @@
+# 0.1.9 (May 31, 2018)
+
+* Add `poll_reset` to `SendResponse` and `SendStream` (#279).
+
 # 0.1.8 (May 23, 2018)
 
 * Fix client bug when max streams is reached. (#277)
