@@ -916,6 +916,8 @@ fn notify_on_send_capacity() {
                     assert_eq!(response.status(), StatusCode::OK);
                 }
 
+                poll_fn(|| client.poll_ready()).wait().unwrap();
+
                 done_tx.send(()).unwrap();
             });
 

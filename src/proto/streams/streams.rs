@@ -567,7 +567,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-        pending: Option<&store::Key>,
+        pending: Option<&OpaqueStreamRef>,
     ) -> Result<StreamRef<B>, SendError> {
         use http::Method;
         use super::stream::ContentLength;
@@ -593,8 +593,8 @@ where
             //
             // If that stream is still pending, the Client isn't allowed to
             // queue up another pending stream. They should use `poll_ready`.
-            if let Some(key) = pending {
-                if me.store.resolve(*key).is_pending_open {
+            if let Some(stream) = pending {
+                if me.store.resolve(stream.key).is_pending_open {
                     return Err(UserError::Rejected.into());
                 }
             }
@@ -697,15 +697,15 @@ impl<B> Streams<B, client::Peer>
 where
     B: Buf,
 {
-    pub fn poll_pending_open(&mut self, key: Option<&store::Key>) -> Poll<(), ::Error> {
+    pub fn poll_pending_open(&mut self, pending: Option<&OpaqueStreamRef>) -> Poll<(), ::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         me.actions.ensure_no_conn_error()?;
         me.actions.send.ensure_next_stream_id()?;
 
-        if let Some(key) = key {
-            let mut stream = me.store.resolve(*key);
+        if let Some(pending) = pending {
+            let mut stream = me.store.resolve(pending.key);
             trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
             if stream.is_pending_open {
                 stream.wait_send();
@@ -939,10 +939,6 @@ impl<B> StreamRef<B> {
 
         me.actions.send.poll_reset(&mut stream, mode)
             .map_err(From::from)
-    }
-
-    pub(crate) fn key(&self) -> store::Key {
-        self.opaque.key
     }
 
     pub fn clone_to_opaque(&self) -> OpaqueStreamRef

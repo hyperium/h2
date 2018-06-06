@@ -223,7 +223,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// [`Error`]: ../struct.Error.html
 pub struct SendRequest<B: IntoBuf> {
     inner: proto::Streams<B::Buf, Peer>,
-    pending: Option<proto::StreamKey>,
+    pending: Option<proto::OpaqueStreamRef>,
 }
 
 /// Returns a `SendRequest` instance once it is ready to send at least one
@@ -568,7 +568,7 @@ where
             .map_err(Into::into)
             .map(|stream| {
                 if stream.is_pending_open() {
-                    self.pending = Some(stream.key());
+                    self.pending = Some(stream.clone_to_opaque());
                 }
 
                 let response = ResponseFuture {
