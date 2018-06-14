@@ -932,7 +932,7 @@ impl<B: IntoBuf> SendResponse<B> {
     /// used to stream the response body and send trailers.
     ///
     /// If a body or trailers will be sent on the returned [`SendStream`]
-    /// instance, then `end_of_stream` must be set to `true` when calling this
+    /// instance, then `end_of_stream` must be set to `false` when calling this
     /// function.
     ///
     /// The [`SendResponse`] instance is already associated with a received
