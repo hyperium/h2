@@ -329,7 +329,7 @@ impl io::Write for Mock {
         let mut me = self.pipe.inner.lock().unwrap();
 
         if me.closed {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "mock closed"));
+            return Ok(buf.len());
         }
 
         if me.tx_rem == 0 {

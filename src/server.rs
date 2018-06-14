@@ -1045,6 +1045,12 @@ where
 
         while rem > 0 {
             let n = try_nb!(self.inner_mut().read(&mut buf[..rem]));
+            if n == 0 {
+                return Err(::std::io::Error::new(
+                    ::std::io::ErrorKind::ConnectionReset,
+                    "connection closed unexpectedly",
+                ).into());
+            }
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {
                 // TODO: Should this just write the GO_AWAY frame directly?
