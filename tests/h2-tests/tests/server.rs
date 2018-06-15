@@ -589,3 +589,19 @@ fn poll_reset_after_send_response_is_user_error() {
 
     srv.join(client).wait().expect("wait");
 }
+
+#[test]
+fn server_error_on_unclean_shutdown() {
+    use std::io::Write;
+
+    let _ = ::env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let srv = server::Builder::new()
+        .handshake::<_, Bytes>(io);
+
+    client.write_all(b"PRI *").expect("write");
+    drop(client);
+
+    srv.wait().expect_err("should error");
+}
