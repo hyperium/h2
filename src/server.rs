@@ -140,7 +140,7 @@ use proto::{self, Config, Prioritized};
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
 use http::{Request, Response};
-use std::{convert, fmt, mem};
+use std::{convert, fmt, io, mem};
 use std::time::Duration;
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -1046,8 +1046,8 @@ where
         while rem > 0 {
             let n = try_nb!(self.inner_mut().read(&mut buf[..rem]));
             if n == 0 {
-                return Err(::std::io::Error::new(
-                    ::std::io::ErrorKind::ConnectionReset,
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
                     "connection closed unexpectedly",
                 ).into());
             }
