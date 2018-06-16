@@ -850,8 +850,9 @@ fn notify_on_send_capacity() {
     use std::sync::mpsc;
 
     let _ = ::env_logger::try_init();
+
     let (io, srv) = mock::new();
-    let (done_tx, done_rx) = mpsc::channel();
+    let (done_tx, done_rx) = futures::sync::oneshot::channel();
     let (tx, rx) = mpsc::channel();
 
     let mut settings = frame::Settings::default();
@@ -884,6 +885,9 @@ fn notify_on_send_capacity() {
                 .eos(),
         )
         .send_frame(frames::headers(5).response(200).eos())
+        // Don't close the connection until the client is done doing its
+        // checks.
+        .wait_for(done_rx)
         .close()
         ;
 
@@ -922,10 +926,11 @@ fn notify_on_send_capacity() {
             });
 
             conn.expect("h2")
-        });
+        })
+        .expect("client");
+
 
     client.join(srv).wait().unwrap();
-    done_rx.recv().unwrap();
 }
 
 #[test]
