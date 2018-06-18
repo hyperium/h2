@@ -1,3 +1,8 @@
+# 0.1.10 (June 15, 2018)
+
+* Fix potential panic in `SendRequest::poll_ready()` (#281).
+* Fix infinite loop on reset connection during prefix (#285).
+
 # 0.1.9 (May 31, 2018)
 
 * Add `poll_reset` to `SendResponse` and `SendStream` (#279).
