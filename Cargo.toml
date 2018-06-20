@@ -14,6 +14,7 @@ repository = "https://github.com/carllerche/h2"
 readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
+exclude = ["fixtures/**"]
 
 [badges.travis-ci]
 repository = "carllerche/h2"
