@@ -335,6 +335,15 @@ impl<B: IntoBuf> SendStream<B> {
     pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
         self.inner.poll_reset(proto::PollReset::Streaming)
     }
+
+    /// Returns the stream ID of this `SendStream`.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        self.inner.stream_id()
+    }
 }
 
 // ===== impl RecvStream =====
@@ -370,6 +379,15 @@ impl RecvStream {
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.inner.poll_trailers().map_err(Into::into)
     }
+
+    /// Returns the stream ID of this stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        self.inner.stream_id()
+    }
 }
 
 impl futures::Stream for RecvStream {
@@ -394,6 +412,16 @@ impl fmt::Debug for RecvStream {
 impl ReleaseCapacity {
     pub(crate) fn new(inner: proto::OpaqueStreamRef) -> Self {
         ReleaseCapacity { inner }
+    }
+
+    /// Returns the stream ID of the stream whose capacity will
+    /// be released by this `ReleaseCapacity`.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        self.inner.stream_id()
     }
 
     /// Release window capacity back to remote stream.
