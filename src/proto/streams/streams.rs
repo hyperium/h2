@@ -946,6 +946,10 @@ impl<B> StreamRef<B> {
     {
         self.opaque.clone()
     }
+
+    pub fn stream_id(&self) -> StreamId {
+        self.opaque.stream_id()
+    }
 }
 
 impl<B> Clone for StreamRef<B> {
@@ -1017,6 +1021,13 @@ impl OpaqueStreamRef {
         me.actions
             .recv
             .release_capacity(capacity, &mut stream, &mut me.actions.task)
+    }
+
+    pub fn stream_id(&self) -> StreamId {
+        self.inner.lock()
+            .unwrap()
+            .store[self.key]
+            .id
     }
 }
 
