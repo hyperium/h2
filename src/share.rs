@@ -96,6 +96,19 @@ pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
+/// A stream identifier, as described in [Section 5.1.1] of RFC 7540.
+///
+/// Streams are identified with an unsigned 31-bit integer. Streams
+/// initiated by a client MUST use odd-numbered stream identifiers; those
+/// initiated by the server MUST use even-numbered stream identifiers.  A
+/// stream identifier of zero (0x0) is used for connection control
+/// messages; the stream identifier of zero cannot be used to establish a
+/// new stream.
+///
+/// [Section 5.1.1]: https://tools.ietf.org/html/rfc7540#section-5.1.1
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct StreamId(u32);
+
 /// Receives the body stream and trailers from the remote peer.
 ///
 /// A `RecvStream` is provided by [`client::ResponseFuture`] and
@@ -341,11 +354,18 @@ impl<B: IntoBuf> SendStream<B> {
     /// # Panics
     ///
     /// If the lock on the stream store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
-        self.inner.stream_id()
+    pub fn stream_id(&self) -> StreamId {
+        StreamId::from_internal(self.inner.stream_id())
     }
 }
 
+// ===== impl StreamId =====
+
+impl StreamId {
+    pub(crate) fn from_internal(id: ::frame::StreamId) -> Self {
+        StreamId(id.into())
+    }
+}
 // ===== impl RecvStream =====
 
 impl RecvStream {
@@ -385,7 +405,7 @@ impl RecvStream {
     /// # Panics
     ///
     /// If the lock on the stream store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
+    pub fn stream_id(&self) -> StreamId {
         self.inner.stream_id()
     }
 }
@@ -420,8 +440,8 @@ impl ReleaseCapacity {
     /// # Panics
     ///
     /// If the lock on the stream store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
-        self.inner.stream_id()
+    pub fn stream_id(&self) -> StreamId {
+        StreamId::from_internal(self.inner.stream_id())
     }
 
     /// Release window capacity back to remote stream.

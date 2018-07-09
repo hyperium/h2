@@ -128,8 +128,7 @@ pub mod server;
 mod share;
 
 pub use error::{Error, Reason};
-pub use share::{SendStream, RecvStream, ReleaseCapacity};
-pub use frame::StreamId;
+pub use share::{SendStream, StreamId, RecvStream, ReleaseCapacity};
 
 #[cfg(feature = "unstable")]
 pub use codec::{Codec, RecvError, SendError, UserError};
