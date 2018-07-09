@@ -20,8 +20,10 @@ pub struct StreamIdOverflow;
 const STREAM_ID_MASK: u32 = 1 << 31;
 
 impl StreamId {
+    /// Stream ID 0.
     pub const ZERO: StreamId = StreamId(0);
 
+    /// The maximum allowed stream ID.
     pub const MAX: StreamId = StreamId(u32::MAX >> 1);
 
     /// Parse the stream ID
@@ -49,6 +51,7 @@ impl StreamId {
         id != 0 && id % 2 == 0
     }
 
+    /// Return a new `StreamId` for stream 0.
     #[inline]
     pub fn zero() -> StreamId {
         StreamId::ZERO
