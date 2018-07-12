@@ -106,7 +106,7 @@ pub struct SendStream<B: IntoBuf> {
 /// new stream.
 ///
 /// [Section 5.1.1]: https://tools.ietf.org/html/rfc7540#section-5.1.1
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct StreamId(u32);
 
 /// Receives the body stream and trailers from the remote peer.
