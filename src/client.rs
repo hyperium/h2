@@ -1353,6 +1353,17 @@ impl Future for ResponseFuture {
     }
 }
 
+impl ResponseFuture {
+    /// Returns the stream ID of the response stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        ::StreamId::from_internal(self.inner.stream_id())
+    }
+}
+
 // ===== impl Peer =====
 
 impl Peer {

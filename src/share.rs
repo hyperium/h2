@@ -96,6 +96,19 @@ pub struct SendStream<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
 }
 
+/// A stream identifier, as described in [Section 5.1.1] of RFC 7540.
+///
+/// Streams are identified with an unsigned 31-bit integer. Streams
+/// initiated by a client MUST use odd-numbered stream identifiers; those
+/// initiated by the server MUST use even-numbered stream identifiers.  A
+/// stream identifier of zero (0x0) is used for connection control
+/// messages; the stream identifier of zero cannot be used to establish a
+/// new stream.
+///
+/// [Section 5.1.1]: https://tools.ietf.org/html/rfc7540#section-5.1.1
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct StreamId(u32);
+
 /// Receives the body stream and trailers from the remote peer.
 ///
 /// A `RecvStream` is provided by [`client::ResponseFuture`] and
@@ -335,8 +348,24 @@ impl<B: IntoBuf> SendStream<B> {
     pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
         self.inner.poll_reset(proto::PollReset::Streaming)
     }
+
+    /// Returns the stream ID of this `SendStream`.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> StreamId {
+        StreamId::from_internal(self.inner.stream_id())
+    }
 }
 
+// ===== impl StreamId =====
+
+impl StreamId {
+    pub(crate) fn from_internal(id: ::frame::StreamId) -> Self {
+        StreamId(id.into())
+    }
+}
 // ===== impl RecvStream =====
 
 impl RecvStream {
@@ -370,6 +399,15 @@ impl RecvStream {
     pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
         self.inner.inner.poll_trailers().map_err(Into::into)
     }
+
+    /// Returns the stream ID of this stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> StreamId {
+        self.inner.stream_id()
+    }
 }
 
 impl futures::Stream for RecvStream {
@@ -394,6 +432,16 @@ impl fmt::Debug for RecvStream {
 impl ReleaseCapacity {
     pub(crate) fn new(inner: proto::OpaqueStreamRef) -> Self {
         ReleaseCapacity { inner }
+    }
+
+    /// Returns the stream ID of the stream whose capacity will
+    /// be released by this `ReleaseCapacity`.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> StreamId {
+        StreamId::from_internal(self.inner.stream_id())
     }
 
     /// Release window capacity back to remote stream.
