@@ -622,6 +622,13 @@ impl Prioritize {
         }
     }
 
+    pub fn clear_pending_open(&mut self, store: &mut Store, counts: &mut Counts) {
+        while let Some(stream) = self.pending_open.pop(store) {
+            let is_pending_reset = stream.is_pending_reset_expiration();
+            counts.transition_after(stream, is_pending_reset);
+        }
+    }
+
     fn pop_frame<B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
