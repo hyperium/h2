@@ -229,7 +229,7 @@ impl Stream {
             // The stream is not in any queue
             !self.is_pending_send && !self.is_pending_send_capacity &&
             !self.is_pending_accept && !self.is_pending_window_update &&
-            !self.reset_at.is_some()
+            !self.is_pending_open && !self.reset_at.is_some()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles
