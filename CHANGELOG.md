@@ -1,3 +1,9 @@
+# 0.1.11 (July 31, 2018)
+
+* Add `stream_id` accessors to public API types (#292).
+* Fix potential panic when dropping clients (#295).
+* Fix busy loop when shutting down server (#296).
+
 # 0.1.10 (June 15, 2018)
 
 * Fix potential panic in `SendRequest::poll_ready()` (#281).
