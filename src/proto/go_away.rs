@@ -127,6 +127,8 @@ impl GoAway {
                 .expect("invalid GOAWAY frame");
 
             return Ok(Async::Ready(Some(reason)));
+        } else if self.should_close_now() {
+            return Ok(Async::Ready(self.going_away_reason()));
         }
 
         Ok(Async::Ready(None))
