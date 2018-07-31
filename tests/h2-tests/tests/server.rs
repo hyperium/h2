@@ -268,7 +268,7 @@ fn graceful_shutdown() {
         .send_frame(frames::data(7, "").eos())
         .send_frame(frames::data(3, "").eos())
         .recv_frame(frames::headers(3).response(200).eos())
-        .close(); //TODO: closed()?
+        .recv_eof();
 
     let srv = server::handshake(io)
         .expect("handshake")
