@@ -11,7 +11,7 @@ use futures::{Async, Poll};
 use futures::task::Task;
 use tokio_io::AsyncWrite;
 
-use std::{cmp, io};
+use std::io;
 
 /// Manages state transitions related to outbound frames.
 #[derive(Debug)]
@@ -370,8 +370,8 @@ impl Send {
             self.init_window_sz = val;
 
             if val < old_val {
+                // We must decrease the (remote) window on every open stream.
                 let dec = old_val - val;
-
                 trace!("decrementing all windows; dec={}", dec);
 
                 let mut total_reclaimed = 0;
@@ -380,15 +380,29 @@ impl Send {
 
                     stream.send_flow.dec_window(dec);
 
+                    // It's possible that decreasing the window causes
+                    // `window_size` (the stream-specific window) to fall below
+                    // `available` (the portion of the connection-level window
+                    // that we have allocated to the stream).
+                    // In this case, we should take that excess allocation away
+                    // and reassign it to other streams.
+                    let window_size = stream.send_flow.window_size();
                     let available = stream.send_flow.available().as_size();
-                    let reclaim = cmp::min(dec, available);
-                    stream.send_flow.claim_capacity(reclaim);
-                    total_reclaimed += reclaim;
+                    let reclaimed = if available > window_size {
+                        // Drop down to `window_size`.
+                        let reclaim = available - window_size;
+                        stream.send_flow.claim_capacity(reclaim);
+                        total_reclaimed += reclaim;
+                        reclaim
+                    } else {
+                        0
+                    };
 
                     trace!(
-                        "decremented stream window; id={:?}; decr={}; flow={:?}",
+                        "decremented stream window; id={:?}; decr={}; reclaimed={}; flow={:?}",
                         stream.id,
                         dec,
+                        reclaimed,
                         stream.send_flow
                     );
 

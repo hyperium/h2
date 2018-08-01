@@ -845,6 +845,63 @@ fn recv_settings_removes_available_capacity() {
 }
 
 #[test]
+fn recv_settings_keeps_assigned_capacity() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let (sent_settings, sent_settings_rx) = futures::sync::oneshot::channel();
+
+    let srv = srv.assert_client_handshake().unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        .send_frame(frames::settings().initial_window_size(64))
+        .recv_frame(frames::settings_ack())
+        .then_notify(sent_settings)
+        .recv_frame(frames::data(1, "hello world").eos())
+        .send_frame(
+            frames::headers(1)
+                .response(204)
+                .eos()
+        )
+        .close();
+
+
+    let h2 = client::handshake(io).unwrap()
+        .and_then(move |(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+
+            let (response, mut stream) = client.send_request(request, false).unwrap();
+
+            stream.reserve_capacity(11);
+
+            h2.expect("h2")
+                .join(
+                    util::wait_for_capacity(stream, 11)
+                        .and_then(|mut stream| {
+                            sent_settings_rx.expect("rx")
+                                .and_then(move |()| {
+                                    stream.send_data("hello world".into(), true).unwrap();
+                                    response.expect("response")
+                                })
+                                .and_then(move |resp| {
+                                    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+                                    Ok(client)
+                                })
+                        })
+                )
+        });
+
+    let _ = h2.join(srv)
+        .wait().unwrap();
+}
+
+#[test]
 fn recv_no_init_window_then_receive_some_init_window() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
