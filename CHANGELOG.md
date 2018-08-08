@@ -1,3 +1,9 @@
+# 0.1.12 (August 8, 2018)
+
+* Fix initial send window size (#301).
+* Fix panic when calling `reserve_capacity` after connection has been closed (#302).
+* Fix handling of incoming `SETTINGS_INITIAL_WINDOW_SIZE`. (#299)
+
 # 0.1.11 (July 31, 2018)
 
 * Add `stream_id` accessors to public API types (#292).
