@@ -37,7 +37,7 @@ impl Send {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
         Send {
-            init_window_sz: config.local_init_window_sz,
+            init_window_sz: config.remote_init_window_sz,
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
         }
