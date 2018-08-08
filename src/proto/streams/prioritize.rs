@@ -225,7 +225,7 @@ impl Prioritize {
         );
 
         // Actual capacity is `capacity` + the current amount of buffered data.
-        // It it were less, then we could never send out the buffered data.
+        // If it were less, then we could never send out the buffered data.
         let capacity = capacity + stream.buffered_send_data;
 
         if capacity == stream.requested_send_capacity {
@@ -247,6 +247,12 @@ impl Prioritize {
                 self.assign_connection_capacity(diff, stream, counts);
             }
         } else {
+            // If trying to *add* capacity, but the stream send side is closed,
+            // there's nothing to be done.
+            if stream.state.is_send_closed() {
+                return;
+            }
+
             // Update the target requested capacity
             stream.requested_send_capacity = capacity;
 

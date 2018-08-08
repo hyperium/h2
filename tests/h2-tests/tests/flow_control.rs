@@ -1259,3 +1259,42 @@ fn recv_settings_increase_window_size_after_using_some() {
 
     srv.join(client).wait().unwrap();
 }
+
+#[test]
+fn reserve_capacity_after_peer_closes() {
+    // See https://github.com/carllerche/h2/issues/300
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+        )
+        // close connection suddenly
+        .close();
+
+    let client = client::handshake(io).unwrap()
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method("POST")
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+            let (resp, req_body) = client.send_request(request, false).unwrap();
+            conn.drive(resp.then(move |result| {
+                assert!(result.is_err());
+                Ok::<_, ()>(req_body)
+            }))
+        })
+        .and_then(|(conn, mut req_body)| {
+            // As stated in #300, this would panic because the connection
+            // had already been closed.
+            req_body.reserve_capacity(1);
+            conn.expect("client")
+        });
+
+    srv.join(client).wait().expect("wait");
+}
+
