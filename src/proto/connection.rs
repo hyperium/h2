@@ -189,7 +189,7 @@ where
                 State::Open => {
                     match self.poll2() {
                         // The connection has shutdown normally
-                        Ok(Async::Ready(())) => return self.take_error(Reason::NO_ERROR),
+                        Ok(Async::Ready(())) => self.state = State::Closing(Reason::NO_ERROR),
                         // The connection is not ready to make progress
                         Ok(Async::NotReady) => {
                             // Ensure all window updates have been sent.
@@ -253,8 +253,8 @@ where
                 }
                 State::Closing(reason) => {
                     trace!("connection closing after flush, reason={:?}", reason);
-                    // Flush the codec
-                    try_ready!(self.codec.flush());
+                    // Flush/shutdown the codec
+                    try_ready!(self.codec.shutdown());
 
                     // Transition the state to error
                     self.state = State::Closed(reason);
