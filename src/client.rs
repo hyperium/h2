@@ -425,6 +425,7 @@ where
     ///
     /// See [module] level docs for more details.
     ///
+    /// [`poll_ready`]: #method.poll_ready
     /// [module]: index.html
     pub fn ready(self) -> ReadySendRequest<B> {
         ReadySendRequest { inner: Some(self) }
@@ -930,11 +931,9 @@ impl Builder {
 
     /// Sets the maximum number of concurrent locally reset streams.
     ///
-    /// When a stream is explicitly reset by either calling
-    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing the stream, the HTTP/2.0 specification requires that
-    /// any further frames received for that stream must be ignored for "some
-    /// time".
+    /// When a stream is explicitly reset, the HTTP/2.0 specification requires
+    /// that any further frames received for that stream must be ignored for
+    /// "some time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
@@ -976,13 +975,11 @@ impl Builder {
         self
     }
 
-    /// Sets the maximum number of concurrent locally reset streams.
+    /// Sets the duration to remember locally reset streams.
     ///
-    /// When a stream is explicitly reset by either calling
-    /// [`SendResponse::send_reset`] or by dropping a [`SendResponse`] instance
-    /// before completing the stream, the HTTP/2.0 specification requires that
-    /// any further frames received for that stream must be ignored for "some
-    /// time".
+    /// When a stream is explicitly reset, the HTTP/2.0 specification requires
+    /// that any further frames received for that stream must be ignored for
+    /// "some time".
     ///
     /// In order to satisfy the specification, internal state must be maintained
     /// to implement the behavior. This state grows linearly with the number of
