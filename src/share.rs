@@ -277,7 +277,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// Requests to be notified when the stream's capacity increases.
     ///
     /// Before calling this, capacity should be requested with
-    /// [`reserve_capacity`]. Once capacity is requested, the connection will
+    /// `reserve_capacity`. Once capacity is requested, the connection will
     /// assign capacity to the stream **as it becomes available**. There is no
     /// guarantee as to when and in what increments capacity gets assigned to
     /// the stream.
