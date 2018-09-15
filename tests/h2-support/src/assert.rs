@@ -57,14 +57,14 @@ macro_rules! poll_err {
 }
 
 #[macro_export]
-macro_rules! poll_data {
-    ($transport:expr) => {{
+macro_rules! poll_frame {
+    ($type: ident, $transport:expr) => {{
         use h2::frame::Frame;
         use futures::Async;
 
         match $transport.poll() {
-            Ok(Async::Ready(Some(Frame::Data(frame)))) => frame,
-            frame => panic!("expected data frame; actual={:?}", frame),
+            Ok(Async::Ready(Some(Frame::$type(frame)))) => frame,
+            frame => panic!("unexpected frame; actual={:?}", frame),
         }
     }}
 }

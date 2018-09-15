@@ -27,7 +27,7 @@ fn read_data_no_padding() {
         ];
     };
 
-    let data = poll_data!(codec);
+    let data = poll_frame!(Data, codec);
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
     assert!(!data.is_end_stream());
@@ -43,7 +43,7 @@ fn read_data_empty_payload() {
         ];
     };
 
-    let data = poll_data!(codec);
+    let data = poll_frame!(Data, codec);
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b""[..]);
     assert!(!data.is_end_stream());
@@ -60,7 +60,7 @@ fn read_data_end_stream() {
         ];
     };
 
-    let data = poll_data!(codec);
+    let data = poll_frame!(Data, codec);
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
     assert!(data.is_end_stream());
@@ -79,10 +79,30 @@ fn read_data_padding() {
         ];
     };
 
-    let data = poll_data!(codec);
+    let data = poll_frame!(Data, codec);
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
     assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+
+#[test]
+fn read_push_promise() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 0x5,
+            0x5, 0x4,
+            0, 0, 0, 0x1, // stream id
+            0, 0, 0, 0x2, // promised id
+            0x82, // HPACK :method="GET"
+        ];
+    };
+
+    let pp = poll_frame!(PushPromise, codec);
+    assert_eq!(pp.stream_id(), 1);
+    assert_eq!(pp.promised_id(), 2);
+    assert_eq!(pp.into_parts().0.method, Some(Method::GET));
 
     assert_closed!(codec);
 }
@@ -182,7 +202,7 @@ fn update_max_frame_len_at_rest() {
         ];
     };
 
-    assert_eq!(poll_data!(codec).payload(), &b"hello"[..]);
+    assert_eq!(poll_frame!(Data, codec).payload(), &b"hello"[..]);
 
     codec.set_max_recv_frame_size(16_384);
 

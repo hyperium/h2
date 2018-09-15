@@ -312,7 +312,7 @@ impl PushPromise {
 
         let (promised_id, _) = StreamId::parse(&src[..4]);
         // Drop promised_id bytes
-        let _ = src.split_to(5);
+        let _ = src.split_to(4);
 
         if pad > 0 {
             if pad > src.len() {
