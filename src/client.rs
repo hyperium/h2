@@ -114,7 +114,7 @@
 //!
 //!                 // Send the request. The second tuple item allows the caller
 //!                 // to stream a request body.
-//!                 let (response, _) = h2.send_request(request, true).unwrap();
+//!                 let (response, _, _) = h2.send_request(request, true).unwrap();
 //!
 //!                 response.and_then(|response| {
 //!                     let (head, mut body) = response.into_parts();
@@ -165,12 +165,13 @@
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError, SendError, UserError};
-use frame::{Headers, Pseudo, Reason, Settings, StreamId};
+use frame::{HasHeaders, Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, Stream};
 use http::{uri, Request, Response, Method, Version};
+use http::request::Parts;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
@@ -301,6 +302,36 @@ pub struct Connection<T, B: IntoBuf = Bytes> {
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
+}
+
+/// A pushed response and corresponding request headers
+#[derive(Debug)]
+pub struct PushedResponse {
+    /// The request headers
+    pub request: Parts,
+    /// The pushed response
+    pub response: ResponseFuture,
+}
+
+#[derive(Debug)]
+/// A stream of pushed response
+pub struct PushedResponses {
+    inner: proto::OpaqueStreamRef,
+}
+
+impl Stream for PushedResponses {
+    type Item = PushedResponse;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match try_ready!(self.inner.poll_pushed()) {
+            Some((request, response)) => {
+                let response = ResponseFuture { inner: response };
+                Ok(Async::Ready(Some(PushedResponse{request, response})))
+            }
+            None => Ok(Async::Ready(None)),
+        }
+    }
 }
 
 /// Builds client connections with custom configuration values.
@@ -489,7 +520,7 @@ where
     ///
     ///         // Send the request to the server. Since we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
-    ///         let (response, _) = send_request
+    ///         let (response, _, _) = send_request
     ///             .send_request(request, true).unwrap();
     ///
     ///         response
@@ -523,9 +554,10 @@ where
     ///             .body(())
     ///             .unwrap();
     ///
-    ///         // Send the request to the server. Since we are not sending a
+    ///         // Send the request to the server. If we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
-    ///         let (response, mut send_stream) = send_request
+    ///         // We aren't using pushed streams so we drop the PushedResponses
+    ///         let (response, mut send_stream, _) = send_request
     ///             .send_request(request, false).unwrap();
     ///
     ///         // At this point, one option would be to wait for send capacity.
@@ -563,7 +595,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture, SendStream<B>), ::Error> {
+    ) -> Result<(ResponseFuture, SendStream<B>, PushedResponses), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -572,13 +604,12 @@ where
                     self.pending = Some(stream.clone_to_opaque());
                 }
 
-                let response = ResponseFuture {
-                    inner: stream.clone_to_opaque(),
-                };
+                let response = ResponseFuture { inner: stream.clone_to_opaque() };
+                let pushed = PushedResponses { inner: stream.clone_to_opaque() };
 
                 let stream = SendStream::new(stream);
 
-                (response, stream)
+                (response, stream, pushed)
             })
     }
 }

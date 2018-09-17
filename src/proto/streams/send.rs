@@ -1,8 +1,8 @@
 use codec::{RecvError, UserError};
-use frame::{self, Reason};
+use frame::{self, HasHeaders, Reason};
 use super::{
-    store, Buffer, Codec, Config, Counts, Frame, Prioritize,
-    Prioritized, Store, Stream, StreamId, StreamIdOverflow, WindowSize,
+    store, Buffer, Codec, Config, Counts, Frame, Prioritize, Prioritized, Store, Stream,
+    StreamId, StreamIdOverflow, WindowSize
 };
 
 use bytes::Buf;

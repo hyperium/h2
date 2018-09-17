@@ -4,7 +4,7 @@ use bytes::{Bytes, IntoBuf};
 use http::{self, HeaderMap, HttpTryFrom};
 
 use super::SendFrame;
-use h2::frame::{self, Frame, StreamId};
+use h2::frame::{self, HasHeaders, Frame, StreamId};
 
 pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
@@ -219,6 +219,18 @@ impl Mock<frame::PushPromise> {
         let frame = frame::PushPromise::new(id, promised, pseudo, fields);
         Mock(frame)
     }
+
+    pub fn field<K, V>(self, key: K, value: V) -> Self
+    where
+        K: HttpTryInto<http::header::HeaderName>,
+        V: HttpTryInto<http::header::HeaderValue>,
+    {
+        let (id, promised, pseudo, mut fields) = self.into_parts();
+        fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
+        let frame = frame::PushPromise::new(id, promised, pseudo, fields);
+        Mock(frame)
+    }
+
 
     fn into_parts(self) -> (StreamId, StreamId, frame::Pseudo, HeaderMap) {
         assert!(self.0.is_end_headers(), "unset eoh will be lost");

@@ -12,6 +12,11 @@ use string::String;
 use std::fmt;
 use std::io::Cursor;
 
+pub trait HasHeaders {
+    fn into_parts(self) -> (Pseudo, HeaderMap);
+    fn stream_id(&self) -> StreamId;
+}
+
 /// Header frame
 ///
 /// This could be either a request or a response.
@@ -208,10 +213,6 @@ impl Headers {
         self.header_block.load(src, max_header_list_size, decoder)
     }
 
-    pub fn stream_id(&self) -> StreamId {
-        self.stream_id
-    }
-
     pub fn is_end_headers(&self) -> bool {
         self.flags.is_end_headers()
     }
@@ -230,10 +231,6 @@ impl Headers {
 
     pub fn is_over_size(&self) -> bool {
         self.header_block.is_over_size
-    }
-
-    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
-        (self.header_block.pseudo, self.header_block.fields)
     }
 
     #[cfg(feature = "unstable")]
@@ -266,6 +263,16 @@ impl Headers {
     }
 }
 
+impl HasHeaders for Headers {
+    fn into_parts(self) -> (Pseudo, HeaderMap) {
+        (self.header_block.pseudo, self.header_block.fields)
+    }
+
+    fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+}
+
 impl<T> From<Headers> for Frame<T> {
     fn from(src: Headers) -> Self {
         Frame::Headers(src)
@@ -285,6 +292,15 @@ impl fmt::Debug for Headers {
 
 // ===== impl PushPromise =====
 
+impl HasHeaders for PushPromise {
+    fn into_parts(self) -> (Pseudo, HeaderMap) {
+        (self.header_block.pseudo, self.header_block.fields)
+    }
+
+    fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+}
 impl PushPromise {
     /// Loads the push promise frame but doesn't actually do HPACK decoding.
     ///
@@ -398,10 +414,6 @@ impl PushPromise {
             promised_id,
             stream_id,
         }
-    }
-
-    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
-        (self.header_block.pseudo, self.header_block.fields)
     }
 
     pub fn fields(&self) -> &HeaderMap {

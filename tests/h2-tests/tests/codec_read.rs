@@ -2,6 +2,7 @@
 extern crate h2_support;
 
 use h2_support::prelude::*;
+use frame::HasHeaders;
 
 use std::error::Error;
 

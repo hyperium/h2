@@ -1,9 +1,10 @@
 use super::*;
 use {frame, proto};
 use codec::{RecvError, UserError};
-use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use frame::{HasHeaders, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
-use http::HeaderMap;
+use http::{HeaderMap, Response, Request};
+use http::request::Parts;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -59,6 +60,7 @@ pub(super) struct Recv {
 #[derive(Debug)]
 pub(super) enum Event {
     Headers(peer::PollMessage),
+    PushPromise(Parts),
     Data(Bytes),
     Trailers(HeaderMap),
 }
@@ -244,6 +246,36 @@ impl Recv {
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Headers(Server(request))) => request,
             _ => panic!(),
+        }
+    }
+
+    /// Called by the client to get pushed response
+    pub fn poll_pushed<'a>(
+        &'a mut self, stream: &'a mut store::Ptr
+    ) -> Poll<Option<(Parts, store::Key)>, proto::Error> {
+        let mut ppp = stream.pending_push_promises.take();
+        let pushed = ppp.pop(stream.store_mut()).map(
+            |mut pushed| match pushed.pushed_headers.take()
+                .expect("Headers not set on pushed stream")
+                .take(&mut self.buffer) {
+                    Event::PushPromise(headers) => {
+                        Async::Ready(Some((headers, pushed.key())))
+                    }
+                    _ => panic!(),
+                }
+        );
+        stream.pending_push_promises = ppp;
+        if let Some(p) = pushed {
+            Ok(p)
+        } else {
+            stream.recv_task = Some(task::current());
+            let is_open = stream.state.ensure_recv_open()?;
+
+            if is_open {
+                Ok(Async::NotReady)
+            } else {
+                Ok(Async::Ready(None))
+            }
         }
     }
 
@@ -536,14 +568,7 @@ impl Recv {
     pub fn recv_push_promise(
         &mut self,
         frame: frame::PushPromise,
-        stream: &mut store::Ptr,
-    ) -> Result<(), RecvError> {
-
-        // TODO: Streams in the reserved states do not count towards the concurrency
-        // limit. However, it seems like there should be a cap otherwise this
-        // could grow in memory indefinitely.
-
-        stream.state.reserve_remote()?;
+    ) -> Result<Parts, RecvError> {
 
         if frame.is_over_size() {
             // A frame is over size if the decoded header block was bigger than
@@ -564,7 +589,43 @@ impl Recv {
             });
         }
 
-        Ok(())
+        let promised_id = frame.promised_id();
+        use http::header;
+        use http::Method;
+        let parts = ::server::Peer::convert_headers_like(frame)?.into_parts().0;
+        if let Some(content_length) = parts.headers.get(header::CONTENT_LENGTH) {
+            match parse_u64(content_length.as_bytes()) {
+                Ok(0) => {},
+                _ => {
+                    return Err(RecvError::Stream {
+                        id: promised_id,
+                        reason: Reason::PROTOCOL_ERROR,
+                    });
+                },
+            }
+        }
+        let safe_and_cachable_method =
+            parts.method == Method::GET
+            || parts.method == Method::HEAD;
+        if !safe_and_cachable_method {
+            return Err(RecvError::Stream {
+                id: promised_id,
+                reason: Reason::PROTOCOL_ERROR,
+            });
+        }
+        Ok(parts)
+    }
+
+    pub fn handle_pushed_headers(
+        &mut self,
+        stream: &mut store::Ptr,
+        headers: Parts,
+    ) {
+        stream.pushed_headers = Some(buffer::SingleFrame::new(
+            &mut self.buffer,
+            Event::PushPromise(headers),
+        ));
+        stream.notify_recv();
     }
 
     /// Ensures that `id` is not in the `Idle` state.

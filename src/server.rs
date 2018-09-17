@@ -1182,20 +1182,9 @@ impl Peer {
 
         frame
     }
-}
-
-impl proto::Peer for Peer {
-    type Poll = Request<()>;
-
-    fn is_server() -> bool {
-        true
-    }
-
-    fn dyn() -> proto::DynPeer {
-        proto::DynPeer::Server
-    }
-
-    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {
+    pub fn convert_headers_like<H: frame::HasHeaders>(
+        headers: H,
+    ) -> Result<Request<()>, RecvError> {
         use http::{uri, Version};
 
         let mut b = Request::builder();
@@ -1268,6 +1257,22 @@ impl proto::Peer for Peer {
         *request.headers_mut() = fields;
 
         Ok(request)
+    }
+}
+
+impl proto::Peer for Peer {
+    type Poll = Request<()>;
+
+    fn is_server() -> bool {
+        true
+    }
+
+    fn dyn() -> proto::DynPeer {
+        proto::DynPeer::Server
+    }
+
+    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {
+        Peer::convert_headers_like(headers)
     }
 }
 

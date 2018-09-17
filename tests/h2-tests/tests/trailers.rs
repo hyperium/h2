@@ -32,7 +32,7 @@ fn recv_trailers_only() {
         .unwrap();
 
     info!("sending request");
-    let (response, _) = client.send_request(request, true).unwrap();
+    let (response, _, _) = client.send_request(request, true).unwrap();
 
     let response = h2.run(response).unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -80,7 +80,7 @@ fn send_trailers_immediately() {
         .unwrap();
 
     info!("sending request");
-    let (response, mut stream) = client.send_request(request, false).unwrap();
+    let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
     let mut trailers = HeaderMap::new();
     trailers.insert("zomg", "hello".parse().unwrap());

@@ -12,6 +12,12 @@ pub struct Deque {
     indices: Option<Indices>,
 }
 
+/// A single frame in a `Buffer`
+#[derive(Debug)]
+pub struct SingleFrame {
+    index: usize,
+}
+
 /// Tracks the head & tail for a sequence of frames in a `Buffer`.
 #[derive(Debug, Default, Copy, Clone)]
 struct Indices {
@@ -30,6 +36,22 @@ impl<T> Buffer<T> {
         Buffer {
             slab: Slab::new(),
         }
+    }
+}
+
+impl SingleFrame {
+    pub fn new<T>(buf: &mut Buffer<T>, value: T) -> Self {
+        let key = buf.slab.insert(Slot {
+            value,
+            next: None,
+        });
+        SingleFrame {
+            index: key,
+        }
+    }
+
+    pub fn take<T>(self, buf: &mut Buffer<T>) -> T {
+        buf.slab.remove(self.index).value
     }
 }
 

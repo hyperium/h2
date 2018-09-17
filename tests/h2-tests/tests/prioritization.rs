@@ -47,7 +47,7 @@ fn single_stream_send_large_body() {
         .body(())
         .unwrap();
 
-    let (response, mut stream) = client.send_request(request, false).unwrap();
+    let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
     // Reserve capacity to send the payload
     stream.reserve_capacity(payload.len());
@@ -102,9 +102,9 @@ fn multiple_streams_with_payload_greater_than_default_window() {
             let request1 = Request::post("https://http2.akamai.com/").body(()).unwrap();
             let request2 = Request::post("https://http2.akamai.com/").body(()).unwrap();
             let request3 = Request::post("https://http2.akamai.com/").body(()).unwrap();
-            let (response1, mut stream1) = client.send_request(request1, false).unwrap();
-            let (_response2, mut stream2) = client.send_request(request2, false).unwrap();
-            let (_response3, mut stream3) = client.send_request(request3, false).unwrap();
+            let (response1, mut stream1, _) = client.send_request(request1, false).unwrap();
+            let (_response2, mut stream2, _) = client.send_request(request2, false).unwrap();
+            let (_response3, mut stream3, _) = client.send_request(request3, false).unwrap();
 
             // The capacity should be immediately
             // allocated to default window size (smaller than payload)
@@ -178,7 +178,7 @@ fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
         .body(())
         .unwrap();
 
-    let (response, mut stream) = client.send_request(request, false).unwrap();
+    let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -265,7 +265,7 @@ fn single_stream_send_body_greater_than_default_window() {
         .body(())
         .unwrap();
 
-    let (response, mut stream) = client.send_request(request, false).unwrap();
+    let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
     // Flush request head
     loop {
@@ -338,7 +338,7 @@ fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
         .body(())
         .unwrap();
 
-    let (response, mut stream) = client.send_request(request, false).unwrap();
+    let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
     stream.reserve_capacity(payload.len());
 
@@ -371,7 +371,7 @@ fn send_data_receive_window_update() {
                 .unwrap();
 
             // Send request
-            let (response, mut stream) = client.send_request(request, false).unwrap();
+            let (response, mut stream, _) = client.send_request(request, false).unwrap();
 
             // Send data frame
             stream.send_data("hello".into(), false).unwrap();

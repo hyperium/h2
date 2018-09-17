@@ -1,6 +1,6 @@
 use {client, proto, server};
 use codec::{Codec, RecvError, SendError, UserError};
-use frame::{self, Frame, Reason};
+use frame::{self, HasHeaders, Frame, Reason};
 use proto::{peer, Peer, Open, WindowSize};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use super::recv::RecvHeaderBlockError;
@@ -9,6 +9,7 @@ use super::store::{self, Entry, Resolve, Store};
 use bytes::{Buf, Bytes};
 use futures::{task, Async, Poll};
 use http::{HeaderMap, Request, Response};
+use http::request::Parts;
 use tokio_io::AsyncWrite;
 
 use std::{fmt, io};
@@ -147,7 +148,7 @@ where
                     e.insert(stream)
                 },
                 None => return Ok(()),
-            },
+            }
         };
 
         let stream = me.store.resolve(key);
@@ -206,7 +207,9 @@ where
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
+            res.or_else(|e|
+                actions.reset_on_recv_stream_err(send_buffer, stream, counts, e)
+            )
         })
     }
 
@@ -242,11 +245,14 @@ where
             // Any stream error after receiving a DATA frame means
             // we won't give the data to the user, and so they can't
             // release the capacity. We do it automatically.
-            if let Err(RecvError::Stream { .. }) = res {
-                actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
+            if let Err(e) = res {
+                if let RecvError::Stream { .. } = e {
+                    actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
+                }
+                actions.reset_on_recv_stream_err(send_buffer, stream, counts, e)
+            } else {
+                Ok(())
             }
-
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
         })
     }
 
@@ -427,6 +433,15 @@ where
             None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
+        let pushed_headers = {
+            let actions = &mut me.actions;
+            actions.recv.recv_push_promise(frame)
+        };
+
+        // TODO: Streams in the reserved states do not count towards the concurrency
+        // limit. However, it seems like there should be a cap otherwise this
+        // could grow in memory indefinitely.
+
         // Ensure that we can reserve streams
         me.actions.recv.ensure_can_reserve()?;
 
@@ -451,23 +466,39 @@ where
             let actions = &mut me.actions;
 
             me.counts.transition(stream, |counts, stream| {
-                let res = actions.recv.recv_push_promise(frame, stream);
+                let headers =
+                    stream.state.reserve_remote().and(pushed_headers);
 
-                let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-                actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, res)
-                    .map(|_| stream.key())
+                match headers {
+                    Ok(headers) =>
+                        Ok(Some((stream.key(), headers))),
+                    Err(e) => {
+                        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+                        actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, e)
+                            .map(|()| None)
+                    }
+                }
             })?
         };
-
-        // Push the stream... this requires a bit of indirection to make
+        // Push the headers and stream... this requires a bit of indirection to make
         // the borrow checker happy.
-        let mut ppp = me.store[parent_key].pending_push_promises.take();
-        ppp.push(&mut me.store.resolve(child_key));
+        if let Some((child, headers)) = child_key {
+            let ppp = {
+                let mut ppp = {
+                    let parent = &mut me.store[parent_key];
+                    parent.pending_push_promises.take()
+                };
+                let child = &mut me.store.resolve(child);
+                ppp.push(child);
 
-        let parent = &mut me.store[parent_key];
+                me.actions.recv.handle_pushed_headers(child, headers);
+                ppp
+            };
 
-        parent.pending_push_promises = ppp;
-        parent.notify_recv();
+            let parent = &mut me.store.resolve(parent_key);
+            parent.pending_push_promises = ppp;
+            parent.notify_recv()
+        };
 
         Ok(())
     }
@@ -973,6 +1004,29 @@ impl OpaqueStreamRef {
 
         me.actions.recv.poll_response(&mut stream)
     }
+    /// Called by a client to check for a pushed request.
+    pub fn poll_pushed(
+        &mut self
+    ) -> Poll<Option<(Parts, OpaqueStreamRef)>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let res = {
+            let mut stream = me.store.resolve(self.key);
+            me.actions.recv.poll_pushed(&mut stream)
+        };
+        res.map(
+            |r| r.map(|s| s.map(|(h, key)| {
+                me.store.resolve(key).ref_inc();
+                (
+                    h,
+                    OpaqueStreamRef {
+                        inner: self.inner.clone(), key,
+                    }
+                )
+            })),
+        )
+    }
 
     pub fn body_is_empty(&self) -> bool {
         let mut me = self.inner.lock().unwrap();
@@ -1103,8 +1157,10 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
         maybe_cancel(stream, actions, counts);
 
         if stream.ref_count == 0 {
+            // We won't be able to reach our push promises anymore
             let mut ppp = stream.pending_push_promises.take();
-            while let Some(promise) = ppp.pop(stream.store_mut()) {
+            while let Some(mut promise) = ppp.pop(stream.store_mut()) {
+                promise.pushed_headers.take();
                 counts.transition(promise, |counts, stream| {
                     maybe_cancel(stream, actions, counts);
                 });
@@ -1141,17 +1197,17 @@ impl Actions {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        res: Result<(), RecvError>,
+        res: RecvError,
     ) -> Result<(), RecvError> {
-        if let Err(RecvError::Stream {
+        if let RecvError::Stream {
             reason, ..
-        }) = res
+        } = res
         {
             // Reset the stream.
             self.send.send_reset(reason, buffer, stream, counts, &mut self.task);
             Ok(())
         } else {
-            res
+            Err(res)
         }
     }
 
