@@ -21,7 +21,7 @@ pub struct Error {
 }
 
 #[derive(Debug)]
-enum Kind {
+pub enum Kind {
     /// An error caused by an action taken by the remote peer.
     ///
     /// This is either an error received by the peer or caused by an invalid
@@ -48,6 +48,11 @@ impl Error {
             Kind::Proto(reason) => Some(reason),
             _ => None,
         }
+    }
+
+    /// Returns the kind of error
+    pub fn kind(&self) -> &Kind {
+        return &self.kind;
     }
 }
 
