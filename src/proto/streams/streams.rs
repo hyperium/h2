@@ -394,7 +394,7 @@ where
                 );
             } else {
                 me.actions
-                    .recv
+                    .send
                     .ensure_not_idle(id)
                     .map_err(RecvError::Connection)?;
             }
