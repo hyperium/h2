@@ -394,8 +394,7 @@ where
                 );
             } else {
                 me.actions
-                    .send
-                    .ensure_not_idle(id)
+                    .ensure_not_idle(me.counts.peer(), id)
                     .map_err(RecvError::Connection)?;
             }
         }
