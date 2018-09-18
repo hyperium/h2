@@ -21,7 +21,7 @@ pub struct Error {
 }
 
 #[derive(Debug)]
-pub enum Kind {
+enum Kind {
     /// An error caused by an action taken by the remote peer.
     ///
     /// This is either an error received by the peer or caused by an invalid
@@ -50,9 +50,28 @@ impl Error {
         }
     }
 
-    /// Returns the kind of error
-    pub fn kind(&self) -> &Kind {
-        return &self.kind;
+    /// Returns the true if the error is an io::Error
+    pub fn is_io(&self) -> bool {
+        match self.kind {
+            Kind::Io(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the error if the error is an io::Error
+    pub fn get_io(&self) -> Option<&io::Error> {
+        match self.kind {
+            Kind::Io(ref e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Returns the error if the error is an io::Error
+    pub fn into_io(self) -> Option<io::Error> {
+        match self.kind {
+            Kind::Io(e) => Some(e),
+            _ => None,
+        }
     }
 }
 
