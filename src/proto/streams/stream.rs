@@ -99,7 +99,6 @@ pub(super) struct Stream {
     pub recv_task: Option<task::Task>,
 
     /// The stream's pending push promises
-    pub pushed_headers: Option<buffer::SingleFrame>,
     pub pending_push_promises: store::Queue<NextAccept>,
 
     /// Validate content-length headers
@@ -183,7 +182,6 @@ impl Stream {
             next_reset_expire: None,
             pending_recv: buffer::Deque::new(),
             recv_task: None,
-            pushed_headers: None,
             pending_push_promises: store::Queue::new(),
             content_length: ContentLength::Omitted,
         }
@@ -231,8 +229,7 @@ impl Stream {
             // The stream is not in any queue
             !self.is_pending_send && !self.is_pending_send_capacity &&
             !self.is_pending_accept && !self.is_pending_window_update &&
-            !self.is_pending_open && !self.reset_at.is_some() &&
-            !self.pushed_headers.is_some()
+            !self.is_pending_open && !self.reset_at.is_some()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles

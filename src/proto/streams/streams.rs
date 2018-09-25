@@ -433,11 +433,6 @@ where
             None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
-        let pushed_headers = {
-            let actions = &mut me.actions;
-            actions.recv.recv_push_promise(frame)
-        };
-
         // TODO: Streams in the reserved states do not count towards the concurrency
         // limit. However, it seems like there should be a cap otherwise this
         // could grow in memory indefinitely.
@@ -466,12 +461,12 @@ where
             let actions = &mut me.actions;
 
             me.counts.transition(stream, |counts, stream| {
-                let headers =
-                    stream.state.reserve_remote().and(pushed_headers);
+                let stream_valid =
+                    stream.state.reserve_remote().and(actions.recv.recv_push_promise(stream, frame));
 
-                match headers {
-                    Ok(headers) =>
-                        Ok(Some((stream.key(), headers))),
+                match stream_valid {
+                    Ok(()) =>
+                        Ok(Some(stream.key())),
                     Err(e) => {
                         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
                         actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, e)
@@ -482,7 +477,7 @@ where
         };
         // Push the headers and stream... this requires a bit of indirection to make
         // the borrow checker happy.
-        if let Some((child, headers)) = child_key {
+        if let Some(child) = child_key {
             let ppp = {
                 let mut ppp = {
                     let parent = &mut me.store[parent_key];
@@ -490,8 +485,6 @@ where
                 };
                 let child = &mut me.store.resolve(child);
                 ppp.push(child);
-
-                me.actions.recv.handle_pushed_headers(child, headers);
                 ppp
             };
 
@@ -1159,8 +1152,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
         if stream.ref_count == 0 {
             // We won't be able to reach our push promises anymore
             let mut ppp = stream.pending_push_promises.take();
-            while let Some(mut promise) = ppp.pop(stream.store_mut()) {
-                promise.pushed_headers.take();
+            while let Some(promise) = ppp.pop(stream.store_mut()) {
                 counts.transition(promise, |counts, stream| {
                     maybe_cancel(stream, actions, counts);
                 });

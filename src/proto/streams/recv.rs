@@ -60,7 +60,6 @@ pub(super) struct Recv {
 #[derive(Debug)]
 pub(super) enum Event {
     Headers(peer::PollMessage),
-    PushPromise(Parts),
     Data(Bytes),
     Trailers(HeaderMap),
 }
@@ -255,16 +254,15 @@ impl Recv {
     pub fn poll_pushed<'a>(
         &'a mut self, stream: &'a mut store::Ptr
     ) -> Poll<Option<(Parts, store::Key)>, proto::Error> {
+        use super::peer::PollMessage::*;
+
         let mut ppp = stream.pending_push_promises.take();
         let pushed = ppp.pop(stream.store_mut()).map(
-            |mut pushed| match pushed.pushed_headers.take()
-                .expect("Headers not set on pushed stream")
-                .take(&mut self.buffer) {
-                    Event::PushPromise(headers) => {
-                        Async::Ready(Some((headers, pushed.key())))
-                    }
-                    _ => panic!(),
-                }
+            |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
+                Some(Event::Headers(Server(headers))) =>
+                    Async::Ready(Some((headers.into_parts().0, pushed.key()))),
+                _ => panic!("Headers not set on pushed stream")
+            }
         );
         stream.pending_push_promises = ppp;
         if let Some(p) = pushed {
@@ -569,8 +567,9 @@ impl Recv {
 
     pub fn recv_push_promise(
         &mut self,
+        stream: &mut store::Ptr,
         frame: frame::PushPromise,
-    ) -> Result<Parts, RecvError> {
+    ) -> Result<(), RecvError> {
 
         if frame.is_over_size() {
             // A frame is over size if the decoded header block was bigger than
@@ -594,13 +593,13 @@ impl Recv {
         let promised_id = frame.promised_id();
         use http::header;
         let (pseudo, fields) = frame.into_parts();
-        let parts = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?.into_parts().0;
+        let req = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
         // The spec has some requirements for promised request headers
         // [https://httpwg.org/specs/rfc7540.html#PushRequests]
 
         // A promised request "that indicates the presence of a request body
         // MUST reset the promised stream with a stream error"
-        if let Some(content_length) = parts.headers.get(header::CONTENT_LENGTH) {
+        if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
             match parse_u64(content_length.as_bytes()) {
                 Ok(0) => {},
                 _ => {
@@ -613,31 +612,22 @@ impl Recv {
         }
         // "The server MUST include a method in the :method pseudo-header field
         // that is safe and cacheable"
-        if !Self::safe_and_cacheable(&parts.method) {
+        if !Self::safe_and_cacheable(req.method()) {
             return Err(RecvError::Stream {
                 id: promised_id,
                 reason: Reason::PROTOCOL_ERROR,
             });
         }
-        Ok(parts)
+        use super::peer::PollMessage::*;
+        stream.pending_recv.push_back(&mut self.buffer, Event::Headers(Server(req)));
+        stream.notify_recv();
+        Ok(())
     }
 
     fn safe_and_cacheable(method: &Method) -> bool {
         // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
         // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
         return method == Method::GET || method == Method::HEAD;
-    }
-
-    pub fn handle_pushed_headers(
-        &mut self,
-        stream: &mut store::Ptr,
-        headers: Parts,
-    ) {
-        stream.pushed_headers = Some(buffer::SingleFrame::new(
-            &mut self.buffer,
-            Event::PushPromise(headers),
-        ));
-        stream.notify_recv();
     }
 
     /// Ensures that `id` is not in the `Idle` state.
