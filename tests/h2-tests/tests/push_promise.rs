@@ -70,8 +70,10 @@ fn pushed_streams_arent_dropped_too_early() {
         .send_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"))
         .send_frame(frames::data(1, "").eos())
         .idle_ms(10)
-        .send_frame(frames::headers(2).response(200).eos())
-        .send_frame(frames::headers(4).response(200).eos());
+        .send_frame(frames::headers(2).response(200))
+        .send_frame(frames::headers(4).response(200).eos())
+        .send_frame(frames::data(2, "").eos())
+        .recv_frame(frames::go_away(4));
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
@@ -96,7 +98,7 @@ fn pushed_streams_arent_dropped_too_early() {
             assert_eq!(2, ps.len());
             Ok(())
         });
-        h2.drive(check_status.join(check_pushed))
+        h2.drive(check_status.join(check_pushed)).and_then(|(conn, _)| conn.expect("client"))
     });
 
     h2.join(mock).wait().unwrap();
