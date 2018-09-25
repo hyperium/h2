@@ -3,7 +3,7 @@ use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{HasHeaders, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
-use http::{HeaderMap, Response, Request};
+use http::{HeaderMap, Response, Request, Method};
 use http::request::Parts;
 
 use std::io;
@@ -591,8 +591,12 @@ impl Recv {
 
         let promised_id = frame.promised_id();
         use http::header;
-        use http::Method;
         let parts = ::server::Peer::convert_headers_like(frame)?.into_parts().0;
+        // The spec has some requirements for promised request headers
+        // [https://httpwg.org/specs/rfc7540.html#PushRequests]
+
+        // A promised request "that indicates the presence of a request body
+        // MUST reset the promised stream with a stream error"
         if let Some(content_length) = parts.headers.get(header::CONTENT_LENGTH) {
             match parse_u64(content_length.as_bytes()) {
                 Ok(0) => {},
@@ -604,16 +608,21 @@ impl Recv {
                 },
             }
         }
-        let safe_and_cachable_method =
-            parts.method == Method::GET
-            || parts.method == Method::HEAD;
-        if !safe_and_cachable_method {
+        // "The server MUST include a method in the :method pseudo-header field
+        // that is safe and cacheable"
+        if !Self::safe_and_cacheable(&parts.method) {
             return Err(RecvError::Stream {
                 id: promised_id,
                 reason: Reason::PROTOCOL_ERROR,
             });
         }
         Ok(parts)
+    }
+
+    fn safe_and_cacheable(method: &Method) -> bool {
+        // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
+        // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
+        return method == Method::GET || method == Method::HEAD;
     }
 
     pub fn handle_pushed_headers(
