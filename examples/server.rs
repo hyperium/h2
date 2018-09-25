@@ -3,7 +3,7 @@ extern crate env_logger;
 extern crate futures;
 extern crate h2;
 extern crate http;
-extern crate tokio_core;
+extern crate tokio;
 
 use h2::server;
 
@@ -11,20 +11,16 @@ use bytes::*;
 use futures::*;
 use http::*;
 
-use tokio_core::net::TcpListener;
-use tokio_core::reactor;
+use tokio::net::TcpListener;
 
 pub fn main() {
     let _ = env_logger::try_init();
 
-    let mut core = reactor::Core::new().unwrap();
-    let handle = core.handle();
-
-    let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap(), &handle).unwrap();
+    let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap()).unwrap();
 
     println!("listening on {:?}", listener.local_addr());
 
-    let server = listener.incoming().for_each(move |(socket, _)| {
+    let server = listener.incoming().for_each(move |socket| {
         // let socket = io_dump::Dump::to_stdout(socket);
 
         let connection = server::handshake(socket)
@@ -64,9 +60,10 @@ pub fn main() {
                 Ok(())
             });
 
-        handle.spawn(connection);
+        tokio::spawn(Box::new(connection));
         Ok(())
-    });
+    })
+    .map_err(|e| eprintln!("accept error: {}", e));
 
-    core.run(server).unwrap();
+    tokio::run(server);
 }
