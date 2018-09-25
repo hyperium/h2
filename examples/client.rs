@@ -2,7 +2,7 @@ extern crate env_logger;
 extern crate futures;
 extern crate h2;
 extern crate http;
-extern crate tokio_core;
+extern crate tokio;
 
 use h2::client;
 use h2::RecvStream;
@@ -10,8 +10,7 @@ use h2::RecvStream;
 use futures::*;
 use http::*;
 
-use tokio_core::net::TcpStream;
-use tokio_core::reactor;
+use tokio::net::TcpStream;
 
 struct Process {
     body: RecvStream,
@@ -47,10 +46,7 @@ impl Future for Process {
 pub fn main() {
     let _ = env_logger::try_init();
 
-    let mut core = reactor::Core::new().unwrap();
-    let handle = core.handle();
-
-    let tcp = TcpStream::connect(&"127.0.0.1:5928".parse().unwrap(), &handle);
+    let tcp = TcpStream::connect(&"127.0.0.1:5928".parse().unwrap());
 
     let tcp = tcp.then(|res| {
         let tcp = res.unwrap();
@@ -74,7 +70,7 @@ pub fn main() {
             stream.send_trailers(trailers).unwrap();
 
             // Spawn a task to run the conn...
-            handle.spawn(h2.map_err(|e| println!("GOT ERR={:?}", e)));
+            tokio::spawn(h2.map_err(|e| println!("GOT ERR={:?}", e)));
 
             response
                 .and_then(|response| {
@@ -93,5 +89,5 @@ pub fn main() {
                 })
         });
 
-    core.run(tcp).unwrap();
+    tokio::run(tcp);
 }
