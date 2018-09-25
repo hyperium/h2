@@ -111,6 +111,7 @@
 //!             Ok(())
 //!         })
 //!         .map_err(|e| panic!("failed to run HTTP/2.0 server: {:?}", e))
+//!  #      .select(ok(())).map(|_|()).map_err(|_|())
 //!     });
 //! }
 //! ```
