@@ -165,12 +165,12 @@
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError, SendError, UserError};
-use frame::{HasHeaders, Headers, Pseudo, Reason, Settings, StreamId};
+use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
 use bytes::{Bytes, IntoBuf};
 use futures::{Async, Future, Poll, Stream};
-use http::{uri, Request, Response, Method, Version};
+use http::{uri, HeaderMap, Request, Response, Method, Version};
 use http::request::Parts;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
@@ -1469,11 +1469,10 @@ impl proto::Peer for Peer {
         false
     }
 
-    fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError> {
+    fn convert_poll_message(
+        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+    ) -> Result<Self::Poll, RecvError> {
         let mut b = Response::builder();
-
-        let stream_id = headers.stream_id();
-        let (pseudo, fields) = headers.into_parts();
 
         b.version(Version::HTTP_2);
 

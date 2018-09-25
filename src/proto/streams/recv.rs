@@ -1,7 +1,7 @@
 use super::*;
 use {frame, proto};
 use codec::{RecvError, UserError};
-use frame::{HasHeaders, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
 use http::{HeaderMap, Response, Request, Method};
 use http::request::Parts;
@@ -218,7 +218,9 @@ impl Recv {
             };
         }
 
-        let message = counts.peer().convert_poll_message(frame)?;
+        let stream_id = frame.stream_id();
+        let (pseudo, fields) = frame.into_parts();
+        let message = counts.peer().convert_poll_message(pseudo, fields, stream_id)?;
 
         // Push the frame onto the stream's recv buffer
         stream
@@ -591,7 +593,8 @@ impl Recv {
 
         let promised_id = frame.promised_id();
         use http::header;
-        let parts = ::server::Peer::convert_headers_like(frame)?.into_parts().0;
+        let (pseudo, fields) = frame.into_parts();
+        let parts = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?.into_parts().0;
         // The spec has some requirements for promised request headers
         // [https://httpwg.org/specs/rfc7540.html#PushRequests]
 

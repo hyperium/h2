@@ -1,6 +1,6 @@
 use {client, proto, server};
 use codec::{Codec, RecvError, SendError, UserError};
-use frame::{self, HasHeaders, Frame, Reason};
+use frame::{self, Frame, Reason};
 use proto::{peer, Peer, Open, WindowSize};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use super::recv::RecvHeaderBlockError;
@@ -148,7 +148,7 @@ where
                     e.insert(stream)
                 },
                 None => return Ok(()),
-            }
+            },
         };
 
         let stream = me.store.resolve(key);

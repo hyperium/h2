@@ -1,5 +1,5 @@
 use codec::RecvError;
-use frame::{self, HasHeaders, Frame, Kind, Reason};
+use frame::{self, Frame, Kind, Reason};
 use frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
 
 use hpack;

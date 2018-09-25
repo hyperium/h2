@@ -4,7 +4,7 @@ use bytes::{Bytes, IntoBuf};
 use http::{self, HeaderMap, HttpTryFrom};
 
 use super::SendFrame;
-use h2::frame::{self, HasHeaders, Frame, StreamId};
+use h2::frame::{self, Frame, StreamId};
 
 pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
