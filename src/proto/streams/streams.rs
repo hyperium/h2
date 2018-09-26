@@ -207,9 +207,7 @@ where
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            res.or_else(|e|
-                actions.reset_on_recv_stream_err(send_buffer, stream, counts, e)
-            )
+            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
         })
     }
 
@@ -245,14 +243,10 @@ where
             // Any stream error after receiving a DATA frame means
             // we won't give the data to the user, and so they can't
             // release the capacity. We do it automatically.
-            if let Err(e) = res {
-                if let RecvError::Stream { .. } = e {
-                    actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
-                }
-                actions.reset_on_recv_stream_err(send_buffer, stream, counts, e)
-            } else {
-                Ok(())
+            if let Err(RecvError::Stream { .. }) = res {
+                actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
             }
+            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
         })
     }
 
@@ -467,9 +461,9 @@ where
                 match stream_valid {
                     Ok(()) =>
                         Ok(Some(stream.key())),
-                    Err(e) => {
+                    _ => {
                         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-                        actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, e)
+                        actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, stream_valid)
                             .map(|()| None)
                     }
                 }
@@ -1189,17 +1183,17 @@ impl Actions {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        res: RecvError,
+        res: Result<(), RecvError>,
     ) -> Result<(), RecvError> {
-        if let RecvError::Stream {
+        if let Err(RecvError::Stream {
             reason, ..
-        } = res
+        }) = res
         {
             // Reset the stream.
             self.send.send_reset(reason, buffer, stream, counts, &mut self.task);
             Ok(())
         } else {
-            Err(res)
+            res
         }
     }
 
