@@ -35,7 +35,7 @@ fn send_data_without_requesting_capacity() {
         .body(())
         .unwrap();
 
-    let (response, mut stream, _) = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // The capacity should be immediately allocated
     assert_eq!(stream.capacity(), 0);
@@ -408,7 +408,7 @@ fn stream_close_by_data_frame_releases_capacity() {
             .unwrap();
 
         // Send request
-        let (resp1, mut s1, _) = client.send_request(request, false).unwrap();
+        let (resp1, mut s1) = client.send_request(request, false).unwrap();
 
         // This effectively reserves the entire connection window
         s1.reserve_capacity(window_size);
@@ -424,7 +424,7 @@ fn stream_close_by_data_frame_releases_capacity() {
             .unwrap();
 
         // Create a second stream
-        let (resp2, mut s2, _) = client.send_request(request, false).unwrap();
+        let (resp2, mut s2) = client.send_request(request, false).unwrap();
 
         // Request capacity
         s2.reserve_capacity(5);
@@ -479,7 +479,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
             .unwrap();
 
         // Send request
-        let (resp1, mut s1, _) = client.send_request(request, false).unwrap();
+        let (resp1, mut s1) = client.send_request(request, false).unwrap();
 
         // This effectively reserves the entire connection window
         s1.reserve_capacity(window_size);
@@ -495,7 +495,7 @@ fn stream_close_by_trailers_frame_releases_capacity() {
             .unwrap();
 
         // Create a second stream
-        let (resp2, mut s2, _) = client.send_request(request, false).unwrap();
+        let (resp2, mut s2) = client.send_request(request, false).unwrap();
 
         // Request capacity
         s2.reserve_capacity(5);
@@ -563,7 +563,7 @@ fn recv_window_update_on_stream_closed_by_data_frame() {
                 .body(())
                 .unwrap();
 
-            let (response, stream, _) = client.send_request(request, false).unwrap();
+            let (response, stream) = client.send_request(request, false).unwrap();
 
             // Wait for the response
             h2.drive(response.map(|response| (response, stream)))
@@ -612,7 +612,7 @@ fn reserved_capacity_assigned_in_multi_window_updates() {
                 .body(())
                 .unwrap();
 
-            let (response, mut stream, _) = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             // Consume the capacity
             let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
@@ -751,8 +751,8 @@ fn connection_notified_on_released_capacity() {
     });
 
     // Get the two requests
-    let (a, _, _) = rx.recv().unwrap();
-    let (b, _, _) = rx.recv().unwrap();
+    let (a, _) = rx.recv().unwrap();
+    let (b, _) = rx.recv().unwrap();
 
     // Get the first response
     let response = a.wait().unwrap();
@@ -819,7 +819,7 @@ fn recv_settings_removes_available_capacity() {
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
 
-            let (response, mut stream, _) = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             stream.reserve_capacity(11);
 
@@ -876,7 +876,7 @@ fn recv_settings_keeps_assigned_capacity() {
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
 
-            let (response, mut stream, _) = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             stream.reserve_capacity(11);
 
@@ -938,7 +938,7 @@ fn recv_no_init_window_then_receive_some_init_window() {
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
 
-            let (response, mut stream, _) = client.send_request(request, false).unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
 
             stream.reserve_capacity(11);
 
@@ -1047,12 +1047,12 @@ fn settings_lowered_capacity_returns_capacity_to_connection() {
     let request = Request::post("https://example.com/one")
         .body(()).unwrap();
 
-    let (resp1, mut stream1, _) = client.send_request(request, false).unwrap();
+    let (resp1, mut stream1) = client.send_request(request, false).unwrap();
 
     let request = Request::post("https://example.com/two")
         .body(()).unwrap();
 
-    let (resp2, mut stream2, _) = client.send_request(request, false).unwrap();
+    let (resp2, mut stream2) = client.send_request(request, false).unwrap();
 
     // Reserve capacity for stream one, this will consume all connection level
     // capacity
@@ -1174,7 +1174,7 @@ fn decrease_target_window_size() {
             let request = Request::builder()
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
-            let (resp, _, _) = client.send_request(request, true).unwrap();
+            let (resp, _) = client.send_request(request, true).unwrap();
             conn.drive(resp.expect("response")).map(|c| (c, client))
         })
         .and_then(|((mut conn, res), client)| {
@@ -1249,7 +1249,7 @@ fn recv_settings_increase_window_size_after_using_some() {
                 .method("POST")
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
-            let (resp, mut req_body, _) = client.send_request(request, false).unwrap();
+            let (resp, mut req_body) = client.send_request(request, false).unwrap();
             req_body.send_data(vec![0; new_win_size].into(), true).unwrap();
             conn.drive(resp.expect("response")).map(|c| (c, client))
         })
@@ -1282,7 +1282,7 @@ fn reserve_capacity_after_peer_closes() {
                 .method("POST")
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
-            let (resp, req_body, _) = client.send_request(request, false).unwrap();
+            let (resp, req_body) = client.send_request(request, false).unwrap();
             conn.drive(resp.then(move |result| {
                 assert!(result.is_err());
                 Ok::<_, ()>(req_body)

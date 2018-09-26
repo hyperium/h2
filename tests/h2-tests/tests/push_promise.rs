@@ -27,9 +27,10 @@ fn recv_push_works() {
             .uri("https://http2.akamai.com/")
             .body(())
             .unwrap();
-        let (resp, _, pushed) = client
+        let (mut resp, _) = client
             .send_request(request, true)
             .unwrap();
+        let pushed = resp.push_promises();
         let check_resp_status = resp.unwrap().map(|resp| {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND)
         });
@@ -81,9 +82,10 @@ fn pushed_streams_arent_dropped_too_early() {
             .uri("https://http2.akamai.com/")
             .body(())
             .unwrap();
-        let (resp, _, pushed) = client
+        let (mut resp, _) = client
             .send_request(request, true)
             .unwrap();
+        let pushed = resp.push_promises();
         let check_status = resp.unwrap().and_then(|resp| {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
             Ok(())
@@ -288,10 +290,10 @@ fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
             .uri("https://http2.akamai.com/")
             .body(())
             .unwrap();
-        let (_, _, pushed) = client
+        let (mut resp, _) = client
             .send_request(request, true)
             .unwrap();
-        let check_pushed_request = pushed.and_then(|headers| {
+        let check_pushed_request = resp.push_promises().and_then(|headers| {
             headers.response
         });
         let check_pushed_response = check_pushed_request

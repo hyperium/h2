@@ -126,7 +126,7 @@ fn run(script: &[u8]) -> Result<(), h2::Error> {
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();
-            let (resp, mut send, _) = h2.send_request(request, false)?;
+            let (resp, mut send) = h2.send_request(request, false)?;
             send.send_data(vec![0u8; 32769].into(), true).unwrap();
             drop(send);
             in_progress = Some(resp);

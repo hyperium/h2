@@ -114,7 +114,7 @@
 //!
 //!                 // Send the request. The second tuple item allows the caller
 //!                 // to stream a request body.
-//!                 let (response, _, _) = h2.send_request(request, true).unwrap();
+//!                 let (response, _) = h2.send_request(request, true).unwrap();
 //!
 //!                 response.and_then(|response| {
 //!                     let (head, mut body) = response.into_parts();
@@ -297,11 +297,19 @@ pub struct Connection<T, B: IntoBuf = Bytes> {
     inner: proto::Connection<T, Peer, B>,
 }
 
+#[derive(Debug)]
+enum PushPromiseStream {
+    Taken,
+    Available,
+    NoPushedStream,
+}
+
 /// A future of an HTTP response.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
+    push_promise_stream: PushPromiseStream,
 }
 
 /// A pushed response and corresponding request headers
@@ -326,7 +334,10 @@ impl Stream for PushPromises {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.inner.poll_pushed()) {
             Some((request, response)) => {
-                let response = ResponseFuture { inner: response };
+                let response = ResponseFuture {
+                    inner: response,
+                    push_promise_stream: PushPromiseStream::NoPushedStream
+                };
                 Ok(Async::Ready(Some(PushPromise{request, response})))
             }
             None => Ok(Async::Ready(None)),
@@ -520,7 +531,7 @@ where
     ///
     ///         // Send the request to the server. Since we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
-    ///         let (response, _, _) = send_request
+    ///         let (response, _) = send_request
     ///             .send_request(request, true).unwrap();
     ///
     ///         response
@@ -556,8 +567,7 @@ where
     ///
     ///         // Send the request to the server. If we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
-    ///         // We aren't using pushed streams so we drop the PushPromises
-    ///         let (response, mut send_stream, _) = send_request
+    ///         let (response, mut send_stream) = send_request
     ///             .send_request(request, false).unwrap();
     ///
     ///         // At this point, one option would be to wait for send capacity.
@@ -595,7 +605,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture, SendStream<B>, PushPromises), ::Error> {
+    ) -> Result<(ResponseFuture, SendStream<B>), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -604,12 +614,14 @@ where
                     self.pending = Some(stream.clone_to_opaque());
                 }
 
-                let response = ResponseFuture { inner: stream.clone_to_opaque() };
-                let pushed = PushPromises { inner: stream.clone_to_opaque() };
+                let response = ResponseFuture {
+                    inner: stream.clone_to_opaque(),
+                    push_promise_stream: PushPromiseStream::Available,
+                };
 
                 let stream = SendStream::new(stream);
 
-                (response, stream, pushed)
+                (response, stream)
             })
     }
 }
@@ -1389,6 +1401,23 @@ impl ResponseFuture {
     /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> ::StreamId {
         ::StreamId::from_internal(self.inner.stream_id())
+    }
+    /// Returns a stream of PushPromises
+    ///
+    /// # Panics
+    ///
+    /// If this method has been called before
+    /// or the stream was itself was pushed
+    pub fn push_promises(&mut self) -> PushPromises {
+        use self::PushPromiseStream::*;
+        match self.push_promise_stream {
+            Available => {
+                self.push_promise_stream = Taken;
+                PushPromises { inner: self.inner.clone() }
+            },
+            NoPushedStream => panic!("PushPromises impossible for pushed streams"),
+            Taken => panic!("Reference to push promises stream taken!")
+        }
     }
 }
 

@@ -31,7 +31,7 @@ fn send_recv_headers_only() {
         .unwrap();
 
     info!("sending request");
-    let (response, _, _) = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
@@ -73,7 +73,7 @@ fn send_recv_data() {
         .unwrap();
 
     info!("sending request");
-    let (response, mut stream, _) = client.send_request(request, false).unwrap();
+    let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // Reserve send capacity
     stream.reserve_capacity(5);
@@ -130,7 +130,7 @@ fn send_headers_recv_data_single_frame() {
         .unwrap();
 
     info!("sending request");
-    let (response, _, _) = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -160,7 +160,7 @@ fn closed_streams_are_released() {
         let request = Request::get("https://example.com/").body(()).unwrap();
 
         // Send request
-        let (response, _, _) = client.send_request(request, true).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
         h2.drive(response).and_then(move |(_, response)| {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
@@ -853,7 +853,7 @@ fn rst_while_closing() {
                 .unwrap();
 
             // The request should be left streaming.
-            let (resp, stream, _) = client.send_request(request, false)
+            let (resp, stream) = client.send_request(request, false)
                 .expect("send_request");
             let req = resp
                 // on receipt of an EOS response from the server, transition
@@ -926,7 +926,7 @@ fn rst_with_buffered_data() {
                 .unwrap();
 
             // Send the request
-            let (resp, mut stream, _) = client.send_request(request, false)
+            let (resp, mut stream) = client.send_request(request, false)
                 .expect("send_request");
 
             // Send the data
@@ -993,7 +993,7 @@ fn err_with_buffered_data() {
                 .unwrap();
 
             // Send the request
-            let (resp, mut stream, _) = client.send_request(request, false)
+            let (resp, mut stream) = client.send_request(request, false)
                 .expect("send_request");
 
             // Send the data
@@ -1056,7 +1056,7 @@ fn send_err_with_buffered_data() {
                 .unwrap();
 
             // Send the request
-            let (resp, mut stream, _) = client.send_request(request, false)
+            let (resp, mut stream) = client.send_request(request, false)
                 .expect("send_request");
 
             // Send the data

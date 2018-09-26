@@ -74,7 +74,7 @@ pub fn main() {
                     .body(())
                     .unwrap();
 
-                let (response, _, _) = client.send_request(request, true).unwrap();
+                let (response, _) = client.send_request(request, true).unwrap();
 
                 let stream = response.and_then(|response| {
                     let (_, body) = response.into_parts();

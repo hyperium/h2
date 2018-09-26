@@ -85,7 +85,7 @@ fn recv_invalid_server_stream_id() {
         .unwrap();
 
     info!("sending request");
-    let (response, _, _) = client.send_request(request, true).unwrap();
+    let (response, _) = client.send_request(request, true).unwrap();
 
     // The connection errors
     assert!(h2.wait().is_err());
@@ -112,7 +112,7 @@ fn request_stream_id_overflows() {
                 .unwrap();
 
             // first request is allowed
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
 
             h2.drive(response).and_then(move |(h2, _)| {
                 let request = Request::builder()
@@ -190,7 +190,7 @@ fn client_builder_max_concurrent_streams() {
                 .body(())
                 .unwrap();
 
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
             h2.drive(response).map(move |(h2, _)| (client, h2))
         });
 
@@ -236,7 +236,7 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
             h2.drive(response).map(move |(h2, _)| (client, h2))
         })
         .and_then(|(mut client, h2)| {
@@ -247,7 +247,7 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // first request is allowed
-            let (resp1, mut stream1, _) = client.send_request(request, false).unwrap();
+            let (resp1, mut stream1) = client.send_request(request, false).unwrap();
 
             let request = Request::builder()
                 .method(Method::POST)
@@ -256,7 +256,7 @@ fn request_over_max_concurrent_streams_errors() {
                 .unwrap();
 
             // second request is put into pending_open
-            let (resp2, mut stream2, _) = client.send_request(request, false).unwrap();
+            let (resp2, mut stream2) = client.send_request(request, false).unwrap();
 
             let request = Request::builder()
                 .method(Method::GET)
@@ -316,7 +316,7 @@ fn send_request_poll_ready_when_connection_error() {
                 .unwrap();
 
             // first request is allowed
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
             h2.drive(response).map(move |(h2, _)| (client, h2))
         })
         .and_then(|(mut client, h2)| {
@@ -327,7 +327,7 @@ fn send_request_poll_ready_when_connection_error() {
                 .unwrap();
 
             // first request is allowed
-            let (resp1, _, _) = client.send_request(request, true).unwrap();
+            let (resp1, _) = client.send_request(request, true).unwrap();
 
             let request = Request::builder()
                 .method(Method::POST)
@@ -336,7 +336,7 @@ fn send_request_poll_ready_when_connection_error() {
                 .unwrap();
 
             // second request is put into pending_open
-            let (resp2, _, _) = client.send_request(request, true).unwrap();
+            let (resp2, _) = client.send_request(request, true).unwrap();
 
             // third stream is over max concurrent
             let until_ready = futures::future::poll_fn(move || {
@@ -389,7 +389,7 @@ fn http_11_request_without_scheme_or_authority() {
                 .unwrap();
 
             // first request is allowed
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
             h2.drive(response)
                 .map(move |(h2, _)| (client, h2))
         });
@@ -754,7 +754,7 @@ fn pending_send_request_gets_reset_by_peer_properly() {
                 .body(())
                 .unwrap();
 
-            let (response, mut stream, _) = client
+            let (response, mut stream) = client
                 .send_request(request, false)
                 .expect("send_request");
 
@@ -796,7 +796,7 @@ fn request_without_path() {
                 .body(())
                 .unwrap();
 
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
 
             conn.drive(response)
         });
@@ -834,7 +834,7 @@ fn request_options_with_star() {
                 .body(())
                 .unwrap();
 
-            let (response, _, _) = client.send_request(request, true).unwrap();
+            let (response, _) = client.send_request(request, true).unwrap();
 
             conn.drive(response)
         });
@@ -959,7 +959,7 @@ fn send_stream_poll_reset() {
                 .body(())
                 .unwrap();
 
-            let (_response, mut tx, _) = client.send_request(request, false).unwrap();
+            let (_response, mut tx) = client.send_request(request, false).unwrap();
             conn.drive(futures::future::poll_fn(move || {
                 tx.poll_reset()
             }))
