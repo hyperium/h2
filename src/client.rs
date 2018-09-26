@@ -306,7 +306,7 @@ pub struct ResponseFuture {
 
 /// A pushed response and corresponding request headers
 #[derive(Debug)]
-pub struct PushedResponse {
+pub struct PushPromise {
     /// The request headers
     pub request: Parts,
     /// The pushed response
@@ -314,20 +314,20 @@ pub struct PushedResponse {
 }
 
 #[derive(Debug)]
-/// A stream of pushed response
-pub struct PushedResponses {
+/// A stream of pushed responses and corresponding promised requests
+pub struct PushPromises {
     inner: proto::OpaqueStreamRef,
 }
 
-impl Stream for PushedResponses {
-    type Item = PushedResponse;
+impl Stream for PushPromises {
+    type Item = PushPromise;
     type Error = ::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.inner.poll_pushed()) {
             Some((request, response)) => {
                 let response = ResponseFuture { inner: response };
-                Ok(Async::Ready(Some(PushedResponse{request, response})))
+                Ok(Async::Ready(Some(PushPromise{request, response})))
             }
             None => Ok(Async::Ready(None)),
         }
@@ -556,7 +556,7 @@ where
     ///
     ///         // Send the request to the server. If we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
-    ///         // We aren't using pushed streams so we drop the PushedResponses
+    ///         // We aren't using pushed streams so we drop the PushPromises
     ///         let (response, mut send_stream, _) = send_request
     ///             .send_request(request, false).unwrap();
     ///
@@ -595,7 +595,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture, SendStream<B>, PushedResponses), ::Error> {
+    ) -> Result<(ResponseFuture, SendStream<B>, PushPromises), ::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -605,7 +605,7 @@ where
                 }
 
                 let response = ResponseFuture { inner: stream.clone_to_opaque() };
-                let pushed = PushedResponses { inner: stream.clone_to_opaque() };
+                let pushed = PushPromises { inner: stream.clone_to_opaque() };
 
                 let stream = SendStream::new(stream);
 
