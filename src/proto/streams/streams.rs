@@ -442,8 +442,9 @@ where
             return Ok(());
         }
 
-        // Create a scope
-        let child_key = {
+        // Try to handle the frame and create a corresponding key for the pushed stream
+        // this requires a bit of indirection to make the borrow checker happy.
+        let child_key: Option<store::Key> = {
             // Create state for the stream
             let stream = me.store.insert(promised_id, {
                 Stream::new(
@@ -456,7 +457,7 @@ where
 
             me.counts.transition(stream, |counts, stream| {
                 let stream_valid =
-                    stream.state.reserve_remote().and(actions.recv.recv_push_promise(stream, frame));
+                    actions.recv.recv_push_promise(frame, stream);
 
                 match stream_valid {
                     Ok(()) =>
@@ -469,22 +470,14 @@ where
                 }
             })?
         };
-        // Push the headers and stream... this requires a bit of indirection to make
-        // the borrow checker happy.
+        // If we're successful, push the headers and stream...
         if let Some(child) = child_key {
-            let ppp = {
-                let mut ppp = {
-                    let parent = &mut me.store[parent_key];
-                    parent.pending_push_promises.take()
-                };
-                let child = &mut me.store.resolve(child);
-                ppp.push(child);
-                ppp
-            };
+            let mut ppp = me.store[parent_key].pending_push_promises.take();
+            ppp.push(&mut me.store.resolve(child));
 
             let parent = &mut me.store.resolve(parent_key);
             parent.pending_push_promises = ppp;
-            parent.notify_recv()
+            parent.notify_recv();
         };
 
         Ok(())
@@ -1000,19 +993,16 @@ impl OpaqueStreamRef {
 
         let res = {
             let mut stream = me.store.resolve(self.key);
-            me.actions.recv.poll_pushed(&mut stream)
+            try_ready!(me.actions.recv.poll_pushed(&mut stream))
         };
-        res.map(
-            |r| r.map(|s| s.map(|(h, key)| {
-                me.store.resolve(key).ref_inc();
-                (
-                    h,
-                    OpaqueStreamRef {
-                        inner: self.inner.clone(), key,
-                    }
-                )
-            })),
-        )
+        Ok(Async::Ready(res.map(|(h, key)| {
+            me.store.resolve(key).ref_inc();
+            let opaque_ref =
+                OpaqueStreamRef {
+                    inner: self.inner.clone(), key,
+                };
+            (h, opaque_ref)
+        })))
     }
 
     pub fn body_is_empty(&self) -> bool {

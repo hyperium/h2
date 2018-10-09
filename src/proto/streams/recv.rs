@@ -251,8 +251,8 @@ impl Recv {
     }
 
     /// Called by the client to get pushed response
-    pub fn poll_pushed<'a>(
-        &'a mut self, stream: &'a mut store::Ptr
+    pub fn poll_pushed(
+        &mut self, stream: &mut store::Ptr
     ) -> Poll<Option<(Parts, store::Key)>, proto::Error> {
         use super::peer::PollMessage::*;
 
@@ -268,10 +268,10 @@ impl Recv {
         if let Some(p) = pushed {
             Ok(p)
         } else {
-            stream.recv_task = Some(task::current());
             let is_open = stream.state.ensure_recv_open()?;
 
             if is_open {
+                stream.recv_task = Some(task::current());
                 Ok(Async::NotReady)
             } else {
                 Ok(Async::Ready(None))
@@ -567,10 +567,10 @@ impl Recv {
 
     pub fn recv_push_promise(
         &mut self,
-        stream: &mut store::Ptr,
         frame: frame::PushPromise,
+        stream: &mut store::Ptr,
     ) -> Result<(), RecvError> {
-
+        stream.state.reserve_remote()?;
         if frame.is_over_size() {
             // A frame is over size if the decoded header block was bigger than
             // SETTINGS_MAX_HEADER_LIST_SIZE.
