@@ -159,12 +159,17 @@ impl Send {
             return;
         }
 
-        self.recv_err(buffer, stream, counts);
+        // Clear all pending outbound frames.
+        // Note that we don't call `self.recv_err` because we want to enqueue
+        // the reset frame before transitioning the stream inside
+        // `reclaim_all_capacity`.
+        self.prioritize.clear_queue(buffer, stream);
 
         let frame = frame::Reset::new(stream.id, reason);
 
         trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+        self.prioritize.reclaim_all_capacity(stream, counts);
     }
 
     pub fn schedule_implicit_reset(
