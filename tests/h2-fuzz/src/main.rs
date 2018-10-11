@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate futures;
 extern crate tokio_io;
 #[macro_use]
@@ -14,6 +13,7 @@ use std::cell::Cell;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use tokio_io::{AsyncRead, AsyncWrite};
+use futures::stream::futures_unordered::FuturesUnordered;
 
 struct MockIo<'a> {
     input: &'a [u8],
@@ -114,13 +114,15 @@ fn run(script: &[u8]) -> Result<(), h2::Error> {
     let notify_handle: executor::NotifyHandle = notify.clone().into();
     let io = MockIo { input: script };
     let (mut h2, mut connection) = h2::client::handshake(io).wait()?;
-    let mut in_progress = None;
+    let mut futs = FuturesUnordered::new();
     let future = future::poll_fn(|| {
         if let Async::Ready(()) = connection.poll()? {
             return Ok(Async::Ready(()));
         }
-        if in_progress.is_none() {
-            try_ready!(h2.poll_ready());
+        while futs.len() < 128 {
+            if h2.poll_ready()?.is_not_ready() {
+                break;
+            }
             let request = Request::builder()
                 .method(Method::POST)
                 .uri("https://example.com/")
@@ -129,14 +131,15 @@ fn run(script: &[u8]) -> Result<(), h2::Error> {
             let (resp, mut send) = h2.send_request(request, false)?;
             send.send_data(vec![0u8; 32769].into(), true).unwrap();
             drop(send);
-            in_progress = Some(resp);
+            futs.push(resp);
         }
-        match in_progress.as_mut().unwrap().poll() {
-            r @ Ok(Async::Ready(_)) | r @ Err(_) => {
-                eprintln!("{:?}", r);
-                in_progress = None;
+        loop {
+            match futs.poll() {
+                Ok(Async::NotReady) | Ok(Async::Ready(None)) => break,
+                r @ Ok(Async::Ready(_)) | r @ Err(_) => {
+                    eprintln!("{:?}", r);
+                }
             }
-            Ok(Async::NotReady) => (),
         }
         Ok::<_, h2::Error>(Async::NotReady)
     });
