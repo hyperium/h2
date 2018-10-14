@@ -4,7 +4,6 @@ use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
 use http::{HeaderMap, Response, Request, Method};
-use http::request::Parts;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -253,14 +252,14 @@ impl Recv {
     /// Called by the client to get pushed response
     pub fn poll_pushed(
         &mut self, stream: &mut store::Ptr
-    ) -> Poll<Option<(Parts, store::Key)>, proto::Error> {
+    ) -> Poll<Option<(Request<()>, store::Key)>, proto::Error> {
         use super::peer::PollMessage::*;
 
         let mut ppp = stream.pending_push_promises.take();
         let pushed = ppp.pop(stream.store_mut()).map(
             |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
                 Some(Event::Headers(Server(headers))) =>
-                    Async::Ready(Some((headers.into_parts().0, pushed.key()))),
+                    Async::Ready(Some((headers, pushed.key()))),
                 _ => panic!("Headers not set on pushed stream")
             }
         );

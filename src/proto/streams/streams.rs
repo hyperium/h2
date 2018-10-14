@@ -9,7 +9,6 @@ use super::store::{self, Entry, Resolve, Store};
 use bytes::{Buf, Bytes};
 use futures::{task, Async, Poll};
 use http::{HeaderMap, Request, Response};
-use http::request::Parts;
 use tokio_io::AsyncWrite;
 
 use std::{fmt, io};
@@ -987,7 +986,7 @@ impl OpaqueStreamRef {
     /// Called by a client to check for a pushed request.
     pub fn poll_pushed(
         &mut self
-    ) -> Poll<Option<(Parts, OpaqueStreamRef)>, proto::Error> {
+    ) -> Poll<Option<(Request<()>, OpaqueStreamRef)>, proto::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 

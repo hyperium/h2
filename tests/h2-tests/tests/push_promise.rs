@@ -35,7 +35,7 @@ fn recv_push_works() {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND)
         });
         let check_pushed_request = pushed.and_then(|headers| {
-            assert_eq!(headers.request.method, Method::GET);
+            assert_eq!(headers.request.into_parts().0.method, Method::GET);
             headers.response
         });
         let check_pushed_response = check_pushed_request.and_then(
@@ -91,7 +91,7 @@ fn pushed_streams_arent_dropped_too_early() {
             Ok(())
         });
         let check_pushed_headers = pushed.and_then(|headers| {
-            assert_eq!(headers.request.method, Method::GET);
+            assert_eq!(headers.request.into_parts().0.method, Method::GET);
             headers.response
         });
         let check_pushed = check_pushed_headers.map(
@@ -315,7 +315,6 @@ fn recv_push_promise_with_wrong_authority_is_stream_error() {
 
 #[test]
 fn recv_push_promise_skipped_stream_id() {
-    // tests that by default, received push promises work
     let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
@@ -330,8 +329,7 @@ fn recv_push_promise_skipped_stream_id() {
         .send_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style.css"))
         .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
         .recv_frame(frames::go_away(0).protocol_error())
-        .close()
-        ;
+        .close();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()
@@ -367,7 +365,6 @@ fn recv_push_promise_skipped_stream_id() {
 
 #[test]
 fn recv_push_promise_dup_stream_id() {
-    // tests that by default, received push promises work
     let _ = ::env_logger::try_init();
 
     let (io, srv) = mock::new();
@@ -382,8 +379,7 @@ fn recv_push_promise_dup_stream_id() {
         .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
         .send_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
         .recv_frame(frames::go_away(0).protocol_error())
-        .close()
-        ;
+        .close();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
         let request = Request::builder()

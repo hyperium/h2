@@ -171,7 +171,6 @@ use proto;
 use bytes::{Bytes, IntoBuf};
 use futures::{Async, Future, Poll, Stream};
 use http::{uri, HeaderMap, Request, Response, Method, Version};
-use http::request::Parts;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
@@ -316,7 +315,7 @@ pub struct ResponseFuture {
 #[derive(Debug)]
 pub struct PushPromise {
     /// The request headers
-    pub request: Parts,
+    pub request: Request<()>,
     /// The pushed response
     pub response: ResponseFuture,
 }
