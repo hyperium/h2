@@ -296,19 +296,24 @@ pub struct Connection<T, B: IntoBuf = Bytes> {
     inner: proto::Connection<T, Peer, B>,
 }
 
-#[derive(Debug)]
-enum PushPromiseStream {
-    Taken,
-    Available,
-    NoPushedStream,
-}
-
 /// A future of an HTTP response.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
-    push_promise_stream: PushPromiseStream,
+    push_promise_consumed: bool,
+}
+
+/// A future of a pushed HTTP response.
+///
+/// We have to differentiate between pushed and non pushed because of the spec
+/// <https://httpwg.org/specs/rfc7540.html#PUSH_PROMISE>
+/// > PUSH_PROMISE frames MUST only be sent on a peer-initiated stream
+/// > that is in either the "open" or "half-closed (remote)" state.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless polled"]
+pub struct PushedResponseFuture {
+    inner: ResponseFuture,
 }
 
 /// A pushed response and corresponding request headers
@@ -317,7 +322,7 @@ pub struct PushPromise {
     /// The request headers
     pub request: Request<()>,
     /// The pushed response
-    pub response: ResponseFuture,
+    pub response: PushedResponseFuture,
 }
 
 #[derive(Debug)]
@@ -333,9 +338,10 @@ impl Stream for PushPromises {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.inner.poll_pushed()) {
             Some((request, response)) => {
-                let response = ResponseFuture {
-                    inner: response,
-                    push_promise_stream: PushPromiseStream::NoPushedStream
+                let response = PushedResponseFuture {
+                    inner: ResponseFuture {
+                        inner: response, push_promise_consumed: false
+                    }
                 };
                 Ok(Async::Ready(Some(PushPromise{request, response})))
             }
@@ -615,7 +621,7 @@ where
 
                 let response = ResponseFuture {
                     inner: stream.clone_to_opaque(),
-                    push_promise_stream: PushPromiseStream::Available,
+                    push_promise_consumed: false,
                 };
 
                 let stream = SendStream::new(stream);
@@ -1408,15 +1414,33 @@ impl ResponseFuture {
     /// If this method has been called before
     /// or the stream was itself was pushed
     pub fn push_promises(&mut self) -> PushPromises {
-        use self::PushPromiseStream::*;
-        match self.push_promise_stream {
-            Available => {
-                self.push_promise_stream = Taken;
-                PushPromises { inner: self.inner.clone() }
-            },
-            NoPushedStream => panic!("PushPromises impossible for pushed streams"),
-            Taken => panic!("Reference to push promises stream taken!")
+        if self.push_promise_consumed {
+            panic!("Reference to push promises stream taken!");
         }
+        self.push_promise_consumed = true;
+        PushPromises { inner: self.inner.clone() }
+    }
+}
+
+// ===== impl PushedResponseFuture =====
+
+impl Future for PushedResponseFuture {
+    type Item = Response<RecvStream>;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl PushedResponseFuture {
+    /// Returns the stream ID of the response stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        self.inner.stream_id()
     }
 }
 
