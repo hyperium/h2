@@ -49,6 +49,30 @@ impl Error {
             _ => None,
         }
     }
+
+    /// Returns the true if the error is an io::Error
+    pub fn is_io(&self) -> bool {
+        match self.kind {
+            Kind::Io(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the error if the error is an io::Error
+    pub fn get_io(&self) -> Option<&io::Error> {
+        match self.kind {
+            Kind::Io(ref e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Returns the error if the error is an io::Error
+    pub fn into_io(self) -> Option<io::Error> {
+        match self.kind {
+            Kind::Io(e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 impl From<proto::Error> for Error {

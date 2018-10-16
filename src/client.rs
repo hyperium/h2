@@ -68,27 +68,21 @@
 //! extern crate futures;
 //! extern crate h2;
 //! extern crate http;
-//! extern crate tokio_core;
+//! extern crate tokio;
 //!
 //! use h2::client;
 //!
 //! use futures::*;
-//! # use futures::future::ok;
 //! use http::*;
 //!
-//! use tokio_core::net::TcpStream;
-//! use tokio_core::reactor;
+//! use tokio::net::TcpStream;
 //!
 //! pub fn main() {
-//!     let mut core = reactor::Core::new().unwrap();
-//!     let handle = core.handle();
-//!
 //!     let addr = "127.0.0.1:5928".parse().unwrap();
 //!
-//!     core.run({
-//! # let _ =
+//!     tokio::run(
 //!         // Establish TCP connection to the server.
-//!         TcpStream::connect(&addr, &handle)
+//!         TcpStream::connect(&addr)
 //!             .map_err(|_| {
 //!                 panic!("failed to establish TCP connection")
 //!             })
@@ -98,7 +92,7 @@
 //!                     .map_err(|_| panic!("HTTP/2.0 connection failed"));
 //!
 //!                 // Spawn a new task to drive the connection state
-//!                 handle.spawn(connection);
+//!                 tokio::spawn(connection);
 //!
 //!                 // Wait until the `SendRequest` handle has available
 //!                 // capacity.
@@ -139,9 +133,8 @@
 //!                     })
 //!                 })
 //!             })
-//! # ;
-//! # ok::<_, ()>(())
-//!     }).ok().expect("failed to perform HTTP/2.0 request");
+//!             .map_err(|e| panic!("failed to perform HTTP/2.0 request: {:?}", e))
+//!     )
 //! }
 //! ```
 //!
