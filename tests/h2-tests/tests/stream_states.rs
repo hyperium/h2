@@ -1085,3 +1085,58 @@ fn send_err_with_buffered_data() {
 
     client.join(srv).wait().expect("wait");
 }
+
+#[test]
+fn srv_window_update_on_lower_stream_id() {
+    // See https://github.com/carllerche/h2/issues/208
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(7)
+                .request("GET", "https://example.com/")
+                .eos()
+        )
+        .send_frame(frames::push_promise(7, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .send_frame(frames::headers(7).eos())
+        .recv_frame(frames::reset(2).cancel())
+        .send_frame(frames::window_update(5, 66666))
+        .close()
+        ;
+
+    let client = client::Builder::new()
+        .initial_stream_id(7)
+        .handshake::<_, Bytes>(io)
+        .unwrap()
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method("GET")
+                .uri("https://example.com/")
+                .body(()).unwrap();
+
+            let response = client.send_request(request, true)
+                .unwrap()
+                .0.expect("response")
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    Ok(())
+                });
+
+            h2.expect("client")
+                .drive(response)
+                .and_then(|(h2, _)| {
+                    println!("RESPONSE DONE");
+                    h2
+                })
+                .then(|result| {
+                    println!("WUT");
+                    assert!(result.is_ok(), "result: {:?}", result);
+                    Ok::<_, ()>(())
+                })
+        });
+
+    srv.join(client).wait().unwrap();
+}
