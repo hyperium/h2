@@ -162,8 +162,8 @@ use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{Async, Future, Poll};
-use http::{uri, Request, Response, Method, Version};
+use futures::{Async, Future, Poll, Stream};
+use http::{uri, HeaderMap, Request, Response, Method, Version};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
 
@@ -294,6 +294,54 @@ pub struct Connection<T, B: IntoBuf = Bytes> {
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
+    push_promise_consumed: bool,
+}
+
+/// A future of a pushed HTTP response.
+///
+/// We have to differentiate between pushed and non pushed because of the spec
+/// <https://httpwg.org/specs/rfc7540.html#PUSH_PROMISE>
+/// > PUSH_PROMISE frames MUST only be sent on a peer-initiated stream
+/// > that is in either the "open" or "half-closed (remote)" state.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless polled"]
+pub struct PushedResponseFuture {
+    inner: ResponseFuture,
+}
+
+/// A pushed response and corresponding request headers
+#[derive(Debug)]
+pub struct PushPromise {
+    /// The request headers
+    request: Request<()>,
+
+    /// The pushed response
+    response: PushedResponseFuture,
+}
+
+#[derive(Debug)]
+/// A stream of pushed responses and corresponding promised requests
+pub struct PushPromises {
+    inner: proto::OpaqueStreamRef,
+}
+
+impl Stream for PushPromises {
+    type Item = PushPromise;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match try_ready!(self.inner.poll_pushed()) {
+            Some((request, response)) => {
+                let response = PushedResponseFuture {
+                    inner: ResponseFuture {
+                        inner: response, push_promise_consumed: false
+                    }
+                };
+                Ok(Async::Ready(Some(PushPromise{request, response})))
+            }
+            None => Ok(Async::Ready(None)),
+        }
+    }
 }
 
 /// Builds client connections with custom configuration values.
@@ -516,7 +564,7 @@ where
     ///             .body(())
     ///             .unwrap();
     ///
-    ///         // Send the request to the server. Since we are not sending a
+    ///         // Send the request to the server. If we are not sending a
     ///         // body or trailers, we can drop the `SendStream` instance.
     ///         let (response, mut send_stream) = send_request
     ///             .send_request(request, false).unwrap();
@@ -567,6 +615,7 @@ where
 
                 let response = ResponseFuture {
                     inner: stream.clone_to_opaque(),
+                    push_promise_consumed: false,
                 };
 
                 let stream = SendStream::new(stream);
@@ -1352,6 +1401,61 @@ impl ResponseFuture {
     pub fn stream_id(&self) -> ::StreamId {
         ::StreamId::from_internal(self.inner.stream_id())
     }
+    /// Returns a stream of PushPromises
+    ///
+    /// # Panics
+    ///
+    /// If this method has been called before
+    /// or the stream was itself was pushed
+    pub fn push_promises(&mut self) -> PushPromises {
+        if self.push_promise_consumed {
+            panic!("Reference to push promises stream taken!");
+        }
+        self.push_promise_consumed = true;
+        PushPromises { inner: self.inner.clone() }
+    }
+}
+
+// ===== impl PushPromise =====
+
+impl PushPromise {
+    /// Returns a reference to the push promise's request headers.
+    pub fn request(&self) -> &Request<()> {
+        &self.request
+    }
+
+    /// Returns a mutable reference to the push promise's request headers.
+    pub fn request_mut(&mut self) -> &mut Request<()> {
+        &mut self.request
+    }
+
+    /// Consumes `self`, returning the push promise's request headers and
+    /// response future.
+    pub fn into_parts(self) -> (Request<()>, PushedResponseFuture) {
+        (self.request, self.response)
+    }
+}
+
+// ===== impl PushedResponseFuture =====
+
+impl Future for PushedResponseFuture {
+    type Item = Response<RecvStream>;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl PushedResponseFuture {
+    /// Returns the stream ID of the response stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the stream store has been poisoned.
+    pub fn stream_id(&self) -> ::StreamId {
+        self.inner.stream_id()
+    }
 }
 
 // ===== impl Peer =====
@@ -1431,11 +1535,10 @@ impl proto::Peer for Peer {
         false
     }
 
-    fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError> {
+    fn convert_poll_message(
+        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+    ) -> Result<Self::Poll, RecvError> {
         let mut b = Response::builder();
-
-        let stream_id = headers.stream_id();
-        let (pseudo, fields) = headers.into_parts();
 
         b.version(Version::HTTP_2);
 

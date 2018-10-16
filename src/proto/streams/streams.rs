@@ -245,7 +245,6 @@ where
             if let Err(RecvError::Stream { .. }) = res {
                 actions.recv.release_connection_capacity(sz as WindowSize, &mut None);
             }
-
             actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
         })
     }
@@ -426,6 +425,10 @@ where
             None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
         };
 
+        // TODO: Streams in the reserved states do not count towards the concurrency
+        // limit. However, it seems like there should be a cap otherwise this
+        // could grow in memory indefinitely.
+
         // Ensure that we can reserve streams
         me.actions.recv.ensure_can_reserve()?;
 
@@ -437,8 +440,9 @@ where
             return Ok(());
         }
 
-        // Create a scope
-        let child_key = {
+        // Try to handle the frame and create a corresponding key for the pushed stream
+        // this requires a bit of indirection to make the borrow checker happy.
+        let child_key: Option<store::Key> = {
             // Create state for the stream
             let stream = me.store.insert(promised_id, {
                 Stream::new(
@@ -450,23 +454,29 @@ where
             let actions = &mut me.actions;
 
             me.counts.transition(stream, |counts, stream| {
-                let res = actions.recv.recv_push_promise(frame, stream);
+                let stream_valid =
+                    actions.recv.recv_push_promise(frame, stream);
 
-                let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-                actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, res)
-                    .map(|_| stream.key())
+                match stream_valid {
+                    Ok(()) =>
+                        Ok(Some(stream.key())),
+                    _ => {
+                        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+                        actions.reset_on_recv_stream_err(&mut *send_buffer, stream, counts, stream_valid)
+                            .map(|()| None)
+                    }
+                }
             })?
         };
+        // If we're successful, push the headers and stream...
+        if let Some(child) = child_key {
+            let mut ppp = me.store[parent_key].pending_push_promises.take();
+            ppp.push(&mut me.store.resolve(child));
 
-        // Push the stream... this requires a bit of indirection to make
-        // the borrow checker happy.
-        let mut ppp = me.store[parent_key].pending_push_promises.take();
-        ppp.push(&mut me.store.resolve(child_key));
-
-        let parent = &mut me.store[parent_key];
-
-        parent.pending_push_promises = ppp;
-        parent.notify_recv();
+            let parent = &mut me.store.resolve(parent_key);
+            parent.pending_push_promises = ppp;
+            parent.notify_recv();
+        };
 
         Ok(())
     }
@@ -972,6 +982,26 @@ impl OpaqueStreamRef {
 
         me.actions.recv.poll_response(&mut stream)
     }
+    /// Called by a client to check for a pushed request.
+    pub fn poll_pushed(
+        &mut self
+    ) -> Poll<Option<(Request<()>, OpaqueStreamRef)>, proto::Error> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let res = {
+            let mut stream = me.store.resolve(self.key);
+            try_ready!(me.actions.recv.poll_pushed(&mut stream))
+        };
+        Ok(Async::Ready(res.map(|(h, key)| {
+            me.store.resolve(key).ref_inc();
+            let opaque_ref =
+                OpaqueStreamRef {
+                    inner: self.inner.clone(), key,
+                };
+            (h, opaque_ref)
+        })))
+    }
 
     pub fn body_is_empty(&self) -> bool {
         let mut me = self.inner.lock().unwrap();
@@ -1102,6 +1132,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
         maybe_cancel(stream, actions, counts);
 
         if stream.ref_count == 0 {
+            // We won't be able to reach our push promises anymore
             let mut ppp = stream.pending_push_promises.take();
             while let Some(promise) = ppp.pop(stream.store_mut()) {
                 counts.transition(promise, |counts, stream| {

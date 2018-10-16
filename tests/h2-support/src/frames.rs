@@ -220,6 +220,18 @@ impl Mock<frame::PushPromise> {
         Mock(frame)
     }
 
+    pub fn field<K, V>(self, key: K, value: V) -> Self
+    where
+        K: HttpTryInto<http::header::HeaderName>,
+        V: HttpTryInto<http::header::HeaderValue>,
+    {
+        let (id, promised, pseudo, mut fields) = self.into_parts();
+        fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
+        let frame = frame::PushPromise::new(id, promised, pseudo, fields);
+        Mock(frame)
+    }
+
+
     fn into_parts(self) -> (StreamId, StreamId, frame::Pseudo, HeaderMap) {
         assert!(self.0.is_end_headers(), "unset eoh will be lost");
         let id = self.0.stream_id();

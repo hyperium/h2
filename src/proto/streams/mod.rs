@@ -28,7 +28,6 @@ use frame::{StreamId, StreamIdOverflow};
 use proto::*;
 
 use bytes::Bytes;
-use http::{Request, Response};
 use std::time::Duration;
 
 #[derive(Debug)]

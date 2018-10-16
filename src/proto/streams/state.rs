@@ -153,10 +153,7 @@ impl State {
                 if eos {
                     Closed(Cause::EndStream)
                 } else {
-                    Open {
-                        local: AwaitingHeaders,
-                        remote,
-                    }
+                    HalfClosedLocal(Streaming)
                 }
             },
             Open {

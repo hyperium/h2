@@ -3,7 +3,7 @@ use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
-use http::HeaderMap;
+use http::{HeaderMap, Response, Request, Method};
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -216,7 +216,9 @@ impl Recv {
             };
         }
 
-        let message = counts.peer().convert_poll_message(frame)?;
+        let stream_id = frame.stream_id();
+        let (pseudo, fields) = frame.into_parts();
+        let message = counts.peer().convert_poll_message(pseudo, fields, stream_id)?;
 
         // Push the frame onto the stream's recv buffer
         stream
@@ -244,6 +246,37 @@ impl Recv {
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Headers(Server(request))) => request,
             _ => panic!(),
+        }
+    }
+
+    /// Called by the client to get pushed response
+    pub fn poll_pushed(
+        &mut self, stream: &mut store::Ptr
+    ) -> Poll<Option<(Request<()>, store::Key)>, proto::Error> {
+        use super::peer::PollMessage::*;
+
+        let mut ppp = stream.pending_push_promises.take();
+        let pushed = ppp.pop(stream.store_mut()).map(
+            |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
+                Some(Event::Headers(Server(headers))) =>
+                    Async::Ready(Some((headers, pushed.key()))),
+                // When frames are pushed into the queue, it is verified that
+                // the first frame is a HEADERS frame.
+                _ => panic!("Headers not set on pushed stream")
+            }
+        );
+        stream.pending_push_promises = ppp;
+        if let Some(p) = pushed {
+            Ok(p)
+        } else {
+            let is_open = stream.state.ensure_recv_open()?;
+
+            if is_open {
+                stream.recv_task = Some(task::current());
+                Ok(Async::NotReady)
+            } else {
+                Ok(Async::Ready(None))
+            }
         }
     }
 
@@ -538,13 +571,7 @@ impl Recv {
         frame: frame::PushPromise,
         stream: &mut store::Ptr,
     ) -> Result<(), RecvError> {
-
-        // TODO: Streams in the reserved states do not count towards the concurrency
-        // limit. However, it seems like there should be a cap otherwise this
-        // could grow in memory indefinitely.
-
         stream.state.reserve_remote()?;
-
         if frame.is_over_size() {
             // A frame is over size if the decoded header block was bigger than
             // SETTINGS_MAX_HEADER_LIST_SIZE.
@@ -564,7 +591,44 @@ impl Recv {
             });
         }
 
+        let promised_id = frame.promised_id();
+        use http::header;
+        let (pseudo, fields) = frame.into_parts();
+        let req = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
+        // The spec has some requirements for promised request headers
+        // [https://httpwg.org/specs/rfc7540.html#PushRequests]
+
+        // A promised request "that indicates the presence of a request body
+        // MUST reset the promised stream with a stream error"
+        if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
+            match parse_u64(content_length.as_bytes()) {
+                Ok(0) => {},
+                _ => {
+                    return Err(RecvError::Stream {
+                        id: promised_id,
+                        reason: Reason::PROTOCOL_ERROR,
+                    });
+                },
+            }
+        }
+        // "The server MUST include a method in the :method pseudo-header field
+        // that is safe and cacheable"
+        if !Self::safe_and_cacheable(req.method()) {
+            return Err(RecvError::Stream {
+                id: promised_id,
+                reason: Reason::PROTOCOL_ERROR,
+            });
+        }
+        use super::peer::PollMessage::*;
+        stream.pending_recv.push_back(&mut self.buffer, Event::Headers(Server(req)));
+        stream.notify_recv();
         Ok(())
+    }
+
+    fn safe_and_cacheable(method: &Method) -> bool {
+        // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
+        // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
+        return method == Method::GET || method == Method::HEAD;
     }
 
     /// Ensures that `id` is not in the `Idle` state.

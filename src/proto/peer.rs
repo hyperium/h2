@@ -1,9 +1,9 @@
 use codec::RecvError;
 use error::Reason;
-use frame::{Headers, StreamId};
+use frame::{Pseudo, StreamId};
 use proto::Open;
 
-use http::{Request, Response};
+use http::{HeaderMap, Request, Response};
 
 use std::fmt;
 
@@ -16,7 +16,9 @@ pub(crate) trait Peer {
 
     fn is_server() -> bool;
 
-    fn convert_poll_message(headers: Headers) -> Result<Self::Poll, RecvError>;
+    fn convert_poll_message(
+        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+    ) -> Result<Self::Poll, RecvError>;
 
     fn is_local_init(id: StreamId) -> bool {
         assert!(!id.is_zero());
@@ -51,12 +53,14 @@ impl Dyn {
         self.is_server() == id.is_server_initiated()
     }
 
-    pub fn convert_poll_message(&self, headers: Headers) -> Result<PollMessage, RecvError> {
+    pub fn convert_poll_message(
+        &self, pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+    ) -> Result<PollMessage, RecvError> {
         if self.is_server() {
-            ::server::Peer::convert_poll_message(headers)
+            ::server::Peer::convert_poll_message(pseudo, fields, stream_id)
                 .map(PollMessage::Server)
         } else {
-            ::client::Peer::convert_poll_message(headers)
+            ::client::Peer::convert_poll_message(pseudo, fields, stream_id)
                 .map(PollMessage::Client)
         }
     }

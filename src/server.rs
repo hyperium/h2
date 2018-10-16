@@ -131,12 +131,12 @@
 
 use {SendStream, RecvStream, ReleaseCapacity};
 use codec::{Codec, RecvError};
-use frame::{self, Reason, Settings, StreamId};
+use frame::{self, Pseudo, Reason, Settings, StreamId};
 use proto::{self, Config, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
 use futures::{self, Async, Future, Poll};
-use http::{Request, Response};
+use http::{HeaderMap, Request, Response};
 use std::{convert, fmt, io, mem};
 use std::time::Duration;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -1168,7 +1168,7 @@ impl Peer {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let pseudo = frame::Pseudo::response(status);
+        let pseudo = Pseudo::response(status);
 
         // Create the HEADERS frame
         let mut frame = frame::Headers::new(id, pseudo, headers);
@@ -1192,13 +1192,12 @@ impl proto::Peer for Peer {
         proto::DynPeer::Server
     }
 
-    fn convert_poll_message(headers: frame::Headers) -> Result<Self::Poll, RecvError> {
+    fn convert_poll_message(
+        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+    ) -> Result<Self::Poll, RecvError> {
         use http::{uri, Version};
 
         let mut b = Request::builder();
-
-        let stream_id = headers.stream_id();
-        let (pseudo, fields) = headers.into_parts();
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
