@@ -1298,3 +1298,66 @@ fn reserve_capacity_after_peer_closes() {
     srv.join(client).wait().expect("wait");
 }
 
+#[test]
+fn reset_stream_waiting_for_capacity() {
+    // This tests that receiving a reset on a stream that has some available
+    // connection-level window reassigns that window to another stream.
+    let _ = ::env_logger::try_init();
+
+    let (io, srv) = mock::new();
+
+    let srv = srv
+        .assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(frames::headers(1).request("GET", "http://example.com/"))
+        .recv_frame(frames::headers(3).request("GET", "http://example.com/"))
+        .recv_frame(frames::headers(5).request("GET", "http://example.com/"))
+        .recv_frame(frames::data(1, vec![0; 16384]))
+        .recv_frame(frames::data(1, vec![0; 16384]))
+        .recv_frame(frames::data(1, vec![0; 16384]))
+        .recv_frame(frames::data(1, vec![0; 16383]).eos())
+        .send_frame(frames::headers(1).response(200))
+        // Assign enough connection window for stream 3...
+        .send_frame(frames::window_update(0, 1))
+        // but then reset it.
+        .send_frame(frames::reset(3))
+        // 5 should use that window instead.
+        .recv_frame(frames::data(5, vec![0; 1]).eos())
+        .send_frame(frames::headers(5).response(200))
+        .close()
+        ;
+
+    fn request() -> Request<()> {
+        Request::builder()
+            .uri("http://example.com/")
+            .body(())
+            .unwrap()
+    }
+
+    let client = client::Builder::new()
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(move |(mut client, conn)| {
+            let (req1, mut send1) = client.send_request(
+                request(), false).unwrap();
+            let (req2, mut send2) = client.send_request(
+                request(), false).unwrap();
+            let (req3, mut send3) = client.send_request(
+                request(), false).unwrap();
+            // Use up the connection window.
+            send1.send_data(vec![0; 65535].into(), true).unwrap();
+            // Queue up for more connection window.
+            send2.send_data(vec![0; 1].into(), true).unwrap();
+            // .. and even more.
+            send3.send_data(vec![0; 1].into(), true).unwrap();
+            conn.expect("h2")
+                .join(req1.expect("req1"))
+                .join(req2.then(|r| Ok(r.unwrap_err())))
+                .join(req3.expect("req3"))
+        });
+
+
+    client.join(srv).wait().unwrap();
+}
+

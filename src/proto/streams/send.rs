@@ -325,15 +325,6 @@ impl Send {
         Ok(())
     }
 
-    pub fn recv_reset<B>(
-        &mut self,
-        buffer: &mut Buffer<Frame<B>>,
-        stream: &mut store::Ptr
-    ) {
-        // Clear all pending outbound frames
-        self.prioritize.clear_queue(buffer, stream);
-    }
-
     pub fn recv_err<B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
