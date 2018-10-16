@@ -286,7 +286,7 @@ where
 
         me.counts.transition(stream, |counts, stream| {
             actions.recv.recv_reset(frame, stream);
-            actions.send.recv_reset(send_buffer, stream, counts);
+            actions.send.recv_err(send_buffer, stream, counts);
             assert!(stream.state.is_closed());
             Ok(())
         })
