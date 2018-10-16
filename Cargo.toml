@@ -1,14 +1,18 @@
 [package]
 name = "h2"
 # When releasing to crates.io:
-# - Update html_root_url.
+# - Deploy docs.
+# - Update doc URL.
+#   - Cargo.toml
+#   - README
+#   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.1.12"
+version = "0.1.13"
 license = "MIT"
 authors = ["Carl Lerche <me@carllerche.com>"]
 description = "An HTTP/2.0 client and server"
-documentation = "https://docs.rs/h2"
+documentation = "http://rust-doc.s3-website-us-east-1.amazonaws.com/h2/v0.1.13/h2"
 homepage = "https://github.com/carllerche/h2"
 repository = "https://github.com/carllerche/h2"
 readme = "README.md"

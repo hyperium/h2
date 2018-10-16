@@ -84,7 +84,7 @@
 //! [`server::handshake`]: server/fn.handshake.html
 //! [`client::handshake`]: client/fn.handshake.html
 
-#![doc(html_root_url = "https://docs.rs/h2/0.1.12")]
+#![doc(html_root_url = "http://rust-doc.s3-website-us-east-1.amazonaws.com/h2/v0.1.13/h2")]
 #![deny(missing_debug_implementations, missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 

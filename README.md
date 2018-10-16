@@ -9,7 +9,7 @@ A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 More information about this crate can be found in the [crate documentation][dox].
 
-[dox]: https://docs.rs/h2
+[dox]: http://rust-doc.s3-website-us-east-1.amazonaws.com/h2/v0.1.13/h2/
 
 ## Features
 
