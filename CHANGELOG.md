@@ -1,3 +1,9 @@
+# 0.1.13 (October 16, 2018)
+
+* Add client support for Push Promises (#314).
+* Expose `io::Error` from `h2::Error` (#311)
+* Misc bug fixes (#304, #309, #319, #313, #320).
+
 # 0.1.12 (August 8, 2018)
 
 * Fix initial send window size (#301).
