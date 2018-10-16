@@ -313,9 +313,10 @@ pub struct PushedResponseFuture {
 #[derive(Debug)]
 pub struct PushPromise {
     /// The request headers
-    pub request: Request<()>,
+    request: Request<()>,
+
     /// The pushed response
-    pub response: PushedResponseFuture,
+    response: PushedResponseFuture,
 }
 
 #[derive(Debug)]
@@ -1412,6 +1413,26 @@ impl ResponseFuture {
         }
         self.push_promise_consumed = true;
         PushPromises { inner: self.inner.clone() }
+    }
+}
+
+// ===== impl PushPromise =====
+
+impl PushPromise {
+    /// Returns a reference to the push promise's request headers.
+    pub fn request(&self) -> &Request<()> {
+        &self.request
+    }
+
+    /// Returns a mutable reference to the push promise's request headers.
+    pub fn request_mut(&mut self) -> &mut Request<()> {
+        &mut self.request
+    }
+
+    /// Consumes `self`, returning the push promise's request headers and
+    /// response future.
+    pub fn into_parts(self) -> (Request<()>, PushedResponseFuture) {
+        (self.request, self.response)
     }
 }
 

@@ -35,8 +35,9 @@ fn recv_push_works() {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND)
         });
         let check_pushed_request = pushed.and_then(|headers| {
-            assert_eq!(headers.request.into_parts().0.method, Method::GET);
-            headers.response
+            let (request, response) = headers.into_parts();
+            assert_eq!(request.into_parts().0.method, Method::GET);
+            response
         });
         let check_pushed_response = check_pushed_request.and_then(
             |resp| {
@@ -91,8 +92,9 @@ fn pushed_streams_arent_dropped_too_early() {
             Ok(())
         });
         let check_pushed_headers = pushed.and_then(|headers| {
-            assert_eq!(headers.request.into_parts().0.method, Method::GET);
-            headers.response
+            let (request, response) = headers.into_parts();
+            assert_eq!(request.into_parts().0.method, Method::GET);
+            response
         });
         let check_pushed = check_pushed_headers.map(
             |resp| assert_eq!(resp.status(), StatusCode::OK)
@@ -294,7 +296,7 @@ fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
             .send_request(request, true)
             .unwrap();
         let check_pushed_request = resp.push_promises().and_then(|headers| {
-            headers.response
+            headers.into_parts().1
         });
         let check_pushed_response = check_pushed_request
             .collect().unwrap().map(|ps| {

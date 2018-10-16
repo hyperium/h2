@@ -381,7 +381,14 @@ impl PushPromise {
 }
 
 impl PushPromise {
-    #[cfg(feature = "unstable")]
+    /// Consume `self`, returning the parts of the frame
+    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
+        (self.header_block.pseudo, self.header_block.fields)
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl PushPromise {
     pub fn new(
         stream_id: StreamId,
         promised_id: StreamId,
@@ -400,16 +407,10 @@ impl PushPromise {
         }
     }
 
-    pub fn into_parts(self) -> (Pseudo, HeaderMap) {
-        (self.header_block.pseudo, self.header_block.fields)
-    }
-
-    #[cfg(feature = "unstable")]
     pub fn fields(&self) -> &HeaderMap {
         &self.header_block.fields
     }
 
-    #[cfg(feature = "unstable")]
     pub fn into_fields(self) -> HeaderMap {
         self.header_block.fields
     }

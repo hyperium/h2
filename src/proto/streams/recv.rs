@@ -260,6 +260,8 @@ impl Recv {
             |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
                 Some(Event::Headers(Server(headers))) =>
                     Async::Ready(Some((headers, pushed.key()))),
+                // When frames are pushed into the queue, it is verified that
+                // the first frame is a HEADERS frame.
                 _ => panic!("Headers not set on pushed stream")
             }
         );
