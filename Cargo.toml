@@ -62,7 +62,7 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Akamai example
-tokio-core = "0.1"
+tokio = "0.1.8"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"

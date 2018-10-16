@@ -3,7 +3,7 @@ extern crate futures;
 extern crate h2;
 extern crate http;
 extern crate rustls;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tokio_rustls;
 extern crate webpki;
 extern crate webpki_roots;
@@ -13,8 +13,7 @@ use h2::client;
 use futures::*;
 use http::{Method, Request};
 
-use tokio_core::net::TcpStream;
-use tokio_core::reactor;
+use tokio::net::TcpStream;
 
 use rustls::Session;
 use tokio_rustls::ClientConfigExt;
@@ -44,13 +43,10 @@ pub fn main() {
 
     println!("ADDR: {:?}", addr);
 
-    let mut core = reactor::Core::new().unwrap();
-    let handle = core.handle();
-
-    let tcp = TcpStream::connect(&addr, &handle);
+    let tcp = TcpStream::connect(&addr);
     let dns_name = DNSNameRef::try_from_ascii_str("http2.akamai.com").unwrap();
 
-    let tcp = tcp.then(|res| {
+    let tcp = tcp.then(move |res| {
         let tcp = res.unwrap();
         tls_client_config
             .connect_async(dns_name, tcp)
@@ -87,7 +83,9 @@ pub fn main() {
 
                 h2.join(stream)
             })
-    });
+    })
+        .map_err(|e| eprintln!("ERROR: {:?}", e))
+        .map(|((), ())| ());
 
-    core.run(tcp).unwrap();
+    tokio::run(tcp);
 }
