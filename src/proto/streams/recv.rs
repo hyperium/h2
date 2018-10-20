@@ -3,7 +3,7 @@ use {frame, proto};
 use codec::{RecvError, UserError};
 use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
-use http::{HeaderMap, Response, Request, Method};
+use http::{HeaderMap, Response, Request};
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -176,7 +176,7 @@ impl Recv {
             use http::header;
 
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
-                let content_length = match parse_u64(content_length.as_bytes()) {
+                let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
                     Err(_) => {
                         return Err(RecvError::Stream {
@@ -592,43 +592,20 @@ impl Recv {
         }
 
         let promised_id = frame.promised_id();
-        use http::header;
         let (pseudo, fields) = frame.into_parts();
         let req = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
-        // The spec has some requirements for promised request headers
-        // [https://httpwg.org/specs/rfc7540.html#PushRequests]
 
-        // A promised request "that indicates the presence of a request body
-        // MUST reset the promised stream with a stream error"
-        if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
-            match parse_u64(content_length.as_bytes()) {
-                Ok(0) => {},
-                _ => {
-                    return Err(RecvError::Stream {
-                        id: promised_id,
-                        reason: Reason::PROTOCOL_ERROR,
-                    });
-                },
-            }
-        }
-        // "The server MUST include a method in the :method pseudo-header field
-        // that is safe and cacheable"
-        if !Self::safe_and_cacheable(req.method()) {
+        if !frame::PushPromise::validate_request(&req) {
             return Err(RecvError::Stream {
                 id: promised_id,
                 reason: Reason::PROTOCOL_ERROR,
             });
         }
+
         use super::peer::PollMessage::*;
         stream.pending_recv.push_back(&mut self.buffer, Event::Headers(Server(req)));
         stream.notify_recv();
         Ok(())
-    }
-
-    fn safe_and_cacheable(method: &Method) -> bool {
-        // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
-        // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
-        return method == Method::GET || method == Method::HEAD;
     }
 
     /// Ensures that `id` is not in the `Idle` state.
@@ -991,26 +968,4 @@ impl<T> From<RecvError> for RecvHeaderBlockError<T> {
     fn from(err: RecvError) -> Self {
         RecvHeaderBlockError::State(err)
     }
-}
-
-// ===== util =====
-
-fn parse_u64(src: &[u8]) -> Result<u64, ()> {
-    if src.len() > 19 {
-        // At danger for overflow...
-        return Err(());
-    }
-
-    let mut ret = 0;
-
-    for &d in src {
-        if d < b'0' || d > b'9' {
-            return Err(());
-        }
-
-        ret *= 10;
-        ret += (d - b'0') as u64;
-    }
-
-    Ok(ret)
 }

@@ -109,6 +109,55 @@ fn serve_request() {
 }
 
 #[test]
+fn push_request() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"))
+        .recv_frame(frames::headers(4).response(200).eos())
+        .recv_frame(frames::headers(2).response(200).eos())
+        .recv_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::GET);
+
+            let pushed_req1 = http::Request::builder()
+                .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
+            let mut pushed_stream = stream.push_request(pushed_req1).unwrap();
+
+            let pushed_req = http::Request::builder()
+                .method("GET").uri("https://http2.akamai.com/style2.css").body(()).unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.push_request(pushed_req).unwrap().send_response(rsp, true).unwrap();
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            pushed_stream.send_response(rsp, true).unwrap();
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
 #[ignore]
 fn accept_with_pending_connections_after_socket_close() {}
 

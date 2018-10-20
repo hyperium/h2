@@ -130,7 +130,7 @@
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
 use {SendStream, RecvStream, ReleaseCapacity};
-use codec::{Codec, RecvError};
+use codec::{Codec, RecvError, UserError};
 use frame::{self, Pseudo, Reason, Settings, StreamId};
 use proto::{self, Config, Prioritized};
 
@@ -270,8 +270,7 @@ pub struct Builder {
 /// explicitly reset the stream with a custom reason.
 ///
 /// It will also be used to initiate push promises linked with the associated
-/// stream. This is [not yet
-/// implemented](https://github.com/carllerche/h2/issues/185).
+/// stream.
 ///
 /// If the `SendResponse` instance is dropped without sending a response, then
 /// the HTTP/2.0 stream will be reset.
@@ -950,6 +949,22 @@ impl<B: IntoBuf> SendResponse<B> {
             .map_err(Into::into)
     }
 
+
+    /// Push a request and response to the client
+    ///
+    /// On success, a [`SendResponse`] instance is returned.
+    ///
+    /// [`SendResponse`]: #
+    pub fn push_request(
+        &mut self,
+        request: Request<()>,
+    ) -> Result<SendResponse<B>, ::Error> {
+        self.inner
+            .send_push_promise(request)
+            .map(|inner| SendResponse{inner})
+            .map_err(Into::into)
+    }
+
     /// Send a stream reset to the peer.
     ///
     /// This essentially cancels the stream, including any inbound or outbound
@@ -1178,6 +1193,38 @@ impl Peer {
         }
 
         frame
+    }
+
+    pub fn convert_push_message(
+        stream_id: StreamId,
+        promised_id: StreamId,
+        request: Request<()>,
+    ) -> Result<frame::PushPromise, UserError> {
+        use http::request::Parts;
+
+        if !frame::PushPromise::validate_request(&request) {
+            return Err(UserError::MalformedHeaders);
+        }
+
+        // Extract the components of the HTTP request
+        let (
+            Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            _,
+        ) = request.into_parts();
+
+        let pseudo = Pseudo::request(method, uri);
+
+        Ok(frame::PushPromise::new(
+            stream_id,
+            promised_id,
+            pseudo,
+            headers
+        ))
     }
 }
 
