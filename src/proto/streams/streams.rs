@@ -883,15 +883,11 @@ impl<B> StreamRef<B> {
 
         let actions = &mut me.actions;
 
-        {
+        let frame = {
             let mut stream = me.store.resolve(self.opaque.key);
 
-            let frame =
-                ::server::Peer::convert_push_message(stream.id, promised_id, request)?;
-
-            actions.send.send_push_promise(
-                frame, send_buffer, &mut stream, &mut actions.task)?;
-        }
+            ::server::Peer::convert_push_message(stream.id, promised_id, request)
+        }?;
 
         let child_key = {
             let mut child_stream = me.store.insert(
@@ -903,6 +899,16 @@ impl<B> StreamRef<B> {
                 )
             );
             child_stream.state.reserve_local()?;
+
+            let sent = actions.send.send_push_promise(
+                frame, send_buffer, &mut child_stream, &mut actions.task);
+
+            if let Err(err) = sent {
+                child_stream.unlink();
+                child_stream.remove();
+                return Err(err.into());
+            }
+
             child_stream.key()
         };
 
