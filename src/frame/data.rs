@@ -153,12 +153,16 @@ impl<T> From<Data<T>> for Frame<T> {
 
 impl<T> fmt::Debug for Data<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Data")
-            .field("stream_id", &self.stream_id)
-            .field("flags", &self.flags)
-            .field("pad_len", &self.pad_len)
-            // `data` purposefully excluded
-            .finish()
+        let mut f = fmt.debug_struct("Data");
+        f.field("stream_id", &self.stream_id);
+        if !self.flags.is_empty() {
+            f.field("flags", &self.flags);
+        }
+        if let Some(ref pad_len) = self.pad_len {
+            f.field("pad_len", pad_len);
+        }
+        // `data` bytes purposefully excluded
+        f.finish()
     }
 }
 
@@ -167,6 +171,10 @@ impl<T> fmt::Debug for Data<T> {
 impl DataFlags {
     fn load(bits: u8) -> DataFlags {
         DataFlags(bits & ALL)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0 == 0
     }
 
     fn is_end_stream(&self) -> bool {

@@ -104,15 +104,15 @@ impl<T> fmt::Debug for Frame<T> {
         use self::Frame::*;
 
         match *self {
-            Data(ref frame) => write!(fmt, "Frame::Data({:?})", frame),
-            Headers(ref frame) => write!(fmt, "Frame::Headers({:?})", frame),
-            Priority(ref frame) => write!(fmt, "Frame::Priority({:?})", frame),
-            PushPromise(ref frame) => write!(fmt, "Frame::PushPromise({:?})", frame),
-            Settings(ref frame) => write!(fmt, "Frame::Settings({:?})", frame),
-            Ping(ref frame) => write!(fmt, "Frame::Ping({:?})", frame),
-            GoAway(ref frame) => write!(fmt, "Frame::GoAway({:?})", frame),
-            WindowUpdate(ref frame) => write!(fmt, "Frame::WindowUpdate({:?})", frame),
-            Reset(ref frame) => write!(fmt, "Frame::Reset({:?})", frame),
+            Data(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Headers(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Priority(ref frame) => fmt::Debug::fmt(frame, fmt),
+            PushPromise(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Settings(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Ping(ref frame) => fmt::Debug::fmt(frame, fmt),
+            GoAway(ref frame) => fmt::Debug::fmt(frame, fmt),
+            WindowUpdate(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Reset(ref frame) => fmt::Debug::fmt(frame, fmt),
         }
     }
 }
