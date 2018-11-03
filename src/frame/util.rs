@@ -15,7 +15,8 @@ use bytes::Bytes;
 /// If the padded payload is invalid (e.g. the length of the padding is equal
 /// to the total length), returns `None`.
 pub fn strip_padding(payload: &mut Bytes) -> Result<u8, Error> {
-    if payload.len() == 0 {
+    let payload_len = payload.len();
+    if payload_len == 0 {
         // If this is the case, the frame is invalid as no padding length can be
         // extracted, even though the frame should be padded.
         return Err(Error::TooMuchPadding);
@@ -23,14 +24,14 @@ pub fn strip_padding(payload: &mut Bytes) -> Result<u8, Error> {
 
     let pad_len = payload[0] as usize;
 
-    if pad_len >= payload.len() {
+    if pad_len >= payload_len {
         // This is invalid: the padding length MUST be less than the
         // total frame size.
         return Err(Error::TooMuchPadding);
     }
 
     let _ = payload.split_to(1);
-    let _ = payload.split_off(pad_len);
+    let _ = payload.split_off(payload_len - pad_len - 1);
 
     Ok(pad_len as u8)
 }

@@ -1361,3 +1361,60 @@ fn reset_stream_waiting_for_capacity() {
     client.join(srv).wait().unwrap();
 }
 
+#[test]
+fn data_padding() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let mut body = Vec::new();
+    body.push(5);
+    body.extend_from_slice(&[b'z'; 100][..]);
+    body.extend_from_slice(&[b'0'; 5][..]);
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "http://example.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", 100)
+        )
+        .send_frame(
+            frames::data(1, body)
+                .padded()
+                .eos()
+        )
+        .close();
+
+    let h2 = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("http://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let (response, _) = client.send_request(request, true).unwrap();
+            let fut = response
+                .and_then(|resp| {
+                    assert_eq!(resp.status(), StatusCode::OK);
+                    let body = resp.into_body();
+                    body.concat2()
+                })
+                .map(|bytes| {
+                    assert_eq!(bytes.len(), 100);
+                });
+            conn
+                .expect("client")
+                .join(fut.expect("response"))
+        });
+
+    h2.join(srv).wait().expect("wait");
+}

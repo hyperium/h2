@@ -63,6 +63,18 @@ impl<T> Data<T> {
         }
     }
 
+    /// Returns whther the `PADDED` flag is set on this frame.
+    #[cfg(feature = "unstable")]
+    pub fn is_padded(&self) -> bool {
+        self.flags.is_padded()
+    }
+
+    /// Sets the value for the `PADDED` flag on this frame.
+    #[cfg(feature = "unstable")]
+    pub fn set_padded(&mut self) {
+        self.flags.set_padded();
+    }
+
     /// Returns a reference to this frame's payload.
     ///
     /// This does **not** include any padding that might have been originally
@@ -191,6 +203,11 @@ impl DataFlags {
 
     fn is_padded(&self) -> bool {
         self.0 & PADDED == PADDED
+    }
+
+    #[cfg(feature = "unstable")]
+    fn set_padded(&mut self) {
+        self.0 |= PADDED
     }
 }
 

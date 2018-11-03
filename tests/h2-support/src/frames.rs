@@ -180,6 +180,11 @@ impl From<Mock<frame::Headers>> for SendFrame {
 // Data helpers
 
 impl Mock<frame::Data> {
+    pub fn padded(mut self) -> Self {
+        self.0.set_padded();
+        self
+    }
+
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream(true);
         self
@@ -190,9 +195,13 @@ impl From<Mock<frame::Data>> for SendFrame {
     fn from(src: Mock<frame::Data>) -> Self {
         let id = src.0.stream_id();
         let eos = src.0.is_end_stream();
+        let is_padded = src.0.is_padded();
         let payload = src.0.into_payload();
         let mut frame = frame::Data::new(id, payload.into_buf());
         frame.set_end_stream(eos);
+        if is_padded {
+            frame.set_padded();
+        }
         Frame::Data(frame)
     }
 }
