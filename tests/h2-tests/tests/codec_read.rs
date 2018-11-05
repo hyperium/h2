@@ -72,16 +72,16 @@ fn read_data_end_stream() {
 fn read_data_padding() {
     let mut codec = raw_codec! {
         read => [
-            0, 0, 11, 0, 0x8, 0, 0, 0, 1,
+            0, 0, 16, 0, 0x8, 0, 0, 0, 1,
             5,       // Pad length
-            "hello", // Data
-            "world", // Padding
+            "helloworld", // Data
+            "\0\0\0\0\0", // Padding
         ];
     };
 
     let data = poll_frame!(Data, codec);
     assert_eq!(data.stream_id(), 1);
-    assert_eq!(data.payload(), &b"hello"[..]);
+    assert_eq!(data.payload(), &b"helloworld"[..]);
     assert!(!data.is_end_stream());
 
     assert_closed!(codec);
