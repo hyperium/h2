@@ -135,20 +135,198 @@ fn push_request() {
 
             assert_eq!(req.method(), &http::Method::GET);
 
-            let pushed_req1 = http::Request::builder()
-                .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
-            let mut pushed_stream = stream.push_request(pushed_req1).unwrap();
+            // Promise stream 2
+            let mut pushed_s2 = {
+                let req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
+                stream.push_request(req).unwrap()
+            };
 
-            let pushed_req = http::Request::builder()
-                .method("GET").uri("https://http2.akamai.com/style2.css").body(()).unwrap();
-            let rsp = http::Response::builder().status(200).body(()).unwrap();
-            stream.push_request(pushed_req).unwrap().send_response(rsp, true).unwrap();
+            // Promise stream 4 and push response headers
+            {
+                let req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style2.css").body(()).unwrap();
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.push_request(req).unwrap().send_response(rsp, true).unwrap();
+            }
 
-            let rsp = http::Response::builder().status(200).body(()).unwrap();
-            pushed_stream.send_response(rsp, true).unwrap();
+            // Push response to stream 2
+            {
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                pushed_s2.send_response(rsp, true).unwrap();
+            }
 
+            // Send response for stream 1
             let rsp = http::Response::builder().status(200).body(()).unwrap();
             stream.send_response(rsp, true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn push_request_against_concurrency() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::headers(2).response(200))
+        .recv_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"))
+        .recv_frame(frames::data(2, &b""[..]).eos())
+        .recv_frame(frames::headers(1).response(200).eos())
+        .recv_frame(frames::headers(4).response(200).eos())
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::GET);
+
+            // Promise stream 2 and start response (concurrency limit reached)
+            let mut s2_tx = {
+                let req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
+                let mut pushed_stream = stream.push_request(req).unwrap();
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                pushed_stream.send_response(rsp, false).unwrap()
+            };
+
+            // Promise stream 4 and push response
+            {
+                let pushed_req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style2.css").body(()).unwrap();
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.push_request(pushed_req).unwrap().send_response(rsp, true).unwrap();
+            }
+
+            // Send and finish response for stream 1
+            {
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.send_response(rsp, true).unwrap();
+            }
+
+            // Finish response for stream 2 (at which point stream 4 will be sent)
+            s2_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn push_request_with_data() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(frames::headers(1).response(200))
+        .recv_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::headers(2).response(200))
+        .recv_frame(frames::data(1, &b""[..]).eos())
+        .recv_frame(frames::data(2, &b"\x00"[..]).eos())
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::GET);
+
+            // Start response to stream 1
+            let mut s1_tx = {
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.send_response(rsp, false).unwrap()
+            };
+
+            // Promise stream 2, push response headers and send data
+            {
+                let pushed_req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                let mut push_tx = stream.push_request(pushed_req).unwrap().send_response(rsp, false).unwrap();
+                // Make sure nothing can queue our pushed stream before we have the PushPromise sent
+                push_tx.send_data(vec![0; 1].into(), true).unwrap();
+                push_tx.reserve_capacity(1);
+            }
+
+            // End response for stream 1
+            s1_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+            srv.into_future().unwrap()
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
+}
+
+#[test]
+fn push_request_between_data() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(frames::headers(1).response(200))
+        .recv_frame(frames::data(1, &b""[..]))
+        .recv_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::headers(2).response(200).eos())
+        .recv_frame(frames::data(1, &b""[..]).eos())
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.method(), &http::Method::GET);
+
+            // Push response to stream 1 and send some data
+            let mut s1_tx = {
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                let mut tx = stream.send_response(rsp, false).unwrap();
+                tx.send_data(vec![0; 0].into(), false).unwrap();
+                tx
+            };
+
+            // Promise stream 2 and push response headers
+            {
+                let pushed_req = http::Request::builder()
+                    .method("GET").uri("https://http2.akamai.com/style.css").body(()).unwrap();
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.push_request(pushed_req).unwrap().send_response(rsp, true).unwrap();
+            }
+
+            // End response for stream 1
+            s1_tx.send_data(vec![0; 0].into(), true).unwrap();
 
             srv.into_future().unwrap()
         })
