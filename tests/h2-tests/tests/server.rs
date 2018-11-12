@@ -123,9 +123,9 @@ fn push_request() {
                 .eos(),
         )
         .recv_frame(frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"))
+        .recv_frame(frames::headers(2).response(200).eos())
         .recv_frame(frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"))
         .recv_frame(frames::headers(4).response(200).eos())
-        .recv_frame(frames::headers(2).response(200).eos())
         .recv_frame(frames::headers(1).response(200).eos())
         .close();
 

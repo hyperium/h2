@@ -883,16 +883,6 @@ impl<B> StreamRef<B> {
 
         let actions = &mut me.actions;
 
-        {
-            let mut stream = me.store.resolve(self.opaque.key);
-
-            let frame =
-                ::server::Peer::convert_push_message(stream.id, promised_id, request)?;
-
-            actions.send.send_push_promise(
-                frame, send_buffer, &mut stream, &mut actions.task)?;
-        }
-
         let child_key = {
             let mut child_stream = me.store.insert(
                 promised_id,
@@ -903,8 +893,26 @@ impl<B> StreamRef<B> {
                 )
             );
             child_stream.state.reserve_local()?;
+            child_stream.is_pending_push = true;
             child_stream.key()
         };
+
+        let pushed = {
+            let mut stream = me.store.resolve(self.opaque.key);
+
+            let frame =
+                ::server::Peer::convert_push_message(stream.id, promised_id, request)?;
+
+            actions.send.send_push_promise(
+                frame, send_buffer, &mut stream, &mut actions.task)
+        };
+
+        if let Err(err) = pushed {
+            let mut child_stream = me.store.resolve(child_key);
+            child_stream.unlink();
+            child_stream.remove();
+            return Err(err.into());
+        }
 
         let opaque =
             OpaqueStreamRef::new(

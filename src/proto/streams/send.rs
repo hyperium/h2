@@ -124,10 +124,14 @@ impl Send {
         stream.state.send_open(end_stream)?;
 
         if counts.peer().is_local_init(frame.stream_id()) {
-            if counts.can_inc_num_send_streams() {
-                counts.inc_num_send_streams(stream);
-            } else {
-                self.prioritize.queue_open(stream);
+            // If we're waiting on a PushPromise anyway
+            // handle potentially queueing the stream at that point
+            if !stream.is_pending_push {
+                if counts.can_inc_num_send_streams() {
+                    counts.inc_num_send_streams(stream);
+                } else {
+                    self.prioritize.queue_open(stream);
+                }
             }
         }
 
