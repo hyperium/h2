@@ -1043,18 +1043,8 @@ impl OpaqueStreamRef {
 
 impl fmt::Debug for OpaqueStreamRef {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self.inner.lock() {
-            Ok(me) => {
-                let stream = &me.store[self.key];
-                fmt.debug_struct("OpaqueStreamRef")
-                    .field("stream_id", &stream.id)
-                    .field("ref_count", &stream.ref_count)
-                    .finish()
-            },
-            Err(_poisoned) => fmt.debug_struct("OpaqueStreamRef")
-                .field("inner", &"<Poisoned>")
-                .finish(),
-        }
+        fmt.debug_struct("OpaqueStreamRef")
+            .finish()
     }
 }
 
