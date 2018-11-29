@@ -1043,8 +1043,27 @@ impl OpaqueStreamRef {
 
 impl fmt::Debug for OpaqueStreamRef {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("OpaqueStreamRef")
-            .finish()
+        use std::sync::TryLockError::*;
+
+        match self.inner.try_lock() {
+            Ok(me) => {
+                let stream = &me.store[self.key];
+                fmt.debug_struct("OpaqueStreamRef")
+                    .field("stream_id", &stream.id)
+                    .field("ref_count", &stream.ref_count)
+                    .finish()
+            },
+            Err(Poisoned(_)) => {
+                fmt.debug_struct("OpaqueStreamRef")
+                    .field("inner", &"<Poisoned>")
+                    .finish()
+            }
+            Err(WouldBlock) => {
+                fmt.debug_struct("OpaqueStreamRef")
+                    .field("inner", &"<Locked>")
+                    .finish()
+            }
+        }
     }
 }
 
