@@ -18,7 +18,7 @@ repository = "https://github.com/carllerche/h2"
 readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
-exclude = ["fixtures/**"]
+exclude = ["fixtures/**", "ci/**"]
 
 [badges.travis-ci]
 repository = "carllerche/h2"
@@ -70,5 +70,5 @@ tokio = "0.1.8"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"
-webpki = "0.18.0-alpha"
+webpki = "0.18"
 webpki-roots = "0.14"
