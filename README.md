@@ -4,12 +4,12 @@ A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 [![Build Status](https://travis-ci.org/carllerche/h2.svg?branch=master)](https://travis-ci.org/carllerche/h2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Crates.io](https://img.shields.io/crates/v/h2.svg?maxAge=2592000)](https://crates.io/crates/h2)
+[![Crates.io](https://img.shields.io/crates/v/h2.svg)](https://crates.io/crates/h2)
 [![Documentation](https://docs.rs/h2/badge.svg)][dox]
 
 More information about this crate can be found in the [crate documentation][dox].
 
-[dox]: http://rust-doc.s3-website-us-east-1.amazonaws.com/h2/v0.1.13/h2/
+[dox]: https://docs.rs/h2
 
 ## Features
 
