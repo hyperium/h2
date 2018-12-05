@@ -334,7 +334,11 @@ impl Recv {
         capacity: WindowSize,
         task: &mut Option<Task>,
     ) {
-        trace!("release_connection_capacity; size={}", capacity);
+        trace!(
+            "release_connection_capacity; size={}, connection in_flight_data={}",
+            capacity,
+            self.in_flight_data,
+        );
 
         // Decrement in-flight data
         self.in_flight_data -= capacity;
@@ -381,6 +385,31 @@ impl Recv {
         }
 
         Ok(())
+    }
+
+    /// Release any unclaimed capacity for a closed stream.
+    pub fn release_closed_capacity(
+        &mut self,
+        stream: &mut store::Ptr,
+        task: &mut Option<Task>,
+    ) {
+        debug_assert_eq!(stream.ref_count, 0);
+
+        if stream.in_flight_recv_data == 0 {
+            return;
+        }
+
+        trace!(
+            "auto-release closed stream ({:?}) capacity: {:?}",
+            stream.id,
+            stream.in_flight_recv_data,
+        );
+
+        self.release_connection_capacity(
+            stream.in_flight_recv_data,
+            task,
+        );
+        stream.in_flight_recv_data = 0;
     }
 
     /// Set the "target" connection window size.
@@ -515,12 +544,6 @@ impl Recv {
             });
         }
 
-        // Update stream level flow control
-        stream.recv_flow.send_data(sz);
-
-        // Track the data as in-flight
-        stream.in_flight_recv_data += sz;
-
         if stream.dec_content_length(frame.payload().len()).is_err() {
             trace!("content-length overflow");
             return Err(RecvError::Stream {
@@ -543,6 +566,12 @@ impl Recv {
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
+
+        // Update stream level flow control
+        stream.recv_flow.send_data(sz);
+
+        // Track the data as in-flight
+        stream.in_flight_recv_data += sz;
 
         let event = Event::Data(frame.into_payload());
 

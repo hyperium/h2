@@ -542,8 +542,52 @@ fn stream_close_by_trailers_frame_releases_capacity() {
 }
 
 #[test]
-#[ignore]
-fn stream_close_by_send_reset_frame_releases_capacity() {}
+fn stream_close_by_send_reset_frame_releases_capacity() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::data(1, vec![0; 16_384]))
+        .send_frame(frames::data(1, vec![0; 16_384]).eos())
+        .recv_frame(frames::window_update(0, 16_384 * 2))
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://http2.akamai.com/")
+                .eos()
+        )
+        .send_frame(frames::headers(3).response(200).eos())
+        .close();
+
+    let client = client::handshake(io).expect("client handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+            let (resp, _) = client.send_request(request, true).unwrap();
+            conn.drive(resp.expect("response")).map(move |c| (c, client))
+        })
+        .and_then(|((conn, _res), mut client)| {
+            // ^-- ignore the response body
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(()).unwrap();
+            let (resp, _) = client.send_request(request, true).unwrap();
+            conn.drive(resp.expect("response"))
+        })
+        .and_then(|(conn, _res)| {
+            conn.expect("client conn")
+        });
+
+    srv.join(client).wait().expect("wait");
+}
 
 #[test]
 #[ignore]
@@ -1130,17 +1174,29 @@ fn increase_target_window_size_after_using_some() {
                 .uri("https://http2.akamai.com/")
                 .body(()).unwrap();
 
-            let res = client.send_request(request, true).unwrap().0
-                .and_then(|res| {
-                    // "leak" the capacity for now
-                    res.into_parts().1.concat2()
-                });
+            let res = client.send_request(request, true).unwrap().0;
 
             conn.drive(res)
-                .and_then(|(mut conn, _bytes)| {
-                    conn.set_target_window_size(2 << 20);
-                    conn.unwrap()
-                }).map(|c| (c, client))
+        })
+        .and_then(|(mut conn, res)| {
+            conn.set_target_window_size(2 << 20);
+            // drive an empty future to allow the WINDOW_UPDATE
+            // to go out while the response capacity is still in use.
+            let mut yielded = false;
+            conn.drive(futures::future::poll_fn(move || {
+                if yielded {
+                    Ok::<_, ()>(().into())
+                } else {
+                    yielded = true;
+                    futures::task::current().notify();
+                    Ok(futures::Async::NotReady)
+                }
+            }))
+                .map(move |(c, _)| (c, res))
+        })
+        .and_then(|(conn, res)| {
+            conn.drive(res.into_body().concat2())
+                .and_then(|(c, _)| c.expect("client"))
         });
 
     srv.join(client).wait().unwrap();
@@ -1213,7 +1269,6 @@ fn server_target_window_size() {
 
     srv.join(client).wait().unwrap();
 }
-
 
 #[test]
 fn recv_settings_increase_window_size_after_using_some() {
@@ -1360,6 +1415,7 @@ fn reset_stream_waiting_for_capacity() {
 
     client.join(srv).wait().unwrap();
 }
+
 
 #[test]
 fn data_padding() {
