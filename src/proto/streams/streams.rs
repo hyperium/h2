@@ -1118,10 +1118,16 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
         }
     }
 
+
     me.counts.transition(stream, |counts, stream| {
         maybe_cancel(stream, actions, counts);
 
         if stream.ref_count == 0 {
+
+            // Release any recv window back to connection, no one can access
+            // it anymore.
+            actions.recv.release_closed_capacity(stream, &mut actions.task);
+
             // We won't be able to reach our push promises anymore
             let mut ppp = stream.pending_push_promises.take();
             while let Some(promise) = ppp.pop(stream.store_mut()) {
