@@ -1,3 +1,10 @@
+# 0.1.14 (December 5, 2018)
+
+* Fix closed streams to always return window capacity to the connection (#334).
+* Fix locking when `Debug` printing an `OpaqueStreamRef` (#333).
+* Fix inverted split for DATA frame padding (#330).
+* Reduce `Debug` noise for `Frame` (#329).
+
 # 0.1.13 (October 16, 2018)
 
 * Add client support for Push Promises (#314).
