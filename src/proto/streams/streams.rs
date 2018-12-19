@@ -748,16 +748,8 @@ where
     }
 
     pub fn has_streams_or_other_references(&self) -> bool {
-        if Arc::strong_count(&self.inner) > 1 {
-            return true;
-        }
-
-        if Arc::strong_count(&self.send_buffer) > 1 {
-            return true;
-        }
-
         let me = self.inner.lock().unwrap();
-        me.counts.has_streams()
+        me.store.num_active_streams() > 0 || me.counts.has_streams()
     }
 
     #[cfg(feature = "unstable")]
