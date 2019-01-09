@@ -9,3 +9,4 @@ publish = false
 [dev-dependencies]
 h2-support = { path = "../h2-support" }
 log = "0.4.1"
+tokio = "0.1.8"
