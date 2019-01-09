@@ -63,6 +63,9 @@ struct Inner {
 
     /// Stores stream state
     store: Store,
+
+    /// The number of stream refs to this shared state.
+    refs: usize,
 }
 
 #[derive(Debug)]
@@ -106,6 +109,7 @@ where
                     conn_error: None,
                 },
                 store: Store::new(),
+                refs: 0,
             })),
             send_buffer: Arc::new(SendBuffer::new()),
             _p: ::std::marker::PhantomData,
@@ -485,7 +489,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
         let key = me.actions.recv.next_incoming(&mut me.store);
-
+        // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
+        // the lock, so it can't.
+        me.refs += 1;
         key.map(|key| {
             let stream = &mut me.store.resolve(key);
             trace!("next_incoming; id={:?}, state={:?}", stream.id, stream.state);
@@ -635,6 +641,10 @@ where
         // closed state.
         debug_assert!(!stream.state.is_closed());
 
+        // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
+        // the lock, so it can't.
+        me.refs += 1;
+
         Ok(StreamRef {
             opaque: OpaqueStreamRef::new(
                 self.inner.clone(),
@@ -748,16 +758,13 @@ where
     }
 
     pub fn has_streams_or_other_references(&self) -> bool {
-        if Arc::strong_count(&self.inner) > 1 {
-            return true;
-        }
 
         if Arc::strong_count(&self.send_buffer) > 1 {
             return true;
         }
 
         let me = self.inner.lock().unwrap();
-        me.counts.has_streams()
+        me.counts.has_streams() || me.refs > 1
     }
 
     #[cfg(feature = "unstable")]
@@ -978,6 +985,7 @@ impl OpaqueStreamRef {
             try_ready!(me.actions.recv.poll_pushed(&mut stream))
         };
         Ok(Async::Ready(res.map(|(h, key)| {
+            me.refs += 1;
             let opaque_ref =
                 OpaqueStreamRef::new(self.inner.clone(), &mut me.store.resolve(key));
             (h, opaque_ref)
@@ -1070,7 +1078,9 @@ impl fmt::Debug for OpaqueStreamRef {
 impl Clone for OpaqueStreamRef {
     fn clone(&self) -> Self {
         // Increment the ref count
-        self.inner.lock().unwrap().store.resolve(self.key).ref_inc();
+        let mut inner = self.inner.lock().unwrap();
+        inner.store.resolve(self.key).ref_inc();
+        inner.refs += 1;
 
         OpaqueStreamRef {
             inner: self.inner.clone(),
@@ -1098,7 +1108,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     };
 
     let me = &mut *me;
-
+    me.refs -= 1;
     let mut stream = me.store.resolve(key);
 
     trace!("drop_stream_ref; stream={:?}", stream);
