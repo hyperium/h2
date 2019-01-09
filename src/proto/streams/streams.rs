@@ -764,7 +764,7 @@ where
         }
 
         let me = self.inner.lock().unwrap();
-        me.counts.has_streams() || me.refs > 1
+        me.counts.has_streams() || me.refs > 0
     }
 
     #[cfg(feature = "unstable")]
