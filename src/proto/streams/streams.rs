@@ -758,11 +758,6 @@ where
     }
 
     pub fn has_streams_or_other_references(&self) -> bool {
-
-        if Arc::strong_count(&self.send_buffer) > 1 {
-            return true;
-        }
-
         let me = self.inner.lock().unwrap();
         me.counts.has_streams() || me.refs > 0
     }
