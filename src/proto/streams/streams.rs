@@ -109,7 +109,7 @@ where
                     conn_error: None,
                 },
                 store: Store::new(),
-                refs: 0,
+                refs: 1,
             })),
             send_buffer: Arc::new(SendBuffer::new()),
             _p: ::std::marker::PhantomData,
@@ -759,7 +759,7 @@ where
 
     pub fn has_streams_or_other_references(&self) -> bool {
         let me = self.inner.lock().unwrap();
-        me.counts.has_streams() || me.refs > 0
+        me.counts.has_streams() || me.refs > 1
     }
 
     #[cfg(feature = "unstable")]
@@ -775,6 +775,7 @@ where
     P: Peer,
 {
     fn clone(&self) -> Self {
+        self.inner.lock().unwrap().refs += 1;
         Streams {
             inner: self.inner.clone(),
             send_buffer: self.send_buffer.clone(),
@@ -782,6 +783,16 @@ where
         }
     }
 }
+
+impl<B, P> Drop for Streams<B, P>
+where
+    P: Peer,
+{
+    fn drop(&mut self) {
+        let _ = self.inner.lock().map(|mut inner| inner.refs -= 1);
+    }
+}
+
 
 // ===== impl StreamRef =====
 
