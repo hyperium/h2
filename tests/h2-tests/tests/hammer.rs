@@ -60,13 +60,6 @@ impl Server {
         self.addr.clone()
     }
 
-    fn expect_join(&mut self) {
-        self.join.take()
-            .expect("can't join twice")
-            .join()
-            .expect("join")
-    }
-
     fn request_count(&self) -> usize {
         self.reqs.load(Ordering::Acquire)
     }
@@ -108,57 +101,53 @@ fn hammer_client_concurrency() {
     // This reproduces issue #326.
     const N: usize = 5000;
 
-    let mut server = Server::serve(|| Bytes::from_static(b"hello world!"));
+    let server = Server::serve(|| Bytes::from_static(b"hello world!"));
 
     let addr = server.addr();
     let rsps = Arc::new(AtomicUsize::new(0));
-    let rsps2 = rsps.clone();
 
-    let client = thread::spawn(move || {
-        let rsps = rsps2;
-        for _ in 0..N {
-            let rsps = rsps.clone();
-            let tcp = TcpStream::connect(&addr);
-            let tcp = tcp.then(|res| {
-                let tcp = res.unwrap();
-                client::handshake(tcp)
-            }).then(move |res| {
-                    print!("sending");
-                    let rsps = rsps;
-                    let (mut client, h2) = res.unwrap();
-                    let request = Request::builder()
-                        .uri("https://http2.akamai.com/")
-                        .body(())
-                        .unwrap();
+    for i in 0..N {
+        print!("sending {}", i);
+        let rsps = rsps.clone();
+        let tcp = TcpStream::connect(&addr);
+        let tcp = tcp.then(|res| {
+            let tcp = res.unwrap();
+            client::handshake(tcp)
+        }).then(move |res| {
+                let rsps = rsps;
+                let (mut client, h2) = res.unwrap();
+                let request = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .body(())
+                    .unwrap();
 
-                    let (response, mut stream) = client.send_request(request, false).unwrap();
-                    stream.send_trailers(HeaderMap::new()).unwrap();
+                let (response, mut stream) = client.send_request(request, false).unwrap();
+                stream.send_trailers(HeaderMap::new()).unwrap();
 
-                    tokio::spawn(h2.map_err(|e| panic!("client conn error: {:?}", e)));
+                tokio::spawn(h2.map_err(|e| panic!("client conn error: {:?}", e)));
 
-                    response
-                        .and_then(|response| {
-                            let (_, body) = response.into_parts();
+                response
+                    .and_then(|response| {
+                        let (_, body) = response.into_parts();
 
-                            Process {
-                                body,
-                                trailers: false,
-                            }
-                        })
-                        .map_err(|e| {
-                            panic!("client error: {:?}", e);
-                        })
-                        .map(move |_| {
-                            println!(" {}...done", rsps.fetch_add(1, Ordering::Release));
-                        })
-                });
+                        Process {
+                            body,
+                            trailers: false,
+                        }
+                    })
+                    .map_err(|e| {
+                        panic!("client error: {:?}", e);
+                    })
+                    .map(move |_| {
+                        rsps.fetch_add(1, Ordering::Release);
+                    })
+            });
 
-            tokio::run(tcp);
-        }
-        println!("all done");
-    });
+        tokio::run(tcp);
+        println!("...done");
+    }
 
-    client.join().expect("client thread");
+    println!("all done");
 
     assert_eq!(N, rsps.load(Ordering::Acquire));
     assert_eq!(N, server.request_count());
