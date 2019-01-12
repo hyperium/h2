@@ -1,3 +1,7 @@
+# 0.1.15 (January 12, 2018)
+
+* Fix race condition bug related to shutting down the client (#338).
+
 # 0.1.14 (December 5, 2018)
 
 * Fix closed streams to always return window capacity to the connection (#334).
