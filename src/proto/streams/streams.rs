@@ -876,12 +876,8 @@ impl<B> StreamRef<B> {
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        let promised_id = {
-            let actions = &mut me.actions;
-            actions.send.reserve_local()?
-        };
-
         let actions = &mut me.actions;
+        let promised_id = actions.send.reserve_local()?;
 
         let child_key = {
             let mut child_stream = me.store.insert(

@@ -333,9 +333,8 @@ impl PushPromise {
         // A promised request "that indicates the presence of a request body
         // MUST reset the promised stream with a stream error"
         if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
-            match parse_u64(content_length.as_bytes()) {
-                Ok(0) => {},
-                _ => return false,
+            if parse_u64(content_length.as_bytes()) != Ok(0) {
+                return false;
             }
         }
         // "The server MUST include a method in the :method pseudo-header field
