@@ -128,8 +128,8 @@ impl Send {
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
             ",
-            stream.id,
             reason,
+            stream.id,
             is_reset,
             is_closed,
             is_empty,
