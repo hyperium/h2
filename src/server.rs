@@ -1226,15 +1226,19 @@ impl proto::Peer for Peer {
         let mut parts = uri::Parts::default();
 
         if let Some(scheme) = pseudo.scheme {
-            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed scheme"))?);
+            let maybe_scheme = uri::Scheme::from_shared(scheme.clone().into_inner());
+            parts.scheme = Some(maybe_scheme.or_else(|why| malformed!(
+                "malformed headers: malformed scheme ({:?}): {}", scheme, why,
+            ))?);
         } else {
             malformed!("malformed headers: missing scheme");
         }
 
         if let Some(authority) = pseudo.authority {
-            parts.authority = Some(uri::Authority::from_shared(authority.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed authority"))?);
+            let maybe_authority = uri::Authority::from_shared(authority.clone().into_inner());
+            parts.authority = Some(maybe_authority.or_else(|why| malformed!(
+                "malformed headers: malformed authority ({:?}): {}", authority, why,
+            ))?);
         }
 
         if let Some(path) = pseudo.path {
@@ -1243,8 +1247,10 @@ impl proto::Peer for Peer {
                 malformed!("malformed headers: missing path");
             }
 
-            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed path"))?);
+            let maybe_path = uri::PathAndQuery::from_shared(path.clone().into_inner());
+            parts.path_and_query = Some(maybe_path.or_else(|why| malformed!(
+                "malformed headers: malformed path ({:?}): {}", path, why,
+            ))?);
         }
 
         b.uri(parts);
