@@ -1,4 +1,8 @@
-# 0.1.15 (January 12, 2018)
+# 0.1.16 (January 24, 2019)
+
+* Log header values when malformed (#342).
+
+# 0.1.15 (January 12, 2019)
 
 * Fix race condition bug related to shutting down the client (#338).
 
