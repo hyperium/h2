@@ -187,7 +187,7 @@ use std::usize;
 ///
 /// [module]: index.html
 #[must_use = "futures do nothing unless polled"]
-pub struct Handshake<T, B: IntoBuf = Bytes> {
+pub struct Handshake<T, B = Bytes> {
     builder: Builder,
     inner: WriteAll<T, &'static [u8]>,
     _marker: PhantomData<B>,
