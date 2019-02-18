@@ -178,6 +178,10 @@ where
         }
     }
 
+    pub(crate) fn take_user_pings(&mut self) -> Option<UserPings> {
+        self.ping_pong.take_user_pings()
+    }
+
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
         use codec::RecvError::*;

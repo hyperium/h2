@@ -54,6 +54,9 @@ pub enum UserError {
 
     /// Calls `SendResponse::poll_reset` after having called `send_response`.
     PollResetAfterSendResponse,
+
+    /// Calls `PingPong::send_ping` before receiving a pong.
+    SendPingWhilePending,
 }
 
 // ===== impl RecvError =====
@@ -134,6 +137,7 @@ impl error::Error for UserError {
             MalformedHeaders => "malformed headers",
             MissingUriSchemeAndAuthority => "request URI missing scheme and authority",
             PollResetAfterSendResponse => "poll_reset after send_response is illegal",
+            SendPingWhilePending => "send_ping before received previous pong",
         }
     }
 }

@@ -108,3 +108,100 @@ fn pong_has_highest_priority() {
 
     srv.join(client).wait().expect("wait");
 }
+
+#[test]
+fn user_ping_pong() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .expect("srv handshake")
+        .recv_settings()
+        .recv_frame(frames::ping(frame::Ping::USER))
+        .send_frame(frames::ping(frame::Ping::USER).pong())
+        .recv_frame(frames::go_away(0))
+        .recv_eof();
+
+    let client = client::handshake(io)
+        .expect("client handshake")
+        .and_then(|(client, conn)| {
+            // yield once so we can ack server settings
+            conn
+                .drive(util::yield_once())
+                .map(move |(conn, ())| (client, conn))
+        })
+        .and_then(|(client, mut conn)| {
+            // `ping_pong()` method conflict with mock future ext trait.
+            let mut ping_pong = client::Connection::ping_pong(&mut conn)
+                .expect("taking ping_pong");
+            ping_pong
+                .send_ping(Ping::opaque())
+                .expect("send ping");
+
+            // multiple pings results in a user error...
+            assert_eq!(
+                ping_pong.send_ping(Ping::opaque()).expect_err("ping 2").to_string(),
+                "user error: send_ping before received previous pong",
+                "send_ping while ping pending is a user error",
+            );
+
+            conn
+                .drive(futures::future::poll_fn(move || {
+                    ping_pong.poll_pong()
+                }))
+                .and_then(move |(conn, _pong)| {
+                    drop(client);
+                    conn.expect("client")
+                })
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
+fn user_notifies_when_connection_closes() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .expect("srv handshake")
+        .recv_settings();
+
+    let client = client::handshake(io)
+        .expect("client handshake")
+        .and_then(|(client, conn)| {
+            // yield once so we can ack server settings
+            conn
+                .drive(util::yield_once())
+                .map(move |(conn, ())| (client, conn))
+        })
+        .map(|(_client, conn)| conn);
+
+    let (mut client, srv) = client.join(srv).wait().expect("wait");
+
+    // `ping_pong()` method conflict with mock future ext trait.
+    let mut ping_pong = client::Connection::ping_pong(&mut client)
+        .expect("taking ping_pong");
+
+    // Spawn a thread so we can park a task waiting on `poll_pong`, and then
+    // drop the client and be sure the parked task is notified...
+    let t = thread::spawn(move || {
+        poll_fn(|| { ping_pong.poll_pong() })
+            .wait()
+            .expect_err("poll_pong should error");
+        ping_pong
+    });
+
+    // Sleep to let the ping thread park its task...
+    thread::sleep(Duration::from_millis(50));
+    drop(client);
+    drop(srv);
+
+    let mut ping_pong = t.join().expect("ping pong thread join");
+
+    // Now that the connection is closed, also test `send_ping` errors...
+    assert_eq!(
+        ping_pong.send_ping(Ping::opaque()).expect_err("send_ping").to_string(),
+        "broken pipe",
+    );
+}

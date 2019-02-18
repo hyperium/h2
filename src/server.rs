@@ -129,7 +129,7 @@
 //! [`SendStream`]: ../struct.SendStream.html
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
-use {SendStream, RecvStream, ReleaseCapacity};
+use {SendStream, RecvStream, ReleaseCapacity, PingPong};
 use codec::{Codec, RecvError};
 use frame::{self, Pseudo, Reason, Settings, StreamId};
 use proto::{self, Config, Prioritized};
@@ -458,6 +458,17 @@ where
     /// [1]: http://httpwg.org/specs/rfc7540.html#GOAWAY
     pub fn graceful_shutdown(&mut self) {
         self.connection.go_away_gracefully();
+    }
+
+    /// Takes a `PingPong` instance from the connection.
+    ///
+    /// # Note
+    ///
+    /// This may only be called once. Calling multiple times will return `None`.
+    pub fn ping_pong(&mut self) -> Option<PingPong> {
+        self.connection
+            .take_user_pings()
+            .map(PingPong::new)
     }
 }
 
