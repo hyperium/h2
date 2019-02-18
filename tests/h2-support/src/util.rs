@@ -8,6 +8,19 @@ pub fn byte_str(s: &str) -> String<Bytes> {
     String::try_from(Bytes::from(s)).unwrap()
 }
 
+pub fn yield_once() -> impl Future<Item=(), Error=()> {
+    let mut yielded = false;
+    futures::future::poll_fn(move || {
+        if yielded {
+            Ok(Async::Ready(()))
+        } else {
+            yielded = true;
+            futures::task::current().notify();
+            Ok(Async::NotReady)
+        }
+    })
+}
+
 pub fn wait_for_capacity(stream: h2::SendStream<Bytes>, target: usize) -> WaitForCapacity {
     WaitForCapacity {
         stream: Some(stream),

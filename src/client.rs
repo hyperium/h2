@@ -156,7 +156,7 @@
 //! [`Builder`]: struct.Builder.html
 //! [`Error`]: ../struct.Error.html
 
-use {SendStream, RecvStream, ReleaseCapacity};
+use {SendStream, RecvStream, ReleaseCapacity, PingPong};
 use codec::{Codec, RecvError, SendError, UserError};
 use frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use proto;
@@ -319,29 +319,11 @@ pub struct PushPromise {
     response: PushedResponseFuture,
 }
 
-#[derive(Debug)]
 /// A stream of pushed responses and corresponding promised requests
+#[derive(Debug)]
+#[must_use = "streams do nothing unless polled"]
 pub struct PushPromises {
     inner: proto::OpaqueStreamRef,
-}
-
-impl Stream for PushPromises {
-    type Item = PushPromise;
-    type Error = ::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match try_ready!(self.inner.poll_pushed()) {
-            Some((request, response)) => {
-                let response = PushedResponseFuture {
-                    inner: ResponseFuture {
-                        inner: response, push_promise_consumed: false
-                    }
-                };
-                Ok(Async::Ready(Some(PushPromise{request, response})))
-            }
-            None => Ok(Async::Ready(None)),
-        }
-    }
 }
 
 /// Builds client connections with custom configuration values.
@@ -1282,6 +1264,17 @@ where
         assert!(size <= proto::MAX_WINDOW_SIZE);
         self.inner.set_target_window_size(size);
     }
+
+    /// Takes a `PingPong` instance from the connection.
+    ///
+    /// # Note
+    ///
+    /// This may only be called once. Calling multiple times will return `None`.
+    pub fn ping_pong(&mut self) -> Option<PingPong> {
+        self.inner
+            .take_user_pings()
+            .map(PingPong::new)
+    }
 }
 
 impl<T, B> Future for Connection<T, B>
@@ -1413,6 +1406,27 @@ impl ResponseFuture {
         }
         self.push_promise_consumed = true;
         PushPromises { inner: self.inner.clone() }
+    }
+}
+
+// ===== impl PushPromises =====
+
+impl Stream for PushPromises {
+    type Item = PushPromise;
+    type Error = ::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match try_ready!(self.inner.poll_pushed()) {
+            Some((request, response)) => {
+                let response = PushedResponseFuture {
+                    inner: ResponseFuture {
+                        inner: response, push_promise_consumed: false
+                    }
+                };
+                Ok(Async::Ready(Some(PushPromise{request, response})))
+            }
+            None => Ok(Async::Ready(None)),
+        }
     }
 }
 

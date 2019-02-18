@@ -193,6 +193,27 @@ pub struct ReleaseCapacity {
     inner: proto::OpaqueStreamRef,
 }
 
+/// A handle to send and receive PING frames with the peer.
+// NOT Clone on purpose
+pub struct PingPong {
+    inner: proto::UserPings,
+}
+
+/// Sent via [`PingPong`][] to send a PING frame to a peer.
+///
+/// [`PingPong`]: struct.PingPong.html
+pub struct Ping {
+    _p: (),
+}
+
+/// Received via [`PingPong`][] when a peer acknowledges a [`Ping`][].
+///
+/// [`PingPong`]: struct.PingPong.html
+/// [`Ping`]: struct.Ping.html
+pub struct Pong {
+    _p: (),
+}
+
 // ===== impl SendStream =====
 
 impl<B: IntoBuf> SendStream<B> {
@@ -475,5 +496,114 @@ impl Clone for ReleaseCapacity {
     fn clone(&self) -> Self {
         let inner = self.inner.clone();
         ReleaseCapacity { inner }
+    }
+}
+
+// ===== impl PingPong =====
+
+impl PingPong {
+    pub(crate) fn new(inner: proto::UserPings) -> Self {
+        PingPong {
+            inner,
+        }
+    }
+
+    /// Send a `PING` frame to the peer.
+    ///
+    /// Only one ping can be pending at a time, so trying to send while
+    /// a pong has not be received means this will return a user error.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn doc(mut ping_pong: h2::PingPong) {
+    /// // let mut ping_pong = ...
+    /// ping_pong
+    ///     .send_ping(h2::Ping::opaque())
+    ///     .unwrap();
+    /// # }
+    /// ```
+    pub fn send_ping(&mut self, ping: Ping) -> Result<(), ::Error> {
+        // Passing a `Ping` here is just to be forwards-compatible with
+        // eventually allowing choosing a ping payload. For now, we can
+        // just drop it.
+        drop(ping);
+
+        self.inner
+            .send_ping()
+            .map_err(|err| match err {
+                Some(err) => err.into(),
+                None => UserError::SendPingWhilePending.into()
+            })
+    }
+
+    /// Polls for the acknowledgement of a previously [sent][] `PING` frame.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # extern crate futures;
+    /// # extern crate h2;
+    /// # use futures::Future;
+    /// # fn doc(mut ping_pong: h2::PingPong) {
+    /// // let mut ping_pong = ...
+    ///
+    /// // First, send a PING.
+    /// ping_pong
+    ///     .send_ping(h2::Ping::opaque())
+    ///     .unwrap();
+    ///
+    /// // And then wait for the PONG.
+    /// futures::future::poll_fn(move || {
+    ///     ping_pong.poll_pong()
+    /// }).wait().unwrap();
+    /// # }
+    /// # fn main() {}
+    /// ```
+    ///
+    /// [sent]: struct.PingPong.html#method.send_ping
+    pub fn poll_pong(&mut self) -> Poll<Pong, ::Error> {
+        try_ready!(self.inner.poll_pong());
+        Ok(Async::Ready(Pong {
+            _p: (),
+        }))
+    }
+}
+
+impl fmt::Debug for PingPong {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("PingPong")
+            .finish()
+    }
+}
+
+// ===== impl Ping =====
+
+impl Ping {
+    /// Creates a new opaque `Ping` to be sent via a [`PingPong`][].
+    ///
+    /// The payload is "opaque", such that it shouldn't be depended on.
+    ///
+    /// [`PingPong`]: struct.PingPong.html
+    pub fn opaque() -> Ping {
+        Ping {
+            _p: (),
+        }
+    }
+}
+
+impl fmt::Debug for Ping {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Ping")
+            .finish()
+    }
+}
+
+// ===== impl Pong =====
+
+impl fmt::Debug for Pong {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Pong")
+            .finish()
     }
 }

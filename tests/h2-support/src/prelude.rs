@@ -38,6 +38,7 @@ pub use self::bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
 pub use tokio_io::{AsyncRead, AsyncWrite};
 
+pub use std::thread;
 pub use std::time::Duration;
 
 // ===== Everything under here shouldn't be used =====
