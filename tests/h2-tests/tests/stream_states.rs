@@ -513,7 +513,7 @@ fn send_rst_stream_allows_recv_data() {
 
             conn.expect("client")
                 .drive(req)
-                .and_then(|(conn, _)| conn)
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
 
@@ -562,7 +562,7 @@ fn send_rst_stream_allows_recv_trailers() {
 
             conn.expect("client")
                 .drive(req)
-                .and_then(|(conn, _)| conn)
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
 
@@ -709,7 +709,8 @@ fn rst_stream_max() {
 
             conn.drive(req1.join(req2))
                 .and_then(|(conn, _)| conn.expect_err("client"))
-                .map(|err| {
+                .map(move |err| {
+                    drop(client);
                     assert_eq!(
                         err.to_string(),
                         "protocol error: unspecific protocol error detected"
@@ -1127,9 +1128,9 @@ fn srv_window_update_on_lower_stream_id() {
 
             h2.expect("client")
                 .drive(response)
-                .and_then(|(h2, _)| {
+                .and_then(move |(h2, _)| {
                     println!("RESPONSE DONE");
-                    h2
+                    h2.map(move |()| drop(client))
                 })
                 .then(|result| {
                     println!("WUT");

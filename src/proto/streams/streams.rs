@@ -746,9 +746,15 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "unstable")]
     pub fn num_active_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_active_streams()
+    }
+
+    pub fn has_streams(&self) -> bool {
+        let me = self.inner.lock().unwrap();
+        me.counts.has_streams()
     }
 
     pub fn has_streams_or_other_references(&self) -> bool {

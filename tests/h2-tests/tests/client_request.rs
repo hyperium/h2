@@ -375,17 +375,8 @@ fn send_reset_notifies_recv_stream() {
         )
         .send_frame(frames::headers(1).response(200))
         .recv_frame(frames::reset(1).refused())
-        .recv_frame(
-            frames::headers(3)
-                .request("POST", "https://example.com/")
-                .eos()
-        )
-        .send_frame(
-            frames::headers(3)
-                .response(200)
-                .eos()
-        )
-        .close();
+        .recv_frame(frames::go_away(0))
+        .recv_eof();
 
     let client = client::handshake(io)
         .expect("handshake")
@@ -424,22 +415,10 @@ fn send_reset_notifies_recv_stream() {
             unordered.push(Box::new(tx));
 
             conn.drive(unordered.for_each(|_| Ok(())))
-                .map(move |(conn, _)| (client, conn))
-        })
-        .and_then(|(mut client, conn)| {
-            // send a second request just to keep the connection alive until
-            // we know the previous `RecvStream` was notified about the reset.
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let (resp2, _) = client.send_request(request, true).unwrap();
-            let fut = resp2.map(|_res| ());
-
-            conn.drive(fut)
-                .and_then(|(conn, _)| conn.expect("client"))
+                .and_then(move |(conn, _)| {
+                    drop(client); // now let client gracefully goaway
+                    conn.expect("client")
+                })
         });
 
     client.join(srv).wait().expect("wait");
