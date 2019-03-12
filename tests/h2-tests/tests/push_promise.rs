@@ -198,7 +198,7 @@ fn pending_push_promises_reset_when_dropped() {
             });
 
         conn.drive(req)
-            .and_then(|(conn, _)| conn.expect("client"))
+            .and_then(move |(conn, _)| conn.expect("client").map(move |()| drop(client)))
     });
 
     client.join(srv).wait().expect("wait");

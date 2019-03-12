@@ -173,7 +173,7 @@ where
     pub fn maybe_close_connection_if_no_streams(&mut self) {
         // If we poll() and realize that there are no streams or references
         // then we can close the connection by transitioning to GOAWAY
-        if self.streams.num_active_streams() == 0 && !self.streams.has_streams_or_other_references() {
+        if !self.streams.has_streams_or_other_references() {
             self.go_away_now(Reason::NO_ERROR);
         }
     }
@@ -202,7 +202,7 @@ where
                             try_ready!(self.streams.poll_complete(&mut self.codec));
 
                             if self.error.is_some() || self.go_away.should_close_on_idle() {
-                                if self.streams.num_active_streams() == 0 {
+                                if !self.streams.has_streams() {
                                     self.go_away_now(Reason::NO_ERROR);
                                     continue;
                                 }

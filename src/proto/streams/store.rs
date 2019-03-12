@@ -193,6 +193,7 @@ impl ops::IndexMut<Key> for Store {
 }
 
 impl Store {
+    #[cfg(feature = "unstable")]
     pub fn num_active_streams(&self) -> usize {
         self.ids.len()
     }

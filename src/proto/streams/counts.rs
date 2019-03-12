@@ -147,7 +147,6 @@ impl Counts {
         if stream.is_closed() {
             if !stream.is_pending_reset_expiration() {
                 stream.unlink();
-
                 if is_reset_counted {
                     self.dec_num_reset_streams();
                 }
