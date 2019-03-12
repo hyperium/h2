@@ -361,6 +361,91 @@ fn send_request_poll_ready_when_connection_error() {
 }
 
 #[test]
+fn send_reset_notifies_recv_stream() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+        )
+        .send_frame(frames::headers(1).response(200))
+        .recv_frame(frames::reset(1).refused())
+        .recv_frame(
+            frames::headers(3)
+                .request("POST", "https://example.com/")
+                .eos()
+        )
+        .send_frame(
+            frames::headers(3)
+                .response(200)
+                .eos()
+        )
+        .close();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            // first request is allowed
+            let (resp1, tx) = client.send_request(request, false).unwrap();
+
+            conn.drive(resp1)
+                .map(move |(conn, res)| (client, conn, tx, res))
+        })
+        .and_then(|(client, conn, mut tx, res)| {
+            let tx = futures::future::poll_fn(move || {
+                tx.send_reset(h2::Reason::REFUSED_STREAM);
+                Ok(().into())
+            });
+
+
+            let rx = res
+                .into_body()
+                .for_each(|_| -> Result<(), _> {
+                    unreachable!("no response body expected")
+                });
+            // a FuturesUnordered is used on purpose!
+            //
+            // We don't want a join, since any of the other futures notifying
+            // will make the rx future polled again, but we are
+            // specifically testing that rx gets notified on its own.
+            let mut unordered = futures::stream::FuturesUnordered::<Box<Future<Item=(), Error=()>>>::new();
+            unordered.push(Box::new(rx.expect_err("RecvBody").then(|_| Ok(()))));
+            unordered.push(Box::new(tx));
+
+            conn.drive(unordered.for_each(|_| Ok(())))
+                .map(move |(conn, _)| (client, conn))
+        })
+        .and_then(|(mut client, conn)| {
+            // send a second request just to keep the connection alive until
+            // we know the previous `RecvStream` was notified about the reset.
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp2, _) = client.send_request(request, true).unwrap();
+            let fut = resp2.map(|_res| ());
+
+            conn.drive(fut)
+                .and_then(|(conn, _)| conn.expect("client"))
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
 fn http_11_request_without_scheme_or_authority() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();

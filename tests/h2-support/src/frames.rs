@@ -321,6 +321,11 @@ impl Mock<frame::Reset> {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::INTERNAL_ERROR))
     }
+
+    pub fn reason(self, reason: frame::Reason) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, reason))
+    }
 }
 
 impl From<Mock<frame::Reset>> for SendFrame {

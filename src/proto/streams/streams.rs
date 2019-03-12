@@ -671,15 +671,9 @@ where
         };
 
         let stream = me.store.resolve(key);
-        let actions = &mut me.actions;
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
-
-        me.counts.transition(stream, |counts, stream| {
-            actions.send.send_reset(
-                reason, send_buffer, stream, counts, &mut actions.task);
-            actions.recv.enqueue_reset_expiration(stream, counts)
-        })
+        me.actions.send_reset(stream, reason, &mut me.counts, send_buffer);
     }
 
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
@@ -848,14 +842,10 @@ impl<B> StreamRef<B> {
         let me = &mut *me;
 
         let stream = me.store.resolve(self.opaque.key);
-        let actions = &mut me.actions;
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.transition(stream, |counts, stream| {
-            actions.send.send_reset(
-                reason, send_buffer, stream, counts, &mut actions.task)
-        })
+        me.actions.send_reset(stream, reason, &mut me.counts, send_buffer);
     }
 
     pub fn send_response(
@@ -1178,6 +1168,22 @@ impl<B> SendBuffer<B> {
 // ===== impl Actions =====
 
 impl Actions {
+    fn send_reset<B>(
+        &mut self,
+        stream: store::Ptr,
+        reason: Reason,
+        counts: &mut Counts,
+        send_buffer: &mut Buffer<Frame<B>>,
+    ) {
+        counts.transition(stream, |counts, stream| {
+            self.send.send_reset(
+                reason, send_buffer, stream, counts, &mut self.task);
+            self.recv.enqueue_reset_expiration(stream, counts);
+            // if a RecvStream is parked, ensure it's notified
+            stream.notify_recv();
+        });
+    }
+
     fn reset_on_recv_stream_err<B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
