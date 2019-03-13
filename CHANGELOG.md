@@ -1,3 +1,9 @@
+# 0.1.17 (March 12, 2019)
+
+* Add user PING support (#346).
+* Fix notifying a `RecvStream` task if locally sending a reset.
+* Fix connections "hanging" when all handles are dropped but some streams had been reset.
+
 # 0.1.16 (January 24, 2019)
 
 * Log header values when malformed (#342).
