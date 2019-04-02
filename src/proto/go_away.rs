@@ -13,7 +13,8 @@ pub(super) struct GoAway {
     close_now: bool,
     /// Records if we've sent any GOAWAY before.
     going_away: Option<GoingAway>,
-
+    /// Whether the user started the GOAWAY by calling `abrupt_shutdown`.
+    is_user_initiated: bool,
     /// A GOAWAY frame that must be buffered in the Codec immediately.
     pending: Option<frame::GoAway>,
 }
@@ -45,6 +46,7 @@ impl GoAway {
         GoAway {
             close_now: false,
             going_away: None,
+            is_user_initiated: false,
             pending: None,
         }
     }
@@ -82,9 +84,18 @@ impl GoAway {
         self.go_away(f);
     }
 
+    pub fn go_away_from_user(&mut self, f: frame::GoAway) {
+        self.is_user_initiated = true;
+        self.go_away_now(f);
+    }
+
     /// Return if a GOAWAY has ever been scheduled.
     pub fn is_going_away(&self) -> bool {
         self.going_away.is_some()
+    }
+
+    pub fn is_user_initiated(&self) -> bool {
+        self.is_user_initiated
     }
 
     /// Return the last Reason we've sent.

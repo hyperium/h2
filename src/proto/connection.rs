@@ -139,10 +139,19 @@ where
         self.go_away.go_away(frame);
     }
 
-    pub fn go_away_now(&mut self, e: Reason) {
+    fn go_away_now(&mut self, e: Reason) {
         let last_processed_id = self.streams.last_processed_id();
         let frame = frame::GoAway::new(last_processed_id, e);
         self.go_away.go_away_now(frame);
+    }
+
+    pub fn go_away_from_user(&mut self, e: Reason) {
+        let last_processed_id = self.streams.last_processed_id();
+        let frame = frame::GoAway::new(last_processed_id, e);
+        self.go_away.go_away_from_user(frame);
+
+        // Notify all streams of reason we're abruptly closing.
+        self.streams.recv_err(&proto::Error::Proto(e));
     }
 
     fn take_error(&mut self, ours: Reason) -> Poll<(), proto::Error> {
@@ -214,7 +223,7 @@ where
                         // error. This is handled by setting a GOAWAY frame followed by
                         // terminating the connection.
                         Err(Connection(e)) => {
-                            debug!("Connection::poll; err={:?}", e);
+                            debug!("Connection::poll; connection error={:?}", e);
 
                             // We may have already sent a GOAWAY for this error,
                             // if so, don't send another, just flush and close up.
@@ -237,7 +246,7 @@ where
                             id,
                             reason,
                         }) => {
-                            trace!("stream level error; id={:?}; reason={:?}", id, reason);
+                            trace!("stream error; id={:?}; reason={:?}", id, reason);
                             self.streams.send_reset(id, reason);
                         },
                         // Attempting to read a frame resulted in an I/O error. All
@@ -245,6 +254,7 @@ where
                         //
                         // TODO: Are I/O errors recoverable?
                         Err(Io(e)) => {
+                            debug!("Connection::poll; IO error={:?}", e);
                             let e = e.into();
 
                             // Reset all active streams
@@ -256,7 +266,7 @@ where
                     }
                 }
                 State::Closing(reason) => {
-                    trace!("connection closing after flush, reason={:?}", reason);
+                    trace!("connection closing after flush");
                     // Flush/shutdown the codec
                     try_ready!(self.codec.shutdown());
 
@@ -284,7 +294,13 @@ where
             // - If it has, we've also added a PING to be sent in poll_ready
             if let Some(reason) = try_ready!(self.poll_go_away()) {
                 if self.go_away.should_close_now() {
-                    return Err(RecvError::Connection(reason));
+                    if self.go_away.is_user_initiated() {
+                        // A user initiated abrupt shutdown shouldn't return
+                        // the same error back to the user.
+                        return Ok(Async::Ready(()));
+                    } else {
+                        return Err(RecvError::Connection(reason));
+                    }
                 }
                 // Only NO_ERROR should be waiting for idle
                 debug_assert_eq!(reason, Reason::NO_ERROR, "graceful GOAWAY should be NO_ERROR");
