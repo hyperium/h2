@@ -220,13 +220,33 @@ fn abrupt_shutdown() {
             frames::headers(1)
                 .request("POST", "https://example.com/")
         )
-        .recv_frame(frames::go_away(1))
-        .close();
+        .recv_frame(frames::go_away(1).internal_error())
+        .recv_eof();
 
     let srv = server::handshake(io).expect("handshake").and_then(|srv| {
-        srv.into_future().unwrap().and_then(|(_, mut srv)| {
-            srv.abrupt_shutdown(Reason::NO_ERROR);
-            srv.into_future().unwrap()
+        srv.into_future().unwrap().and_then(|(item, mut srv)| {
+            let (req, tx) = item.expect("server receives request");
+
+            let req_fut = req
+                .into_body()
+                .concat2()
+                .map(|_| drop(tx))
+                .expect_err("request body should error")
+                .map(|err| {
+                    assert_eq!(
+                        err.reason(),
+                        Some(Reason::INTERNAL_ERROR),
+                        "streams should be also error with user's reason",
+                    );
+                });
+
+            srv.abrupt_shutdown(Reason::INTERNAL_ERROR);
+
+            let srv_fut = futures::future::poll_fn(move || {
+                srv.poll_close()
+            }).expect("server");
+
+            req_fut.join(srv_fut)
         })
     });
 

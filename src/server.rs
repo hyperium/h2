@@ -443,7 +443,7 @@ where
     ///
     /// For graceful shutdowns, see [`graceful_shutdown`](Connection::graceful_shutdown).
     pub fn abrupt_shutdown(&mut self, reason: Reason) {
-        self.connection.go_away_now(reason);
+        self.connection.go_away_from_user(reason);
     }
 
     /// Starts a [graceful shutdown][1] process.

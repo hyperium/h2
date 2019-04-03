@@ -260,30 +260,29 @@ impl From<Mock<frame::PushPromise>> for SendFrame {
 
 impl Mock<frame::GoAway> {
     pub fn protocol_error(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::PROTOCOL_ERROR,
-        ))
+        self.reason(frame::Reason::PROTOCOL_ERROR)
+    }
+
+    pub fn internal_error(self) -> Self {
+        self.reason(frame::Reason::INTERNAL_ERROR)
     }
 
     pub fn flow_control(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::FLOW_CONTROL_ERROR,
-        ))
+        self.reason(frame::Reason::FLOW_CONTROL_ERROR)
     }
 
     pub fn frame_size(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::FRAME_SIZE_ERROR,
-        ))
+        self.reason(frame::Reason::FRAME_SIZE_ERROR)
     }
 
     pub fn no_error(self) -> Self {
+        self.reason(frame::Reason::NO_ERROR)
+    }
+
+    pub fn reason(self, reason: frame::Reason) -> Self {
         Mock(frame::GoAway::new(
             self.0.last_stream_id(),
-            frame::Reason::NO_ERROR,
+            reason,
         ))
     }
 }
