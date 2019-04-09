@@ -1,3 +1,7 @@
+# 0.1.18 (April 9, 2019)
+
+* Fix `server::Connection::abrupt_shutdown` to no longer return the same error the user sent (#352).
+
 # 0.1.17 (March 12, 2019)
 
 * Add user PING support (#346).
