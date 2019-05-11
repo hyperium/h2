@@ -1,7 +1,9 @@
-use bytes::{BufMut, BytesMut};
-use frame::{Error, Frame, FrameSize, Head, Kind, StreamId};
+use std::fmt;
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+use bytes::{BufMut, BytesMut};
+use frame::{util, Error, Frame, FrameSize, Head, Kind, StreamId};
+
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct Settings {
     flags: SettingsFlags,
     // Fields
@@ -27,7 +29,7 @@ pub enum Setting {
     MaxHeaderListSize(u32),
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub struct SettingsFlags(u8);
 
 const ACK: u8 = 0x1;
@@ -231,6 +233,36 @@ impl<T> From<Settings> for Frame<T> {
     }
 }
 
+impl fmt::Debug for Settings {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut builder = f.debug_struct("Settings");
+        builder.field("flags", &self.flags);
+
+        self.for_each(|setting| match setting {
+            Setting::EnablePush(v) => {
+                builder.field("enable_push", &v);
+            }
+            Setting::HeaderTableSize(v) => {
+                builder.field("header_table_size", &v);
+            }
+            Setting::InitialWindowSize(v) => {
+                builder.field("initial_window_size", &v);
+            }
+            Setting::MaxConcurrentStreams(v) => {
+                builder.field("max_concurrent_streams", &v);
+            }
+            Setting::MaxFrameSize(v) => {
+                builder.field("max_frame_size", &v);
+            }
+            Setting::MaxHeaderListSize(v) => {
+                builder.field("max_header_list_size", &v);
+            }
+        });
+
+        builder.finish()
+    }
+}
+
 // ===== impl Setting =====
 
 impl Setting {
@@ -308,5 +340,13 @@ impl SettingsFlags {
 impl From<SettingsFlags> for u8 {
     fn from(src: SettingsFlags) -> u8 {
         src.0
+    }
+}
+
+impl fmt::Debug for SettingsFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        util::debug_flags(f, self.0)
+            .flag_if(self.is_ack(), "ACK")
+            .finish()
     }
 }

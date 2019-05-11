@@ -1,4 +1,4 @@
-use super::{StreamDependency, StreamId};
+use super::{util, StreamDependency, StreamId};
 use frame::{Error, Frame, Head, Kind};
 use hpack;
 
@@ -274,12 +274,17 @@ impl<T> From<Headers> for Frame<T> {
 
 impl fmt::Debug for Headers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Headers")
+        let mut builder = f.debug_struct("Headers");
+        builder
             .field("stream_id", &self.stream_id)
-            .field("stream_dep", &self.stream_dep)
-            .field("flags", &self.flags)
-            // `fields` and `pseudo` purposefully not included
-            .finish()
+            .field("flags", &self.flags);
+
+        if let Some(ref dep) = self.stream_dep {
+            builder.field("stream_dep", dep);
+        }
+
+        // `fields` and `pseudo` purposefully not included
+        builder.finish()
     }
 }
 
@@ -656,11 +661,11 @@ impl From<HeadersFlag> for u8 {
 
 impl fmt::Debug for HeadersFlag {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("HeadersFlag")
-            .field("end_stream", &self.is_end_stream())
-            .field("end_headers", &self.is_end_headers())
-            .field("padded", &self.is_padded())
-            .field("priority", &self.is_priority())
+        util::debug_flags(fmt, self.0)
+            .flag_if(self.is_end_headers(), "END_HEADERS")
+            .flag_if(self.is_end_stream(), "END_STREAM")
+            .flag_if(self.is_padded(), "PADDED")
+            .flag_if(self.is_priority(), "PRIORITY")
             .finish()
     }
 }
@@ -704,9 +709,9 @@ impl From<PushPromiseFlag> for u8 {
 
 impl fmt::Debug for PushPromiseFlag {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("PushPromiseFlag")
-            .field("end_headers", &self.is_end_headers())
-            .field("padded", &self.is_padded())
+        util::debug_flags(fmt, self.0)
+            .flag_if(self.is_end_headers(), "END_HEADERS")
+            .flag_if(self.is_padded(), "PADDED")
             .finish()
     }
 }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use super::Error;
 use bytes::Bytes;
 
@@ -34,4 +36,43 @@ pub fn strip_padding(payload: &mut Bytes) -> Result<u8, Error> {
     let _ = payload.split_off(payload_len - pad_len - 1);
 
     Ok(pad_len as u8)
+}
+
+pub(super) fn debug_flags<'a, 'f>(fmt: &'a mut fmt::Formatter<'f>, bits: u8) -> DebugFlags<'a, 'f> {
+    let result = write!(fmt, "({:#x}", bits);
+    DebugFlags {
+        fmt,
+        result,
+        started: false,
+    }
+}
+
+pub(super) struct DebugFlags<'a, 'f> {
+    fmt: &'a mut fmt::Formatter<'f>,
+    result: fmt::Result,
+    started: bool,
+}
+
+impl<'a, 'f> DebugFlags<'a, 'f> {
+    pub(super) fn flag_if(&mut self, enabled: bool, name: &str) -> &mut Self {
+        if enabled {
+            self.result = self.result.and_then(|()| {
+                let prefix = if self.started {
+                    " | "
+                } else {
+                    self.started = true;
+                    ": "
+                };
+
+                write!(self.fmt, "{}{}", prefix, name)
+            });
+        }
+        self
+    }
+
+    pub(super) fn finish(&mut self) -> fmt::Result {
+        self.result.and_then(|()| {
+            write!(self.fmt, ")")
+        })
+    }
 }
