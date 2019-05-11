@@ -88,8 +88,10 @@ impl Encoder {
                 dst.truncate(len);
             }
 
-            unreachable!();
+            unreachable!("encode_size_updates errored");
         }
+
+        let mut last_index = None;
 
         if let Some(resume) = resume {
             let len = dst.len();
@@ -103,9 +105,8 @@ impl Encoder {
                 dst.truncate(len);
                 return Encode::Partial(resume);
             }
+            last_index = Some(resume.index);
         }
-
-        let mut last_index = None;
 
         for header in headers {
             let len = dst.len();
@@ -132,13 +133,15 @@ impl Encoder {
                 // which case, we skip table lookup and just use the same index
                 // as the previous entry.
                 Err(value) => {
-                    let res =
-                        self.encode_header_without_name(last_index.as_ref().unwrap(), &value, dst);
+                    let index = last_index.as_ref().unwrap_or_else(|| {
+                        panic!("encoding header without name, but not previous index to use for name");
+                    });
+                    let res = self.encode_header_without_name(index, &value, dst);
 
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                            index: last_index.unwrap(),
+                            index: last_index.unwrap(), // checked just above
                             value: Some(value),
                         });
                     }
