@@ -133,10 +133,13 @@ impl Encoder {
                 // which case, we skip table lookup and just use the same index
                 // as the previous entry.
                 Err(value) => {
-                    let index = last_index.as_ref().unwrap_or_else(|| {
-                        panic!("encoding header without name, but not previous index to use for name");
-                    });
-                    let res = self.encode_header_without_name(index, &value, dst);
+                    let res = self.encode_header_without_name(
+                        last_index.as_ref().unwrap_or_else(|| {
+                            panic!("encoding header without name, but no previous index to use for name");
+                        }),
+                        &value,
+                        dst,
+                    );
 
                     if res.is_err() {
                         dst.truncate(len);
@@ -444,6 +447,23 @@ mod test {
 
         assert_eq!(1 << 7 | 62, res[0]);
         assert_eq!(1, res.len());
+    }
+
+    #[test]
+    fn test_encode_indexed_name_literal_value() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header("content-language", "foo")]);
+
+        assert_eq!(res[0], 0b01000000 | 27); // Indexed name
+        assert_eq!(res[1], 0x80 | 2); // header value w/ huffman coding
+
+        assert_eq!("foo", huff_decode(&res[2..4]));
+
+        // Same name, new value should still use incremental
+        let res = encode(&mut encoder, vec![header("content-language", "bar")]);
+        assert_eq!(res[0], 0b01000000 | 27); // Indexed name
+        assert_eq!(res[1], 0x80 | 3); // header value w/ huffman coding
+        assert_eq!("bar", huff_decode(&res[2..5]));
     }
 
     #[test]
@@ -773,7 +793,7 @@ mod test {
     #[test]
     fn test_nameless_header_at_resume() {
         let mut encoder = Encoder::default();
-        let mut dst = BytesMut::from(Vec::with_capacity(11));
+        let mut dst = BytesMut::from(Vec::with_capacity(15));
 
         let mut input = vec![
             Header::Field {
@@ -783,6 +803,10 @@ mod test {
             Header::Field {
                 name: None,
                 value: HeaderValue::from_bytes(b"zomg").unwrap(),
+            },
+            Header::Field {
+                name: None,
+                value: HeaderValue::from_bytes(b"sup").unwrap(),
             },
         ].into_iter();
 
@@ -800,12 +824,14 @@ mod test {
 
         match encoder.encode(Some(resume), &mut input, &mut dst) {
             Encode::Full => {},
-            _ => panic!(),
+            unexpected => panic!("resume returned unexpected: {:?}", unexpected),
         }
 
         // Next is not indexed
         assert_eq!(&[15, 47, 0x80 | 3], &dst[0..3]);
-        assert_eq!("zomg", huff_decode(&dst[3..]));
+        assert_eq!("zomg", huff_decode(&dst[3..6]));
+        assert_eq!(&[15, 47, 0x80 | 3], &dst[6..9]);
+        assert_eq!("sup", huff_decode(&dst[9..]));
     }
 
     #[test]
@@ -825,8 +851,6 @@ mod test {
     }
 
     fn header(name: &str, val: &str) -> Header<Option<HeaderName>> {
-        use http::header::{HeaderName, HeaderValue};
-
         let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
         let value = HeaderValue::from_bytes(val.as_bytes()).unwrap();
 

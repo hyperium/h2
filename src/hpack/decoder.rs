@@ -572,7 +572,6 @@ impl From<DecoderError> for frame::Error {
 
 /// Get an entry from the static table
 pub fn get_static(idx: usize) -> Header {
-    use http::header;
     use http::header::HeaderValue;
 
     match idx {

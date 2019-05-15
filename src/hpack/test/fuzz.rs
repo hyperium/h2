@@ -1,4 +1,5 @@
 extern crate bytes;
+extern crate env_logger;
 extern crate quickcheck;
 extern crate rand;
 
@@ -16,6 +17,7 @@ const MAX_CHUNK: usize = 2 * 1024;
 
 #[test]
 fn hpack_fuzz() {
+    let _ = env_logger::try_init();
     fn prop(fuzz: FuzzHpack) -> TestResult {
         fuzz.run();
         TestResult::from_bool(true)
@@ -88,14 +90,34 @@ impl FuzzHpack {
                 _ => {},
             }
 
+            let mut is_name_required = true;
+
             for _ in 0..rng.gen_range(1, (num - added) + 1) {
-                added += 1;
 
                 let x: f64 = rng.gen_range(0.0, 1.0);
                 let x = x.powi(skew);
 
                 let i = (x * source.len() as f64) as usize;
-                frame.headers.push(source[i].clone());
+
+                let header = &source[i];
+                match header {
+                    Header::Field { name: None, .. } => {
+                        if is_name_required {
+                            continue;
+                        }
+                    },
+                    Header::Field { .. } => {
+                        is_name_required = false;
+                    },
+                    _ => {
+                        // pseudos can't be followed by a header with no name
+                        is_name_required = true;
+                    }
+                }
+
+                frame.headers.push(header.clone());
+
+                added += 1;
             }
 
             frames.push(frame);
@@ -125,10 +147,30 @@ impl FuzzHpack {
         let mut decoder = Decoder::default();
 
         for frame in frames {
-            expect.extend(frame.headers.clone());
+            // build "expected" frames, such that decoding headers always
+            // includes a name
+            let mut prev_name = None;
+            for header in &frame.headers {
+                match header.clone().reify() {
+                    Ok(h) => {
+                        prev_name = match h {
+                            Header::Field { ref name, .. } => Some(name.clone()),
+                            _ => None,
+                        };
+                        expect.push(h);
+                    },
+                    Err(value) => {
+                        expect.push(Header::Field {
+                            name: prev_name.as_ref().cloned().expect("previous header name"),
+                            value,
+                        });
+                    }
+                }
 
-            let mut index = None;
+            }
+
             let mut input = frame.headers.into_iter();
+            let mut index = None;
 
             let mut buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
 
@@ -149,10 +191,11 @@ impl FuzzHpack {
 
                         // Decode the chunk!
                         decoder
-                            .decode(&mut Cursor::new(&mut buf), |e| {
-                                assert_eq!(e, expect.remove(0).reify().unwrap());
+                            .decode(&mut Cursor::new(&mut buf), |h| {
+                                let e = expect.remove(0);
+                                assert_eq!(h, e);
                             })
-                            .unwrap();
+                            .expect("partial decode");
 
                         buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
                     },
@@ -161,10 +204,11 @@ impl FuzzHpack {
 
             // Decode the chunk!
             decoder
-                .decode(&mut Cursor::new(&mut buf), |e| {
-                    assert_eq!(e, expect.remove(0).reify().unwrap());
+                .decode(&mut Cursor::new(&mut buf), |h| {
+                    let e = expect.remove(0);
+                    assert_eq!(h, e);
                 })
-                .unwrap();
+                .expect("full decode");
         }
 
         assert_eq!(0, expect.len());
@@ -232,7 +276,11 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             _ => unreachable!(),
         }
     } else {
-        let name = gen_header_name(g);
+        let name = if g.gen_weighted_bool(10) {
+            None
+        } else {
+            Some(gen_header_name(g))
+        };
         let mut value = gen_header_value(g);
 
         if g.gen_weighted_bool(30) {
@@ -240,8 +288,8 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
         }
 
         Header::Field {
-            name: Some(name),
-            value: value,
+            name,
+            value,
         }
     }
 }

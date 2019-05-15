@@ -125,7 +125,7 @@ impl Table {
             Indexed(idx, ..) => idx,
             Name(idx, ..) => idx,
             Inserted(idx) => idx + DYN_OFFSET,
-            InsertedValue(idx, _) => idx,
+            InsertedValue(_name_idx, slot_idx) => slot_idx + DYN_OFFSET,
             NotIndexed(_) => panic!("cannot resolve index"),
         }
     }
@@ -140,6 +140,10 @@ impl Table {
             // Right now, if this is true, the header name is always in the
             // static table. At some point in the future, this might not be true
             // and this logic will need to be updated.
+            debug_assert!(
+                statik.is_some(),
+                "skip_value_index requires a static name",
+            );
             return Index::new(statik, header);
         }
 
@@ -191,7 +195,7 @@ impl Table {
                     return self.index_vacant(header, hash, dist, probe, statik);
                 } else if pos.hash == hash && self.slots[slot_idx].header.name() == header.name() {
                     // Matching name, check values
-                    return self.index_occupied(header, hash, pos.index);
+                    return self.index_occupied(header, hash, pos.index, statik.map(|(n, _)| n));
                 }
             } else {
                 return self.index_vacant(header, hash, dist, probe, statik);
@@ -201,7 +205,13 @@ impl Table {
         });
     }
 
-    fn index_occupied(&mut self, header: Header, hash: HashValue, mut index: usize) -> Index {
+    fn index_occupied(
+        &mut self,
+        header: Header,
+        hash: HashValue,
+        mut index: usize,
+        statik: Option<usize>,
+    ) -> Index {
         debug_assert!(self.assert_valid_state("top"));
 
         // There already is a match for the given header name. Check if a value
@@ -222,6 +232,8 @@ impl Table {
             }
 
             if header.is_sensitive() {
+                // Should we assert this?
+                // debug_assert!(statik.is_none());
                 return Index::Name(real_idx + DYN_OFFSET, header);
             }
 
@@ -245,7 +257,12 @@ impl Table {
 
             // Even if the previous header was evicted, we can still reference
             // it when inserting the new one...
-            return Index::InsertedValue(real_idx + DYN_OFFSET, 0);
+            return if let Some(n) = statik {
+                // If name is in static table, use it instead
+                Index::InsertedValue(n, 0)
+            } else {
+                Index::InsertedValue(real_idx + DYN_OFFSET, 0)
+            };
         }
     }
 
