@@ -1,3 +1,8 @@
+# 0.1.19 (May 5, 2019)
+
+* Fix rare crash if `CONTINUATION` frame resumed in the middle of headers with the same name.
+* Fix HPACK encoder using an old evicted index for repeated header names.
+
 # 0.1.18 (April 9, 2019)
 
 * Fix `server::Connection::abrupt_shutdown` to no longer return the same error the user sent (#352).
