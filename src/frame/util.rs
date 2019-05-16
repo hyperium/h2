@@ -38,7 +38,7 @@ pub fn strip_padding(payload: &mut Bytes) -> Result<u8, Error> {
     Ok(pad_len as u8)
 }
 
-pub(super) fn debug_flags<'a, 'f>(fmt: &'a mut fmt::Formatter<'f>, bits: u8) -> DebugFlags<'a, 'f> {
+pub(super) fn debug_flags<'a, 'f: 'a>(fmt: &'a mut fmt::Formatter<'f>, bits: u8) -> DebugFlags<'a, 'f> {
     let result = write!(fmt, "({:#x}", bits);
     DebugFlags {
         fmt,
@@ -47,13 +47,13 @@ pub(super) fn debug_flags<'a, 'f>(fmt: &'a mut fmt::Formatter<'f>, bits: u8) -> 
     }
 }
 
-pub(super) struct DebugFlags<'a, 'f> {
+pub(super) struct DebugFlags<'a, 'f: 'a> {
     fmt: &'a mut fmt::Formatter<'f>,
     result: fmt::Result,
     started: bool,
 }
 
-impl<'a, 'f> DebugFlags<'a, 'f> {
+impl<'a, 'f: 'a> DebugFlags<'a, 'f> {
     pub(super) fn flag_if(&mut self, enabled: bool, name: &str) -> &mut Self {
         if enabled {
             self.result = self.result.and_then(|()| {
