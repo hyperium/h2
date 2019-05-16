@@ -1,4 +1,8 @@
-# 0.1.19 (May 5, 2019)
+# 0.1.20 (May 16, 2019)
+
+* Fix lifetime conflict for older compilers.
+
+# 0.1.19 (May 15, 2019)
 
 * Fix rare crash if `CONTINUATION` frame resumed in the middle of headers with the same name.
 * Fix HPACK encoder using an old evicted index for repeated header names.
