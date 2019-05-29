@@ -180,8 +180,9 @@ where
                     Ok(()) => Ok(()),
                     Err(RecvHeaderBlockError::Oversize(resp)) => {
                         if let Some(resp) = resp {
-                            let _ = actions.send.send_headers(
+                            let sent = actions.send.send_headers(
                                 resp, send_buffer, stream, counts, &mut actions.task);
+                            debug_assert!(sent.is_ok(), "oversize response should not fail");
 
                             actions.send.schedule_implicit_reset(
                                 stream,
