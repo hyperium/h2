@@ -197,6 +197,17 @@ where
                 Some(Next::Continuation(frame)) => {
                     // Buffer the continuation frame, then try to write again
                     if let Some(continuation) = frame.encode(&mut self.hpack, self.buf.get_mut()) {
+
+                        // We previously had a CONTINUATION, and after encoding
+                        // it, we got *another* one? Let's just double check
+                        // that at least some progress is being made...
+                        if self.buf.get_ref().len() == frame::HEADER_LEN {
+                            // If *only* the CONTINUATION frame header was
+                            // written, and *no* header fields, we're stuck
+                            // in a loop...
+                            panic!("CONTINUATION frame write loop; header value too big to encode");
+                        }
+
                         self.next = Some(Next::Continuation(continuation));
                     }
                 },
