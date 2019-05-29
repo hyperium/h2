@@ -85,6 +85,10 @@ impl Send {
             }
         }
 
+        if frame.has_too_big_field() {
+            return Err(UserError::HeaderTooBig);
+        }
+
         let end_stream = frame.is_end_stream();
 
         // Update the state
@@ -214,6 +218,10 @@ impl Send {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
             return Err(UserError::UnexpectedFrameType);
+        }
+
+        if frame.has_too_big_field() {
+            return Err(UserError::HeaderTooBig);
         }
 
         stream.state.send_close();

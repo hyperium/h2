@@ -12,6 +12,10 @@ use string::String;
 use std::fmt;
 use std::io::Cursor;
 
+// Minimum MAX_FRAME_SIZE is 16kb, so save some arbitrary space for frame
+// head and other header bits.
+const MAX_HEADER_LENGTH: usize = 1024 * 16 - 100;
+
 /// Header frame
 ///
 /// This could be either a request or a response.
@@ -230,6 +234,10 @@ impl Headers {
 
     pub fn is_over_size(&self) -> bool {
         self.header_block.is_over_size
+    }
+
+    pub(crate) fn has_too_big_field(&self) -> bool {
+        self.header_block.has_too_big_field()
     }
 
     pub fn into_parts(self) -> (Pseudo, HeaderMap) {
@@ -843,6 +851,46 @@ impl HeaderBlock {
         self.fields.iter()
             .map(|(name, value)| decoded_header_size(name.as_str().len(), value.len()))
             .sum::<usize>()
+    }
+
+    /// Iterate over all pseudos and headers to see if any individual pair
+    /// would be too large to encode.
+    pub(crate) fn has_too_big_field(&self) -> bool {
+        macro_rules! pseudo_size {
+            ($name:ident) => ({
+                self.pseudo
+                    .$name
+                    .as_ref()
+                    .map(|m| decoded_header_size(stringify!($name).len() + 1, m.as_str().len()))
+                    .unwrap_or(0)
+            });
+        }
+
+        if pseudo_size!(method) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(scheme) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(authority) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(path) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        // skip :status, its never going to be too big
+
+        for (name, value) in &self.fields {
+            if decoded_header_size(name.as_str().len(), value.len()) > MAX_HEADER_LENGTH {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
