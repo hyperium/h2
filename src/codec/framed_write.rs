@@ -39,7 +39,10 @@ enum Next<B> {
 }
 
 /// Initialze the connection with this amount of write buffer.
-const DEFAULT_BUFFER_CAPACITY: usize = 4 * 1_024;
+///
+/// The minimum MAX_FRAME_SIZE is 16kb, so always be able to send a HEADERS
+/// frame that big.
+const DEFAULT_BUFFER_CAPACITY: usize = 16 * 1_024;
 
 /// Min buffer required to attempt to write a frame
 const MIN_BUFFER_CAPACITY: usize = frame::HEADER_LEN + CHAIN_THRESHOLD;
