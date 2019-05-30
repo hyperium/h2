@@ -1,3 +1,7 @@
+# 0.1.21 (May 30, 2019)
+
+* Fix write loop when a header didn't fit in write buffer.
+
 # 0.1.20 (May 16, 2019)
 
 * Fix lifetime conflict for older compilers.
