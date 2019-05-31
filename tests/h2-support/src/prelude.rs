@@ -70,7 +70,7 @@ where
     B: IntoBuf + 'static,
 {
     fn run<F: Future>(&mut self, f: F) -> Result<F::Item, F::Error> {
-        use futures::future::{self, Future};
+        use futures::future;
         use futures::future::Either::*;
 
         let res = future::poll_fn(|| self.poll()).select2(f).wait();

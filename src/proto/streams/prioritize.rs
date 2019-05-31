@@ -352,6 +352,14 @@ impl Prioritize {
                 None => return,
             };
 
+            // Streams pending capacity may have been reset before capacity
+            // became available. In that case, the stream won't want any
+            // capacity, and so we shouldn't "transition" on it, but just evict
+            // it and continue the loop.
+            if !(stream.state.is_send_streaming() || stream.buffered_send_data > 0) {
+                continue;
+            }
+
             counts.transition(stream, |_, mut stream| {
                 // Try to assign capacity to the stream. This will also re-queue the
                 // stream if there isn't enough connection level capacity to fulfill
@@ -378,7 +386,8 @@ impl Prioritize {
         );
 
         trace!(
-            "try_assign_capacity; requested={}; additional={}; buffered={}; window={}; conn={}",
+            "try_assign_capacity; stream={:?}, requested={}; additional={}; buffered={}; window={}; conn={}",
+            stream.id,
             total_requested,
             additional,
             stream.buffered_send_data,
@@ -409,7 +418,11 @@ impl Prioritize {
             // TODO: Should prioritization factor into this?
             let assign = cmp::min(conn_available, additional);
 
-            trace!("  assigning; num={}", assign);
+            trace!(
+                "  assigning; stream={:?}, capacity={}",
+                stream.id,
+                assign,
+            );
 
             // Assign the capacity to the stream
             stream.assign_capacity(assign);
@@ -419,7 +432,7 @@ impl Prioritize {
         }
 
         trace!(
-            "try_assign_capacity; available={}; requested={}; buffered={}; has_unavailable={:?}",
+            "try_assign_capacity(2); available={}; requested={}; buffered={}; has_unavailable={:?}",
             stream.send_flow.available(),
             stream.requested_send_capacity,
             stream.buffered_send_data,
@@ -604,7 +617,7 @@ impl Prioritize {
     }
 
     pub fn clear_queue<B>(&mut self, buffer: &mut Buffer<Frame<B>>, stream: &mut store::Ptr) {
-        trace!("clear_queue; stream-id={:?}", stream.id);
+        trace!("clear_queue; stream={:?}", stream.id);
 
         // TODO: make this more efficient?
         while let Some(frame) = stream.pending_send.pop_front(buffer) {
