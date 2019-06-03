@@ -1,3 +1,7 @@
+# 0.1.22 (June 3, 2019)
+
+* Fix rare panic when remote sends `RST_STREAM` or `GOAWAY` for a stream pending window capacity (#364).
+
 # 0.1.21 (May 30, 2019)
 
 * Fix write loop when a header didn't fit in write buffer.
