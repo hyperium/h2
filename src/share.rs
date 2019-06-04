@@ -448,6 +448,17 @@ impl fmt::Debug for RecvStream {
     }
 }
 
+impl Drop for RecvStream {
+    fn drop(&mut self) {
+        // Eagerly clear any received DATA frames now, since its no longer
+        // possible to retrieve them. However, this will be called
+        // again once *all* stream refs have been dropped, since
+        // this won't send a RST_STREAM frame, in case the user wishes to
+        // still *send* DATA.
+        self.inner.inner.clear_recv_buffer();
+    }
+}
+
 // ===== impl ReleaseCapacity =====
 
 impl ReleaseCapacity {

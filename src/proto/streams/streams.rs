@@ -1044,6 +1044,17 @@ impl OpaqueStreamRef {
             .release_capacity(capacity, &mut stream, &mut me.actions.task)
     }
 
+    pub(crate) fn clear_recv_buffer(&mut self) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions
+            .recv
+            .clear_recv_buffer(&mut stream);
+    }
+
     pub fn stream_id(&self) -> StreamId {
         self.inner.lock()
             .unwrap()
