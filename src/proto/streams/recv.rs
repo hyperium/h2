@@ -410,6 +410,8 @@ impl Recv {
             task,
         );
         stream.in_flight_recv_data = 0;
+
+        self.clear_recv_buffer(stream);
     }
 
     /// Set the "target" connection window size.
@@ -701,6 +703,12 @@ impl Recv {
         stream.state.recv_eof();
         stream.notify_send();
         stream.notify_recv();
+    }
+
+    pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
+        while let Some(_) = stream.pending_recv.pop_front(&mut self.buffer) {
+            // drop it
+        }
     }
 
     /// Get the max ID of streams we can receive.
