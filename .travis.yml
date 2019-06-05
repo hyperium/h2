@@ -53,7 +53,7 @@ deploy:
   local_dir: target/doc
   on:
     branch: master
-    repo: carllerche/h2
+    repo: hyperium/h2
     rust: stable
 
 env:

@@ -1272,7 +1272,7 @@ fn server_target_window_size() {
 
 #[test]
 fn recv_settings_increase_window_size_after_using_some() {
-    // See https://github.com/carllerche/h2/issues/208
+    // See https://github.com/hyperium/h2/issues/208
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
@@ -1317,7 +1317,7 @@ fn recv_settings_increase_window_size_after_using_some() {
 
 #[test]
 fn reserve_capacity_after_peer_closes() {
-    // See https://github.com/carllerche/h2/issues/300
+    // See https://github.com/hyperium/h2/issues/300
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 
