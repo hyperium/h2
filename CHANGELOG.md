@@ -1,3 +1,7 @@
+# 0.1.23 (June 4, 2019)
+
+* Fix leaking of received DATA frames if the `RecvStream` is never polled (#368).
+
 # 0.1.22 (June 3, 2019)
 
 * Fix rare panic when remote sends `RST_STREAM` or `GOAWAY` for a stream pending window capacity (#364).
