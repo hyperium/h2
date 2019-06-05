@@ -1089,7 +1089,7 @@ fn send_err_with_buffered_data() {
 
 #[test]
 fn srv_window_update_on_lower_stream_id() {
-    // See https://github.com/carllerche/h2/issues/208
+    // See https://github.com/hyperium/h2/issues/208
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();
 

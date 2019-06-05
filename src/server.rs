@@ -55,7 +55,7 @@
 //! # Shutting down the server
 //!
 //! Graceful shutdown of the server is [not yet
-//! implemented](https://github.com/carllerche/h2/issues/69).
+//! implemented](https://github.com/hyperium/h2/issues/69).
 //!
 //! # Example
 //!
@@ -271,7 +271,7 @@ pub struct Builder {
 ///
 /// It will also be used to initiate push promises linked with the associated
 /// stream. This is [not yet
-/// implemented](https://github.com/carllerche/h2/issues/185).
+/// implemented](https://github.com/hyperium/h2/issues/185).
 ///
 /// If the `SendResponse` instance is dropped without sending a response, then
 /// the HTTP/2.0 stream will be reset.
