@@ -172,8 +172,9 @@ impl State {
             } else {
                 HalfClosedLocal(remote)
             },
-            _ => {
+            state => {
                 // All other transitions result in a protocol error
+                warn!("recv_open: unexpected state {:?}", state);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             },
         };
@@ -208,7 +209,10 @@ impl State {
                 self.inner = Closed(Cause::EndStream);
                 Ok(())
             },
-            _ => Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+            state => {
+                warn!("recv_close: unexpected state {:?}", state);
+                Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
+            }
         }
     }
 
@@ -287,7 +291,7 @@ impl State {
                 trace!("send_close: HalfClosedRemote => Closed");
                 self.inner = Closed(Cause::EndStream);
             },
-            _ => panic!("transition send_close on unexpected state"),
+            state => panic!("send_close: unexpected state {:?}", state),
         }
     }
 
