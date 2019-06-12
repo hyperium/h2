@@ -171,11 +171,17 @@ impl<T> FramedRead<T> {
             },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load RESET frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::GoAway => {
                 let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    debug!("connection error PROTOCOL_ERROR -- failed to load GO_AWAY frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::PushPromise => {
                 header_block!(PushPromise, head, bytes)
@@ -183,6 +189,7 @@ impl<T> FramedRead<T> {
             Kind::Priority => {
                 if head.stream_id() == 0 {
                     // Invalid stream identifier
+                    debug!("connection error PROTOCOL_ERROR -- invalid stream ID 0");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
@@ -198,7 +205,10 @@ impl<T> FramedRead<T> {
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    Err(e) => {
+                        debug!("connection error PROTOCOL_ERROR -- failed to load PRIORITY frame; err={:?};", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    }
                 }
             },
             Kind::Continuation => {

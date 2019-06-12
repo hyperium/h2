@@ -178,7 +178,11 @@ impl Recv {
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(_) => {
+                    Err(()) => {
+                        trace!(
+                            "recv_headers; could not parse content-length, PROTOCOL_ERROR; stream={:?};",
+                            stream.id,
+                        );
                         return Err(RecvError::Stream {
                             id: stream.id,
                             reason: Reason::PROTOCOL_ERROR,
@@ -311,6 +315,10 @@ impl Recv {
         stream.state.recv_close()?;
 
         if stream.ensure_content_length_zero().is_err() {
+            trace!(
+                "recv_trailers; content-length is not zero, PROTOCOL_ERROR; stream={:?};",
+                stream.id,
+            );
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -499,6 +507,7 @@ impl Recv {
 
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
+            trace!("recv_data; unexpected DATA frame; PROTOCOL_ERROR; stream={:?}", stream.id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -515,7 +524,7 @@ impl Recv {
 
         if is_ignoring_frame {
             trace!(
-                "recv_data frame ignored on locally reset {:?} for some time",
+                "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
             // we just checked for enough connection window capacity, and
@@ -547,7 +556,11 @@ impl Recv {
         }
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
-            trace!("content-length overflow");
+            trace!(
+                "recv_data; content-length overflow; stream={:?}; len={:?};",
+                stream.id,
+                frame.payload().len(),
+            );
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -556,7 +569,11 @@ impl Recv {
 
         if frame.is_end_stream() {
             if stream.ensure_content_length_zero().is_err() {
-                trace!("content-length underflow");
+                trace!(
+                    "recv_data; content-length underflow; stream={:?}; len={:?};",
+                    stream.id,
+                    frame.payload().len(),
+                );
                 return Err(RecvError::Stream {
                     id: stream.id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -564,7 +581,7 @@ impl Recv {
             }
 
             if stream.state.recv_close().is_err() {
-                trace!("failed to transition to closed state");
+                trace!("recv_data; failed to transition to closed state; stream={:?};", stream.id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
@@ -586,6 +603,11 @@ impl Recv {
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
         if self.flow.window_size() < sz {
+            trace!(
+                "window_size ({:?}) < sz ({:?}); FLOW_CONTROL_ERROR",
+                self.flow.window_size(),
+                sz,
+            );
             return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
         }
 
@@ -634,7 +656,13 @@ impl Recv {
         if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
             match parse_u64(content_length.as_bytes()) {
                 Ok(0) => {},
-                _ => {
+                otherwise => {
+                    trace!(
+                        "recv_push_promise; promised request has content-length {:?}; \
+                         PROTOCOL_ERROR; promised_id={:?};",
+                        otherwise,
+                        promised_id,
+                    );
                     return Err(RecvError::Stream {
                         id: promised_id,
                         reason: Reason::PROTOCOL_ERROR,
@@ -645,6 +673,12 @@ impl Recv {
         // "The server MUST include a method in the :method pseudo-header field
         // that is safe and cacheable"
         if !Self::safe_and_cacheable(req.method()) {
+            trace!(
+                "recv_push_promise; method {} is not safe and cacheable; \
+                    PROTOCOL_ERROR; promised_id={:?};",
+                req.method(),
+                promised_id,
+            );
             return Err(RecvError::Stream {
                 id: promised_id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -666,7 +700,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                trace!("stream ID implicitly closed");
+                trace!("stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}", id);
                 return Err(Reason::PROTOCOL_ERROR);
             }
         }
@@ -731,7 +765,7 @@ impl Recv {
         -> Result<(), RecvError>
     {
         if !self.is_push_enabled {
-            trace!("recv_push_promise; error push is disabled");
+            trace!("recv_push_promise; error push is disabled, PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 

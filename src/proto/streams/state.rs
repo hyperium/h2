@@ -189,7 +189,10 @@ impl State {
                 self.inner = ReservedRemote;
                 Ok(())
             },
-            _ => Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+            state => {
+                warn!("reserve_remote: unexpected state {:?}", state);
+                Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
+            }
         }
     }
 
