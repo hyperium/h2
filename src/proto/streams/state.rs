@@ -174,7 +174,7 @@ impl State {
             },
             state => {
                 // All other transitions result in a protocol error
-                warn!("recv_open: unexpected state {:?}", state);
+                trace!("recv_open: unexpected state {:?}", state);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             },
         };
@@ -190,7 +190,7 @@ impl State {
                 Ok(())
             },
             state => {
-                warn!("reserve_remote: unexpected state {:?}", state);
+                trace!("reserve_remote: unexpected state {:?}", state);
                 Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
             }
         }
@@ -213,7 +213,7 @@ impl State {
                 Ok(())
             },
             state => {
-                warn!("recv_close: unexpected state {:?}", state);
+                trace!("recv_close: unexpected state {:?}", state);
                 Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
             }
         }
