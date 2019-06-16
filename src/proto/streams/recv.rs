@@ -135,7 +135,7 @@ impl Recv {
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
-            trace!("id ({:?}) < next_id ({:?}), PROTOCOL_ERROR", id, next_id);
+            proto_err!(conn: "id ({:?}) < next_id ({:?})", id, next_id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -179,10 +179,7 @@ impl Recv {
                 let content_length = match parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
                     Err(()) => {
-                        trace!(
-                            "recv_headers; could not parse content-length, PROTOCOL_ERROR; stream={:?};",
-                            stream.id,
-                        );
+                        proto_err!(stream: "could not parse content-length; stream={:?}", stream.id);
                         return Err(RecvError::Stream {
                             id: stream.id,
                             reason: Reason::PROTOCOL_ERROR,
@@ -315,10 +312,7 @@ impl Recv {
         stream.state.recv_close()?;
 
         if stream.ensure_content_length_zero().is_err() {
-            trace!(
-                "recv_trailers; content-length is not zero, PROTOCOL_ERROR; stream={:?};",
-                stream.id,
-            );
+            proto_err!(stream: "recv_trailers: content-length is not zero; stream={:?};",  stream.id);
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -507,7 +501,7 @@ impl Recv {
 
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
-            trace!("recv_data; unexpected DATA frame; PROTOCOL_ERROR; stream={:?}", stream.id);
+            proto_err!(conn: "unexpected DATA frame; stream={:?}", stream.id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -556,8 +550,8 @@ impl Recv {
         }
 
         if stream.dec_content_length(frame.payload().len()).is_err() {
-            trace!(
-                "recv_data; content-length overflow; stream={:?}; len={:?};",
+            proto_err!(stream:
+                "recv_data: content-length overflow; stream={:?}; len={:?}",
                 stream.id,
                 frame.payload().len(),
             );
@@ -569,8 +563,8 @@ impl Recv {
 
         if frame.is_end_stream() {
             if stream.ensure_content_length_zero().is_err() {
-                trace!(
-                    "recv_data; content-length underflow; stream={:?}; len={:?};",
+                proto_err!(stream:
+                    "recv_data: content-length underflow; stream={:?}; len={:?}",
                     stream.id,
                     frame.payload().len(),
                 );
@@ -581,7 +575,7 @@ impl Recv {
             }
 
             if stream.state.recv_close().is_err() {
-                trace!("recv_data; failed to transition to closed state; stream={:?};", stream.id);
+                proto_err!(conn: "recv_data: failed to transition to closed state; stream={:?}", stream.id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
@@ -657,9 +651,8 @@ impl Recv {
             match parse_u64(content_length.as_bytes()) {
                 Ok(0) => {},
                 otherwise => {
-                    trace!(
-                        "recv_push_promise; promised request has content-length {:?}; \
-                         PROTOCOL_ERROR; promised_id={:?};",
+                    proto_err!(stream:
+                        "recv_push_promise; promised request has content-length {:?}; promised_id={:?}",
                         otherwise,
                         promised_id,
                     );
@@ -765,7 +758,7 @@ impl Recv {
         -> Result<(), RecvError>
     {
         if !self.is_push_enabled {
-            trace!("recv_push_promise; error push is disabled, PROTOCOL_ERROR");
+            proto_err!(conn: "recv_push_promise: push is disabled, PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 

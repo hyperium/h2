@@ -1070,7 +1070,7 @@ where
             }
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {
-                trace!("read_preface; invalid preface, PROTOCOL_ERROR");
+                proto_err!(conn: "read_preface: invalid preface");
                 // TODO: Should this just write the GO_AWAY frame directly?
                 return Err(Reason::PROTOCOL_ERROR.into());
             }
@@ -1273,7 +1273,7 @@ impl proto::Peer for Peer {
             Err(e) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
-                trace!("request body error: {}, PROTOCOL_ERROR", e);
+                proto_err!(stream: "error building request: {}; stream={:?}", e, stream_id);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,

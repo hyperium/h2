@@ -70,7 +70,7 @@ impl Dyn {
         if self.is_server() {
             // Ensure that the ID is a valid client initiated ID
             if mode.is_push_promise() || !id.is_client_initiated() {
-                trace!("Cannot open stream {:?} - not client initiated, PROTOCOL_ERROR", id);
+                proto_err!(conn: "cannot open stream {:?} - not client initiated", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
 
@@ -78,7 +78,7 @@ impl Dyn {
         } else {
             // Ensure that the ID is a valid server initiated ID
             if !mode.is_push_promise() || !id.is_server_initiated() {
-                trace!("Cannot open stream {:?} - not server initiated, PROTOCOL_ERROR", id);
+                proto_err!(conn: "cannot open stream {:?} - not server initiated", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
 
