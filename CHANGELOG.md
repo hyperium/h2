@@ -1,3 +1,7 @@
+# 0.1.24 (June 17, 2019)
+
+* Fix server wrongly rejecting requests that don't have an `:authority` header (#372).
+
 # 0.1.23 (June 4, 2019)
 
 * Fix leaking of received DATA frames if the `RecvStream` is never polled (#368).
