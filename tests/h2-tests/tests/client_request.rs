@@ -444,15 +444,13 @@ fn http_11_request_without_scheme_or_authority() {
     let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
-            // we send a simple req here just to drive the connection so we can
-            // receive the server settings.
+            // HTTP_11 request with just :path is allowed
             let request = Request::builder()
                 .method(Method::GET)
                 .uri("/")
                 .body(())
                 .unwrap();
 
-            // first request is allowed
             let (response, _) = client.send_request(request, true).unwrap();
             h2.drive(response)
                 .map(move |(h2, _)| (client, h2))
@@ -474,8 +472,8 @@ fn http_2_request_without_scheme_or_authority() {
     let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
-            // we send a simple req here just to drive the connection so we can
-            // receive the server settings.
+            // HTTP_2 with only a :path is illegal, so this request should
+            // be rejected as a user error.
             let request = Request::builder()
                 .version(Version::HTTP_2)
                 .method(Method::GET)
@@ -483,8 +481,10 @@ fn http_2_request_without_scheme_or_authority() {
                 .body(())
                 .unwrap();
 
-            // first request is allowed
-            assert!(client.send_request(request, true).is_err());
+            client
+                .send_request(request, true)
+                .expect_err("should be UserError");
+
             h2.expect("h2").map(|ret| {
                 // Hold on to the `client` handle to avoid sending a GO_AWAY frame.
                 drop(client);

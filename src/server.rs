@@ -1236,20 +1236,32 @@ impl proto::Peer for Peer {
         // Convert the URI
         let mut parts = uri::Parts::default();
 
-        if let Some(scheme) = pseudo.scheme {
-            let maybe_scheme = uri::Scheme::from_shared(scheme.clone().into_inner());
-            parts.scheme = Some(maybe_scheme.or_else(|why| malformed!(
-                "malformed headers: malformed scheme ({:?}): {}", scheme, why,
-            ))?);
-        } else {
-            malformed!("malformed headers: missing scheme");
-        }
 
+        // A request translated from HTTP/1 must not include the :authority
+        // header
         if let Some(authority) = pseudo.authority {
             let maybe_authority = uri::Authority::from_shared(authority.clone().into_inner());
             parts.authority = Some(maybe_authority.or_else(|why| malformed!(
                 "malformed headers: malformed authority ({:?}): {}", authority, why,
             ))?);
+
+        }
+
+        // A :scheme is always required.
+        if let Some(scheme) = pseudo.scheme {
+            let maybe_scheme = uri::Scheme::from_shared(scheme.clone().into_inner());
+            let scheme = maybe_scheme.or_else(|why| malformed!(
+                "malformed headers: malformed scheme ({:?}): {}", scheme, why,
+            ))?;
+
+            // It's not possible to build an `Uri` from a scheme and path. So,
+            // after validating is was a valid scheme, we just have to drop it
+            // if there isn't an :authority.
+            if parts.authority.is_some() {
+                parts.scheme = Some(scheme);
+            }
+        } else {
+            malformed!("malformed headers: missing scheme");
         }
 
         if let Some(path) = pseudo.path {

@@ -68,7 +68,7 @@ fn server_builder_set_max_concurrent_streams() {
                         .unwrap();
                 stream.send_response(rsp, true).unwrap();
 
-                srv.into_future().unwrap()
+                srv.into_future().unwrap().map(|_| ())
             })
         });
 
@@ -101,7 +101,7 @@ fn serve_request() {
             let rsp = http::Response::builder().status(200).body(()).unwrap();
             stream.send_response(rsp, true).unwrap();
 
-            srv.into_future().unwrap()
+            srv.into_future().unwrap().map(|_| ())
         })
     });
 
@@ -134,7 +134,7 @@ fn recv_invalid_authority() {
 
     let srv = server::handshake(io)
         .expect("handshake")
-        .and_then(|srv| srv.into_future().unwrap());
+        .and_then(|srv| srv.into_future().unwrap().map(|_| ()));
 
     srv.join(client).wait().expect("wait");
 }
@@ -169,7 +169,7 @@ fn recv_connection_header() {
 
     let srv = server::handshake(io)
         .expect("handshake")
-        .and_then(|srv| srv.into_future().unwrap());
+        .and_then(|srv| srv.into_future().unwrap()).map(|_| ());
 
     srv.join(client).wait().expect("wait");
 }
@@ -200,7 +200,7 @@ fn sends_reset_cancel_when_req_body_is_dropped() {
             let rsp = http::Response::builder().status(200).body(()).unwrap();
             stream.send_response(rsp, true).unwrap();
 
-            srv.into_future().unwrap()
+            srv.into_future().unwrap().map(|_| ())
         })
     });
 
@@ -390,7 +390,7 @@ fn sends_reset_cancel_when_res_body_is_dropped() {
             tx.send_data(vec![0; 10].into(), false).unwrap();
             // no send_data with eos
 
-            srv.into_future().unwrap()
+            srv.into_future().unwrap().map(|_| ())
         })
     });
 
@@ -624,4 +624,38 @@ fn server_error_on_unclean_shutdown() {
     drop(client);
 
     srv.wait().expect_err("should error");
+}
+
+#[test]
+fn request_without_authority() {
+    let _ = ::env_logger::try_init();
+    let (io, client) = mock::new();
+
+    let client = client
+        .assert_server_handshake()
+        .unwrap()
+        .recv_settings()
+        .send_frame(
+            frames::headers(1)
+                .request("GET", "/just-a-path")
+                .scheme("http")
+                .eos()
+        )
+        .recv_frame(frames::headers(1).response(200).eos())
+        .close();
+
+    let srv = server::handshake(io).expect("handshake").and_then(|srv| {
+        srv.into_future().unwrap().and_then(|(reqstream, srv)| {
+            let (req, mut stream) = reqstream.unwrap();
+
+            assert_eq!(req.uri().path(), "/just-a-path");
+
+            let rsp = Response::new(());
+            stream.send_response(rsp, true).unwrap();
+
+            srv.into_future().unwrap().map(|_| ())
+        })
+    });
+
+    srv.join(client).wait().expect("wait");
 }
