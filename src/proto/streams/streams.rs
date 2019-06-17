@@ -205,6 +205,7 @@ where
             } else {
                 if !frame.is_end_stream() {
                     // TODO: Is this the right error
+                    proto_err!(conn: "recv_headers: trailers frame was not EOS; stream={:?}", stream.id);
                     return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
                 }
 
@@ -231,7 +232,7 @@ where
                     return Ok(());
                 }
 
-                trace!("recv_data; stream not found: {:?}", id);
+                proto_err!(conn: "recv_data: stream not found; id={:?}", id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             },
         };
@@ -261,6 +262,7 @@ where
         let id = frame.stream_id();
 
         if id.is_zero() {
+            proto_err!(conn: "recv_reset: invalid stream ID 0");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -343,6 +345,10 @@ where
             // the value they send in the last stream identifier, since the
             // peers might already have retried unprocessed requests on another
             // connection.")
+            proto_err!(conn:
+                "recv_go_away: last_stream_id ({:?}) > max_stream_id ({:?})",
+                last_stream_id, actions.recv.max_stream_id(),
+            );
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -427,7 +433,10 @@ where
                 stream.state.ensure_recv_open()?;
                 stream.key()
             }
-            None => return Err(RecvError::Connection(Reason::PROTOCOL_ERROR)),
+            None => {
+                proto_err!(conn: "recv_push_promise: initiating stream is in an invalid state");
+                return Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
+            },
         };
 
         // TODO: Streams in the reserved states do not count towards the concurrency

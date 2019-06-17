@@ -63,7 +63,7 @@ impl<T> FramedRead<T> {
         let head = frame::Head::parse(&bytes);
 
         if self.partial.is_some() && head.kind() != Kind::Continuation {
-            trace!("connection error PROTOCOL_ERROR -- expected CONTINUATION, got {:?}", head.kind());
+            proto_err!(conn: "expected CONTINUATION, got {:?}", head.kind());
             return Err(Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -81,7 +81,7 @@ impl<T> FramedRead<T> {
                 let (mut frame, mut payload) = match frame::$frame::load($head, $bytes) {
                     Ok(res) => res,
                     Err(frame::Error::InvalidDependencyId) => {
-                        debug!("stream error PROTOCOL_ERROR -- invalid HEADERS dependency ID");
+                        proto_err!(stream: "invalid HEADERS dependency ID");
                         // A stream cannot depend on itself. An endpoint MUST
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
@@ -91,7 +91,7 @@ impl<T> FramedRead<T> {
                         });
                     },
                     Err(e) => {
-                        debug!("connection error PROTOCOL_ERROR -- failed to load frame; err={:?}", e);
+                        proto_err!(conn: "failed to load frame; err={:?}", e);
                         return Err(Connection(Reason::PROTOCOL_ERROR));
                     }
                 };
@@ -103,15 +103,15 @@ impl<T> FramedRead<T> {
                     Ok(_) => {},
                     Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
                     Err(frame::Error::MalformedMessage) => {
-
-                        debug!("stream error PROTOCOL_ERROR -- malformed header block");
+                        let id = $head.stream_id();
+                        proto_err!(stream: "malformed header block; stream={:?}", id);
                         return Err(Stream {
-                            id: $head.stream_id(),
+                            id,
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
                     Err(e) => {
-                        debug!("connection error PROTOCOL_ERROR -- failed HPACK decoding; err={:?}", e);
+                        proto_err!(conn: "failed HPACK decoding; err={:?}", e);
                         return Err(Connection(Reason::PROTOCOL_ERROR));
                     }
                 }
@@ -136,7 +136,7 @@ impl<T> FramedRead<T> {
                 let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|e| {
-                    debug!("connection error PROTOCOL_ERROR -- failed to load SETTINGS frame; err={:?}", e);
+                    proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
                 })?.into()
             },
@@ -144,7 +144,7 @@ impl<T> FramedRead<T> {
                 let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|e| {
-                    debug!("connection error PROTOCOL_ERROR -- failed to load PING frame; err={:?}", e);
+                    proto_err!(conn: "failed to load PING frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
                 })?.into()
             },
@@ -152,7 +152,7 @@ impl<T> FramedRead<T> {
                 let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|e| {
-                    debug!("connection error PROTOCOL_ERROR -- failed to load WINDOW_UPDATE frame; err={:?}", e);
+                    proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
                 })?.into()
             },
@@ -162,7 +162,7 @@ impl<T> FramedRead<T> {
 
                 // TODO: Should this always be connection level? Probably not...
                 res.map_err(|e| {
-                    debug!("connection error PROTOCOL_ERROR -- failed to load DATA frame; err={:?}", e);
+                    proto_err!(conn: "failed to load DATA frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
                 })?.into()
             },
@@ -171,11 +171,17 @@ impl<T> FramedRead<T> {
             },
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    proto_err!(conn: "failed to load RESET frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::GoAway => {
                 let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
-                res.map_err(|_| Connection(Reason::PROTOCOL_ERROR))?.into()
+                res.map_err(|e| {
+                    proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
+                    Connection(Reason::PROTOCOL_ERROR)
+                })?.into()
             },
             Kind::PushPromise => {
                 header_block!(PushPromise, head, bytes)
@@ -183,6 +189,7 @@ impl<T> FramedRead<T> {
             Kind::Priority => {
                 if head.stream_id() == 0 {
                     // Invalid stream identifier
+                    proto_err!(conn: "invalid stream ID 0");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
@@ -192,13 +199,17 @@ impl<T> FramedRead<T> {
                         // A stream cannot depend on itself. An endpoint MUST
                         // treat this as a stream error (Section 5.4.2) of type
                         // `PROTOCOL_ERROR`.
-                        debug!("stream error PROTOCOL_ERROR -- PRIORITY invalid dependency ID");
+                        let id = head.stream_id();
+                        proto_err!(stream: "PRIORITY invalid dependency ID; stream={:?}", id);
                         return Err(Stream {
-                            id: head.stream_id(),
+                            id,
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
-                    Err(_) => return Err(Connection(Reason::PROTOCOL_ERROR)),
+                    Err(e) => {
+                        proto_err!(conn: "failed to load PRIORITY frame; err={:?};", e);
+                        return Err(Connection(Reason::PROTOCOL_ERROR));
+                    }
                 }
             },
             Kind::Continuation => {
@@ -207,14 +218,14 @@ impl<T> FramedRead<T> {
                 let mut partial = match self.partial.take() {
                     Some(partial) => partial,
                     None => {
-                        debug!("connection error PROTOCOL_ERROR -- received unexpected CONTINUATION frame");
+                        proto_err!(conn: "received unexpected CONTINUATION frame");
                         return Err(Connection(Reason::PROTOCOL_ERROR));
                     }
                 };
 
                 // The stream identifiers must match
                 if partial.frame.stream_id() != head.stream_id() {
-                    debug!("connection error PROTOCOL_ERROR -- CONTINUATION frame stream ID does not match previous frame stream ID");
+                    proto_err!(conn: "CONTINUATION frame stream ID does not match previous frame stream ID");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
 
@@ -239,7 +250,7 @@ impl<T> FramedRead<T> {
                         // we should continue to ignore decoding, or to tell
                         // the attacker to go away.
                         if partial.buf.len() + bytes.len() > self.max_header_list_size {
-                            debug!("connection error COMPRESSION_ERROR -- CONTINUATION frame header block size over ignorable limit");
+                            proto_err!(conn: "CONTINUATION frame header block size over ignorable limit");
                             return Err(Connection(Reason::COMPRESSION_ERROR));
                         }
                     }
@@ -250,14 +261,15 @@ impl<T> FramedRead<T> {
                     Ok(_) => {},
                     Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
                     Err(frame::Error::MalformedMessage) => {
-                        debug!("stream error PROTOCOL_ERROR -- malformed CONTINUATION frame");
+                        let id = head.stream_id();
+                        proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
                         return Err(Stream {
-                            id: head.stream_id(),
+                            id,
                             reason: Reason::PROTOCOL_ERROR,
                         });
                     },
                     Err(e) => {
-                        debug!("connection error PROTOCOL_ERROR -- failed HPACK decoding; err={:?}", e);
+                        proto_err!(conn: "failed HPACK decoding; err={:?}", e);
                         return Err(Connection(Reason::PROTOCOL_ERROR));
                     },
                 }

@@ -1070,6 +1070,7 @@ where
             }
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {
+                proto_err!(conn: "read_preface: invalid preface");
                 // TODO: Should this just write the GO_AWAY frame directly?
                 return Err(Reason::PROTOCOL_ERROR.into());
             }
@@ -1230,6 +1231,7 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
+            trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -1280,9 +1282,10 @@ impl proto::Peer for Peer {
 
         let mut request = match b.body(()) {
             Ok(request) => request,
-            Err(_) => {
+            Err(e) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
+                proto_err!(stream: "error building request: {}; stream={:?}", e, stream_id);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
