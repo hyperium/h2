@@ -203,7 +203,11 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            trace!("recv_headers; frame for {:?} is over size", stream.id);
+            debug!(
+                "stream error REQUEST_HEADER_FIELDS_TOO_LARGE -- \
+                 recv_headers: frame is over size; stream={:?}",
+                stream.id
+            );
             return if counts.peer().is_server() && is_initial {
                 let mut res = frame::Headers::new(
                     stream.id,
@@ -597,8 +601,8 @@ impl Recv {
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
         if self.flow.window_size() < sz {
-            trace!(
-                "window_size ({:?}) < sz ({:?}); FLOW_CONTROL_ERROR",
+            debug!(
+                "connection error FLOW_CONTROL_ERROR -- window_size ({:?}) < sz ({:?});",
                 self.flow.window_size(),
                 sz,
             );
@@ -631,7 +635,11 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            trace!("recv_push_promise; frame for {:?} is over size", frame.promised_id());
+            debug!(
+                "stream error REFUSED_STREAM -- recv_push_promise: \
+                 headers frame is over size; promised_id={:?};",
+                frame.promised_id(),
+            );
             return Err(RecvError::Stream {
                 id: frame.promised_id(),
                 reason: Reason::REFUSED_STREAM,
@@ -666,9 +674,9 @@ impl Recv {
         // "The server MUST include a method in the :method pseudo-header field
         // that is safe and cacheable"
         if !Self::safe_and_cacheable(req.method()) {
-            trace!(
-                "recv_push_promise; method {} is not safe and cacheable; \
-                    PROTOCOL_ERROR; promised_id={:?};",
+            proto_err!(
+                stream:
+                "recv_push_promise: method {} is not safe and cacheable; promised_id={:?}"
                 req.method(),
                 promised_id,
             );
@@ -693,7 +701,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                trace!("stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}", id);
+                debug!("stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}", id);
                 return Err(Reason::PROTOCOL_ERROR);
             }
         }
@@ -758,7 +766,7 @@ impl Recv {
         -> Result<(), RecvError>
     {
         if !self.is_push_enabled {
-            proto_err!(conn: "recv_push_promise: push is disabled, PROTOCOL_ERROR");
+            proto_err!(conn: "recv_push_promise: push is disabled");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
