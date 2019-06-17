@@ -261,8 +261,8 @@ impl<T> FramedRead<T> {
                     Ok(_) => {},
                     Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
                     Err(frame::Error::MalformedMessage) => {
-                        let id = head.stream_id(),;
-                        proto_err!(stream: "malformed CONTINUATION frame; stream={:?}");
+                        let id = head.stream_id();
+                        proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
                         return Err(Stream {
                             id,
                             reason: Reason::PROTOCOL_ERROR,

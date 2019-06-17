@@ -676,7 +676,7 @@ impl Recv {
         if !Self::safe_and_cacheable(req.method()) {
             proto_err!(
                 stream:
-                "recv_push_promise: method {} is not safe and cacheable; promised_id={:?}"
+                "recv_push_promise: method {} is not safe and cacheable; promised_id={:?}",
                 req.method(),
                 promised_id,
             );
