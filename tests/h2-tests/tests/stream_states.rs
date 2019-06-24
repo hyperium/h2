@@ -395,23 +395,18 @@ fn recv_next_stream_id_updated_by_malformed_headers() {
         .send_frame(frames::headers(1)
             .request("GET", "https://example.com/")
             .eos())
-        .recv_frame(frames::go_away(1).protocol_error())
+        .recv_frame(frames::reset(1).stream_closed())
         .close();
 
-        let srv = server::handshake(io)
-            .expect("handshake")
-            .and_then(|srv| srv.into_future().then(|res| {
-                let (err, _) = res.unwrap_err();
-                assert_eq!(
-                    err.to_string(),
-                    "protocol error: unspecific protocol error detected"
-                );
-
-                Ok::<(), ()>(())
+    let srv = server::handshake(io)
+        .expect("handshake")
+        .and_then(|srv| {
+            srv.into_future().unwrap().map(|(item, _srv)| {
+                assert!(item.is_none());
             })
-        );
+        });
 
-        srv.join(client).wait().expect("wait");
+    srv.join(client).wait().expect("wait");
 }
 
 #[test]
@@ -429,43 +424,33 @@ fn skipped_stream_ids_are_implicitly_closed() {
         )
         // send the response on a lower-numbered stream, which should be
         // implicitly closed.
-        .send_frame(frames::headers(3).response(200));
+        .send_frame(frames::headers(3).response(299))
+        .recv_frame(frames::reset(3).stream_closed())
+        .send_frame(frames::headers(5).response(200).eos());
 
-        let h2 = client::Builder::new()
-            .initial_stream_id(5)
-            .handshake::<_, Bytes>(io)
-            .expect("handshake")
-            .and_then(|(mut client, h2)| {
-                let request = Request::builder()
-                    .method(Method::GET)
-                    .uri("https://example.com/")
-                    .body(())
-                    .unwrap();
+    let h2 = client::Builder::new()
+        .initial_stream_id(5)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
 
-                let req = client.send_request(request, true)
-                    .unwrap()
-                    .0.then(|res| {
-                        let err = res.unwrap_err();
-                        assert_eq!(
-                            err.to_string(),
-                            "protocol error: unspecific protocol error detected");
-                        Ok::<(), ()>(())
-                    });
-                    // client should see a conn error
-                    let conn = h2.then(|res| {
-                        let err = res.unwrap_err();
-                        assert_eq!(
-                            err.to_string(),
-                            "protocol error: unspecific protocol error detected"
-                        );
-                        Ok::<(), ()>(())
-                    });
-                    conn.unwrap().join(req)
-            });
+            let req = client.send_request(request, true)
+                .unwrap()
+                .0
+                .expect("req1")
+                .map(|res| {
+                    assert_eq!(res.status(), StatusCode::OK);
+                });
+            h2.drive(req)
+                .and_then(|(conn, ())| conn.expect("client"))
+        });
 
-
-        h2.join(srv).wait().expect("wait");
-
+    h2.join(srv).wait().expect("wait");
 }
 
 #[test]
@@ -590,7 +575,10 @@ fn rst_stream_expires() {
         .ping_pong([1; 8])
         // sending frame after canceled!
         .send_frame(frames::data(1, vec![0; 16_384]).eos())
-        .recv_frame(frames::go_away(0).protocol_error())
+        // window capacity is returned
+        .recv_frame(frames::window_update(0, 16_384 * 2))
+        // and then stream error
+        .recv_frame(frames::reset(1).stream_closed())
         .close();
 
     let client = client::Builder::new()
@@ -607,24 +595,15 @@ fn rst_stream_expires() {
             let req = client.send_request(request, true)
                 .unwrap()
                 .0.expect("response")
-                .and_then(|resp| {
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
-                })
-                .map_err(|()| -> Error {
-                    unreachable!()
                 });
 
-            conn.drive(req)
-                .and_then(|(conn, _)| conn.expect_err("client"))
-                .map(|err| {
-                    assert_eq!(
-                        err.to_string(),
-                        "protocol error: unspecific protocol error detected"
-                    );
-                    drop(client);
-                })
+            // no connection error should happen
+            conn.expect("client")
+                .drive(req)
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
 
@@ -661,9 +640,9 @@ fn rst_stream_max() {
         .send_frame(frames::data(3, vec![0; 16]).eos())
         // ping pong to be sure of no goaway
         .ping_pong([1; 8])
-        // 1 has been evicted, will get a goaway
+        // 1 has been evicted, will get a reset
         .send_frame(frames::data(1, vec![0; 16]).eos())
-        .recv_frame(frames::go_away(0).protocol_error())
+        .recv_frame(frames::reset(1).stream_closed())
         .close();
 
     let client = client::Builder::new()
@@ -680,13 +659,9 @@ fn rst_stream_max() {
             let req1 = client.send_request(request, true)
                 .unwrap()
                 .0.expect("response1")
-                .and_then(|resp| {
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
-                })
-                .map_err(|()| -> Error {
-                    unreachable!()
                 });
 
             let request = Request::builder()
@@ -698,24 +673,16 @@ fn rst_stream_max() {
             let req2 = client.send_request(request, true)
                 .unwrap()
                 .0.expect("response2")
-                .and_then(|resp| {
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
-                })
-                .map_err(|()| -> Error {
-                    unreachable!()
                 });
 
-            conn.drive(req1.join(req2))
-                .and_then(|(conn, _)| conn.expect_err("client"))
-                .map(move |err| {
-                    drop(client);
-                    assert_eq!(
-                        err.to_string(),
-                        "protocol error: unspecific protocol error detected"
-                    );
-                })
+
+            // no connection error should happen
+            conn.expect("client")
+                .drive(req1.join(req2))
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
 

@@ -72,7 +72,7 @@ pub trait FutureExt: Future {
     ///
     /// This allows the executor to poll other futures before trying this one
     /// again.
-    fn yield_once(self) -> Box<Future<Item = Self::Item, Error = Self::Error>>
+    fn yield_once(self) -> Box<dyn Future<Item = Self::Item, Error = Self::Error>>
     where
         Self: Future + Sized + 'static,
     {

@@ -316,6 +316,11 @@ impl Mock<frame::Reset> {
         Mock(frame::Reset::new(id, frame::Reason::CANCEL))
     }
 
+    pub fn stream_closed(self) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, frame::Reason::STREAM_CLOSED))
+    }
+
     pub fn internal_error(self) -> Self {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::INTERNAL_ERROR))

@@ -109,12 +109,6 @@ impl Send {
     }
 
     /// Send an explicit RST_STREAM frame
-    ///
-    /// # Arguments
-    /// + `reason`: the error code for the RST_STREAM frame
-    /// + `clear_queue`: if true, all pending outbound frames will be cleared,
-    ///    if false, the RST_STREAM frame will be appended to the end of the
-    ///    send queue.
     pub fn send_reset<B>(
         &mut self,
         reason: Reason,
@@ -451,5 +445,18 @@ impl Send {
 
     pub fn ensure_next_stream_id(&self) -> Result<StreamId, UserError> {
         self.next_stream_id.map_err(|_| UserError::OverflowedStreamId)
+    }
+
+    pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        if let Ok(next_id) = self.next_stream_id {
+            // Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(
+                id.is_server_initiated(),
+                next_id.is_server_initiated(),
+            );
+            id < next_id
+        } else {
+            true
+        }
     }
 }
