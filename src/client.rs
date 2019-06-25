@@ -190,7 +190,7 @@ use std::usize;
 pub struct Handshake<T, B = Bytes> {
     builder: Builder,
     inner: WriteAll<T, &'static [u8]>,
-    _marker: PhantomData<B>,
+    _marker: PhantomData<fn(B)>,
 }
 
 /// Initializes new HTTP/2.0 streams on a connection by sending a request.
