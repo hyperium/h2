@@ -116,7 +116,7 @@ impl Handle {
     }
 
     /// Read the client preface
-    pub fn read_preface(self) -> Box<Future<Item = Self, Error = io::Error>> {
+    pub fn read_preface(self) -> Box<dyn Future<Item = Self, Error = io::Error>> {
         let buf = vec![0; PREFACE.len()];
         let ret = read_exact(self, buf).and_then(|(me, buf)| {
             assert_eq!(buf, PREFACE);
@@ -129,7 +129,7 @@ impl Handle {
     /// Perform the H2 handshake
     pub fn assert_client_handshake(
         self,
-    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>> {
+    ) -> Box<dyn Future<Item = (frame::Settings, Self), Error = h2::Error>> {
         self.assert_client_handshake_with_settings(frame::Settings::default())
     }
 
@@ -137,7 +137,7 @@ impl Handle {
     pub fn assert_client_handshake_with_settings<T>(
         mut self,
         settings: T,
-    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    ) -> Box<dyn Future<Item = (frame::Settings, Self), Error = h2::Error>>
     where
         T: Into<frame::Settings>,
     {
@@ -189,7 +189,7 @@ impl Handle {
     /// Perform the H2 handshake
     pub fn assert_server_handshake(
         self,
-    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>> {
+    ) -> Box<dyn Future<Item = (frame::Settings, Self), Error = h2::Error>> {
         self.assert_server_handshake_with_settings(frame::Settings::default())
     }
 
@@ -197,7 +197,7 @@ impl Handle {
     pub fn assert_server_handshake_with_settings<T>(
         mut self,
         settings: T,
-    ) -> Box<Future<Item = (frame::Settings, Self), Error = h2::Error>>
+    ) -> Box<dyn Future<Item = (frame::Settings, Self), Error = h2::Error>>
     where
         T: Into<frame::Settings>,
     {
@@ -433,7 +433,7 @@ impl AsyncWrite for Pipe {
 
 pub trait HandleFutureExt {
     fn recv_settings(self)
-        -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
+        -> RecvFrame<Box<dyn Future<Item = (Option<Frame>, Handle), Error = ()>>>
     where
         Self: Sized + 'static,
         Self: Future<Item = (frame::Settings, Handle)>,
@@ -443,7 +443,7 @@ pub trait HandleFutureExt {
     }
 
     fn recv_custom_settings<T>(self, settings: T)
-        -> RecvFrame<Box<Future<Item = (Option<Frame>, Handle), Error = ()>>>
+        -> RecvFrame<Box<dyn Future<Item = (Option<Frame>, Handle), Error = ()>>>
     where
         Self: Sized + 'static,
         Self: Future<Item = (frame::Settings, Handle)>,
@@ -454,7 +454,7 @@ pub trait HandleFutureExt {
             .map(|(settings, handle)| (Some(settings.into()), handle))
             .unwrap();
 
-        let boxed: Box<Future<Item = (Option<Frame>, Handle), Error = ()>> =
+        let boxed: Box<dyn Future<Item = (Option<Frame>, Handle), Error = ()>> =
             Box::new(map);
         RecvFrame {
             inner: boxed,
@@ -462,7 +462,7 @@ pub trait HandleFutureExt {
         }
     }
 
-    fn ignore_settings(self) -> Box<Future<Item = Handle, Error = ()>>
+    fn ignore_settings(self) -> Box<dyn Future<Item = Handle, Error = ()>>
     where
         Self: Sized + 'static,
         Self: Future<Item = (frame::Settings, Handle)>,
@@ -497,7 +497,7 @@ pub trait HandleFutureExt {
         }
     }
 
-    fn send_bytes(self, data: &[u8]) -> Box<Future<Item = Handle, Error = Self::Error>>
+    fn send_bytes(self, data: &[u8]) -> Box<dyn Future<Item = Handle, Error = Self::Error>>
     where
         Self: Future<Item = Handle> + Sized + 'static,
         Self::Error: fmt::Debug,
@@ -536,7 +536,7 @@ pub trait HandleFutureExt {
             .recv_frame(frames::ping(payload).pong())
     }
 
-    fn idle_ms(self, ms: usize) -> Box<Future<Item = Handle, Error = Self::Error>>
+    fn idle_ms(self, ms: usize) -> Box<dyn Future<Item = Handle, Error = Self::Error>>
     where
         Self: Sized + 'static,
         Self: Future<Item = Handle>,
@@ -562,7 +562,7 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn buffer_bytes(self, num: usize) -> Box<Future<Item = Handle, Error = Self::Error>>
+    fn buffer_bytes(self, num: usize) -> Box<dyn Future<Item = Handle, Error = Self::Error>>
     where Self: Sized + 'static,
           Self: Future<Item = Handle>,
           Self::Error: fmt::Debug,
@@ -596,7 +596,7 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn unbounded_bytes(self) -> Box<Future<Item = Handle, Error = Self::Error>>
+    fn unbounded_bytes(self) -> Box<dyn Future<Item = Handle, Error = Self::Error>>
     where Self: Sized + 'static,
           Self: Future<Item = Handle>,
           Self::Error: fmt::Debug,
@@ -615,7 +615,7 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn then_notify(self, tx: oneshot::Sender<()>) -> Box<Future<Item = Handle, Error = Self::Error>>
+    fn then_notify(self, tx: oneshot::Sender<()>) -> Box<dyn Future<Item = Handle, Error = Self::Error>>
     where Self: Sized + 'static,
           Self: Future<Item = Handle>,
           Self::Error: fmt::Debug,
@@ -626,7 +626,7 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn wait_for<F>(self, other: F) -> Box<Future<Item = Self::Item, Error = Self::Error>>
+    fn wait_for<F>(self, other: F) -> Box<dyn Future<Item = Self::Item, Error = Self::Error>>
     where
         F: Future + 'static,
         Self: Future + Sized + 'static
@@ -636,7 +636,7 @@ pub trait HandleFutureExt {
         }))
     }
 
-    fn close(self) -> Box<Future<Item = (), Error = ()>>
+    fn close(self) -> Box<dyn Future<Item = (), Error = ()>>
     where
         Self: Future<Error = ()> + Sized + 'static,
     {
@@ -752,7 +752,7 @@ where
     T: Future<Item = Handle> + 'static,
     T::Error: fmt::Debug,
 {
-    type Future = Box<Future<Item = (Option<Frame>, Handle), Error = ()>>;
+    type Future = Box<dyn Future<Item = (Option<Frame>, Handle), Error = ()>>;
 
     fn into_recv_frame(self, frame: Option<Frame>) -> RecvFrame<Self::Future> {
         let into_fut = Box::new(
