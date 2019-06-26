@@ -653,6 +653,96 @@ fn rst_stream_max() {
 }
 
 #[test]
+fn rst_stream_recv_eos_clears_from_reset_queue() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(7)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(9)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .send_frame(frames::headers(1).response(200))
+        .send_frame(frames::headers(3).response(200))
+        .recv_frame(frames::reset(1).cancel())
+        .recv_frame(frames::reset(3).cancel())
+        // sending frames after canceled
+        .send_frame(frames::data(1, vec![0; 16]))
+        // this one too, but has EOS
+        // so it should get removed from the limit
+        .send_frame(frames::data(3, vec![0; 16]).eos())
+        // ping pong to be sure of no goaway
+        .ping_pong([1; 8])
+        .send_frame(frames::headers(5).response(200))
+        .recv_frame(frames::reset(5).cancel())
+        // also canceled, but send trailers
+        .send_frame(frames::headers(5).eos())
+        .send_frame(frames::headers(7).response(200))
+        .recv_frame(frames::reset(7).cancel())
+        // Since 3 and 5 were closed, 1 is still ignored
+        .send_frame(frames::data(1, vec![0; 16]).eos())
+        .ping_pong([2; 8])
+        // And finally let client close
+        .send_frame(frames::headers(9).response(200).eos())
+        .close();
+
+    let client = client::Builder::new()
+        .max_concurrent_reset_streams(2)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+
+            let mut make_req = |expect| {
+                client
+                    .get("https://example.com/")
+                    .expect(expect)
+                    .map(|resp| {
+                        assert_eq!(resp.status(), StatusCode::OK);
+                        // drop resp will send a reset
+                    })
+            };
+
+            let req1 = make_req("response1");
+            let req2 = make_req("response2");
+            let req3 = make_req("response3");
+            let req4 = make_req("response4");
+            // one request to keep the client waiting
+            let req5 = make_req("response5");
+
+            conn.expect("client")
+                .drive(req1.join(req2).join(req3).join(req4).join(req5))
+                .and_then(|(conn, _)| conn)
+        });
+
+
+    client.join(srv).wait().expect("wait");
+}
+
+
+#[test]
 fn reserved_state_recv_window_update() {
     let _ = ::env_logger::try_init();
     let (io, srv) = mock::new();

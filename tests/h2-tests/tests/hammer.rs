@@ -1,5 +1,4 @@
 extern crate tokio;
-#[macro_use]
 extern crate h2_support;
 
 use h2_support::prelude::*;
@@ -11,7 +10,7 @@ use std::{net::SocketAddr, thread, sync::{atomic::{AtomicUsize, Ordering}, Arc}}
 struct Server {
     addr: SocketAddr,
     reqs: Arc<AtomicUsize>,
-    join: Option<thread::JoinHandle<()>>,
+    _join: Option<thread::JoinHandle<()>>,
 }
 
 impl Server {
@@ -51,7 +50,7 @@ impl Server {
 
         Self {
             addr,
-            join: Some(join),
+            _join: Some(join),
             reqs
         }
     }

@@ -219,6 +219,15 @@ impl State {
         }
     }
 
+    /// Forces a LocallyReset stream to be fully Closed.
+    ///
+    /// Should be called when we receive an EOS frame while we were
+    /// ignoring frames to this stream "for some time".
+    pub fn reset_to_close(&mut self) {
+        debug_assert!(self.is_local_reset());
+        self.inner = Closed(Cause::EndStream);
+    }
+
     /// The remote explicitly sent a RST_STREAM.
     ///
     /// # Arguments

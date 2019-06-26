@@ -155,16 +155,21 @@ where
         };
 
         let stream = me.store.resolve(key);
+        let actions = &mut me.actions;
 
         if stream.state.is_local_reset() {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
             trace!("recv_headers; ignoring trailers on {:?}", stream.id);
+            if frame.is_end_stream() {
+                me.counts.transition(stream, move |_counts, stream| {
+                    actions.recv.recv_ignored_trailers(frame, stream);
+                });
+            }
             return Ok(());
         }
 
-        let actions = &mut me.actions;
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 

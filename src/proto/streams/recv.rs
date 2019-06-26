@@ -334,6 +334,23 @@ impl Recv {
         Ok(())
     }
 
+    /// Transition the stream even though we're ignoring frames "for some time".
+    pub fn recv_ignored_trailers(
+        &mut self,
+        frame: frame::Headers,
+        stream: &mut store::Ptr,
+    ) {
+        debug_assert!(stream.state.is_local_reset());
+        debug_assert!(frame.is_end_stream());
+        trace!(
+            "recv_ignored_trailers; locally reset stream {:?} got EOS",
+            stream.id,
+        );
+
+        stream.state.reset_to_close();
+        assert!(self.pending_reset_expired.remove(stream));
+    }
+
     /// Releases capacity of the connection
     pub fn release_connection_capacity(
         &mut self,
@@ -535,6 +552,20 @@ impl Recv {
             // the capacity as available to be reclaimed. When the available
             // capacity meets a threshold, a WINDOW_UPDATE is then sent.
             self.release_connection_capacity(sz, &mut None);
+
+
+            // If we receive EOS while ignoring frames, we now know
+            // the remote thinks this stream is closed. So we can
+            // cleanup this stream from the reset_streams queue early.
+            if frame.is_end_stream() {
+                trace!(
+                    "recv_data; locally reset stream {:?} got EOS",
+                    stream.id,
+                );
+
+                stream.state.reset_to_close();
+                assert!(self.pending_reset_expired.remove(stream));
+            }
             return Ok(());
         }
 

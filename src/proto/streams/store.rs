@@ -35,7 +35,7 @@ struct SlabIndex(usize);
 
 #[derive(Debug)]
 pub(super) struct Queue<N> {
-    indices: Option<store::Indices>,
+    indices: Option<Indices>,
     _p: PhantomData<N>,
 }
 
@@ -317,6 +317,53 @@ where
         }
 
         None
+    }
+
+    pub fn remove(&mut self, to_remove: &mut store::Ptr) -> bool {
+        // Unfortunately O(n)
+        if let Some(mut idxs) = self.indices {
+            trace!("Queue::remove; to_remove={:?}, indices={:?}", to_remove.key, idxs);
+            let store = &mut *to_remove.store;
+            let to_remove = to_remove.key;
+            if idxs.head == to_remove {
+                self.pop(store);
+                return true;
+            }
+
+            let mut idx = idxs.head;
+            loop {
+                let mut ptr = store.resolve(idx);
+                if let Some(next) = N::next(&ptr) {
+                    if next == to_remove {
+                        // found it!
+                        let next_next = {
+                            // only deref to_remove once
+                            let stream = &mut *ptr.store.resolve(to_remove);
+                            let n = N::take_next(stream);
+                            N::set_queued(stream, false);
+                            n
+                        };
+                        N::set_next(&mut ptr, next_next);
+
+                        // If removed the tail, update tail to be 'idx', which
+                        // was the key before the 'next' (the tail).
+                        if to_remove == idxs.tail {
+                            idxs.tail = idx;
+                            self.indices = Some(idxs);
+                        }
+                        return true;
+                    }
+
+                    idx = next;
+                } else {
+                    // end of queue and never found it :(
+                    debug_assert_eq!(idx, idxs.tail);
+                    return false;
+                }
+            }
+        } else {
+            false
+        }
     }
 }
 
