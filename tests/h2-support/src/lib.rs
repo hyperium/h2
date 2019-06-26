@@ -22,8 +22,10 @@ pub mod mock_io;
 pub mod notify;
 pub mod util;
 
+mod client_ext;
 mod future_ext;
 
+pub use client_ext::{SendRequestExt};
 pub use future_ext::{FutureExt, Unwrap};
 
 pub type WindowSize = usize;

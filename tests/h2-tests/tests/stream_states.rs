@@ -202,16 +202,9 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
     let (io, mut srv) = mock::new();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("https://example.com/")
-            .body(())
-            .unwrap();
-
         let req = client
-            .send_request(request, true)
-            .unwrap()
-            .0.unwrap()
+            .get("https://example.com/")
+            .expect("response")
             .and_then(|resp| {
                 assert_eq!(resp.status(), StatusCode::OK);
                 let body = resp.into_parts().1;
@@ -261,16 +254,9 @@ fn configure_max_frame_size() {
         .handshake::<_, Bytes>(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
             let req = client
-                .send_request(request, true)
-                .unwrap()
-                .0.expect("response")
+                .get("https://example.com/")
+                .expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     let body = resp.into_parts().1;
@@ -330,15 +316,9 @@ fn recv_goaway_finishes_processed_streams() {
     let h2 = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, h2)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req1 = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response")
+            let req1 = client
+                .get("https://example.com")
+                .expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     let body = resp.into_parts().1;
@@ -349,16 +329,10 @@ fn recv_goaway_finishes_processed_streams() {
                     Ok(())
                 });
 
-
             // this request will trigger a goaway
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-            let req2 = client.send_request(request, true)
-                .unwrap()
-                .0.then(|res| {
+            let req2 = client
+                .get("https://example.com/")
+                .then(|res| {
                     let err = res.unwrap_err();
                     assert_eq!(err.to_string(), "protocol error: not a result of an error");
                     Ok::<(), ()>(())
@@ -436,15 +410,9 @@ fn skipped_stream_ids_are_implicitly_closed() {
             .handshake::<_, Bytes>(io)
             .expect("handshake")
             .and_then(|(mut client, h2)| {
-                let request = Request::builder()
-                    .method(Method::GET)
-                    .uri("https://example.com/")
-                    .body(())
-                    .unwrap();
-
-                let req = client.send_request(request, true)
-                    .unwrap()
-                    .0.then(|res| {
+                let req = client
+                    .get("https://example.com/")
+                    .then(|res| {
                         let err = res.unwrap_err();
                         assert_eq!(
                             err.to_string(),
@@ -496,15 +464,9 @@ fn send_rst_stream_allows_recv_data() {
     let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response")
+            let req = client
+                .get("https://example.com/")
+                .expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
@@ -545,19 +507,12 @@ fn send_rst_stream_allows_recv_trailers() {
     let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response")
-                .and_then(|resp| {
+            let req = client
+                .get("https://example.com/")
+                .expect("response")
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
                 });
 
             conn.expect("client")
@@ -598,26 +553,18 @@ fn rst_stream_expires() {
         .handshake::<_, Bytes>(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response")
-                .and_then(|resp| {
+            let req = client
+                .get("https://example.com/")
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
                 })
-                .map_err(|()| -> Error {
-                    unreachable!()
+                .map_err(|e| -> Error {
+                    unreachable!("req shouldn't error: {:?}", e)
                 });
 
             conn.drive(req)
-                .and_then(|(conn, _)| conn.expect_err("client"))
+                .and_then(|(conn, _)| conn.expect_err("client should error"))
                 .map(|err| {
                     assert_eq!(
                         err.to_string(),
@@ -626,7 +573,6 @@ fn rst_stream_expires() {
                     drop(client);
                 })
         });
-
 
     client.join(srv).wait().expect("wait");
 }
@@ -671,40 +617,24 @@ fn rst_stream_max() {
         .handshake::<_, Bytes>(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req1 = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response1")
-                .and_then(|resp| {
+            let req1 = client
+                .get("https://example.com/")
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
                 })
-                .map_err(|()| -> Error {
-                    unreachable!()
+                .map_err(|e| -> Error {
+                    unreachable!("req1 shouldn't error: {:?}", e)
                 });
 
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req2 = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response2")
-                .and_then(|resp| {
+            let req2 = client
+                .get("https://example.com/")
+                .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                    Ok(())
                 })
-                .map_err(|()| -> Error {
-                    unreachable!()
+                .map_err(|e| -> Error {
+                    unreachable!("req2 shouldn't error: {:?}", e)
                 });
 
             conn.drive(req1.join(req2))
@@ -751,15 +681,9 @@ fn reserved_state_recv_window_update() {
     let client = client::handshake(io)
         .expect("handshake")
         .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://example.com/")
-                .body(())
-                .unwrap();
-
-            let req = client.send_request(request, true)
-                .unwrap()
-                .0.expect("response")
+            let req = client
+                .get("https://example.com/")
+                .expect("response")
                 .and_then(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     Ok(())
@@ -829,7 +753,7 @@ fn rst_while_closing() {
         .recv_settings()
         .recv_frame(
             frames::headers(1)
-                .request("GET", "https://example.com/")
+                .request("POST", "https://example.com/")
         )
         .send_frame(frames::headers(1).response(200))
         .send_frame(frames::headers(1).eos())
@@ -848,7 +772,7 @@ fn rst_while_closing() {
         .expect("handshake")
         .and_then(|(mut client, conn)| {
             let request = Request::builder()
-                .method(Method::GET)
+                .method(Method::POST)
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();

@@ -31,6 +31,9 @@ pub use self::futures::{Future, IntoFuture, Sink, Stream};
 // And our Future extensions
 pub use super::future_ext::{FutureExt, Unwrap};
 
+// Our client_ext helpers
+pub use super::client_ext::{SendRequestExt};
+
 // Re-export HTTP types
 pub use self::http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
