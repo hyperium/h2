@@ -204,9 +204,13 @@ where
                 }
             } else {
                 if !frame.is_end_stream() {
-                    // TODO: Is this the right error
-                    proto_err!(conn: "recv_headers: trailers frame was not EOS; stream={:?}", stream.id);
-                    return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+                    // Receiving trailers that don't set EOS is a "malformed"
+                    // message. Malformed messages are a stream error.
+                    proto_err!(stream: "recv_headers: trailers frame was not EOS; stream={:?}", stream.id);
+                    return Err(RecvError::Stream {
+                        id: stream.id,
+                        reason: Reason::PROTOCOL_ERROR,
+                    });
                 }
 
                 actions.recv.recv_trailers(frame, stream)
