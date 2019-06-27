@@ -140,17 +140,39 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, Open::Headers, &mut me.counts)? {
-                Some(stream_id) => {
-                    let stream = Stream::new(
-                        stream_id,
-                        me.actions.send.init_window_sz(),
-                        me.actions.recv.init_window_sz(),
-                    );
+            Entry::Vacant(e) => {
+                // Client: it's possible to send a request, and then send
+                // a RST_STREAM while the response HEADERS were in transit.
+                //
+                // Server: we can't reset a stream before having received
+                // the request headers, so don't allow.
+                if !P::is_server() {
+                    // This may be response headers for a stream we've already
+                    // forgotten about...
+                    if me.actions.may_have_forgotten_stream::<P>(id) {
+                        debug!(
+                            "recv_headers for old stream={:?}, sending STREAM_CLOSED",
+                            id,
+                        );
+                        return Err(RecvError::Stream {
+                            id,
+                            reason: Reason::STREAM_CLOSED,
+                        });
+                    }
+                }
 
-                    e.insert(stream)
-                },
-                None => return Ok(()),
+                match me.actions.recv.open(id, Open::Headers, &mut me.counts)? {
+                    Some(stream_id) => {
+                        let stream = Stream::new(
+                            stream_id,
+                            me.actions.send.init_window_sz(),
+                            me.actions.recv.init_window_sz(),
+                        );
+
+                        e.insert(stream)
+                    },
+                    None => return Ok(()),
+                }
             },
         };
 
@@ -234,6 +256,25 @@ where
                 if id > me.actions.recv.max_stream_id() {
                     trace!("id ({:?}) > max_stream_id ({:?}), ignoring DATA", id, me.actions.recv.max_stream_id());
                     return Ok(());
+                }
+
+                if me.actions.may_have_forgotten_stream::<P>(id) {
+                    debug!(
+                        "recv_data for old stream={:?}, sending STREAM_CLOSED",
+                        id,
+                    );
+
+                    let sz = frame.payload().len();
+                    // This should have been enforced at the codec::FramedRead layer, so
+                    // this is just a sanity check.
+                    assert!(sz <= super::MAX_WINDOW_SIZE as usize);
+                    let sz = sz as WindowSize;
+
+                    me.actions.recv.ignore_data(sz)?;
+                    return Err(RecvError::Stream {
+                        id,
+                        reason: Reason::STREAM_CLOSED,
+                    });
                 }
 
                 proto_err!(conn: "recv_data: stream not found; id={:?}", id);
@@ -674,13 +715,10 @@ where
 
         let key = match me.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
-            Entry::Vacant(e) => match me.actions.recv.open(id, Open::Headers, &mut me.counts) {
-                Ok(Some(stream_id)) => {
-                    let stream = Stream::new(stream_id, 0, 0);
+            Entry::Vacant(e) => {
+                let stream = Stream::new(id, 0, 0);
 
-                    e.insert(stream)
-                },
-                _ => return,
+                e.insert(stream)
             },
         };
 
@@ -1247,6 +1285,26 @@ impl Actions {
             Err(err.shallow_clone())
         } else {
             Ok(())
+        }
+    }
+
+    /// Check if we possibly could have processed and since forgotten this stream.
+    ///
+    /// If we send a RST_STREAM for a stream, we will eventually "forget" about
+    /// the stream to free up memory. It's possible that the remote peer had
+    /// frames in-flight, and by the time we receive them, our own state is
+    /// gone. We *could* tear everything down by sending a GOAWAY, but it
+    /// is more likely to be latency/memory constraints that caused this,
+    /// and not a bad actor. So be less catastrophic, the spec allows
+    /// us to send another RST_STREAM of STREAM_CLOSED.
+    fn may_have_forgotten_stream<P: Peer>(&self, id: StreamId) -> bool {
+        if id.is_zero() {
+            return false;
+        }
+        if P::is_local_init(id) {
+            self.send.may_have_created_stream(id)
+        } else {
+            self.recv.may_have_created_stream(id)
         }
     }
 

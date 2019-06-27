@@ -372,20 +372,15 @@ fn recv_next_stream_id_updated_by_malformed_headers() {
         .recv_frame(frames::go_away(1).protocol_error())
         .close();
 
-        let srv = server::handshake(io)
-            .expect("handshake")
-            .and_then(|srv| srv.into_future().then(|res| {
-                let (err, _) = res.unwrap_err();
-                assert_eq!(
-                    err.to_string(),
-                    "protocol error: unspecific protocol error detected"
-                );
+    let srv = server::handshake(io)
+        .expect("handshake")
+        .and_then(|srv| srv.into_future().then(|res| {
+            let (err, _) = res.unwrap_err();
+            assert_eq!(err.reason(), Some(h2::Reason::PROTOCOL_ERROR));
+            Ok::<(), ()>(())
+        }));
 
-                Ok::<(), ()>(())
-            })
-        );
-
-        srv.join(client).wait().expect("wait");
+    srv.join(client).wait().expect("wait");
 }
 
 #[test]
@@ -403,37 +398,28 @@ fn skipped_stream_ids_are_implicitly_closed() {
         )
         // send the response on a lower-numbered stream, which should be
         // implicitly closed.
-        .send_frame(frames::headers(3).response(200));
+        .send_frame(frames::headers(3).response(299))
+        // however, our client choose to send a RST_STREAM because it
+        // can't tell if it had previously reset '3'.
+        .recv_frame(frames::reset(3).stream_closed())
+        .send_frame(frames::headers(5).response(200).eos());
 
-        let h2 = client::Builder::new()
-            .initial_stream_id(5)
-            .handshake::<_, Bytes>(io)
-            .expect("handshake")
-            .and_then(|(mut client, h2)| {
-                let req = client
-                    .get("https://example.com/")
-                    .then(|res| {
-                        let err = res.unwrap_err();
-                        assert_eq!(
-                            err.to_string(),
-                            "protocol error: unspecific protocol error detected");
-                        Ok::<(), ()>(())
-                    });
-                    // client should see a conn error
-                    let conn = h2.then(|res| {
-                        let err = res.unwrap_err();
-                        assert_eq!(
-                            err.to_string(),
-                            "protocol error: unspecific protocol error detected"
-                        );
-                        Ok::<(), ()>(())
-                    });
-                    conn.unwrap().join(req)
-            });
+    let h2 = client::Builder::new()
+        .initial_stream_id(5)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, h2)| {
+            let req = client
+                .get("https://example.com/")
+                .expect("response")
+                .map(|res| {
+                    assert_eq!(res.status(), StatusCode::OK);
+                });
+            h2.drive(req)
+                .and_then(|(conn, ())| conn.expect("client"))
+        });
 
-
-        h2.join(srv).wait().expect("wait");
-
+    h2.join(srv).wait().expect("wait");
 }
 
 #[test]
@@ -545,7 +531,10 @@ fn rst_stream_expires() {
         .ping_pong([1; 8])
         // sending frame after canceled!
         .send_frame(frames::data(1, vec![0; 16_384]).eos())
-        .recv_frame(frames::go_away(0).protocol_error())
+        // window capacity is returned
+        .recv_frame(frames::window_update(0, 16_384 * 2))
+        // and then stream error
+        .recv_frame(frames::reset(1).stream_closed())
         .close();
 
     let client = client::Builder::new()
@@ -555,23 +544,16 @@ fn rst_stream_expires() {
         .and_then(|(mut client, conn)| {
             let req = client
                 .get("https://example.com/")
+                .expect("response")
                 .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                })
-                .map_err(|e| -> Error {
-                    unreachable!("req shouldn't error: {:?}", e)
                 });
 
-            conn.drive(req)
-                .and_then(|(conn, _)| conn.expect_err("client should error"))
-                .map(|err| {
-                    assert_eq!(
-                        err.to_string(),
-                        "protocol error: unspecific protocol error detected"
-                    );
-                    drop(client);
-                })
+            // no connection error should happen
+            conn.expect("client")
+                .drive(req)
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
     client.join(srv).wait().expect("wait");
@@ -607,9 +589,9 @@ fn rst_stream_max() {
         .send_frame(frames::data(3, vec![0; 16]).eos())
         // ping pong to be sure of no goaway
         .ping_pong([1; 8])
-        // 1 has been evicted, will get a goaway
+        // 1 has been evicted, will get a reset
         .send_frame(frames::data(1, vec![0; 16]).eos())
-        .recv_frame(frames::go_away(0).protocol_error())
+        .recv_frame(frames::reset(1).stream_closed())
         .close();
 
     let client = client::Builder::new()
@@ -619,33 +601,24 @@ fn rst_stream_max() {
         .and_then(|(mut client, conn)| {
             let req1 = client
                 .get("https://example.com/")
+                .expect("response1")
                 .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                })
-                .map_err(|e| -> Error {
-                    unreachable!("req1 shouldn't error: {:?}", e)
                 });
 
             let req2 = client
                 .get("https://example.com/")
+                .expect("response2")
                 .map(|resp| {
                     assert_eq!(resp.status(), StatusCode::OK);
                     // drop resp will send a reset
-                })
-                .map_err(|e| -> Error {
-                    unreachable!("req2 shouldn't error: {:?}", e)
                 });
 
-            conn.drive(req1.join(req2))
-                .and_then(|(conn, _)| conn.expect_err("client"))
-                .map(move |err| {
-                    drop(client);
-                    assert_eq!(
-                        err.to_string(),
-                        "protocol error: unspecific protocol error detected"
-                    );
-                })
+            // no connection error should happen
+            conn.expect("client")
+                .drive(req1.join(req2))
+                .and_then(move |(conn, _)| conn.map(move |()| drop(client)))
         });
 
 
