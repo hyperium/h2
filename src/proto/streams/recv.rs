@@ -516,27 +516,18 @@ impl Recv {
             stream.recv_flow.window_size()
         );
 
-        // Ensure that there is enough capacity on the connection before acting
-        // on the stream.
-        self.consume_connection_window(sz)?;
 
         if is_ignoring_frame {
             trace!(
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            // we just checked for enough connection window capacity, and
-            // consumed it. Since we are ignoring this frame "for some time",
-            // we aren't returning the frame to the user. That means they
-            // have no way to release the capacity back to the connection. So
-            // we have to release it automatically.
-            //
-            // This call doesn't send a WINDOW_UPDATE immediately, just marks
-            // the capacity as available to be reclaimed. When the available
-            // capacity meets a threshold, a WINDOW_UPDATE is then sent.
-            self.release_connection_capacity(sz, &mut None);
-            return Ok(());
+            return self.ignore_data(sz);
         }
+
+        // Ensure that there is enough capacity on the connection before acting
+        // on the stream.
+        self.consume_connection_window(sz)?;
 
         if stream.recv_flow.window_size() < sz {
             // http://httpwg.org/specs/rfc7540.html#WINDOW_UPDATE
@@ -597,6 +588,22 @@ impl Recv {
         stream.notify_recv();
 
         Ok(())
+    }
+
+    pub fn ignore_data(&mut self, sz: WindowSize) -> Result<(), RecvError> {
+        // Ensure that there is enough capacity on the connection...
+        self.consume_connection_window(sz)?;
+
+        // Since we are ignoring this frame,
+        // we aren't returning the frame to the user. That means they
+        // have no way to release the capacity back to the connection. So
+        // we have to release it automatically.
+        //
+        // This call doesn't send a WINDOW_UPDATE immediately, just marks
+        // the capacity as available to be reclaimed. When the available
+        // capacity meets a threshold, a WINDOW_UPDATE is then sent.
+        self.release_connection_capacity(sz, &mut None);
+        return Ok(());
     }
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
@@ -753,11 +760,24 @@ impl Recv {
         self.max_stream_id
     }
 
-    fn next_stream_id(&self) -> Result<StreamId, RecvError> {
+    pub fn next_stream_id(&self) -> Result<StreamId, RecvError> {
         if let Ok(id) = self.next_stream_id {
             Ok(id)
         } else {
             Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
+        }
+    }
+
+    pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        if let Ok(next_id) = self.next_stream_id {
+            // Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(
+                id.is_server_initiated(),
+                next_id.is_server_initiated(),
+            );
+            id < next_id
+        } else {
+            true
         }
     }
 

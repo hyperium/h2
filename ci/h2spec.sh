@@ -3,7 +3,7 @@ LOGFILE="h2server.log"
 
 if ! [ -e "h2spec" ] ; then
     # if we don't already have a h2spec executable, wget it from github
-    wget https://github.com/summerwind/h2spec/releases/download/v2.1.0/h2spec_linux_amd64.tar.gz
+    wget https://github.com/summerwind/h2spec/releases/download/v2.1.1/h2spec_linux_amd64.tar.gz
     tar xf h2spec_linux_amd64.tar.gz
 fi
 
