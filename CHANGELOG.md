@@ -1,3 +1,8 @@
+# 0.1.25 (June 28, 2019)
+
+* Fix to send a `RST_STREAM` instead of `GOAWAY` if receiving a frame on a previously closed stream.
+* Fix receiving trailers without an end-stream flag to be a stream error instead of connection error.
+
 # 0.1.24 (June 17, 2019)
 
 * Fix server wrongly rejecting requests that don't have an `:authority` header (#372).
