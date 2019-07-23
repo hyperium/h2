@@ -1,5 +1,10 @@
 # H2
 
+> **NOTE**: h2's [`master`](https://github.com/hyperium/h2/tree/master) branch
+> is currently in the process of moving to `std::future`. For the most recent
+> release, please see the [`0.1.x`](https://github.com/hyperium/h2/tree/0.1.x)
+> branch.
+
 A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 [![Build Status](https://travis-ci.org/hyperium/h2.svg?branch=master)](https://travis-ci.org/hyperium/h2)

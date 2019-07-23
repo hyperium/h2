@@ -5,7 +5,7 @@ name = "h2"
 #   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.1.25"
+version = "0.2.0-alpha.0"
 license = "MIT"
 authors = ["Carl Lerche <me@carllerche.com>"]
 description = "An HTTP/2.0 client and server"
@@ -15,6 +15,8 @@ readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
+
+publish = false
 
 [badges.travis-ci]
 repository = "hyperium/h2"
