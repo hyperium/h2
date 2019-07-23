@@ -1,10 +1,8 @@
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 #[test]
 fn recv_push_works() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -56,7 +54,7 @@ fn recv_push_works() {
 #[test]
 fn pushed_streams_arent_dropped_too_early() {
     // tests that by default, received push promises work
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -110,7 +108,7 @@ fn pushed_streams_arent_dropped_too_early() {
 
 #[test]
 fn recv_push_when_push_disabled_is_conn_error() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -163,7 +161,7 @@ fn recv_push_when_push_disabled_is_conn_error() {
 
 #[test]
 fn pending_push_promises_reset_when_dropped() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let srv = srv.assert_client_handshake()
@@ -206,7 +204,7 @@ fn pending_push_promises_reset_when_dropped() {
 
 #[test]
 fn recv_push_promise_over_max_header_list_size() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -257,7 +255,7 @@ fn recv_push_promise_over_max_header_list_size() {
 #[test]
 fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
     // Unsafe method or content length is stream protocol error
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -317,7 +315,7 @@ fn recv_push_promise_with_wrong_authority_is_stream_error() {
 
 #[test]
 fn recv_push_promise_skipped_stream_id() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()
@@ -367,7 +365,7 @@ fn recv_push_promise_skipped_stream_id() {
 
 #[test]
 fn recv_push_promise_dup_stream_id() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let mock = srv.assert_client_handshake()

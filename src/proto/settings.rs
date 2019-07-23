@@ -1,6 +1,6 @@
-use codec::RecvError;
-use frame;
-use proto::*;
+use crate::codec::RecvError;
+use crate::frame;
+use crate::proto::*;
 
 #[derive(Debug)]
 pub(crate) struct Settings {
@@ -19,7 +19,7 @@ impl Settings {
 
     pub fn recv_settings(&mut self, frame: frame::Settings) {
         if frame.is_ack() {
-            debug!("received remote settings ack");
+            log::debug!("received remote settings ack");
         // TODO: handle acks
         } else {
             assert!(self.pending.is_none());
@@ -38,11 +38,11 @@ impl Settings {
         C: Buf,
         P: Peer,
     {
-        trace!("send_pending_ack; pending={:?}", self.pending);
+        log::trace!("send_pending_ack; pending={:?}", self.pending);
 
         if let Some(ref settings) = self.pending {
             if !dst.poll_ready()?.is_ready() {
-                trace!("failed to send ACK");
+                log::trace!("failed to send ACK");
                 return Ok(Async::NotReady);
             }
 
@@ -54,7 +54,7 @@ impl Settings {
                 .ok()
                 .expect("invalid settings frame");
 
-            trace!("ACK sent; applying settings");
+            log::trace!("ACK sent; applying settings");
 
             if let Some(val) = settings.max_frame_size() {
                 dst.set_max_send_frame_size(val as usize);

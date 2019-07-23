@@ -1,9 +1,3 @@
-extern crate env_logger;
-extern crate futures;
-extern crate h2;
-extern crate http;
-extern crate tokio;
-
 use h2::client;
 use h2::RecvStream;
 

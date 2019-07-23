@@ -1,5 +1,5 @@
 use super::{huffman, Header};
-use frame;
+use crate::frame;
 
 use bytes::{Buf, Bytes, BytesMut};
 use http::header;
@@ -180,7 +180,7 @@ impl Decoder {
             self.last_max_update = size;
         }
 
-        trace!("decode");
+        log::trace!("decode");
 
         while let Some(ty) = peek_u8(src) {
             // At this point we are always at the beginning of the next block
@@ -188,14 +188,14 @@ impl Decoder {
             // determined from the first byte.
             match Representation::load(ty)? {
                 Indexed => {
-                    trace!("    Indexed; rem={:?}", src.remaining());
+                    log::trace!("    Indexed; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_indexed(src)?;
                     consume(src);
                     f(entry);
                 },
                 LiteralWithIndexing => {
-                    trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
+                    log::trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, true)?;
 
@@ -206,14 +206,14 @@ impl Decoder {
                     f(entry);
                 },
                 LiteralWithoutIndexing => {
-                    trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
+                    log::trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
                     f(entry);
                 },
                 LiteralNeverIndexed => {
-                    trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
+                    log::trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
@@ -223,7 +223,7 @@ impl Decoder {
                     f(entry);
                 },
                 SizeUpdate => {
-                    trace!("    SizeUpdate; rem={:?}", src.remaining());
+                    log::trace!("    SizeUpdate; rem={:?}", src.remaining());
                     if !can_resize {
                         return Err(DecoderError::InvalidMaxDynamicSize);
                     }
@@ -245,7 +245,7 @@ impl Decoder {
             return Err(DecoderError::InvalidMaxDynamicSize);
         }
 
-        debug!(
+        log::debug!(
             "Decoder changed max table size from {} to {}",
             self.table.size(),
             new_size
@@ -299,7 +299,7 @@ impl Decoder {
         let len = decode_int(buf, 7)?;
 
         if len > buf.remaining() {
-            trace!(
+            log::trace!(
                 "decode_string underflow; len={}; remaining={}",
                 len,
                 buf.remaining()
@@ -788,7 +788,7 @@ fn from_static(s: &'static str) -> String<Bytes> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hpack::Header;
+    use crate::hpack::Header;
 
     #[test]
     fn test_peek_u8() {

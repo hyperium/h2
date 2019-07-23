@@ -1,5 +1,5 @@
-use codec::Codec;
-use frame::{self, Reason, StreamId};
+use crate::codec::Codec;
+use crate::frame::{self, Reason, StreamId};
 
 use bytes::Buf;
 use futures::{Async, Poll};

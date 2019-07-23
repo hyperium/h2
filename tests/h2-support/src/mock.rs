@@ -1,4 +1,4 @@
-use {frames, FutureExt, SendFrame};
+use crate::{frames, FutureExt, SendFrame};
 
 use h2::{self, RecvError, SendError};
 use h2::frame::{self, Frame};
@@ -22,7 +22,7 @@ pub struct Mock {
 
 #[derive(Debug)]
 pub struct Handle {
-    codec: ::Codec<Pipe>,
+    codec: crate::Codec<Pipe>,
 }
 
 #[derive(Debug)]
@@ -92,7 +92,7 @@ pub fn new_with_write_capacity(cap: usize) -> (Mock, Handle) {
 
 impl Handle {
     /// Get a mutable reference to inner Codec.
-    pub fn codec_mut(&mut self) -> &mut ::Codec<Pipe> {
+    pub fn codec_mut(&mut self) -> &mut crate::Codec<Pipe> {
         &mut self.codec
     }
 
@@ -276,7 +276,7 @@ impl io::Write for Handle {
 impl AsyncWrite for Handle {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         use std::io::Write;
-        try_nb!(self.flush());
+        tokio_io::try_nb!(self.flush());
         Ok(().into())
     }
 }
@@ -359,7 +359,7 @@ impl io::Write for Mock {
 impl AsyncWrite for Mock {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         use std::io::Write;
-        try_nb!(self.flush());
+        tokio_io::try_nb!(self.flush());
         Ok(().into())
     }
 }
@@ -426,7 +426,7 @@ impl io::Write for Pipe {
 impl AsyncWrite for Pipe {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         use std::io::Write;
-        try_nb!(self.flush());
+        tokio_io::try_nb!(self.flush());
         Ok(().into())
     }
 }
@@ -519,7 +519,7 @@ pub trait HandleFutureExt {
                         .write_buf(&mut buf)
                         .map_err(|e| panic!("write err={:?}", e));
 
-                    try_ready!(res);
+                    futures::try_ready!(res);
                 }
 
                 Ok(handle.take().unwrap().into())

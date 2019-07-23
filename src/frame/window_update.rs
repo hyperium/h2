@@ -1,4 +1,4 @@
-use frame::{self, Error, Head, Kind, StreamId};
+use crate::frame::{self, Error, Head, Kind, StreamId};
 
 use bytes::{BufMut};
 
@@ -28,7 +28,7 @@ impl WindowUpdate {
 
     /// Builds a `WindowUpdate` frame from a raw frame.
     pub fn load(head: Head, payload: &[u8]) -> Result<WindowUpdate, Error> {
-        debug_assert_eq!(head.kind(), ::frame::Kind::WindowUpdate);
+        debug_assert_eq!(head.kind(), crate::frame::Kind::WindowUpdate);
         if payload.len() != 4 {
             return Err(Error::BadFrameSize);
         }
@@ -48,7 +48,7 @@ impl WindowUpdate {
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
-        trace!("encoding WINDOW_UPDATE; id={:?}", self.stream_id);
+        log::trace!("encoding WINDOW_UPDATE; id={:?}", self.stream_id);
         let head = Head::new(Kind::WindowUpdate, 0, self.stream_id);
         head.encode(4, dst);
         dst.put_u32_be(self.size_increment);

@@ -65,11 +65,6 @@
 //! # Example
 //!
 //! ```rust
-//! extern crate futures;
-//! extern crate h2;
-//! extern crate http;
-//! extern crate tokio;
-//!
 //! use h2::client;
 //!
 //! use futures::*;
@@ -156,13 +151,13 @@
 //! [`Builder`]: struct.Builder.html
 //! [`Error`]: ../struct.Error.html
 
-use {SendStream, RecvStream, ReleaseCapacity, PingPong};
-use codec::{Codec, RecvError, SendError, UserError};
-use frame::{Headers, Pseudo, Reason, Settings, StreamId};
-use proto;
+use crate::{SendStream, RecvStream, ReleaseCapacity, PingPong};
+use crate::codec::{Codec, RecvError, SendError, UserError};
+use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
+use crate::proto;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Future, Poll, Stream, try_ready};
 use http::{uri, HeaderMap, Request, Response, Method, Version};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::io::WriteAll;
@@ -251,10 +246,6 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # extern crate bytes;
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use futures::{Future, Stream};
 /// # use futures::future::Executor;
 /// # use tokio_io::*;
@@ -344,8 +335,6 @@ pub struct PushPromises {
 /// # Examples
 ///
 /// ```
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use tokio_io::*;
 /// # use h2::client::*;
 /// #
@@ -408,7 +397,7 @@ where
     /// See [module] level docs for more details.
     ///
     /// [module]: index.html
-    pub fn poll_ready(&mut self) -> Poll<(), ::Error> {
+    pub fn poll_ready(&mut self) -> Poll<(), crate::Error> {
         try_ready!(self.inner.poll_pending_open(self.pending.as_ref()));
         self.pending = None;
         Ok(().into())
@@ -426,9 +415,6 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # extern crate futures;
-    /// # extern crate h2;
-    /// # extern crate http;
     /// # use futures::*;
     /// # use h2::client::*;
     /// # use http::*;
@@ -493,9 +479,6 @@ where
     /// Sending a request with no body
     ///
     /// ```rust
-    /// # extern crate futures;
-    /// # extern crate h2;
-    /// # extern crate http;
     /// # use futures::*;
     /// # use h2::client::*;
     /// # use http::*;
@@ -529,9 +512,6 @@ where
     /// Sending a request with a body and trailers
     ///
     /// ```rust
-    /// # extern crate futures;
-    /// # extern crate h2;
-    /// # extern crate http;
     /// # use futures::*;
     /// # use h2::client::*;
     /// # use http::*;
@@ -586,7 +566,7 @@ where
         &mut self,
         request: Request<()>,
         end_of_stream: bool,
-    ) -> Result<(ResponseFuture, SendStream<B>), ::Error> {
+    ) -> Result<(ResponseFuture, SendStream<B>), crate::Error> {
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
@@ -658,7 +638,7 @@ where B: IntoBuf,
       B::Buf: 'static,
 {
     type Item = SendRequest<B>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.inner {
@@ -683,8 +663,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -726,8 +704,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -762,8 +738,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -797,8 +771,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -838,8 +810,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -888,8 +858,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -930,8 +898,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -976,8 +942,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -1022,8 +986,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use std::time::Duration;
@@ -1061,8 +1023,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use std::time::Duration;
@@ -1118,8 +1078,6 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -1140,8 +1098,6 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -1193,9 +1149,6 @@ impl Default for Builder {
 /// # Examples
 ///
 /// ```
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use futures::*;
 /// # use tokio_io::*;
 /// # use h2::client;
@@ -1231,7 +1184,7 @@ where
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         use tokio_io::io;
 
-        debug!("binding client connection");
+        log::debug!("binding client connection");
 
         let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         let handshake = io::write_all(io, msg);
@@ -1283,9 +1236,9 @@ where
     B: IntoBuf,
 {
     type Item = ();
-    type Error = ::Error;
+    type Error = crate::Error;
 
-    fn poll(&mut self) -> Poll<(), ::Error> {
+    fn poll(&mut self) -> Poll<(), crate::Error> {
         self.inner.maybe_close_connection_if_no_streams();
         self.inner.poll().map_err(Into::into)
     }
@@ -1312,15 +1265,15 @@ where
     B::Buf: 'static,
 {
     type Item = (SendRequest<B>, Connection<T, B>);
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let res = self.inner.poll()
-            .map_err(::Error::from);
+            .map_err(crate::Error::from);
 
         let (io, _) = try_ready!(res);
 
-        debug!("client connection bound");
+        log::debug!("client connection bound");
 
         // Create the codec
         let mut codec = Codec::new(io);
@@ -1375,7 +1328,7 @@ where
 
 impl Future for ResponseFuture {
     type Item = Response<RecvStream>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (parts, _) = try_ready!(self.inner.poll_response()).into_parts();
@@ -1391,8 +1344,8 @@ impl ResponseFuture {
     /// # Panics
     ///
     /// If the lock on the stream store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
-        ::StreamId::from_internal(self.inner.stream_id())
+    pub fn stream_id(&self) -> crate::StreamId {
+        crate::StreamId::from_internal(self.inner.stream_id())
     }
     /// Returns a stream of PushPromises
     ///
@@ -1413,7 +1366,7 @@ impl ResponseFuture {
 
 impl Stream for PushPromises {
     type Item = PushPromise;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.inner.poll_pushed()) {
@@ -1454,7 +1407,7 @@ impl PushPromise {
 
 impl Future for PushedResponseFuture {
     type Item = Response<RecvStream>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.inner.poll()
@@ -1467,7 +1420,7 @@ impl PushedResponseFuture {
     /// # Panics
     ///
     /// If the lock on the stream store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
+    pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }
 }
@@ -1541,7 +1494,7 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Response<()>;
 
-    fn dyn() -> proto::DynPeer {
+    fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Client
     }
 

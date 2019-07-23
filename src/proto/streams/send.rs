@@ -1,5 +1,5 @@
-use codec::{RecvError, UserError};
-use frame::{self, Reason};
+use crate::codec::{RecvError, UserError};
+use crate::frame::{self, Reason};
 use super::{
     store, Buffer, Codec, Config, Counts, Frame, Prioritize,
     Prioritized, Store, Stream, StreamId, StreamIdOverflow, WindowSize,
@@ -62,7 +62,7 @@ impl Send {
         counts: &mut Counts,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
-        trace!(
+        log::trace!(
             "send_headers; frame={:?}; init_window={:?}",
             frame,
             self.init_window_sz
@@ -75,11 +75,11 @@ impl Send {
             || frame.fields().contains_key("keep-alive")
             || frame.fields().contains_key("proxy-connection")
         {
-            debug!("illegal connection-specific headers found");
+            log::debug!("illegal connection-specific headers found");
             return Err(UserError::MalformedHeaders);
         } else if let Some(te) = frame.fields().get(http::header::TE) {
             if te != "trailers" {
-                debug!("illegal connection-specific headers found");
+                log::debug!("illegal connection-specific headers found");
                 return Err(UserError::MalformedHeaders);
 
             }
@@ -121,7 +121,7 @@ impl Send {
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
 
-        trace!(
+        log::trace!(
             "send_reset(..., reason={:?}, stream={:?}, ..., \
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
@@ -136,7 +136,7 @@ impl Send {
 
         if is_reset {
             // Don't double reset
-            trace!(
+            log::trace!(
                 " -> not sending RST_STREAM ({:?} is already reset)",
                 stream.id
             );
@@ -149,7 +149,7 @@ impl Send {
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
         if is_closed && is_empty {
-            trace!(
+            log::trace!(
                 " -> not sending explicit RST_STREAM ({:?} was closed \
                      and send queue was flushed)",
                 stream.id
@@ -165,7 +165,7 @@ impl Send {
 
         let frame = frame::Reset::new(stream.id, reason);
 
-        trace!("send_reset -- queueing; frame={:?}", frame);
+        log::trace!("send_reset -- queueing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
         self.prioritize.reclaim_all_capacity(stream, counts);
     }
@@ -220,7 +220,7 @@ impl Send {
 
         stream.state.send_close();
 
-        trace!("send_trailers -- queuing; frame={:?}", frame);
+        log::trace!("send_trailers -- queuing; frame={:?}", frame);
         self.prioritize.queue_frame(frame.into(), buffer, stream, task);
 
         // Release any excess capacity
@@ -286,7 +286,7 @@ impl Send {
         &self,
         stream: &mut Stream,
         mode: PollReset,
-    ) -> Poll<Reason, ::Error> {
+    ) -> Poll<Reason, crate::Error> {
         match stream.state.ensure_reason(mode)? {
             Some(reason) => Ok(reason.into()),
             None => {
@@ -315,7 +315,7 @@ impl Send {
         task: &mut Option<Task>,
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
-            debug!("recv_stream_window_update !!; err={:?}", e);
+            log::debug!("recv_stream_window_update !!; err={:?}", e);
 
             self.send_reset(
                 Reason::FLOW_CONTROL_ERROR.into(),
@@ -370,7 +370,7 @@ impl Send {
             if val < old_val {
                 // We must decrease the (remote) window on every open stream.
                 let dec = old_val - val;
-                trace!("decrementing all windows; dec={}", dec);
+                log::trace!("decrementing all windows; dec={}", dec);
 
                 let mut total_reclaimed = 0;
                 store.for_each(|mut stream| {
@@ -396,7 +396,7 @@ impl Send {
                         0
                     };
 
-                    trace!(
+                    log::trace!(
                         "decremented stream window; id={:?}; decr={}; reclaimed={}; flow={:?}",
                         stream.id,
                         dec,

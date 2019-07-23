@@ -1,11 +1,3 @@
-extern crate futures;
-extern crate tokio_io;
-#[macro_use]
-extern crate honggfuzz;
-extern crate env_logger;
-extern crate h2;
-extern crate http;
-
 use futures::prelude::*;
 use futures::{executor, future, task};
 use http::{Method, Request};
@@ -155,7 +147,7 @@ fn run(script: &[u8]) -> Result<(), h2::Error> {
 fn main() {
     env_logger::init();
     loop {
-        fuzz!(|data: &[u8]| {
+        honggfuzz::fuzz!(|data: &[u8]| {
             eprintln!("{:?}", run(data));
         });
     }

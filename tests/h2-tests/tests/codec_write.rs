@@ -1,12 +1,10 @@
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 #[test]
 fn write_continuation_frames() {
     // An invalid dependency ID results in a stream level error. The hpack
     // payload should still be decoded.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let large = build_large_headers();

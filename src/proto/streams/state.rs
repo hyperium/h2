@@ -1,9 +1,9 @@
 use std::io;
 
-use codec::{RecvError, UserError};
-use codec::UserError::*;
-use frame::Reason;
-use proto::{self, PollReset};
+use crate::codec::{RecvError, UserError};
+use crate::codec::UserError::*;
+use crate::frame::Reason;
+use crate::proto::{self, PollReset};
 
 use self::Inner::*;
 use self::Peer::*;
@@ -203,12 +203,12 @@ impl State {
                 local, ..
             } => {
                 // The remote side will continue to receive data.
-                trace!("recv_close: Open => HalfClosedRemote({:?})", local);
+                log::trace!("recv_close: Open => HalfClosedRemote({:?})", local);
                 self.inner = HalfClosedRemote(local);
                 Ok(())
             },
             HalfClosedLocal(..) => {
-                trace!("recv_close: HalfClosedLocal => Closed");
+                log::trace!("recv_close: HalfClosedLocal => Closed");
                 self.inner = Closed(Cause::EndStream);
                 Ok(())
             },
@@ -244,7 +244,7 @@ impl State {
             // previous state with the received RST_STREAM, so that the queue
             // will be cleared by `Prioritize::pop_frame`.
             state => {
-                trace!(
+                log::trace!(
                     "recv_reset; reason={:?}; state={:?}; queued={:?}",
                     reason, state, queued
                 );
@@ -256,12 +256,12 @@ impl State {
 
     /// We noticed a protocol error.
     pub fn recv_err(&mut self, err: &proto::Error) {
-        use proto::Error::*;
+        use crate::proto::Error::*;
 
         match self.inner {
             Closed(..) => {},
             _ => {
-                trace!("recv_err; err={:?}", err);
+                log::trace!("recv_err; err={:?}", err);
                 self.inner = Closed(match *err {
                     Proto(reason) => Cause::LocallyReset(reason),
                     Io(..) => Cause::Io,
@@ -274,7 +274,7 @@ impl State {
         match self.inner {
             Closed(..) => {},
             s => {
-                trace!("recv_eof; state={:?}", s);
+                log::trace!("recv_eof; state={:?}", s);
                 self.inner = Closed(Cause::Io);
             }
         }
@@ -287,11 +287,11 @@ impl State {
                 remote, ..
             } => {
                 // The remote side will continue to receive data.
-                trace!("send_close: Open => HalfClosedLocal({:?})", remote);
+                log::trace!("send_close: Open => HalfClosedLocal({:?})", remote);
                 self.inner = HalfClosedLocal(remote);
             },
             HalfClosedRemote(..) => {
-                trace!("send_close: HalfClosedRemote => Closed");
+                log::trace!("send_close: HalfClosedRemote => Closed");
                 self.inner = Closed(Cause::EndStream);
             },
             state => panic!("send_close: unexpected state {:?}", state),
@@ -418,7 +418,7 @@ impl State {
     }
 
     /// Returns a reason if the stream has been reset.
-    pub(super) fn ensure_reason(&self, mode: PollReset) -> Result<Option<Reason>, ::Error> {
+    pub(super) fn ensure_reason(&self, mode: PollReset) -> Result<Option<Reason>, crate::Error> {
         match self.inner {
             Closed(Cause::Proto(reason)) |
             Closed(Cause::LocallyReset(reason)) |

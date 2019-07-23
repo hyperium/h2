@@ -1,12 +1,12 @@
-use {client, frame, proto, server};
-use codec::RecvError;
-use frame::{Reason, StreamId};
+use crate::{client, frame, proto, server};
+use crate::codec::RecvError;
+use crate::frame::{Reason, StreamId};
 
-use frame::DEFAULT_INITIAL_WINDOW_SIZE;
-use proto::*;
+use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
+use crate::proto::*;
 
 use bytes::{Bytes, IntoBuf};
-use futures::Stream;
+use futures::{Stream, try_ready};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use std::marker::PhantomData;
@@ -193,7 +193,7 @@ where
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self) -> Poll<(), proto::Error> {
-        use codec::RecvError::*;
+        use crate::codec::RecvError::*;
 
         loop {
             // TODO: probably clean up this glob of code
@@ -223,13 +223,13 @@ where
                         // error. This is handled by setting a GOAWAY frame followed by
                         // terminating the connection.
                         Err(Connection(e)) => {
-                            debug!("Connection::poll; connection error={:?}", e);
+                            log::debug!("Connection::poll; connection error={:?}", e);
 
                             // We may have already sent a GOAWAY for this error,
                             // if so, don't send another, just flush and close up.
                             if let Some(reason) = self.go_away.going_away_reason() {
                                 if reason == e {
-                                    trace!("    -> already going away");
+                                    log::trace!("    -> already going away");
                                     self.state = State::Closing(e);
                                     continue;
                                 }
@@ -246,7 +246,7 @@ where
                             id,
                             reason,
                         }) => {
-                            trace!("stream error; id={:?}; reason={:?}", id, reason);
+                            log::trace!("stream error; id={:?}; reason={:?}", id, reason);
                             self.streams.send_reset(id, reason);
                         },
                         // Attempting to read a frame resulted in an I/O error. All
@@ -254,7 +254,7 @@ where
                         //
                         // TODO: Are I/O errors recoverable?
                         Err(Io(e)) => {
-                            debug!("Connection::poll; IO error={:?}", e);
+                            log::debug!("Connection::poll; IO error={:?}", e);
                             let e = e.into();
 
                             // Reset all active streams
@@ -266,7 +266,7 @@ where
                     }
                 }
                 State::Closing(reason) => {
-                    trace!("connection closing after flush");
+                    log::trace!("connection closing after flush");
                     // Flush/shutdown the codec
                     try_ready!(self.codec.shutdown());
 
@@ -279,7 +279,7 @@ where
     }
 
     fn poll2(&mut self) -> Poll<(), RecvError> {
-        use frame::Frame::*;
+        use crate::frame::Frame::*;
 
         // This happens outside of the loop to prevent needing to do a clock
         // check and then comparison of the queue possibly multiple times a
@@ -309,27 +309,27 @@ where
 
             match try_ready!(self.codec.poll()) {
                 Some(Headers(frame)) => {
-                    trace!("recv HEADERS; frame={:?}", frame);
+                    log::trace!("recv HEADERS; frame={:?}", frame);
                     self.streams.recv_headers(frame)?;
                 },
                 Some(Data(frame)) => {
-                    trace!("recv DATA; frame={:?}", frame);
+                    log::trace!("recv DATA; frame={:?}", frame);
                     self.streams.recv_data(frame)?;
                 },
                 Some(Reset(frame)) => {
-                    trace!("recv RST_STREAM; frame={:?}", frame);
+                    log::trace!("recv RST_STREAM; frame={:?}", frame);
                     self.streams.recv_reset(frame)?;
                 },
                 Some(PushPromise(frame)) => {
-                    trace!("recv PUSH_PROMISE; frame={:?}", frame);
+                    log::trace!("recv PUSH_PROMISE; frame={:?}", frame);
                     self.streams.recv_push_promise(frame)?;
                 },
                 Some(Settings(frame)) => {
-                    trace!("recv SETTINGS; frame={:?}", frame);
+                    log::trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
                 },
                 Some(GoAway(frame)) => {
-                    trace!("recv GOAWAY; frame={:?}", frame);
+                    log::trace!("recv GOAWAY; frame={:?}", frame);
                     // This should prevent starting new streams,
                     // but should allow continuing to process current streams
                     // until they are all EOS. Once they are, State should
@@ -338,7 +338,7 @@ where
                     self.error = Some(frame.reason());
                 },
                 Some(Ping(frame)) => {
-                    trace!("recv PING; frame={:?}", frame);
+                    log::trace!("recv PING; frame={:?}", frame);
                     let status = self.ping_pong.recv_ping(frame);
                     if status.is_shutdown() {
                         assert!(
@@ -351,15 +351,15 @@ where
                     }
                 },
                 Some(WindowUpdate(frame)) => {
-                    trace!("recv WINDOW_UPDATE; frame={:?}", frame);
+                    log::trace!("recv WINDOW_UPDATE; frame={:?}", frame);
                     self.streams.recv_window_update(frame)?;
                 },
                 Some(Priority(frame)) => {
-                    trace!("recv PRIORITY; frame={:?}", frame);
+                    log::trace!("recv PRIORITY; frame={:?}", frame);
                     // TODO: handle
                 },
                 None => {
-                    trace!("codec closed");
+                    log::trace!("codec closed");
                     self.streams.recv_eof(false)
                         .ok().expect("mutex poisoned");
                     return Ok(Async::Ready(()));

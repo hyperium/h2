@@ -1,9 +1,5 @@
 #![deny(warnings)]
 
-#[macro_use]
-extern crate log;
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 #[test]
@@ -30,7 +26,7 @@ fn send_recv_headers_only() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).unwrap();
@@ -72,7 +68,7 @@ fn send_recv_data() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // Reserve send capacity
@@ -129,7 +125,7 @@ fn send_headers_recv_data_single_frame() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).unwrap();
@@ -153,7 +149,7 @@ fn send_headers_recv_data_single_frame() {
 
 #[test]
 fn closed_streams_are_released() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
@@ -198,7 +194,7 @@ fn closed_streams_are_released() {
 
 #[test]
 fn errors_if_recv_frame_exceeds_max_frame_size() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
 
     let h2 = client::handshake(io).unwrap().and_then(|(mut client, h2)| {
@@ -246,7 +242,7 @@ fn errors_if_recv_frame_exceeds_max_frame_size() {
 
 #[test]
 fn configure_max_frame_size() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
 
     let h2 = client::Builder::new()
@@ -290,7 +286,7 @@ fn configure_max_frame_size() {
 
 #[test]
 fn recv_goaway_finishes_processed_streams() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -347,7 +343,7 @@ fn recv_goaway_finishes_processed_streams() {
 
 #[test]
 fn recv_next_stream_id_updated_by_malformed_headers() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
 
@@ -385,7 +381,7 @@ fn recv_next_stream_id_updated_by_malformed_headers() {
 
 #[test]
 fn skipped_stream_ids_are_implicitly_closed() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv
@@ -424,7 +420,7 @@ fn skipped_stream_ids_are_implicitly_closed() {
 
 #[test]
 fn send_rst_stream_allows_recv_data() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -470,7 +466,7 @@ fn send_rst_stream_allows_recv_data() {
 
 #[test]
 fn send_rst_stream_allows_recv_trailers() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -512,7 +508,7 @@ fn send_rst_stream_allows_recv_trailers() {
 
 #[test]
 fn rst_stream_expires() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -561,7 +557,7 @@ fn rst_stream_expires() {
 
 #[test]
 fn rst_stream_max() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -627,7 +623,7 @@ fn rst_stream_max() {
 
 #[test]
 fn reserved_state_recv_window_update() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -715,11 +711,11 @@ fn rst_while_closing() {
     // Test to reproduce panic in issue #246 --- receipt of a RST_STREAM frame
     // on a stream in the Half Closed (remote) state with a queued EOS causes
     // a panic.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     // Rendevous when we've queued a trailers frame
-    let (tx, rx) = ::futures::sync::oneshot::channel();
+    let (tx, rx) = crate::futures::sync::oneshot::channel();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -786,13 +782,13 @@ fn rst_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     // This allows the settings + headers frame through
     let (io, srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = ::futures::sync::oneshot::channel();
+    let (tx, rx) = crate::futures::sync::oneshot::channel();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -851,13 +847,13 @@ fn err_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     // This allows the settings + headers frame through
     let (io, srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = ::futures::sync::oneshot::channel();
+    let (tx, rx) = crate::futures::sync::oneshot::channel();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -915,13 +911,13 @@ fn send_err_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     // This allows the settings + headers frame through
     let (io, srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = ::futures::sync::oneshot::channel();
+    let (tx, rx) = crate::futures::sync::oneshot::channel();
 
     let srv = srv.assert_client_handshake()
         .unwrap()
@@ -961,7 +957,7 @@ fn send_err_with_buffered_data() {
             stream.send_data(body.into(), true).unwrap();
 
             // Hack to drive the connection, trying to flush data
-            ::futures::future::lazy(|| {
+            crate::futures::future::lazy(|| {
                 conn.poll().unwrap();
                 Ok::<_, ()>(())
             }).wait().unwrap();
@@ -987,7 +983,7 @@ fn send_err_with_buffered_data() {
 #[test]
 fn srv_window_update_on_lower_stream_id() {
     // See https://github.com/hyperium/h2/issues/208
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()

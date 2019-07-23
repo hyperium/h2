@@ -1,7 +1,7 @@
 mod table;
 
 use self::table::{DECODE_TABLE, ENCODE_TABLE};
-use hpack::{DecoderError, EncoderError};
+use crate::hpack::{DecoderError, EncoderError};
 
 use bytes::{BufMut, BytesMut};
 

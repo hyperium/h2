@@ -1,6 +1,6 @@
 use h2;
 
-use super::string::{String, TryFrom};
+use string::{String, TryFrom};
 use bytes::Bytes;
 use futures::{Async, Future, Poll};
 
@@ -44,7 +44,7 @@ impl Future for WaitForCapacity {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, ()> {
-        let _ = try_ready!(self.stream().poll_capacity().map_err(|_| panic!()));
+        let _ = futures::try_ready!(self.stream().poll_capacity().map_err(|_| panic!()));
 
         let act = self.stream().capacity();
 

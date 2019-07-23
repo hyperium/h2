@@ -1,17 +1,7 @@
 //! Utilities to support tests.
 
-pub extern crate bytes;
-pub extern crate env_logger;
 #[macro_use]
-pub extern crate futures;
-pub extern crate h2;
-pub extern crate http;
-pub extern crate string;
-#[macro_use]
-pub extern crate tokio_io;
-
-#[macro_use]
-mod assert;
+pub mod assert;
 
 pub mod raw;
 
@@ -25,8 +15,8 @@ pub mod util;
 mod client_ext;
 mod future_ext;
 
-pub use client_ext::{SendRequestExt};
-pub use future_ext::{FutureExt, Unwrap};
+pub use crate::client_ext::{SendRequestExt};
+pub use crate::future_ext::{FutureExt, Unwrap};
 
 pub type WindowSize = usize;
 pub const DEFAULT_WINDOW_SIZE: WindowSize = (1 << 16) - 1;

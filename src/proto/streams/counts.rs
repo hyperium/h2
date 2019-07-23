@@ -133,7 +133,7 @@ impl Counts {
 
     // TODO: move this to macro?
     pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
-        trace!("transition_after; stream={:?}; state={:?}; is_closed={:?}; \
+        log::trace!("transition_after; stream={:?}; state={:?}; is_closed={:?}; \
                pending_send_empty={:?}; buffered_send_data={}; \
                num_recv={}; num_send={}",
                stream.id,
@@ -153,7 +153,7 @@ impl Counts {
             }
 
             if stream.is_counted {
-                trace!("dec_num_streams; stream={:?}", stream.id);
+                log::trace!("dec_num_streams; stream={:?}", stream.id);
                 // Decrement the number of active streams.
                 self.dec_num_streams(&mut stream);
             }

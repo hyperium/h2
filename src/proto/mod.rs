@@ -13,13 +13,13 @@ pub(crate) use self::ping_pong::UserPings;
 pub(crate) use self::streams::{StreamRef, OpaqueStreamRef, Streams};
 pub(crate) use self::streams::{PollReset, Prioritized, Open};
 
-use codec::Codec;
+use crate::codec::Codec;
 
 use self::go_away::GoAway;
 use self::ping_pong::PingPong;
 use self::settings::Settings;
 
-use frame::{self, Frame};
+use crate::frame::{self, Frame};
 
 use futures::{task, Async, Poll};
 use futures::task::Task;

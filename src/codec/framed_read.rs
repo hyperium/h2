@@ -1,8 +1,8 @@
-use codec::RecvError;
-use frame::{self, Frame, Kind, Reason};
-use frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
+use crate::codec::RecvError;
+use crate::frame::{self, Frame, Kind, Reason};
+use crate::frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
 
-use hpack;
+use crate::hpack;
 
 use futures::*;
 
@@ -57,7 +57,7 @@ impl<T> FramedRead<T> {
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
         use self::RecvError::*;
 
-        trace!("decoding frame from {}B", bytes.len());
+        log::trace!("decoding frame from {}B", bytes.len());
 
         // Parse the head
         let head = frame::Head::parse(&bytes);
@@ -69,7 +69,7 @@ impl<T> FramedRead<T> {
 
         let kind = head.kind();
 
-        trace!("    -> kind={:?}", kind);
+        log::trace!("    -> kind={:?}", kind);
 
         macro_rules! header_block {
             ($frame:ident, $head:ident, $bytes:ident) => ({
@@ -119,7 +119,7 @@ impl<T> FramedRead<T> {
                 if is_end_headers {
                     frame.into()
                 } else {
-                    trace!("loaded partial header block");
+                    log::trace!("loaded partial header block");
                     // Defer returning the frame
                     self.partial = Some(Partial {
                         frame: Continuable::$frame(frame),
@@ -330,15 +330,15 @@ where
 
     fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
         loop {
-            trace!("poll");
+            log::trace!("poll");
             let bytes = match try_ready!(self.inner.poll().map_err(map_err)) {
                 Some(bytes) => bytes,
                 None => return Ok(Async::Ready(None)),
             };
 
-            trace!("poll; bytes={}B", bytes.len());
+            log::trace!("poll; bytes={}B", bytes.len());
             if let Some(frame) = self.decode_frame(bytes)? {
-                debug!("received; frame={:?}", frame);
+                log::debug!("received; frame={:?}", frame);
                 return Ok(Async::Ready(Some(frame)));
             }
         }

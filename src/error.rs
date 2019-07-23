@@ -1,9 +1,9 @@
-use codec::{SendError, UserError};
-use proto;
+use crate::codec::{SendError, UserError};
+use crate::proto;
 
 use std::{error, fmt, io};
 
-pub use frame::Reason;
+pub use crate::frame::Reason;
 
 /// Represents HTTP/2.0 operation errors.
 ///
@@ -77,7 +77,7 @@ impl Error {
 
 impl From<proto::Error> for Error {
     fn from(src: proto::Error) -> Error {
-        use proto::Error::*;
+        use crate::proto::Error::*;
 
         Error {
             kind: match src {

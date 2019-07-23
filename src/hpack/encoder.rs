@@ -413,7 +413,7 @@ fn encode_int_one_byte(value: usize, prefix_bits: usize) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hpack::Header;
+    use crate::hpack::Header;
     use http::*;
 
     #[test]

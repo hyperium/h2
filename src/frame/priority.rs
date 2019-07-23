@@ -1,4 +1,4 @@
-use frame::*;
+use crate::frame::*;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Priority {

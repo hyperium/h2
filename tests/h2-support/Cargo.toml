@@ -2,6 +2,7 @@
 name = "h2-support"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
+edition = "2018"
 
 [dependencies]
 h2 = { path = "../..", features = ["unstable"] }
