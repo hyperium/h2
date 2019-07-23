@@ -1,7 +1,7 @@
-use codec::RecvError;
-use error::Reason;
-use frame::{Pseudo, StreamId};
-use proto::Open;
+use crate::codec::RecvError;
+use crate::error::Reason;
+use crate::frame::{Pseudo, StreamId};
+use crate::proto::Open;
 
 use http::{HeaderMap, Request, Response};
 
@@ -12,7 +12,7 @@ pub(crate) trait Peer {
     /// Message type polled from the transport
     type Poll: fmt::Debug;
 
-    fn dyn() -> Dyn;
+    fn r#dyn() -> Dyn;
 
     fn is_server() -> bool;
 
@@ -57,10 +57,10 @@ impl Dyn {
         &self, pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
     ) -> Result<PollMessage, RecvError> {
         if self.is_server() {
-            ::server::Peer::convert_poll_message(pseudo, fields, stream_id)
+            crate::server::Peer::convert_poll_message(pseudo, fields, stream_id)
                 .map(PollMessage::Server)
         } else {
-            ::client::Peer::convert_poll_message(pseudo, fields, stream_id)
+            crate::client::Peer::convert_poll_message(pseudo, fields, stream_id)
                 .map(PollMessage::Client)
         }
     }

@@ -1,9 +1,9 @@
-use codec::UserError;
-use frame::Reason;
-use proto::{self, WindowSize};
+use crate::codec::UserError;
+use crate::frame::Reason;
+use crate::proto::{self, WindowSize};
 
 use bytes::{Bytes, IntoBuf};
-use futures::{self, Poll, Async};
+use futures::{self, Poll, Async, try_ready};
 use http::{HeaderMap};
 
 use std::fmt;
@@ -309,7 +309,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// amount of assigned capacity at that point in time. It is also possible
     /// that `n` is lower than the previous call if, since then, the caller has
     /// sent data.
-    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, ::Error> {
+    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, crate::Error> {
         let res = try_ready!(self.inner.poll_capacity());
         Ok(Async::Ready(res.map(|v| v as usize)))
     }
@@ -329,7 +329,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// amounts of data being buffered in memory.
     ///
     /// [`Error`]: struct.Error.html
-    pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), ::Error> {
+    pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), crate::Error> {
         self.inner
             .send_data(data.into_buf(), end_of_stream)
             .map_err(Into::into)
@@ -339,7 +339,7 @@ impl<B: IntoBuf> SendStream<B> {
     ///
     /// Sending trailers implicitly closes the send stream. Once the send stream
     /// is closed, no more data can be sent.
-    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), ::Error> {
+    pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), crate::Error> {
         self.inner.send_trailers(trailers).map_err(Into::into)
     }
 
@@ -366,7 +366,7 @@ impl<B: IntoBuf> SendStream<B> {
     ///
     /// If connection sees an error, this returns that error instead of a
     /// `Reason`.
-    pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
+    pub fn poll_reset(&mut self) -> Poll<Reason, crate::Error> {
         self.inner.poll_reset(proto::PollReset::Streaming)
     }
 
@@ -383,7 +383,7 @@ impl<B: IntoBuf> SendStream<B> {
 // ===== impl StreamId =====
 
 impl StreamId {
-    pub(crate) fn from_internal(id: ::frame::StreamId) -> Self {
+    pub(crate) fn from_internal(id: crate::frame::StreamId) -> Self {
         StreamId(id.into())
     }
 }
@@ -417,7 +417,7 @@ impl RecvStream {
     }
 
     /// Returns received trailers.
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, ::Error> {
+    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, crate::Error> {
         self.inner.inner.poll_trailers().map_err(Into::into)
     }
 
@@ -433,7 +433,7 @@ impl RecvStream {
 
 impl futures::Stream for RecvStream {
     type Item = Bytes;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.inner.inner.poll_data().map_err(Into::into)
@@ -493,7 +493,7 @@ impl ReleaseCapacity {
     ///
     /// [struct level]: #
     /// [`set_target_window_size`]: server/struct.Server.html#method.set_target_window_size
-    pub fn release_capacity(&mut self, sz: usize) -> Result<(), ::Error> {
+    pub fn release_capacity(&mut self, sz: usize) -> Result<(), crate::Error> {
         if sz > proto::MAX_WINDOW_SIZE as usize {
             return Err(UserError::ReleaseCapacityTooBig.into());
         }
@@ -534,7 +534,7 @@ impl PingPong {
     ///     .unwrap();
     /// # }
     /// ```
-    pub fn send_ping(&mut self, ping: Ping) -> Result<(), ::Error> {
+    pub fn send_ping(&mut self, ping: Ping) -> Result<(), crate::Error> {
         // Passing a `Ping` here is just to be forwards-compatible with
         // eventually allowing choosing a ping payload. For now, we can
         // just drop it.
@@ -553,8 +553,6 @@ impl PingPong {
     /// # Example
     ///
     /// ```
-    /// # extern crate futures;
-    /// # extern crate h2;
     /// # use futures::Future;
     /// # fn doc(mut ping_pong: h2::PingPong) {
     /// // let mut ping_pong = ...
@@ -573,7 +571,7 @@ impl PingPong {
     /// ```
     ///
     /// [sent]: struct.PingPong.html#method.send_ping
-    pub fn poll_pong(&mut self) -> Poll<Pong, ::Error> {
+    pub fn poll_pong(&mut self) -> Poll<Pong, crate::Error> {
         try_ready!(self.inner.poll_pong());
         Ok(Async::Ready(Pong {
             _p: (),

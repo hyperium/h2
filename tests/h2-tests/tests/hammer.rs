@@ -1,9 +1,5 @@
-extern crate tokio;
-#[macro_use]
-extern crate h2_support;
-
 use h2_support::prelude::*;
-use h2_support::futures::{Async, Poll};
+use futures::{Async, Poll};
 
 use tokio::net::{TcpListener, TcpStream};
 use std::{net::SocketAddr, thread, sync::{atomic::{AtomicUsize, Ordering}, Arc}};

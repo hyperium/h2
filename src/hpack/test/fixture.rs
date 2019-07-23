@@ -1,12 +1,8 @@
-extern crate bytes;
-extern crate hex;
-extern crate serde_json;
+use crate::hpack::{Decoder, Encoder, Header};
 
-use hpack::{Decoder, Encoder, Header};
-
-use self::bytes::BytesMut;
-use self::hex::FromHex;
-use self::serde_json::Value;
+use bytes::BytesMut;
+use hex::FromHex;
+use serde_json::Value;
 
 use std::fs::File;
 use std::io::Cursor;

@@ -1,6 +1,6 @@
 use super::{util, StreamDependency, StreamId};
-use frame::{Error, Frame, Head, Kind};
-use hpack;
+use crate::frame::{Error, Frame, Head, Kind};
+use crate::hpack;
 
 use http::{uri, HeaderMap, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
@@ -153,7 +153,7 @@ impl Headers {
         let flags = HeadersFlag(head.flag());
         let mut pad = 0;
 
-        trace!("loading headers; flags={:?}", flags);
+        log::trace!("loading headers; flags={:?}", flags);
 
         // Read the padding length
         if flags.is_padded() {
@@ -583,7 +583,7 @@ impl Iterator for Iter {
     type Item = hpack::Header<Option<HeaderName>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use hpack::Header::*;
+        use crate::hpack::Header::*;
 
         if let Some(ref mut pseudo) = self.pseudo {
             if let Some(method) = pseudo.method.take() {
@@ -736,10 +736,10 @@ impl HeaderBlock {
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
                 if reg {
-                    trace!("load_hpack; header malformed -- pseudo not at head of block");
+                    log::trace!("load_hpack; header malformed -- pseudo not at head of block");
                     malformed = true;
                 } else if self.pseudo.$field.is_some() {
-                    trace!("load_hpack; header malformed -- repeated pseudo");
+                    log::trace!("load_hpack; header malformed -- repeated pseudo");
                     malformed = true;
                 } else {
                     let __val = $val;
@@ -747,7 +747,7 @@ impl HeaderBlock {
                     if headers_size < max_header_list_size {
                         self.pseudo.$field = Some(__val);
                     } else if !self.is_over_size {
-                        trace!("load_hpack; header list size over max");
+                        log::trace!("load_hpack; header list size over max");
                         self.is_over_size = true;
                     }
                 }
@@ -761,7 +761,7 @@ impl HeaderBlock {
         // the hpack state is connection level. In order to maintain correct
         // state for other streams, the hpack decoding process must complete.
         let res = decoder.decode(&mut cursor, |header| {
-            use hpack::Header::*;
+            use crate::hpack::Header::*;
 
             match header {
                 Field {
@@ -777,10 +777,10 @@ impl HeaderBlock {
                         || name == "keep-alive"
                         || name == "proxy-connection"
                     {
-                        trace!("load_hpack; connection level header");
+                        log::trace!("load_hpack; connection level header");
                         malformed = true;
                     } else if name == header::TE && value != "trailers" {
-                        trace!("load_hpack; TE header not set to trailers; val={:?}", value);
+                        log::trace!("load_hpack; TE header not set to trailers; val={:?}", value);
                         malformed = true;
                     } else {
                         reg = true;
@@ -789,7 +789,7 @@ impl HeaderBlock {
                         if headers_size < max_header_list_size {
                             self.fields.append(name, value);
                         } else if !self.is_over_size {
-                            trace!("load_hpack; header list size over max");
+                            log::trace!("load_hpack; header list size over max");
                             self.is_over_size = true;
                         }
                     }
@@ -803,12 +803,12 @@ impl HeaderBlock {
         });
 
         if let Err(e) = res {
-            trace!("hpack decoding error; err={:?}", e);
+            log::trace!("hpack decoding error; err={:?}", e);
             return Err(e.into());
         }
 
         if malformed {
-            trace!("malformed message");
+            log::trace!("malformed message");
             return Err(Error::MalformedMessage.into());
         }
 

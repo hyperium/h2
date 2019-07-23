@@ -24,8 +24,8 @@ use self::state::State;
 use self::store::Store;
 use self::stream::Stream;
 
-use frame::{StreamId, StreamIdOverflow};
-use proto::*;
+use crate::frame::{StreamId, StreamIdOverflow};
+use crate::proto::*;
 
 use bytes::Bytes;
 use std::time::Duration;

@@ -1,11 +1,9 @@
-#[macro_use]
-extern crate h2_support;
-
 use h2_support::prelude::*;
+use h2_support::assert_ping;
 
 #[test]
 fn recv_single_ping() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (m, mock) = mock::new();
 
     // Create the handshake
@@ -41,7 +39,7 @@ fn recv_single_ping() {
 
 #[test]
 fn recv_multiple_pings() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client.assert_server_handshake()
@@ -65,7 +63,7 @@ fn recv_multiple_pings() {
 
 #[test]
 fn pong_has_highest_priority() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let data = Bytes::from(vec![0; 16_384]);
@@ -111,7 +109,7 @@ fn pong_has_highest_priority() {
 
 #[test]
 fn user_ping_pong() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -160,7 +158,7 @@ fn user_ping_pong() {
 
 #[test]
 fn user_notifies_when_connection_closes() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()

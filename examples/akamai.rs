@@ -1,13 +1,3 @@
-extern crate env_logger;
-extern crate futures;
-extern crate h2;
-extern crate http;
-extern crate rustls;
-extern crate tokio;
-extern crate tokio_rustls;
-extern crate webpki;
-extern crate webpki_roots;
-
 use h2::client;
 
 use futures::*;

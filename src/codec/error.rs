@@ -1,4 +1,4 @@
-use frame::{Reason, StreamId};
+use crate::frame::{Reason, StreamId};
 
 use std::{error, fmt, io};
 

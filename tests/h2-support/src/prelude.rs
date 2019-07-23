@@ -1,11 +1,11 @@
 
 // Re-export H2 crate
-pub use super::h2;
+pub use h2;
 
-pub use self::h2::*;
-pub use self::h2::client;
-pub use self::h2::frame::StreamId;
-pub use self::h2::server;
+pub use h2::*;
+pub use h2::client;
+pub use h2::frame::StreamId;
+pub use h2::server;
 
 // Re-export mock
 pub use super::mock::{self, HandleFutureExt};
@@ -22,11 +22,16 @@ pub use super::util;
 // Re-export some type defines
 pub use super::{Codec, SendFrame};
 
+// Re-export macros
+pub use super::{assert_ping, assert_data, assert_headers, assert_closed,
+                raw_codec, poll_frame, poll_err};
+
 // Re-export useful crates
-pub use super::{bytes, env_logger, futures, http, mock_io, tokio_io};
+pub use {bytes, env_logger, futures, http, tokio_io};
+pub use super::mock_io;
 
 // Re-export primary future types
-pub use self::futures::{Future, IntoFuture, Sink, Stream};
+pub use futures::{Future, IntoFuture, Sink, Stream};
 
 // And our Future extensions
 pub use super::future_ext::{FutureExt, Unwrap};
@@ -35,9 +40,9 @@ pub use super::future_ext::{FutureExt, Unwrap};
 pub use super::client_ext::{SendRequestExt};
 
 // Re-export HTTP types
-pub use self::http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
+pub use http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
-pub use self::bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
+pub use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
 pub use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -53,7 +58,7 @@ pub trait MockH2 {
     fn handshake(&mut self) -> &mut Self;
 }
 
-impl MockH2 for mock_io::Builder {
+impl MockH2 for super::mock_io::Builder {
     fn handshake(&mut self) -> &mut Self {
         self.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
             // Settings frame

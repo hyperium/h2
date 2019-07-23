@@ -64,11 +64,6 @@
 //! will use the HTTP/2.0 protocol without prior negotiation.
 //!
 //! ```rust
-//! extern crate futures;
-//! extern crate h2;
-//! extern crate http;
-//! extern crate tokio;
-//!
 //! use futures::{Future, Stream};
 //! # use futures::future::ok;
 //! use h2::server;
@@ -129,17 +124,17 @@
 //! [`SendStream`]: ../struct.SendStream.html
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
-use {SendStream, RecvStream, ReleaseCapacity, PingPong};
-use codec::{Codec, RecvError};
-use frame::{self, Pseudo, Reason, Settings, StreamId};
-use proto::{self, Config, Prioritized};
+use crate::{SendStream, RecvStream, ReleaseCapacity, PingPong};
+use crate::codec::{Codec, RecvError};
+use crate::frame::{self, Pseudo, Reason, Settings, StreamId};
+use crate::proto::{self, Config, Prioritized};
 
 use bytes::{Buf, Bytes, IntoBuf};
-use futures::{self, Async, Future, Poll};
+use futures::{self, Async, Future, Poll, try_ready};
 use http::{HeaderMap, Request, Response};
 use std::{convert, fmt, io, mem};
 use std::time::Duration;
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::{AsyncRead, AsyncWrite, try_nb};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -184,9 +179,6 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # Examples
 ///
 /// ```
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use futures::{Future, Stream};
 /// # use tokio_io::*;
 /// # use h2::server;
@@ -229,8 +221,6 @@ pub struct Connection<T, B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use tokio_io::*;
 /// # use h2::server::*;
 /// #
@@ -328,9 +318,6 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use tokio_io::*;
 /// # use futures::*;
 /// # use h2::server;
@@ -420,7 +407,7 @@ where
     /// [`poll`]: struct.Connection.html#method.poll
     /// [`RecvStream`]: ../struct.RecvStream.html
     /// [`SendStream`]: ../struct.SendStream.html
-    pub fn poll_close(&mut self) -> Poll<(), ::Error> {
+    pub fn poll_close(&mut self) -> Poll<(), crate::Error> {
         self.connection.poll().map_err(Into::into)
     }
 
@@ -479,9 +466,9 @@ where
     B::Buf: 'static,
 {
     type Item = (Request<RecvStream>, SendResponse<B>);
-    type Error = ::Error;
+    type Error = crate::Error;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, crate::Error> {
         // Always try to advance the internal state. Getting NotReady also is
         // needed to allow this function to return NotReady.
         match self.poll_close()? {
@@ -494,7 +481,7 @@ where
         }
 
         if let Some(inner) = self.connection.next_incoming() {
-            trace!("received incoming");
+            log::trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
             let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
 
@@ -532,8 +519,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -573,8 +558,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -609,8 +592,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -644,8 +625,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -685,8 +664,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -735,8 +712,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -783,8 +758,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -831,8 +804,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// # use std::time::Duration;
@@ -876,8 +847,6 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -898,8 +867,6 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
@@ -954,7 +921,7 @@ impl<B: IntoBuf> SendResponse<B> {
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<SendStream<B>, ::Error> {
+    ) -> Result<SendStream<B>, crate::Error> {
         self.inner
             .send_response(response, end_of_stream)
             .map(|_| SendStream::new(self.inner.clone()))
@@ -992,7 +959,7 @@ impl<B: IntoBuf> SendResponse<B> {
     ///
     /// Calling this method after having called `send_response` will return
     /// a user error.
-    pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
+    pub fn poll_reset(&mut self) -> Poll<Reason, crate::Error> {
         self.inner.poll_reset(proto::PollReset::AwaitingHeaders)
     }
 
@@ -1001,8 +968,8 @@ impl<B: IntoBuf> SendResponse<B> {
     /// # Panics
     ///
     /// If the lock on the strean store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
-        ::StreamId::from_internal(self.inner.stream_id())
+    pub fn stream_id(&self) -> crate::StreamId {
+        crate::StreamId::from_internal(self.inner.stream_id())
     }
 
     // TODO: Support reserving push promises.
@@ -1024,7 +991,7 @@ where
     B: Buf,
 {
     type Item = Codec<T, B>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Flush the codec
@@ -1054,7 +1021,7 @@ where
     B: Buf,
 {
     type Item = Codec<T, B>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut buf = [0; 24];
@@ -1090,11 +1057,11 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
           B: IntoBuf,
 {
     type Item = Connection<T, B>;
-    type Error = ::Error;
+    type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        trace!("Handshake::poll(); state={:?};", self.state);
-        use server::Handshaking::*;
+        log::trace!("Handshake::poll(); state={:?};", self.state);
+        use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {
             // We're currently flushing a pending SETTINGS frame. Poll the
@@ -1102,11 +1069,11 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             // for the client preface.
             let codec = match flush.poll()? {
                 Async::NotReady => {
-                    trace!("Handshake::poll(); flush.poll()=NotReady");
+                    log::trace!("Handshake::poll(); flush.poll()=NotReady");
                     return Ok(Async::NotReady);
                 },
                 Async::Ready(flushed) => {
-                    trace!("Handshake::poll(); flush.poll()=Ready");
+                    log::trace!("Handshake::poll(); flush.poll()=Ready");
                     flushed
                 }
             };
@@ -1140,7 +1107,7 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
                 settings: self.builder.settings.clone(),
             });
 
-            trace!("Handshake::poll(); connection established!");
+            log::trace!("Handshake::poll(); connection established!");
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
@@ -1200,7 +1167,7 @@ impl proto::Peer for Peer {
         true
     }
 
-    fn dyn() -> proto::DynPeer {
+    fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Server
     }
 
@@ -1213,7 +1180,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
-                debug!($($arg)*);
+                log::debug!($($arg)*);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -1231,7 +1198,7 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
-            trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
+            log::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 

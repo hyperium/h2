@@ -1,4 +1,4 @@
-use hpack;
+use crate::hpack;
 
 use bytes::Bytes;
 

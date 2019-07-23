@@ -10,7 +10,7 @@ pub use self::error::{RecvError, SendError, UserError};
 use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 
-use frame::{self, Data, Frame};
+use crate::frame::{self, Data, Frame};
 
 use futures::*;
 

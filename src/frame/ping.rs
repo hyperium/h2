@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, IntoBuf};
-use frame::{Error, Frame, Head, Kind, StreamId};
+use crate::frame::{Error, Frame, Head, Kind, StreamId};
 
 const ACK_FLAG: u8 = 0x1;
 
@@ -58,7 +58,7 @@ impl Ping {
 
     /// Builds a `Ping` frame from a raw frame.
     pub fn load(head: Head, bytes: &[u8]) -> Result<Ping, Error> {
-        debug_assert_eq!(head.kind(), ::frame::Kind::Ping);
+        debug_assert_eq!(head.kind(), crate::frame::Kind::Ping);
 
         // PING frames are not associated with any individual stream. If a PING
         // frame is received with a stream identifier field value other than
@@ -92,7 +92,7 @@ impl Ping {
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
         let sz = self.payload.len();
-        trace!("encoding PING; ack={} len={}", self.ack, sz);
+        log::trace!("encoding PING; ack={} len={}", self.ack, sz);
 
         let flags = if self.ack { ACK_FLAG } else { 0 };
         let head = Head::new(Kind::Ping, flags, StreamId::zero());

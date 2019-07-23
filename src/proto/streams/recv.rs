@@ -1,9 +1,10 @@
 use super::*;
-use {frame, proto};
-use codec::{RecvError, UserError};
-use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use crate::{frame, proto};
+use crate::codec::{RecvError, UserError};
+use crate::frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
 use http::{HeaderMap, Response, Request, Method};
+use futures::try_ready;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -158,7 +159,7 @@ impl Recv {
         stream: &mut store::Ptr,
         counts: &mut Counts,
     ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
-        trace!("opening stream; init_window={}", self.init_window_sz);
+        log::trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
         if is_initial {
@@ -203,7 +204,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            debug!(
+            log::debug!(
                 "stream error REQUEST_HEADER_FIELDS_TOO_LARGE -- \
                  recv_headers: frame is over size; stream={:?}",
                 stream.id
@@ -340,7 +341,7 @@ impl Recv {
         capacity: WindowSize,
         task: &mut Option<Task>,
     ) {
-        trace!(
+        log::trace!(
             "release_connection_capacity; size={}, connection in_flight_data={}",
             capacity,
             self.in_flight_data,
@@ -366,7 +367,7 @@ impl Recv {
         stream: &mut store::Ptr,
         task: &mut Option<Task>,
     ) -> Result<(), UserError> {
-        trace!("release_capacity; size={}", capacity);
+        log::trace!("release_capacity; size={}", capacity);
 
         if capacity > stream.in_flight_recv_data {
             return Err(UserError::ReleaseCapacityTooBig);
@@ -405,7 +406,7 @@ impl Recv {
             return;
         }
 
-        trace!(
+        log::trace!(
             "auto-release closed stream ({:?}) capacity: {:?}",
             stream.id,
             stream.in_flight_recv_data,
@@ -433,7 +434,7 @@ impl Recv {
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.
     pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Task>) {
-        trace!(
+        log::trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
             self.flow.available(),
@@ -509,7 +510,7 @@ impl Recv {
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
-        trace!(
+        log::trace!(
             "recv_data; size={}; connection={}; stream={}",
             sz,
             self.flow.window_size(),
@@ -518,7 +519,7 @@ impl Recv {
 
 
         if is_ignoring_frame {
-            trace!(
+            log::trace!(
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
@@ -608,7 +609,7 @@ impl Recv {
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
         if self.flow.window_size() < sz {
-            debug!(
+            log::debug!(
                 "connection error FLOW_CONTROL_ERROR -- window_size ({:?}) < sz ({:?});",
                 self.flow.window_size(),
                 sz,
@@ -642,7 +643,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            debug!(
+            log::debug!(
                 "stream error REFUSED_STREAM -- recv_push_promise: \
                  headers frame is over size; promised_id={:?};",
                 frame.promised_id(),
@@ -656,7 +657,7 @@ impl Recv {
         let promised_id = frame.promised_id();
         use http::header;
         let (pseudo, fields) = frame.into_parts();
-        let req = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
+        let req = crate::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
         // The spec has some requirements for promised request headers
         // [https://httpwg.org/specs/rfc7540.html#PushRequests]
 
@@ -708,7 +709,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                debug!("stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}", id);
+                log::debug!("stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}", id);
                 return Err(Reason::PROTOCOL_ERROR);
             }
         }
@@ -803,7 +804,7 @@ impl Recv {
             return;
         }
 
-        trace!("enqueue_reset_expiration; {:?}", stream.id);
+        log::trace!("enqueue_reset_expiration; {:?}", stream.id);
 
         if !counts.can_inc_num_reset_streams() {
             // try to evict 1 stream if possible
@@ -873,7 +874,7 @@ impl Recv {
     fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_window_updates.pop(store) {
             counts.transition(stream, |_, stream| {
-                trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
+                log::trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
             })
         }
     }
@@ -962,7 +963,7 @@ impl Recv {
             };
 
             counts.transition(stream, |_, stream| {
-                trace!("pending_window_updates -- pop; stream={:?}", stream.id);
+                log::trace!("pending_window_updates -- pop; stream={:?}", stream.id);
                 debug_assert!(!stream.is_pending_window_update);
 
                 if !stream.state.is_recv_streaming() {

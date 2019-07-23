@@ -25,8 +25,6 @@
 //! Then use it in your project. For example, a test could be written:
 //!
 //! ```
-//! extern crate mock_io;
-//!
 //! use mock_io::{Builder, Mock};
 //! use std::io::{Read, Write};
 //!
@@ -88,7 +86,7 @@ use std::time::{Duration, Instant};
 pub struct Mock {
     inner: Inner,
     tokio: tokio::Inner,
-    async: Option<bool>,
+    r#async: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -103,7 +101,7 @@ pub struct Builder {
     actions: VecDeque<Action>,
 
     // true for Tokio, false for blocking, None to auto detect
-    async: Option<bool>,
+    r#async: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,7 +169,7 @@ impl Builder {
                 waiting: None,
             },
             tokio: tokio,
-            async: src.async,
+            r#async: src.r#async,
         };
 
         let handle = Handle { inner: handle };
@@ -231,7 +229,7 @@ impl Mock {
 
     /// Returns `true` if running in a futures-rs task context
     fn is_async(&self) -> bool {
-        self.async.unwrap_or(tokio::is_task_ctx())
+        self.r#async.unwrap_or(tokio::is_task_ctx())
     }
 }
 
@@ -376,23 +374,19 @@ impl io::Write for Mock {
 // use tokio::*;
 
 mod tokio {
-    extern crate futures;
-    extern crate tokio_io;
-    extern crate tokio_timer;
-
     use super::*;
 
-    use self::futures::{Future, Stream, Poll, Async};
-    use self::futures::sync::mpsc;
-    use self::futures::task::{self, Task};
-    use self::tokio_io::{AsyncRead, AsyncWrite};
-    use self::tokio_timer::{Timer, Sleep};
+    use futures::{Future, Stream, Poll, Async};
+    use futures::sync::mpsc;
+    use futures::task::{self, Task};
+    use tokio_io::{AsyncRead, AsyncWrite};
+    use tokio_timer::{Timer, Sleep};
 
     use std::io;
 
     impl Builder {
         pub fn set_async(&mut self, is_async: bool) -> &mut Self {
-            self.async = Some(is_async);
+            self.r#async = Some(is_async);
             self
         }
     }
@@ -467,7 +461,7 @@ mod tokio {
     pub fn async_read(me: &mut Mock, dst: &mut [u8]) -> io::Result<usize> {
         loop {
             if let Some(ref mut sleep) = me.tokio.sleep {
-                let res = try!(sleep.poll());
+                let res = r#try!(sleep.poll());
 
                 if !res.is_ready() {
                     return Err(io::ErrorKind::WouldBlock.into());
@@ -509,7 +503,7 @@ mod tokio {
     pub fn async_write(me: &mut Mock, src: &[u8]) -> io::Result<usize> {
         loop {
             if let Some(ref mut sleep) = me.tokio.sleep {
-                let res = try!(sleep.poll());
+                let res = r#try!(sleep.poll());
 
                 if !res.is_ready() {
                     return Err(io::ErrorKind::WouldBlock.into());

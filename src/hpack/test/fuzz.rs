@@ -1,15 +1,10 @@
-extern crate bytes;
-extern crate env_logger;
-extern crate quickcheck;
-extern crate rand;
-
-use hpack::{Decoder, Encode, Encoder, Header};
+use crate::hpack::{Decoder, Encode, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use self::bytes::{Bytes, BytesMut};
-use self::quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
-use self::rand::{Rng, SeedableRng, StdRng};
+use bytes::{Bytes, BytesMut};
+use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
+use rand::{Rng, SeedableRng, StdRng};
 
 use std::io::Cursor;
 

@@ -1,6 +1,4 @@
-extern crate walkdir;
-
-use self::walkdir::WalkDir;
+use walkdir::WalkDir;
 
 use std::env;
 use std::path::Path;

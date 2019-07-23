@@ -1,7 +1,7 @@
 use std::fmt;
 
 use bytes::{BufMut, BytesMut};
-use frame::{util, Error, Frame, FrameSize, Head, Kind, StreamId};
+use crate::frame::{util, Error, Frame, FrameSize, Head, Kind, StreamId};
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Settings {
@@ -110,7 +110,7 @@ impl Settings {
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
         use self::Setting::*;
 
-        debug_assert_eq!(head.kind(), ::frame::Kind::Settings);
+        debug_assert_eq!(head.kind(), crate::frame::Kind::Settings);
 
         if !head.stream_id().is_zero() {
             return Err(Error::InvalidStreamId);
@@ -131,7 +131,7 @@ impl Settings {
 
         // Ensure the payload length is correct, each setting is 6 bytes long.
         if payload.len() % 6 != 0 {
-            debug!("invalid settings payload length; len={:?}", payload.len());
+            log::debug!("invalid settings payload length; len={:?}", payload.len());
             return Err(Error::InvalidPayloadAckSettings);
         }
 
@@ -187,13 +187,13 @@ impl Settings {
         let head = Head::new(Kind::Settings, self.flags.into(), StreamId::zero());
         let payload_len = self.payload_len();
 
-        trace!("encoding SETTINGS; len={}", payload_len);
+        log::trace!("encoding SETTINGS; len={}", payload_len);
 
         head.encode(payload_len, dst);
 
         // Encode the settings
         self.for_each(|setting| {
-            trace!("encoding setting; val={:?}", setting);
+            log::trace!("encoding setting; val={:?}", setting);
             setting.encode(dst)
         });
     }

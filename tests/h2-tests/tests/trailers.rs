@@ -1,7 +1,3 @@
-#[macro_use]
-extern crate log;
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 #[test]
@@ -31,7 +27,7 @@ fn recv_trailers_only() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let response = h2.run(response).unwrap();
@@ -79,7 +75,7 @@ fn send_trailers_immediately() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, mut stream) = client.send_request(request, false).unwrap();
 
     let mut trailers = HeaderMap::new();

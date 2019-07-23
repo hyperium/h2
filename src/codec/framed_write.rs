@@ -1,11 +1,11 @@
-use codec::UserError;
-use codec::UserError::*;
-use frame::{self, Frame, FrameSize};
-use hpack;
+use crate::codec::UserError;
+use crate::codec::UserError::*;
+use crate::frame::{self, Frame, FrameSize};
+use crate::hpack;
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::*;
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::{AsyncRead, AsyncWrite, try_nb};
 
 use std::io::{self, Cursor};
 
@@ -94,7 +94,7 @@ where
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
 
-        debug!("send; frame={:?}", item);
+        log::debug!("send; frame={:?}", item);
 
         match item {
             Frame::Data(mut v) => {
@@ -136,31 +136,31 @@ where
             },
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
-                trace!("encoded settings; rem={:?}", self.buf.remaining());
+                log::trace!("encoded settings; rem={:?}", self.buf.remaining());
             },
             Frame::GoAway(v) => {
                 v.encode(self.buf.get_mut());
-                trace!("encoded go_away; rem={:?}", self.buf.remaining());
+                log::trace!("encoded go_away; rem={:?}", self.buf.remaining());
             },
             Frame::Ping(v) => {
                 v.encode(self.buf.get_mut());
-                trace!("encoded ping; rem={:?}", self.buf.remaining());
+                log::trace!("encoded ping; rem={:?}", self.buf.remaining());
             },
             Frame::WindowUpdate(v) => {
                 v.encode(self.buf.get_mut());
-                trace!("encoded window_update; rem={:?}", self.buf.remaining());
+                log::trace!("encoded window_update; rem={:?}", self.buf.remaining());
             },
 
             Frame::Priority(_) => {
                 /*
                 v.encode(self.buf.get_mut());
-                trace!("encoded priority; rem={:?}", self.buf.remaining());
+                log::trace!("encoded priority; rem={:?}", self.buf.remaining());
                 */
                 unimplemented!();
             },
             Frame::Reset(v) => {
                 v.encode(self.buf.get_mut());
-                trace!("encoded reset; rem={:?}", self.buf.remaining());
+                log::trace!("encoded reset; rem={:?}", self.buf.remaining());
             },
         }
 
@@ -169,18 +169,18 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self) -> Poll<(), io::Error> {
-        trace!("flush");
+        log::trace!("flush");
 
         loop {
             while !self.is_empty() {
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
-                        trace!("  -> queued data frame");
+                        log::trace!("  -> queued data frame");
                         let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
                         try_ready!(self.inner.write_buf(&mut buf));
                     },
                     _ => {
-                        trace!("  -> not a queued data frame");
+                        log::trace!("  -> not a queued data frame");
                         try_ready!(self.inner.write_buf(&mut self.buf));
                     },
                 }
@@ -220,7 +220,7 @@ where
             }
         }
 
-        trace!("flushing buffer");
+        log::trace!("flushing buffer");
         // Flush the upstream
         try_nb!(self.inner.flush());
 

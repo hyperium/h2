@@ -1,7 +1,5 @@
 #![deny(warnings)]
 
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
@@ -9,7 +7,7 @@ const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 #[test]
 fn read_preface_in_multiple_frames() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .read(b"PRI * HTTP/2.0")
@@ -27,7 +25,7 @@ fn read_preface_in_multiple_frames() {
 
 #[test]
 fn server_builder_set_max_concurrent_streams() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -77,7 +75,7 @@ fn server_builder_set_max_concurrent_streams() {
 
 #[test]
 fn serve_request() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -114,7 +112,7 @@ fn accept_with_pending_connections_after_socket_close() {}
 
 #[test]
 fn recv_invalid_authority() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let bad_auth = util::byte_str("not:a/good authority");
@@ -141,7 +139,7 @@ fn recv_invalid_authority() {
 
 #[test]
 fn recv_connection_header() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let req = |id, name, val| {
@@ -176,7 +174,7 @@ fn recv_connection_header() {
 
 #[test]
 fn sends_reset_cancel_when_req_body_is_dropped() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -209,7 +207,7 @@ fn sends_reset_cancel_when_req_body_is_dropped() {
 
 #[test]
 fn abrupt_shutdown() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -255,7 +253,7 @@ fn abrupt_shutdown() {
 
 #[test]
 fn graceful_shutdown() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -341,7 +339,7 @@ fn graceful_shutdown() {
 
 #[test]
 fn sends_reset_cancel_when_res_body_is_dropped() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -399,7 +397,7 @@ fn sends_reset_cancel_when_res_body_is_dropped() {
 
 #[test]
 fn too_big_headers_sends_431() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -436,7 +434,7 @@ fn too_big_headers_sends_431() {
 
 #[test]
 fn too_big_headers_sends_reset_after_431_if_not_eos() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -472,7 +470,7 @@ fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
 #[test]
 fn poll_reset() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -518,7 +516,7 @@ fn poll_reset() {
 
 #[test]
 fn poll_reset_io_error() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -560,7 +558,7 @@ fn poll_reset_io_error() {
 
 #[test]
 fn poll_reset_after_send_response_is_user_error() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client
@@ -614,7 +612,7 @@ fn poll_reset_after_send_response_is_user_error() {
 fn server_error_on_unclean_shutdown() {
     use std::io::Write;
 
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, mut client) = mock::new();
 
     let srv = server::Builder::new()
@@ -628,7 +626,7 @@ fn server_error_on_unclean_shutdown() {
 
 #[test]
 fn request_without_authority() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, client) = mock::new();
 
     let client = client

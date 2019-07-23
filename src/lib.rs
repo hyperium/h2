@@ -88,35 +88,12 @@
 #![deny(missing_debug_implementations, missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
-#[macro_use]
-extern crate futures;
-
-#[macro_use]
-extern crate tokio_io;
-
-// HTTP types
-extern crate http;
-
-// Buffer utilities
-extern crate bytes;
-
-// Hash function used for HPACK encoding and tracking stream states.
-extern crate fnv;
-
-extern crate byteorder;
-extern crate slab;
-
-#[macro_use]
-extern crate log;
-extern crate string;
-extern crate indexmap;
-
 macro_rules! proto_err {
     (conn: $($msg:tt)+) => {
-        debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        log::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
     (stream: $($msg:tt)+) => {
-        debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        log::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
 }
 
@@ -137,8 +114,8 @@ pub mod client;
 pub mod server;
 mod share;
 
-pub use error::{Error, Reason};
-pub use share::{SendStream, StreamId, RecvStream, ReleaseCapacity, PingPong, Ping, Pong};
+pub use crate::error::{Error, Reason};
+pub use crate::share::{SendStream, StreamId, RecvStream, ReleaseCapacity, PingPong, Ping, Pong};
 
 #[cfg(feature = "unstable")]
 pub use codec::{Codec, RecvError, SendError, UserError};

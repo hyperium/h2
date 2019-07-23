@@ -1,13 +1,13 @@
-use {client, proto, server};
-use codec::{Codec, RecvError, SendError, UserError};
-use frame::{self, Frame, Reason};
-use proto::{peer, Peer, Open, WindowSize};
+use crate::{client, proto, server};
+use crate::codec::{Codec, RecvError, SendError, UserError};
+use crate::frame::{self, Frame, Reason};
+use crate::proto::{peer, Peer, Open, WindowSize};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
 
 use bytes::{Buf, Bytes};
-use futures::{task, Async, Poll};
+use futures::{task, Async, Poll, try_ready};
 use http::{HeaderMap, Request, Response};
 use tokio_io::AsyncWrite;
 
@@ -97,7 +97,7 @@ where
     P: Peer,
 {
     pub fn new(config: Config) -> Self {
-        let peer = P::dyn();
+        let peer = P::r#dyn();
 
         Streams {
             inner: Arc::new(Mutex::new(Inner {
@@ -134,7 +134,7 @@ where
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
         if id > me.actions.recv.max_stream_id() {
-            trace!("id ({:?}) > max_stream_id ({:?}), ignoring HEADERS", id, me.actions.recv.max_stream_id());
+            log::trace!("id ({:?}) > max_stream_id ({:?}), ignoring HEADERS", id, me.actions.recv.max_stream_id());
             return Ok(());
         }
 
@@ -150,7 +150,7 @@ where
                     // This may be response headers for a stream we've already
                     // forgotten about...
                     if me.actions.may_have_forgotten_stream::<P>(id) {
-                        debug!(
+                        log::debug!(
                             "recv_headers for old stream={:?}, sending STREAM_CLOSED",
                             id,
                         );
@@ -182,7 +182,7 @@ where
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
-            trace!("recv_headers; ignoring trailers on {:?}", stream.id);
+            log::trace!("recv_headers; ignoring trailers on {:?}", stream.id);
             return Ok(());
         }
 
@@ -191,7 +191,7 @@ where
         let send_buffer = &mut *send_buffer;
 
         me.counts.transition(stream, |counts, stream| {
-            trace!(
+            log::trace!(
                 "recv_headers; stream={:?}; state={:?}",
                 stream.id,
                 stream.state
@@ -254,12 +254,12 @@ where
                 // The GOAWAY process has begun. All streams with a greater ID
                 // than specified as part of GOAWAY should be ignored.
                 if id > me.actions.recv.max_stream_id() {
-                    trace!("id ({:?}) > max_stream_id ({:?}), ignoring DATA", id, me.actions.recv.max_stream_id());
+                    log::trace!("id ({:?}) > max_stream_id ({:?}), ignoring DATA", id, me.actions.recv.max_stream_id());
                     return Ok(());
                 }
 
                 if me.actions.may_have_forgotten_stream::<P>(id) {
-                    debug!(
+                    log::debug!(
                         "recv_data for old stream={:?}, sending STREAM_CLOSED",
                         id,
                     );
@@ -314,7 +314,7 @@ where
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
         if id > me.actions.recv.max_stream_id() {
-            trace!("id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM", id, me.actions.recv.max_stream_id());
+            log::trace!("id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM", id, me.actions.recv.max_stream_id());
             return Ok(());
         }
 
@@ -470,7 +470,7 @@ where
                 // The GOAWAY process has begun. All streams with a greater ID
                 // than specified as part of GOAWAY should be ignored.
                 if id > me.actions.recv.max_stream_id() {
-                    trace!("id ({:?}) > max_stream_id ({:?}), ignoring PUSH_PROMISE", id, me.actions.recv.max_stream_id());
+                    log::trace!("id ({:?}) > max_stream_id ({:?}), ignoring PUSH_PROMISE", id, me.actions.recv.max_stream_id());
                     return Ok(());
                 }
 
@@ -549,7 +549,7 @@ where
         me.refs += 1;
         key.map(|key| {
             let stream = &mut me.store.resolve(key);
-            trace!("next_incoming; id={:?}, state={:?}", stream.id, stream.state);
+            log::trace!("next_incoming; id={:?}, state={:?}", stream.id, stream.state);
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
@@ -740,7 +740,7 @@ impl<B> Streams<B, client::Peer>
 where
     B: Buf,
 {
-    pub fn poll_pending_open(&mut self, pending: Option<&OpaqueStreamRef>) -> Poll<(), ::Error> {
+    pub fn poll_pending_open(&mut self, pending: Option<&OpaqueStreamRef>) -> Poll<(), crate::Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -749,7 +749,7 @@ where
 
         if let Some(pending) = pending {
             let mut stream = me.store.resolve(pending.key);
-            trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
+            log::trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
             if stream.is_pending_open {
                 stream.wait_send();
                 return Ok(Async::NotReady);
@@ -779,7 +779,7 @@ where
             actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
         }
 
-        trace!("Streams::recv_eof");
+        log::trace!("Streams::recv_eof");
 
         me.store
             .for_each(|stream| {
@@ -979,7 +979,7 @@ impl<B> StreamRef<B> {
     }
 
     /// Request to be notified for if a `RST_STREAM` is received for this stream.
-    pub(crate) fn poll_reset(&mut self, mode: proto::PollReset) -> Poll<Reason, ::Error> {
+    pub(crate) fn poll_reset(&mut self, mode: proto::PollReset) -> Poll<Reason, crate::Error> {
         let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -1165,7 +1165,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     let mut me = match inner.lock() {
         Ok(inner) => inner,
         Err(_) => if ::std::thread::panicking() {
-            trace!("StreamRef::drop; mutex poisoned");
+            log::trace!("StreamRef::drop; mutex poisoned");
             return;
         } else {
             panic!("StreamRef::drop; mutex poisoned");
@@ -1176,7 +1176,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     me.refs -= 1;
     let mut stream = me.store.resolve(key);
 
-    trace!("drop_stream_ref; stream={:?}", stream);
+    log::trace!("drop_stream_ref; stream={:?}", stream);
 
     // decrement the stream's ref count by 1.
     stream.ref_dec();

@@ -1,12 +1,8 @@
-#[macro_use]
-extern crate log;
-extern crate h2_support;
-
 use h2_support::prelude::*;
 
 #[test]
 fn handshake() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -15,7 +11,7 @@ fn handshake() {
 
     let (_client, h2) = client::handshake(mock).wait().unwrap();
 
-    trace!("hands have been shook");
+    log::trace!("hands have been shook");
 
     // At this point, the connection should be closed
     h2.wait().unwrap();
@@ -23,7 +19,7 @@ fn handshake() {
 
 #[test]
 fn client_other_thread() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -60,7 +56,7 @@ fn client_other_thread() {
 
 #[test]
 fn recv_invalid_server_stream_id() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -84,7 +80,7 @@ fn recv_invalid_server_stream_id() {
         .body(())
         .unwrap();
 
-    info!("sending request");
+    log::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     // The connection errors
@@ -96,7 +92,7 @@ fn recv_invalid_server_stream_id() {
 
 #[test]
 fn request_stream_id_overflows() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -159,7 +155,7 @@ fn request_stream_id_overflows() {
 
 #[test]
 fn client_builder_max_concurrent_streams() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -199,7 +195,7 @@ fn client_builder_max_concurrent_streams() {
 
 #[test]
 fn request_over_max_concurrent_streams_errors() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -284,7 +280,7 @@ fn request_over_max_concurrent_streams_errors() {
 
 #[test]
 fn send_request_poll_ready_when_connection_error() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -362,7 +358,7 @@ fn send_request_poll_ready_when_connection_error() {
 
 #[test]
 fn send_reset_notifies_recv_stream() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
 
@@ -426,7 +422,7 @@ fn send_reset_notifies_recv_stream() {
 
 #[test]
 fn http_11_request_without_scheme_or_authority() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -461,7 +457,7 @@ fn http_11_request_without_scheme_or_authority() {
 
 #[test]
 fn http_2_request_without_scheme_or_authority() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -501,7 +497,7 @@ fn request_with_h1_version() {}
 
 #[test]
 fn request_with_connection_headers() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     // can't assert full handshake, since client never sends a request, and
@@ -544,7 +540,7 @@ fn request_with_connection_headers() {
 
 #[test]
 fn connection_close_notifies_response_future() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -587,7 +583,7 @@ fn connection_close_notifies_response_future() {
 
 #[test]
 fn connection_close_notifies_client_poll_ready() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -637,7 +633,7 @@ fn connection_close_notifies_client_poll_ready() {
 
 #[test]
 fn sending_request_on_closed_connection() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -702,7 +698,7 @@ fn sending_request_on_closed_connection() {
 
 #[test]
 fn recv_too_big_headers() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -779,7 +775,7 @@ fn recv_too_big_headers() {
 
 #[test]
 fn pending_send_request_gets_reset_by_peer_properly() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let payload = [0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize];
@@ -842,7 +838,7 @@ fn pending_send_request_gets_reset_by_peer_properly() {
 
 #[test]
 fn request_without_path() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv.assert_client_handshake()
@@ -870,7 +866,7 @@ fn request_without_path() {
 
 #[test]
 fn request_options_with_star() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     // Note the lack of trailing slash.
@@ -913,7 +909,7 @@ fn notify_on_send_capacity() {
     // stream, the client is notified.
     use std::sync::mpsc;
 
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let (done_tx, done_rx) = futures::sync::oneshot::channel();
@@ -999,7 +995,7 @@ fn notify_on_send_capacity() {
 
 #[test]
 fn send_stream_poll_reset() {
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
     let (io, srv) = mock::new();
 
     let srv = srv
@@ -1039,7 +1035,7 @@ fn send_stream_poll_reset() {
 fn drop_pending_open() {
     // This test checks that a stream queued for pending open behaves correctly when its
     // client drops.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let (init_tx, init_rx) = futures::sync::oneshot::channel();
@@ -1130,7 +1126,7 @@ fn malformed_response_headers_dont_unlink_stream() {
     // This test checks that receiving malformed headers frame on a stream with
     // no remaining references correctly resets the stream, without prematurely
     // unlinking it.
-    let _ = ::env_logger::try_init();
+    let _ = env_logger::try_init();
 
     let (io, srv) = mock::new();
     let (drop_tx, drop_rx) = futures::sync::oneshot::channel();
