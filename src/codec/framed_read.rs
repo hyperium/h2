@@ -102,6 +102,10 @@ impl<T> FramedRead<T> {
                 match frame.load_hpack(&mut payload, self.max_header_list_size, &mut self.hpack) {
                     Ok(_) => {},
                     Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
+                    Err(frame::Error::Hpack(e)) => {
+                        debug!("connection error COMPRESSION_ERROR -- {:?};", e);
+                        return Err(Connection(Reason::COMPRESSION_ERROR));
+                    },
                     Err(frame::Error::MalformedMessage) => {
                         let id = $head.stream_id();
                         proto_err!(stream: "malformed header block; stream={:?}", id);
@@ -318,6 +322,11 @@ impl<T> FramedRead<T> {
     #[inline]
     pub fn set_max_header_list_size(&mut self, val: usize) {
         self.max_header_list_size = val;
+    }
+
+    /// Update the max header dynamic table size setting.
+    pub fn set_max_header_table_size(&mut self, val: usize) {
+        self.hpack.queue_size_update(val);
     }
 }
 

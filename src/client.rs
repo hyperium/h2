@@ -861,6 +861,14 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum table size of the dynamic header decoder.
+    ///
+    /// By default, this value is 4,096 bytes.
+    pub fn header_table_size(&mut self, max: u32) -> &mut Self {
+        self.settings.set_header_table_size(Some(max));
+        self
+    }
+
     /// Sets the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
@@ -1331,6 +1339,12 @@ where
 
         if let Some(max) = self.builder.settings.max_header_list_size() {
             codec.set_max_recv_header_list_size(max as usize);
+        }
+
+        // The server receives the settings first, so we can just assume
+        // they will be ACKed, or else bad server.
+        if let Some(max) = self.builder.settings.header_table_size() {
+            codec.set_max_recv_header_table_size(max as usize);
         }
 
         // Send initial settings frame

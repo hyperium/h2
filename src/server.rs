@@ -708,6 +708,11 @@ impl Builder {
         self
     }
 
+    // TODO: fn header_table_size
+    // It's a little trickier to add since we need to only enforce it
+    // once the client has ACKed the settings...
+
+
     /// Sets the maximum number of concurrent streams.
     ///
     /// The maximum concurrent streams setting only controls the maximum number
