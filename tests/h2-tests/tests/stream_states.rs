@@ -1038,3 +1038,60 @@ fn srv_window_update_on_lower_stream_id() {
 
     srv.join(client).wait().unwrap();
 }
+
+#[test]
+fn updates_header_table_size() {
+    let _ = ::env_logger::try_init();
+    let (io, mut srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_header_table_size(Some(0));
+
+    srv.codec_mut().set_max_recv_header_table_size(0);
+
+    let srv = srv.assert_client_handshake_with_settings(settings)
+        .unwrap()
+        .recv_settings()
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "http://localhost")
+                .eos(),
+        )
+        .send_frame(
+            frames::headers(1)
+                .response(200)
+                .eos(),
+        )
+        .recv_frame(
+            frames::headers(3)
+                // Same :authority would normally be an index into the
+                // dynamic table. If it is, the mocked Codec will error.
+                .request("GET", "http://localhost")
+                .eos(),
+        )
+        .send_frame(
+            frames::headers(3)
+                .response(200)
+                .eos(),
+        )
+        .recv_eof();
+
+    let client = client::handshake(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let req = client
+                .get("http://localhost")
+                .expect("response");
+
+            conn.drive(req).map(move |(conn, _res)| (client, conn))
+        })
+        .and_then(|(mut client, conn)| {
+            let req = client
+                .get("http://localhost")
+                .expect("response");
+
+            conn.drive(req).map(drop)
+        });
+
+    client.join(srv).wait().expect("wait");
+}

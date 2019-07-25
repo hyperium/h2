@@ -660,7 +660,7 @@ where
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         use self::Frame::Data;
 
-        let (frame, handle) = match self.inner.poll().unwrap() {
+        let (frame, handle) = match self.inner.poll().expect("recv_frame") {
             Async::Ready((frame, handle)) => (frame, handle),
             Async::NotReady => return Ok(Async::NotReady),
         };
@@ -693,7 +693,7 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let mut handle = match self.inner.poll().unwrap() {
+        let mut handle = match self.inner.poll().expect("send_frame") {
             Async::Ready(handle) => handle,
             Async::NotReady => return Ok(Async::NotReady),
         };
@@ -756,8 +756,8 @@ where
 
     fn into_recv_frame(self, frame: Option<Frame>) -> RecvFrame<Self::Future> {
         let into_fut = Box::new(
-            self.unwrap()
-                .and_then(|handle| handle.into_future().unwrap()),
+            self.expect("into_recv_frame")
+                .and_then(|handle| handle.into_future().expect("into_recv_frame into_future")),
         );
         RecvFrame {
             inner: into_fut,

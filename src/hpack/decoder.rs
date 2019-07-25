@@ -45,6 +45,7 @@ pub enum NeedMore {
     StringUnderflow,
 }
 
+#[derive(Debug)]
 enum Representation {
     /// Indexed header field representation
     ///
@@ -157,14 +158,16 @@ impl Decoder {
     }
 
     /// Queues a potential size update
-    #[allow(dead_code)]
     pub fn queue_size_update(&mut self, size: usize) {
         let size = match self.max_size_update {
             Some(v) => cmp::max(v, size),
             None => size,
         };
 
-        self.max_size_update = Some(size);
+        // If size isn't changing, then an Update isn't required
+        if self.table.max_size() != size {
+            self.max_size_update = Some(size);
+        }
     }
 
     /// Decodes the headers found in the given buffer.
@@ -174,13 +177,34 @@ impl Decoder {
     {
         use self::Representation::*;
 
-        let mut can_resize = true;
+        trace!("decode");
 
-        if let Some(size) = self.max_size_update.take() {
-            self.last_max_update = size;
+        // If a max size update is expected, it MUST occur at the beginning
+        // of the next header block.
+        if let Some(size) = self.max_size_update {
+            let ty = match peek_u8(src) {
+                Some(byte) => Representation::load(byte)?,
+                None => return Ok(()),
+            };
+            match ty {
+                SizeUpdate => {
+                    trace!("    SizeUpdate required and found");
+                    self.last_max_update = size;
+                    self.max_size_update = None;
+                    // Handle the dynamic table size update
+                    self.process_size_update(src)?;
+                    consume(src);
+                },
+                ty => {
+                    trace!("    expected SizeUpdate, received={:?}", ty);
+                    return Err(DecoderError::InvalidMaxDynamicSize);
+                },
+            }
         }
 
-        trace!("decode");
+        // Above, a SizeUpdate was *required* because of a SETTINGS change.
+        // However, a SizeUpdate can happen without one...
+        let mut can_resize = true;
 
         while let Some(ty) = peek_u8(src) {
             // At this point we are always at the beginning of the next block
@@ -451,6 +475,10 @@ impl Table {
 
     fn size(&self) -> usize {
         self.size
+    }
+
+    fn max_size(&self) -> usize {
+        self.max_size
     }
 
     /// Returns the entry located at the given index.

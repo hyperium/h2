@@ -99,6 +99,14 @@ impl Settings {
         self.max_header_list_size = size;
     }
 
+    pub fn header_table_size(&self) -> Option<u32> {
+        self.header_table_size
+    }
+
+    pub fn set_header_table_size(&mut self, size: Option<u32>) {
+        self.header_table_size = size;
+    }
+
     pub fn is_push_enabled(&self) -> bool {
         self.enable_push.unwrap_or(1) != 0
     }

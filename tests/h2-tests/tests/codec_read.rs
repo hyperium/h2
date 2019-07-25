@@ -190,6 +190,59 @@ fn read_continuation_frames() {
 }
 
 #[test]
+fn read_dynamic_headers_is_error_when_over_table_size() {
+    let _ = ::env_logger::try_init();
+    let (io, srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_header_table_size(Some(0));
+
+    let srv = srv.assert_client_handshake()
+        .unwrap()
+        .recv_custom_settings(settings)
+        .recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        // Force sending indexed headers
+        .send_bytes(&[
+            // frame length
+            0, 0, 8,
+            // type: HEADERS
+            1,
+            // flags: END_STREAM | END_HEADERS
+            5,
+            // stream identifier: 1
+            0, 0, 0, 1,
+            // Must include the SizeUpdate
+            0b00100000,
+            // 200 OK
+            0x88,
+            // `c: c` twice, one indexing the previous
+            0x40, 0x01, 0x63, 0x01, 0x63, 0xBE
+        ])
+        .recv_frame(frames::go_away(0).compression())
+        .close();
+
+    let client = client::Builder::new()
+        .header_table_size(0)
+        .handshake::<_, Bytes>(io)
+        .expect("handshake")
+        .and_then(|(mut client, conn)| {
+            let req = client
+                .get("https://http2.akamai.com")
+                .expect_err("response");
+
+            conn
+                .expect_err("client")
+                .join(req)
+        });
+
+    client.join(srv).wait().expect("wait");
+}
+
+#[test]
 fn update_max_frame_len_at_rest() {
     let _ = ::env_logger::try_init();
     // TODO: add test for updating max frame length in flight as well?

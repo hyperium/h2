@@ -76,6 +76,7 @@ impl FuzzHpack {
                 headers: vec![],
             };
 
+            #[allow(warnings)]
             match rng.gen_range(0, 20) {
                 0 => {
                     // Two resizes

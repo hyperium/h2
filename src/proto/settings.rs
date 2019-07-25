@@ -60,6 +60,10 @@ impl Settings {
                 dst.set_max_send_frame_size(val as usize);
             }
 
+            if let Some(val) = settings.header_table_size() {
+                dst.set_max_send_header_table_size(val as usize);
+            }
+
             streams.apply_remote_settings(settings)?;
         }
 

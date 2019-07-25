@@ -98,6 +98,16 @@ impl<T, B> Codec<T, B> {
         self.inner.set_max_header_list_size(val);
     }
 
+    /// Set the max dynamic header table size that can be received.
+    pub fn set_max_recv_header_table_size(&mut self, val: usize) {
+        self.inner.set_max_header_table_size(val);
+    }
+
+    /// Set the max dynamic header table size that can be sent.
+    pub fn set_max_send_header_table_size(&mut self, val: usize) {
+        self.framed_write().set_max_header_table_size(val)
+    }
+
     /// Get a reference to the inner stream.
     #[cfg(feature = "unstable")]
     pub fn get_ref(&self) -> &T {
