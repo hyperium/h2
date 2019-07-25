@@ -14,12 +14,6 @@
 //! h2 = "0.1"
 //! ```
 //!
-//! Next, add this to your crate:
-//!
-//! ```no_run
-//! extern crate h2;
-//! ```
-//!
 //! # Layout
 //!
 //! The crate is split into [`client`] and [`server`] modules. Types that are

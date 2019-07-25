@@ -79,7 +79,7 @@ impl FuzzHpack {
 
                     frame.resizes.extend(&[low, high]);
                 },
-                1...3 => {
+                1..=3 => {
                     frame.resizes.push(rng.gen_range(128, MAX_CHUNK * 2));
                 },
                 _ => {},
