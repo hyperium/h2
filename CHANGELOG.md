@@ -1,3 +1,7 @@
+# 0.1.26 (July 25, 2019)
+
+* Fix handling of `SETTING_HEADER_TABLE_SIZE` (#387).
+
 # 0.1.25 (June 28, 2019)
 
 * Fix to send a `RST_STREAM` instead of `GOAWAY` if receiving a frame on a previously closed stream.
