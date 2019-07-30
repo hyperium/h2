@@ -71,7 +71,7 @@ actively maintained.
 
 **Is this an embedded Java SQL database engine?**
 
-[No](http://www.h2database.com).
+[No](https://www.h2database.com).
 
 [solicit]: https://github.com/mlalic/solicit
 [rust-http2]: https://github.com/stepancheg/rust-http2
