@@ -5,7 +5,6 @@ use crate::hpack;
 use http::{uri, HeaderMap, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
 
-use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 use string::String;
 
@@ -563,7 +562,9 @@ impl EncodingHeaderBlock {
         let payload_len = (dst.len() - payload_pos) as u64;
 
         // Write the frame length
-        BigEndian::write_uint(&mut dst[head_pos..head_pos + 3], payload_len, 3);
+        let payload_len_be = payload_len.to_be_bytes();
+        assert!(payload_len_be[0..5].iter().all(|b| *b == 0));
+        (&mut dst[head_pos..head_pos + 3]).copy_from_slice(&payload_len_be[5..]);
 
         if continuation.is_some() {
             // There will be continuation frames, so the `is_end_headers` flag
