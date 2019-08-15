@@ -1,61 +1,55 @@
+#![feature(async_await)]
+
+use futures::future::join;
 use h2_support::prelude::*;
 
-#[test]
-fn write_continuation_frames() {
+#[tokio::test]
+async fn write_continuation_frames() {
     // An invalid dependency ID results in a stream level error. The hpack
     // payload should still be decoded.
     let _ = env_logger::try_init();
-    let (io, srv) = mock::new();
+    let (io, mut srv) = mock::new();
 
     let large = build_large_headers();
 
     // Build the large request frame
     let frame = large.iter().fold(
         frames::headers(1).request("GET", "https://http2.akamai.com/"),
-        |frame, &(name, ref value)| frame.field(name, &value[..]));
+        |frame, &(name, ref value)| frame.field(name, &value[..]),
+    );
 
-    let srv = srv.assert_client_handshake()
-        .unwrap()
-        .recv_settings()
-        .recv_frame(frame.eos())
-        .send_frame(
-            frames::headers(1)
-                .response(204)
-                .eos(),
-        )
-        .close();
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frame.eos()).await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
 
-    let client = client::handshake(io)
-        .expect("handshake")
-        .and_then(|(mut client, conn)| {
-            let mut request = Request::builder();
-            request.uri("https://http2.akamai.com/");
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
 
-            for &(name, ref value) in &large {
-                request.header(name, &value[..]);
-            }
+        let mut request = Request::builder();
+        request.uri("https://http2.akamai.com/");
 
-            let request = request
-                .body(())
-                .unwrap();
+        for &(name, ref value) in &large {
+            request.header(name, &value[..]);
+        }
 
-            let req = client
+        let request = request.body(()).unwrap();
+
+        let req = async {
+            let res = client
                 .send_request(request, true)
                 .expect("send_request1")
                 .0
-                .then(|res| {
-                    let response = res.unwrap();
-                    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-                    Ok::<_, ()>(())
-                });
+                .await;
+            let response = res.unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        };
 
-            conn.drive(req)
-                .and_then(move |(h2, _)| {
-                    h2.unwrap()
-                }).map(|c| {
-                    (c, client)
-                })
-        });
+        conn.drive(req).await;
+        conn.await.unwrap();
+    };
 
-    client.join(srv).wait().expect("wait");
+    join(srv, client).await;
 }
