@@ -1,11 +1,13 @@
-use futures::prelude::*;
-use futures::{executor, future, task};
+#![feature(async_await)]
+use std::future::Future;
+use futures::Stream;
+use std::task::{Context, Poll};
+use std::pin::Pin;
+use futures::future;
 use http::{Method, Request};
-use std::cell::Cell;
-use std::io::{self, Read, Write};
-use std::sync::Arc;
+use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
-use futures::stream::futures_unordered::FuturesUnordered;
+use futures::stream::FuturesUnordered;
 
 struct MockIo<'a> {
     input: &'a [u8],
@@ -26,14 +28,18 @@ impl<'a> MockIo<'a> {
     }
 }
 
-impl<'a> Read for MockIo<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+impl<'a> AsyncRead for MockIo<'a> {
+    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [u8]) -> bool {
+        false
+    }
+
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         let mut len = self.next_u32() as usize;
         if self.input.is_empty() {
-            Ok(0)
+            Poll::Ready(Ok(0))
         } else if len == 0 {
-            task::current().notify();
-            Err(io::ErrorKind::WouldBlock.into())
+            cx.waker().clone().wake();
+            Poll::Pending
         } else {
             if len > self.input.len() {
                 len = self.input.len();
@@ -44,75 +50,45 @@ impl<'a> Read for MockIo<'a> {
             }
             buf[0..len].copy_from_slice(&self.input[0..len]);
             self.input = &self.input[len..];
-            Ok(len)
+            Poll::Ready(Ok(len))
         }
-    }
-}
-
-impl<'a> AsyncRead for MockIo<'a> {
-    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [u8]) -> bool {
-        false
-    }
-}
-
-impl<'a> Write for MockIo<'a> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        let len = std::cmp::min(self.next_u32() as usize, buf.len());
-        if len == 0 {
-            if self.input.is_empty() {
-                Err(io::ErrorKind::BrokenPipe.into())
-            } else {
-                task::current().notify();
-                Err(io::ErrorKind::WouldBlock.into())
-            }
-        } else {
-            Ok(len)
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), io::Error> {
-        Ok(())
     }
 }
 
 impl<'a> AsyncWrite for MockIo<'a> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        Ok(Async::Ready(()))
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let len = std::cmp::min(self.next_u32() as usize, buf.len());
+        if len == 0 {
+            if self.input.is_empty() {
+                Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()))
+            } else {
+                cx.waker().clone().wake();
+                Poll::Pending
+            }
+        } else {
+            Poll::Ready(Ok(len))
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+    
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
-struct MockNotify {
-    notified: Cell<bool>,
-}
-
-unsafe impl Sync for MockNotify {}
-
-impl executor::Notify for MockNotify {
-    fn notify(&self, _id: usize) {
-        self.notified.set(true);
-    }
-}
-
-impl MockNotify {
-    fn take_notify(&self) -> bool {
-        self.notified.replace(false)
-    }
-}
-
-fn run(script: &[u8]) -> Result<(), h2::Error> {
-    let notify = Arc::new(MockNotify {
-        notified: Cell::new(false),
-    });
-    let notify_handle: executor::NotifyHandle = notify.clone().into();
+async fn run(script: &[u8]) -> Result<(), h2::Error> {
     let io = MockIo { input: script };
-    let (mut h2, mut connection) = h2::client::handshake(io).wait()?;
+    let (mut h2, mut connection) = h2::client::handshake(io).await?;
     let mut futs = FuturesUnordered::new();
-    let future = future::poll_fn(|| {
-        if let Async::Ready(()) = connection.poll()? {
-            return Ok(Async::Ready(()));
+    let future = future::poll_fn(|cx| {
+        if let Poll::Ready(()) = Pin::new(&mut connection).poll(cx)? {
+            return Poll::Ready(Ok::<_, h2::Error>(()));
         }
         while futs.len() < 128 {
-            if h2.poll_ready()?.is_not_ready() {
+            if !h2.poll_ready(cx)?.is_ready() {
                 break;
             }
             let request = Request::builder()
@@ -126,29 +102,26 @@ fn run(script: &[u8]) -> Result<(), h2::Error> {
             futs.push(resp);
         }
         loop {
-            match futs.poll() {
-                Ok(Async::NotReady) | Ok(Async::Ready(None)) => break,
-                r @ Ok(Async::Ready(_)) | r @ Err(_) => {
+            match Pin::new(&mut futs).poll_next(cx) {
+                Poll::Pending | Poll::Ready(None) => break,
+                r @ Poll::Ready(Some(Ok(_))) | r @ Poll::Ready(Some(Err(_))) => {
                     eprintln!("{:?}", r);
                 }
             }
         }
-        Ok::<_, h2::Error>(Async::NotReady)
+        Poll::Pending
     });
-    let mut spawn = executor::spawn(future);
-    loop {
-        if let Async::Ready(()) = spawn.poll_future_notify(&notify_handle, 0)? {
-            return Ok(());
-        }
-        assert!(notify.take_notify());
-    }
+    
+    future.await?;
+    Ok(())
 }
 
 fn main() {
     env_logger::init();
+    let rt = tokio::runtime::Runtime::new().unwrap();
     loop {
         honggfuzz::fuzz!(|data: &[u8]| {
-            eprintln!("{:?}", run(data));
+            eprintln!("{:?}", rt.block_on(run(data)));
         });
     }
 }
