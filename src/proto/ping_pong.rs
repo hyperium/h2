@@ -3,11 +3,11 @@ use crate::frame::Ping;
 use crate::proto::{self, PingPayload};
 
 use bytes::Buf;
-use futures::{Async, Poll};
-use futures::task::AtomicTask;
+use futures::task::AtomicWaker;
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio_io::AsyncWrite;
 
 /// Acknowledges ping requests from the remote.
@@ -28,9 +28,9 @@ struct UserPingsRx(Arc<UserPingsInner>);
 struct UserPingsInner {
     state: AtomicUsize,
     /// Task to wake up the main `Connection`.
-    ping_task: AtomicTask,
+    ping_task: AtomicWaker,
     /// Task to wake up `share::PingPong::poll_pong`.
-    pong_task: AtomicTask,
+    pong_task: AtomicWaker,
 }
 
 #[derive(Debug)]
@@ -77,8 +77,8 @@ impl PingPong {
 
         let user_pings = Arc::new(UserPingsInner {
             state: AtomicUsize::new(USER_STATE_EMPTY),
-            ping_task: AtomicTask::new(),
-            pong_task: AtomicTask::new(),
+            ping_task: AtomicWaker::new(),
+            pong_task: AtomicWaker::new(),
         });
         self.user_pings = Some(UserPingsRx(user_pings.clone()));
         Some(UserPings(user_pings))
@@ -135,34 +135,42 @@ impl PingPong {
     }
 
     /// Send any pending pongs.
-    pub(crate) fn send_pending_pong<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
+    pub(crate) fn send_pending_pong<T, B>(
+        &mut self,
+        cx: &mut Context,
+        dst: &mut Codec<T, B>,
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(pong) = self.pending_pong.take() {
-            if !dst.poll_ready()?.is_ready() {
+            if !dst.poll_ready(cx)?.is_ready() {
                 self.pending_pong = Some(pong);
-                return Ok(Async::NotReady);
+                return Poll::Pending;
             }
 
             dst.buffer(Ping::pong(pong).into())
                 .expect("invalid pong frame");
         }
 
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
     }
 
     /// Send any pending pings.
-    pub(crate) fn send_pending_ping<T, B>(&mut self, dst: &mut Codec<T, B>) -> Poll<(), io::Error>
+    pub(crate) fn send_pending_ping<T, B>(
+        &mut self,
+        cx: &mut Context,
+        dst: &mut Codec<T, B>,
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(ref mut ping) = self.pending_ping {
             if !ping.sent {
-                if !dst.poll_ready()?.is_ready() {
-                    return Ok(Async::NotReady);
+                if !dst.poll_ready(cx)?.is_ready() {
+                    return Poll::Pending;
                 }
 
                 dst.buffer(Ping::new(ping.payload).into())
@@ -171,19 +179,22 @@ impl PingPong {
             }
         } else if let Some(ref users) = self.user_pings {
             if users.0.state.load(Ordering::Acquire) == USER_STATE_PENDING_PING {
-                if !dst.poll_ready()?.is_ready() {
-                    return Ok(Async::NotReady);
+                if !dst.poll_ready(cx)?.is_ready() {
+                    return Poll::Pending;
                 }
 
                 dst.buffer(Ping::new(Ping::USER).into())
                     .expect("invalid ping frame");
-                users.0.state.store(USER_STATE_PENDING_PONG, Ordering::Release);
+                users
+                    .0
+                    .state
+                    .store(USER_STATE_PENDING_PONG, Ordering::Release);
             } else {
-                users.0.ping_task.register();
+                users.0.ping_task.register(cx.waker());
             }
         }
 
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -201,19 +212,17 @@ impl ReceivedPing {
 impl UserPings {
     pub(crate) fn send_ping(&self) -> Result<(), Option<proto::Error>> {
         let prev = self.0.state.compare_and_swap(
-            USER_STATE_EMPTY, // current
+            USER_STATE_EMPTY,        // current
             USER_STATE_PENDING_PING, // new
             Ordering::AcqRel,
         );
 
         match prev {
             USER_STATE_EMPTY => {
-                self.0.ping_task.notify();
+                self.0.ping_task.wake();
                 Ok(())
-            },
-            USER_STATE_CLOSED => {
-                Err(Some(broken_pipe().into()))
             }
+            USER_STATE_CLOSED => Err(Some(broken_pipe().into())),
             _ => {
                 // Was already pending, user error!
                 Err(None)
@@ -221,20 +230,20 @@ impl UserPings {
         }
     }
 
-    pub(crate) fn poll_pong(&self) -> Poll<(), proto::Error> {
+    pub(crate) fn poll_pong(&self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
         // Must register before checking state, in case state were to change
         // before we could register, and then the ping would just be lost.
-        self.0.pong_task.register();
+        self.0.pong_task.register(cx.waker());
         let prev = self.0.state.compare_and_swap(
             USER_STATE_RECEIVED_PONG, // current
-            USER_STATE_EMPTY, // new
+            USER_STATE_EMPTY,         // new
             Ordering::AcqRel,
         );
 
         match prev {
-            USER_STATE_RECEIVED_PONG => Ok(Async::Ready(())),
-            USER_STATE_CLOSED => Err(broken_pipe().into()),
-            _ => Ok(Async::NotReady),
+            USER_STATE_RECEIVED_PONG => Poll::Ready(Ok(())),
+            USER_STATE_CLOSED => Poll::Ready(Err(broken_pipe().into())),
+            _ => Poll::Pending,
         }
     }
 }
@@ -244,13 +253,13 @@ impl UserPings {
 impl UserPingsRx {
     fn receive_pong(&self) -> bool {
         let prev = self.0.state.compare_and_swap(
-            USER_STATE_PENDING_PONG, // current
+            USER_STATE_PENDING_PONG,  // current
             USER_STATE_RECEIVED_PONG, // new
             Ordering::AcqRel,
         );
 
         if prev == USER_STATE_PENDING_PONG {
-            self.0.pong_task.notify();
+            self.0.pong_task.wake();
             true
         } else {
             false
@@ -261,7 +270,7 @@ impl UserPingsRx {
 impl Drop for UserPingsRx {
     fn drop(&mut self) {
         self.0.state.store(USER_STATE_CLOSED, Ordering::Release);
-        self.0.pong_task.notify();
+        self.0.pong_task.wake();
     }
 }
 

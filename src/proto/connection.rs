@@ -1,17 +1,18 @@
-use crate::{client, frame, proto, server};
 use crate::codec::RecvError;
 use crate::frame::{Reason, StreamId};
+use crate::{client, frame, proto, server};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{Stream, try_ready};
-use tokio_io::{AsyncRead, AsyncWrite};
-
-use std::marker::PhantomData;
+use futures::{ready, Stream};
 use std::io;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 /// An H2 connection
 #[derive(Debug)]
@@ -70,16 +71,15 @@ enum State {
 
 impl<T, P, B> Connection<T, P, B>
 where
-    T: AsyncRead + AsyncWrite,
+    T: AsyncRead + AsyncWrite + Unpin,
     P: Peer,
-    B: IntoBuf,
+    B: IntoBuf + Unpin,
+    B::Buf: Unpin,
 {
-    pub fn new(
-        codec: Codec<T, Prioritized<B::Buf>>,
-        config: Config,
-    ) -> Connection<T, P, B> {
+    pub fn new(codec: Codec<T, Prioritized<B::Buf>>, config: Config) -> Connection<T, P, B> {
         let streams = Streams::new(streams::Config {
-            local_init_window_sz: config.settings
+            local_init_window_sz: config
+                .settings
                 .initial_window_size()
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
             initial_max_send_streams: config.initial_max_send_streams,
@@ -88,7 +88,8 @@ where
             local_reset_duration: config.reset_stream_duration,
             local_reset_max: config.reset_stream_max,
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            remote_max_initiated: config.settings
+            remote_max_initiated: config
+                .settings
                 .max_concurrent_streams()
                 .map(|max| max as usize),
         });
@@ -112,25 +113,24 @@ where
     ///
     /// Returns `RecvError` as this may raise errors that are caused by delayed
     /// processing of received frames.
-    fn poll_ready(&mut self) -> Poll<(), RecvError> {
+    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
         // The order of these calls don't really matter too much
-        try_ready!(self.ping_pong.send_pending_pong(&mut self.codec));
-        try_ready!(self.ping_pong.send_pending_ping(&mut self.codec));
-        try_ready!(
-            self.settings
-                .send_pending_ack(&mut self.codec, &mut self.streams)
-        );
-        try_ready!(self.streams.send_pending_refusal(&mut self.codec));
+        ready!(self.ping_pong.send_pending_pong(cx, &mut self.codec))?;
+        ready!(self.ping_pong.send_pending_ping(cx, &mut self.codec))?;
+        ready!(self
+            .settings
+            .send_pending_ack(cx, &mut self.codec, &mut self.streams))?;
+        ready!(self.streams.send_pending_refusal(cx, &mut self.codec))?;
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 
     /// Send any pending GOAWAY frames.
     ///
     /// This will return `Some(reason)` if the connection should be closed
     /// afterwards. If this is a graceful shutdown, this returns `None`.
-    fn poll_go_away(&mut self) -> Poll<Option<Reason>, io::Error> {
-        self.go_away.send_pending_go_away(&mut self.codec)
+    fn poll_go_away(&mut self, cx: &mut Context) -> Poll<Option<io::Result<Reason>>> {
+        self.go_away.send_pending_go_away(cx, &mut self.codec)
     }
 
     fn go_away(&mut self, id: StreamId, e: Reason) {
@@ -154,7 +154,7 @@ where
         self.streams.recv_err(&proto::Error::Proto(e));
     }
 
-    fn take_error(&mut self, ours: Reason) -> Poll<(), proto::Error> {
+    fn take_error(&mut self, ours: Reason) -> Poll<Result<(), proto::Error>> {
         let reason = if let Some(theirs) = self.error.take() {
             match (ours, theirs) {
                 // If either side reported an error, return that
@@ -171,9 +171,9 @@ where
         };
 
         if reason == Reason::NO_ERROR {
-            Ok(().into())
+            Poll::Ready(Ok(()))
         } else {
-            Err(proto::Error::Proto(reason))
+            Poll::Ready(Err(proto::Error::Proto(reason)))
         }
     }
 
@@ -192,7 +192,7 @@ where
     }
 
     /// Advances the internal state of the connection.
-    pub fn poll(&mut self) -> Poll<(), proto::Error> {
+    pub fn poll(&mut self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
         use crate::codec::RecvError::*;
 
         loop {
@@ -200,15 +200,15 @@ where
             match self.state {
                 // When open, continue to poll a frame
                 State::Open => {
-                    match self.poll2() {
+                    match self.poll2(cx) {
                         // The connection has shutdown normally
-                        Ok(Async::Ready(())) => self.state = State::Closing(Reason::NO_ERROR),
+                        Poll::Ready(Ok(())) => self.state = State::Closing(Reason::NO_ERROR),
                         // The connection is not ready to make progress
-                        Ok(Async::NotReady) => {
+                        Poll::Pending => {
                             // Ensure all window updates have been sent.
                             //
                             // This will also handle flushing `self.codec`
-                            try_ready!(self.streams.poll_complete(&mut self.codec));
+                            ready!(self.streams.poll_complete(cx, &mut self.codec))?;
 
                             if self.error.is_some() || self.go_away.should_close_on_idle() {
                                 if !self.streams.has_streams() {
@@ -217,12 +217,12 @@ where
                                 }
                             }
 
-                            return Ok(Async::NotReady);
-                        },
+                            return Poll::Pending;
+                        }
                         // Attempting to read a frame resulted in a connection level
                         // error. This is handled by setting a GOAWAY frame followed by
                         // terminating the connection.
-                        Err(Connection(e)) => {
+                        Poll::Ready(Err(Connection(e))) => {
                             log::debug!("Connection::poll; connection error={:?}", e);
 
                             // We may have already sent a GOAWAY for this error,
@@ -238,22 +238,19 @@ where
                             // Reset all active streams
                             self.streams.recv_err(&e.into());
                             self.go_away_now(e);
-                        },
+                        }
                         // Attempting to read a frame resulted in a stream level error.
                         // This is handled by resetting the frame then trying to read
                         // another frame.
-                        Err(Stream {
-                            id,
-                            reason,
-                        }) => {
+                        Poll::Ready(Err(Stream { id, reason })) => {
                             log::trace!("stream error; id={:?}; reason={:?}", id, reason);
                             self.streams.send_reset(id, reason);
-                        },
+                        }
                         // Attempting to read a frame resulted in an I/O error. All
                         // active streams must be reset.
                         //
                         // TODO: Are I/O errors recoverable?
-                        Err(Io(e)) => {
+                        Poll::Ready(Err(Io(e))) => {
                             log::debug!("Connection::poll; IO error={:?}", e);
                             let e = e.into();
 
@@ -261,24 +258,24 @@ where
                             self.streams.recv_err(&e);
 
                             // Return the error
-                            return Err(e);
-                        },
+                            return Poll::Ready(Err(e));
+                        }
                     }
                 }
                 State::Closing(reason) => {
                     log::trace!("connection closing after flush");
                     // Flush/shutdown the codec
-                    try_ready!(self.codec.shutdown());
+                    ready!(self.codec.shutdown(cx))?;
 
                     // Transition the state to error
                     self.state = State::Closed(reason);
-                },
+                }
                 State::Closed(reason) => return self.take_error(reason),
             }
         }
     }
 
-    fn poll2(&mut self) -> Poll<(), RecvError> {
+    fn poll2(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
         use crate::frame::Frame::*;
 
         // This happens outside of the loop to prevent needing to do a clock
@@ -292,43 +289,51 @@ where
             // The order here matters:
             // - poll_go_away may buffer a graceful shutdown GOAWAY frame
             // - If it has, we've also added a PING to be sent in poll_ready
-            if let Some(reason) = try_ready!(self.poll_go_away()) {
-                if self.go_away.should_close_now() {
-                    if self.go_away.is_user_initiated() {
-                        // A user initiated abrupt shutdown shouldn't return
-                        // the same error back to the user.
-                        return Ok(Async::Ready(()));
-                    } else {
-                        return Err(RecvError::Connection(reason));
+            match ready!(self.poll_go_away(cx)) {
+                Some(Ok(reason)) => {
+                    if self.go_away.should_close_now() {
+                        if self.go_away.is_user_initiated() {
+                            // A user initiated abrupt shutdown shouldn't return
+                            // the same error back to the user.
+                            return Poll::Ready(Ok(()));
+                        } else {
+                            return Poll::Ready(Err(RecvError::Connection(reason)));
+                        }
                     }
+                    // Only NO_ERROR should be waiting for idle
+                    debug_assert_eq!(
+                        reason,
+                        Reason::NO_ERROR,
+                        "graceful GOAWAY should be NO_ERROR"
+                    );
                 }
-                // Only NO_ERROR should be waiting for idle
-                debug_assert_eq!(reason, Reason::NO_ERROR, "graceful GOAWAY should be NO_ERROR");
+                Some(Err(e)) => return Poll::Ready(Err(e.into())),
+                None => (),
             }
-            try_ready!(self.poll_ready());
+            ready!(self.poll_ready(cx))?;
 
-            match try_ready!(self.codec.poll()) {
-                Some(Headers(frame)) => {
+            match ready!(Pin::new(&mut self.codec).poll_next(cx)) {
+                Some(Ok(Headers(frame))) => {
                     log::trace!("recv HEADERS; frame={:?}", frame);
                     self.streams.recv_headers(frame)?;
-                },
-                Some(Data(frame)) => {
+                }
+                Some(Ok(Data(frame))) => {
                     log::trace!("recv DATA; frame={:?}", frame);
                     self.streams.recv_data(frame)?;
-                },
-                Some(Reset(frame)) => {
+                }
+                Some(Ok(Reset(frame))) => {
                     log::trace!("recv RST_STREAM; frame={:?}", frame);
                     self.streams.recv_reset(frame)?;
-                },
-                Some(PushPromise(frame)) => {
+                }
+                Some(Ok(PushPromise(frame))) => {
                     log::trace!("recv PUSH_PROMISE; frame={:?}", frame);
                     self.streams.recv_push_promise(frame)?;
-                },
-                Some(Settings(frame)) => {
+                }
+                Some(Ok(Settings(frame))) => {
                     log::trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
-                },
-                Some(GoAway(frame)) => {
+                }
+                Some(Ok(GoAway(frame))) => {
                     log::trace!("recv GOAWAY; frame={:?}", frame);
                     // This should prevent starting new streams,
                     // but should allow continuing to process current streams
@@ -336,8 +341,8 @@ where
                     // transition to GoAway.
                     self.streams.recv_go_away(&frame)?;
                     self.error = Some(frame.reason());
-                },
-                Some(Ping(frame)) => {
+                }
+                Some(Ok(Ping(frame))) => {
                     log::trace!("recv PING; frame={:?}", frame);
                     let status = self.ping_pong.recv_ping(frame);
                     if status.is_shutdown() {
@@ -349,21 +354,21 @@ where
                         let last_processed_id = self.streams.last_processed_id();
                         self.go_away(last_processed_id, Reason::NO_ERROR);
                     }
-                },
-                Some(WindowUpdate(frame)) => {
+                }
+                Some(Ok(WindowUpdate(frame))) => {
                     log::trace!("recv WINDOW_UPDATE; frame={:?}", frame);
                     self.streams.recv_window_update(frame)?;
-                },
-                Some(Priority(frame)) => {
+                }
+                Some(Ok(Priority(frame))) => {
                     log::trace!("recv PRIORITY; frame={:?}", frame);
                     // TODO: handle
-                },
+                }
+                Some(Err(e)) => return Poll::Ready(Err(e)),
                 None => {
                     log::trace!("codec closed");
-                    self.streams.recv_eof(false)
-                        .ok().expect("mutex poisoned");
-                    return Ok(Async::Ready(()));
-                },
+                    self.streams.recv_eof(false).ok().expect("mutex poisoned");
+                    return Poll::Ready(Ok(()));
+                }
             }
         }
     }
@@ -385,8 +390,9 @@ where
 
 impl<T, B> Connection<T, server::Peer, B>
 where
-    T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    T: AsyncRead + AsyncWrite + Unpin,
+    B: IntoBuf + Unpin,
+    B::Buf: Unpin,
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
         self.streams.next_incoming()

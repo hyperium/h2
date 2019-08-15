@@ -1,13 +1,15 @@
+use std::task::Context;
 use super::*;
 use crate::{frame, proto};
 use crate::codec::{RecvError, UserError};
 use crate::frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 
 use http::{HeaderMap, Response, Request, Method};
-use futures::try_ready;
+use futures::ready;
 
 use std::io;
 use std::time::{Duration, Instant};
+use std::task::{Poll, Waker};
 
 #[derive(Debug)]
 pub(super) struct Recv {
@@ -257,15 +259,17 @@ impl Recv {
 
     /// Called by the client to get pushed response
     pub fn poll_pushed(
-        &mut self, stream: &mut store::Ptr
-    ) -> Poll<Option<(Request<()>, store::Key)>, proto::Error> {
+        &mut self,
+        cx: &Context,
+        stream: &mut store::Ptr
+    ) -> Poll<Option<Result<(Request<()>, store::Key), proto::Error>>> {
         use super::peer::PollMessage::*;
 
         let mut ppp = stream.pending_push_promises.take();
         let pushed = ppp.pop(stream.store_mut()).map(
             |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
                 Some(Event::Headers(Server(headers))) =>
-                    Async::Ready(Some((headers, pushed.key()))),
+                    (headers, pushed.key()),
                 // When frames are pushed into the queue, it is verified that
                 // the first frame is a HEADERS frame.
                 _ => panic!("Headers not set on pushed stream")
@@ -273,15 +277,15 @@ impl Recv {
         );
         stream.pending_push_promises = ppp;
         if let Some(p) = pushed {
-            Ok(p)
+            Poll::Ready(Some(Ok(p)))
         } else {
             let is_open = stream.state.ensure_recv_open()?;
 
             if is_open {
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
+                stream.recv_task = Some(cx.waker().clone());
+                Poll::Pending
             } else {
-                Ok(Async::Ready(None))
+                Poll::Ready(None)
             }
         }
     }
@@ -289,20 +293,21 @@ impl Recv {
     /// Called by the client to get the response
     pub fn poll_response(
         &mut self,
+        cx: &Context,
         stream: &mut store::Ptr,
-    ) -> Poll<Response<()>, proto::Error> {
+    ) -> Poll<Result<Response<()>, proto::Error>> {
         use super::peer::PollMessage::*;
 
         // If the buffer is not empty, then the first frame must be a HEADERS
         // frame or the user violated the contract.
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Client(response))) => Ok(response.into()),
+            Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response.into())),
             Some(_) => panic!("poll_response called after response returned"),
             None => {
                 stream.state.ensure_recv_open()?;
 
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
+                stream.recv_task = Some(cx.waker().clone());
+                Poll::Pending
             },
         }
     }
@@ -339,7 +344,7 @@ impl Recv {
     pub fn release_connection_capacity(
         &mut self,
         capacity: WindowSize,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) {
         log::trace!(
             "release_connection_capacity; size={}, connection in_flight_data={}",
@@ -355,7 +360,7 @@ impl Recv {
 
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
     }
@@ -365,7 +370,7 @@ impl Recv {
         &mut self,
         capacity: WindowSize,
         stream: &mut store::Ptr,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
         log::trace!("release_capacity; size={}", capacity);
 
@@ -387,7 +392,7 @@ impl Recv {
             self.pending_window_updates.push(stream);
 
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
 
@@ -398,7 +403,7 @@ impl Recv {
     pub fn release_closed_capacity(
         &mut self,
         stream: &mut store::Ptr,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) {
         debug_assert_eq!(stream.ref_count, 0);
 
@@ -433,7 +438,7 @@ impl Recv {
     ///
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.
-    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Task>) {
+    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Waker>) {
         log::trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
@@ -458,7 +463,7 @@ impl Recv {
         // a connection WINDOW_UPDATE.
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
     }
@@ -824,14 +829,15 @@ impl Recv {
     /// Send any pending refusals.
     pub fn send_pending_refusal<T, B>(
         &mut self,
+        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(stream_id) = self.refused {
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Create the RST_STREAM frame
             let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
@@ -844,7 +850,7 @@ impl Recv {
 
         self.refused = None;
 
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -894,37 +900,39 @@ impl Recv {
 
     pub fn poll_complete<T, B>(
         &mut self,
+        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         // Send any pending connection level window updates
-        try_ready!(self.send_connection_window_update(dst));
+        ready!(self.send_connection_window_update(cx, dst))?;
 
         // Send any pending stream level window updates
-        try_ready!(self.send_stream_window_updates(store, counts, dst));
+        ready!(self.send_stream_window_updates(cx, store, counts, dst))?;
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 
     /// Send connection level window update
     fn send_connection_window_update<T, B>(
         &mut self,
+        cx:  &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(incr) = self.flow.unclaimed_capacity() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             // Ensure the codec has capacity
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Buffer the WINDOW_UPDATE frame
             dst.buffer(frame.into())
@@ -938,28 +946,29 @@ impl Recv {
                 .expect("unexpected flow control state");
         }
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 
     /// Send stream level window update
     pub fn send_stream_window_updates<T, B>(
         &mut self,
+        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         loop {
             // Ensure the codec has capacity
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Get the next stream
             let stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
-                None => return Ok(().into()),
+                None => return Poll::Ready(Ok(())),
             };
 
             counts.transition(stream, |_, stream| {
@@ -1001,10 +1010,10 @@ impl Recv {
         self.pending_accept.pop(store).map(|ptr| ptr.key())
     }
 
-    pub fn poll_data(&mut self, stream: &mut Stream) -> Poll<Option<Bytes>, proto::Error> {
+    pub fn poll_data(&mut self, cx: &Context, stream: &mut Stream) -> Poll<Option<Result<Bytes, proto::Error>>> {
         // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Data(payload)) => Ok(Some(payload).into()),
+            Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
             Some(event) => {
                 // Frame is trailer
                 stream.pending_recv.push_front(&mut self.buffer, event);
@@ -1020,36 +1029,37 @@ impl Recv {
                 stream.notify_recv();
 
                 // No more data frames
-                Ok(None.into())
+                Poll::Ready(None)
             },
-            None => self.schedule_recv(stream),
+            None => self.schedule_recv(cx, stream),
         }
     }
 
     pub fn poll_trailers(
         &mut self,
+        cx: &Context,
         stream: &mut Stream,
-    ) -> Poll<Option<HeaderMap>, proto::Error> {
+    ) -> Poll<Option<Result<HeaderMap, proto::Error>>> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Trailers(trailers)) => Ok(Some(trailers).into()),
+            Some(Event::Trailers(trailers)) => Poll::Ready(Some(Ok(trailers))),
             Some(event) => {
                 // Frame is not trailers.. not ready to poll trailers yet.
                 stream.pending_recv.push_front(&mut self.buffer, event);
 
-                Ok(Async::NotReady)
+                Poll::Pending
             },
-            None => self.schedule_recv(stream),
+            None => self.schedule_recv(cx, stream),
         }
     }
 
-    fn schedule_recv<T>(&mut self, stream: &mut Stream) -> Poll<Option<T>, proto::Error> {
+    fn schedule_recv<T>(&mut self, cx: &Context, stream: &mut Stream) -> Poll<Option<Result<T, proto::Error>>> {
         if stream.state.ensure_recv_open()? {
             // Request to get notified once more frames arrive
-            stream.recv_task = Some(task::current());
-            Ok(Async::NotReady)
+            stream.recv_task = Some(cx.waker().clone());
+            Poll::Pending
         } else {
             // No more frames will be received
-            Ok(None.into())
+            Poll::Ready(None)
         }
     }
 }

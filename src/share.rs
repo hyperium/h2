@@ -3,10 +3,13 @@ use crate::frame::Reason;
 use crate::proto::{self, WindowSize};
 
 use bytes::{Bytes, IntoBuf};
-use futures::{self, Poll, Async, try_ready};
-use http::{HeaderMap};
+use http::HeaderMap;
 
+use crate::PollExt;
+use futures::ready;
 use std::fmt;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Sends the body stream and trailers to the remote peer.
 ///
@@ -264,11 +267,12 @@ impl<B: IntoBuf> SendStream<B> {
     /// is sent. For example:
     ///
     /// ```rust
+    /// #![feature(async_await)]
     /// # use h2::*;
-    /// # fn doc(mut send_stream: SendStream<&'static [u8]>) {
+    /// # async fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
     ///
-    /// let capacity = send_stream.poll_capacity();
+    /// let capacity = futures::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await;
     /// // capacity == 5;
     ///
     /// send_stream.send_data(b"hello", false).unwrap();
@@ -309,9 +313,11 @@ impl<B: IntoBuf> SendStream<B> {
     /// amount of assigned capacity at that point in time. It is also possible
     /// that `n` is lower than the previous call if, since then, the caller has
     /// sent data.
-    pub fn poll_capacity(&mut self) -> Poll<Option<usize>, crate::Error> {
-        let res = try_ready!(self.inner.poll_capacity());
-        Ok(Async::Ready(res.map(|v| v as usize)))
+    pub fn poll_capacity(&mut self, cx: &mut Context) -> Poll<Option<Result<usize, crate::Error>>> {
+        self.inner
+            .poll_capacity(cx)
+            .map_ok_(|w| w as usize)
+            .map_err_(Into::into)
     }
 
     /// Sends a single data frame to the remote peer.
@@ -356,7 +362,7 @@ impl<B: IntoBuf> SendStream<B> {
 
     /// Polls to be notified when the client resets this stream.
     ///
-    /// If stream is still open, this returns `Ok(Async::NotReady)`, and
+    /// If stream is still open, this returns `Poll::Pending`, and
     /// registers the task to be notified if a `RST_STREAM` is received.
     ///
     /// If a `RST_STREAM` frame is received for this stream, calling this
@@ -366,8 +372,8 @@ impl<B: IntoBuf> SendStream<B> {
     ///
     /// If connection sees an error, this returns that error instead of a
     /// `Reason`.
-    pub fn poll_reset(&mut self) -> Poll<Reason, crate::Error> {
-        self.inner.poll_reset(proto::PollReset::Streaming)
+    pub fn poll_reset(&mut self, cx: &mut Context) -> Poll<Result<Reason, crate::Error>> {
+        self.inner.poll_reset(cx, proto::PollReset::Streaming)
     }
 
     /// Returns the stream ID of this `SendStream`.
@@ -417,8 +423,11 @@ impl RecvStream {
     }
 
     /// Returns received trailers.
-    pub fn poll_trailers(&mut self) -> Poll<Option<HeaderMap>, crate::Error> {
-        self.inner.inner.poll_trailers().map_err(Into::into)
+    pub fn poll_trailers(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Option<Result<HeaderMap, crate::Error>>> {
+        self.inner.inner.poll_trailers(cx).map_err_(Into::into)
     }
 
     /// Returns the stream ID of this stream.
@@ -432,11 +441,10 @@ impl RecvStream {
 }
 
 impl futures::Stream for RecvStream {
-    type Item = Bytes;
-    type Error = crate::Error;
+    type Item = Result<Bytes, crate::Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.inner.poll_data().map_err(Into::into)
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.inner.poll_data(cx).map_err_(Into::into)
     }
 }
 
@@ -514,9 +522,7 @@ impl Clone for ReleaseCapacity {
 
 impl PingPong {
     pub(crate) fn new(inner: proto::UserPings) -> Self {
-        PingPong {
-            inner,
-        }
+        PingPong { inner }
     }
 
     /// Send a `PING` frame to the peer.
@@ -540,12 +546,10 @@ impl PingPong {
         // just drop it.
         drop(ping);
 
-        self.inner
-            .send_ping()
-            .map_err(|err| match err {
-                Some(err) => err.into(),
-                None => UserError::SendPingWhilePending.into()
-            })
+        self.inner.send_ping().map_err(|err| match err {
+            Some(err) => err.into(),
+            None => UserError::SendPingWhilePending.into(),
+        })
     }
 
     /// Polls for the acknowledgement of a previously [sent][] `PING` frame.
@@ -553,8 +557,8 @@ impl PingPong {
     /// # Example
     ///
     /// ```
-    /// # use futures::Future;
-    /// # fn doc(mut ping_pong: h2::PingPong) {
+    /// #![feature(async_await)]
+    /// # async fn doc(mut ping_pong: h2::PingPong) {
     /// // let mut ping_pong = ...
     ///
     /// // First, send a PING.
@@ -563,26 +567,23 @@ impl PingPong {
     ///     .unwrap();
     ///
     /// // And then wait for the PONG.
-    /// futures::future::poll_fn(move || {
-    ///     ping_pong.poll_pong()
-    /// }).wait().unwrap();
+    /// futures::future::poll_fn(move |cx| {
+    ///     ping_pong.poll_pong(cx)
+    /// }).await.unwrap();
     /// # }
     /// # fn main() {}
     /// ```
     ///
     /// [sent]: struct.PingPong.html#method.send_ping
-    pub fn poll_pong(&mut self) -> Poll<Pong, crate::Error> {
-        try_ready!(self.inner.poll_pong());
-        Ok(Async::Ready(Pong {
-            _p: (),
-        }))
+    pub fn poll_pong(&mut self, cx: &mut Context) -> Poll<Result<Pong, crate::Error>> {
+        ready!(self.inner.poll_pong(cx))?;
+        Poll::Ready(Ok(Pong { _p: () }))
     }
 }
 
 impl fmt::Debug for PingPong {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("PingPong")
-            .finish()
+        fmt.debug_struct("PingPong").finish()
     }
 }
 
@@ -595,16 +596,13 @@ impl Ping {
     ///
     /// [`PingPong`]: struct.PingPong.html
     pub fn opaque() -> Ping {
-        Ping {
-            _p: (),
-        }
+        Ping { _p: () }
     }
 }
 
 impl fmt::Debug for Ping {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Ping")
-            .finish()
+        fmt.debug_struct("Ping").finish()
     }
 }
 
@@ -612,7 +610,6 @@ impl fmt::Debug for Ping {
 
 impl fmt::Debug for Pong {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Pong")
-            .finish()
+        fmt.debug_struct("Pong").finish()
     }
 }

@@ -1,6 +1,7 @@
 use crate::codec::RecvError;
 use crate::frame;
 use crate::proto::*;
+use std::task::{Poll, Context};
 
 #[derive(Debug)]
 pub(crate) struct Settings {
@@ -29,21 +30,22 @@ impl Settings {
 
     pub fn send_pending_ack<T, B, C, P>(
         &mut self,
+        cx: &mut Context,
         dst: &mut Codec<T, B>,
         streams: &mut Streams<C, P>,
-    ) -> Poll<(), RecvError>
+    ) -> Poll<Result<(), RecvError>>
     where
-        T: AsyncWrite,
-        B: Buf,
-        C: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
+        C: Buf + Unpin,
         P: Peer,
     {
         log::trace!("send_pending_ack; pending={:?}", self.pending);
 
-        if let Some(ref settings) = self.pending {
-            if !dst.poll_ready()?.is_ready() {
+        if let Some(settings) = &self.pending {
+            if !dst.poll_ready(cx)?.is_ready() {
                 log::trace!("failed to send ACK");
-                return Ok(Async::NotReady);
+                return Poll::Pending;
             }
 
             // Create an ACK settings frame
@@ -65,6 +67,6 @@ impl Settings {
 
         self.pending = None;
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 }
