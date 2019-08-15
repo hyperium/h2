@@ -1,5 +1,3 @@
-use futures::executor::{self, Notify};
-
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
@@ -21,22 +19,22 @@ impl MockNotify {
         }
     }
 
-    pub fn with<F: FnOnce() -> R, R>(&self, f: F) -> R {
-        use futures::Async::Ready;
-        use futures::future::poll_fn;
+    pub fn with<F: FnOnce() -> R, R>(&self, _f: F) -> R {
+        unimplemented!();
+        // use futures::future::poll_fn;
 
-        self.clear();
+        // self.clear();
 
-        let mut f = Some(f);
+        // let mut f = Some(f);
 
-        let res = executor::spawn(poll_fn(move || {
-            Ok::<_, ()>(Ready(f.take().unwrap()()))
-        })).poll_future_notify(&self.inner, 0);
+        // let res = tokio::spawn(poll_fn(move |cx| {
+        //     Poll::Ready(f.take().unwrap()())
+        // })).poll_future_notify(&self.inner, 0);
 
-        match res {
-            Ok(Ready(v)) => v,
-            _ => unreachable!(),
-        }
+        // match res {
+        //     Poll::Ready(v) => v,
+        //     _ => unreachable!(),
+        // }
     }
 
     pub fn clear(&self) {
@@ -48,8 +46,8 @@ impl MockNotify {
     }
 }
 
-impl Notify for Inner {
-    fn notify(&self, _: usize) {
-        self.notified.store(true, SeqCst);
-    }
-}
+// impl Notify for Inner {
+//     fn notify(&self, _: usize) {
+//         self.notified.store(true, SeqCst);
+//     }
+// }
