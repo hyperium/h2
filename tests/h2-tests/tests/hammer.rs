@@ -1,13 +1,26 @@
-use h2_support::prelude::*;
-use futures::{Async, Poll};
+#![feature(async_await)]
 
+use futures::{ready, FutureExt, StreamExt, TryFutureExt};
+use h2_support::prelude::*;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use std::io;
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+};
 use tokio::net::{TcpListener, TcpStream};
-use std::{net::SocketAddr, thread, sync::{atomic::{AtomicUsize, Ordering}, Arc}};
 
 struct Server {
     addr: SocketAddr,
     reqs: Arc<AtomicUsize>,
-    join: Option<thread::JoinHandle<()>>,
+    _join: Option<thread::JoinHandle<()>>,
 }
 
 impl Server {
@@ -23,32 +36,27 @@ impl Server {
         let reqs = Arc::new(AtomicUsize::new(0));
         let reqs2 = reqs.clone();
         let join = thread::spawn(move || {
-            let server = listener.incoming().for_each(move |socket| {
-                let reqs = reqs2.clone();
-                let mk_data = mk_data.clone();
-                let connection = server::handshake(socket)
-                    .and_then(move |conn| {
-                        conn.for_each(move |(_, mut respond)| {
-                            reqs.fetch_add(1, Ordering::Release);
-                            let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
-                            let mut send = respond.send_response(response, false)?;
-                            send.send_data(mk_data(), true).map(|_|())
-                        })
-                    })
-                    .map_err(|e| eprintln!("serve conn error: {:?}", e));
+            let server = async move {
+                let mut incoming = listener.incoming();
+                while let Some(socket) = incoming.next().await {
+                    let reqs = reqs2.clone();
+                    let mk_data = mk_data.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_request(socket, reqs, mk_data).await {
+                            eprintln!("serve conn error: {:?}", e)
+                        }
+                    });
+                }
+            };
 
-                tokio::spawn(Box::new(connection));
-                Ok(())
-            })
-            .map_err(|e| eprintln!("serve error: {:?}", e));
-
-            tokio::run(server);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(server);
         });
 
         Self {
             addr,
-            join: Some(join),
-            reqs
+            _join: Some(join),
+            reqs,
         }
     }
 
@@ -61,6 +69,25 @@ impl Server {
     }
 }
 
+async fn handle_request<F>(
+    socket: io::Result<TcpStream>,
+    reqs: Arc<AtomicUsize>,
+    mk_data: Arc<F>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn() -> Bytes,
+    F: Send + Sync + 'static,
+{
+    let mut conn = server::handshake(socket?).await?;
+    while let Some(result) = conn.next().await {
+        let (_, mut respond) = result?;
+        reqs.fetch_add(1, Ordering::Release);
+        let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+        let mut send = respond.send_response(response, false)?;
+        send.send_data(mk_data(), true)?;
+    }
+    Ok(())
+}
 
 struct Process {
     body: RecvStream,
@@ -68,29 +95,24 @@ struct Process {
 }
 
 impl Future for Process {
-    type Item = ();
-    type Error = h2::Error;
+    type Output = Result<(), h2::Error>;
 
-    fn poll(&mut self) -> Poll<(), h2::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             if self.trailers {
-                return match self.body.poll_trailers()? {
-                    Async::NotReady => Ok(Async::NotReady),
-                    Async::Ready(_) => Ok(().into()),
-                };
+                ready!(self.body.poll_trailers(cx));
+                return Poll::Ready(Ok(()));
             } else {
-                match self.body.poll()? {
-                    Async::NotReady => return Ok(Async::NotReady),
-                    Async::Ready(None) => {
+                match ready!(Pin::new(&mut self.body).poll_next(cx)) {
+                    None => {
                         self.trailers = true;
-                    },
-                    _ => {},
+                    }
+                    _ => {}
                 }
             }
         }
     }
 }
-
 
 #[test]
 fn hammer_client_concurrency() {
@@ -106,10 +128,12 @@ fn hammer_client_concurrency() {
         print!("sending {}", i);
         let rsps = rsps.clone();
         let tcp = TcpStream::connect(&addr);
-        let tcp = tcp.then(|res| {
-            let tcp = res.unwrap();
-            client::handshake(tcp)
-        }).then(move |res| {
+        let tcp = tcp
+            .then(|res| {
+                let tcp = res.unwrap();
+                client::handshake(tcp)
+            })
+            .then(move |res| {
                 let rsps = rsps;
                 let (mut client, h2) = res.unwrap();
                 let request = Request::builder()
@@ -120,7 +144,9 @@ fn hammer_client_concurrency() {
                 let (response, mut stream) = client.send_request(request, false).unwrap();
                 stream.send_trailers(HeaderMap::new()).unwrap();
 
-                tokio::spawn(h2.map_err(|e| panic!("client conn error: {:?}", e)));
+                tokio::spawn(async move {
+                    h2.await.unwrap();
+                });
 
                 response
                     .and_then(|response| {
@@ -139,7 +165,8 @@ fn hammer_client_concurrency() {
                     })
             });
 
-        tokio::run(tcp);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(tcp);
         println!("...done");
     }
 

@@ -1,9 +1,11 @@
-use h2_support::prelude::*;
+#![feature(async_await)]
 
+use futures::future::join;
+use h2_support::prelude::*;
 use std::error::Error;
 
-#[test]
-fn read_none() {
+#[tokio::test]
+async fn read_none() {
     let mut codec = Codec::from(mock_io::Builder::new().build());
 
     assert_closed!(codec);
@@ -15,8 +17,8 @@ fn read_frame_too_big() {}
 
 // ===== DATA =====
 
-#[test]
-fn read_data_no_padding() {
+#[tokio::test]
+async fn read_data_no_padding() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 5, 0, 0, 0, 0, 0, 1,
@@ -32,8 +34,8 @@ fn read_data_no_padding() {
     assert_closed!(codec);
 }
 
-#[test]
-fn read_data_empty_payload() {
+#[tokio::test]
+async fn read_data_empty_payload() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 0, 0, 0, 0, 0, 0, 1,
@@ -48,8 +50,8 @@ fn read_data_empty_payload() {
     assert_closed!(codec);
 }
 
-#[test]
-fn read_data_end_stream() {
+#[tokio::test]
+async fn read_data_end_stream() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 5, 0, 1, 0, 0, 0, 1,
@@ -61,12 +63,11 @@ fn read_data_end_stream() {
     assert_eq!(data.stream_id(), 1);
     assert_eq!(data.payload(), &b"hello"[..]);
     assert!(data.is_end_stream());
-
     assert_closed!(codec);
 }
 
-#[test]
-fn read_data_padding() {
+#[tokio::test]
+async fn read_data_padding() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 16, 0, 0x8, 0, 0, 0, 1,
@@ -84,8 +85,8 @@ fn read_data_padding() {
     assert_closed!(codec);
 }
 
-#[test]
-fn read_push_promise() {
+#[tokio::test]
+async fn read_push_promise() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 0x5,
@@ -104,8 +105,8 @@ fn read_push_promise() {
     assert_closed!(codec);
 }
 
-#[test]
-fn read_data_stream_id_zero() {
+#[tokio::test]
+async fn read_data_stream_id_zero() {
     let mut codec = raw_codec! {
         read => [
             0, 0, 5, 0, 0, 0, 0, 0, 0,
@@ -130,64 +131,70 @@ fn read_headers_with_pseudo() {}
 #[ignore]
 fn read_headers_empty_payload() {}
 
-#[test]
-fn read_continuation_frames() {
+#[tokio::test]
+async fn read_continuation_frames() {
     let _ = env_logger::try_init();
-    let (io, srv) = mock::new();
+    let (io, mut srv) = mock::new();
 
     let large = build_large_headers();
-    let frame = large.iter().fold(
-        frames::headers(1).response(200),
-        |frame, &(name, ref value)| frame.field(name, &value[..]),
-    ).eos();
+    let frame = large
+        .iter()
+        .fold(
+            frames::headers(1).response(200),
+            |frame, &(name, ref value)| frame.field(name, &value[..]),
+        )
+        .eos();
 
-    let srv = srv.assert_client_handshake()
-        .unwrap()
-        .recv_settings()
-        .recv_frame(
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
             frames::headers(1)
                 .request("GET", "https://http2.akamai.com/")
                 .eos(),
         )
-        .send_frame(frame)
-        .close();
+        .await;
+        srv.send_frame(frame).await;
+    };
 
-    let client = client::handshake(io)
-        .expect("handshake")
-        .and_then(|(mut client, conn)| {
-            let request = Request::builder()
-                .uri("https://http2.akamai.com/")
-                .body(())
-                .unwrap();
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
 
-            let req = client
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async {
+            let res = client
                 .send_request(request, true)
                 .expect("send_request")
                 .0
-                .expect("response")
-                .map(move |res| {
-                    assert_eq!(res.status(), StatusCode::OK);
-                    let (head, _body) = res.into_parts();
-                    let expected = large.iter().fold(HeaderMap::new(), |mut map, &(name, ref value)| {
-                        use h2_support::frames::HttpTryInto;
-                        map.append(name, value.as_str().try_into().unwrap());
-                        map
-                    });
-                    assert_eq!(head.headers, expected);
+                .await
+                .expect("response");
+            assert_eq!(res.status(), StatusCode::OK);
+            let (head, _body) = res.into_parts();
+            let expected = large
+                .iter()
+                .fold(HeaderMap::new(), |mut map, &(name, ref value)| {
+                    use h2_support::frames::HttpTryInto;
+                    map.append(name, value.as_str().try_into().unwrap());
+                    map
                 });
+            assert_eq!(head.headers, expected);
+        };
 
-            conn.drive(req)
-                .and_then(move |(h2, _)| {
-                    h2.expect("client")
-                }).map(|c| (client, c))
-        });
+        conn.drive(req).await;
+        conn.await.expect("client");
+    };
 
-    client.join(srv).wait().expect("wait");
-
+    join(srv, client).await;
 }
 
-#[test]
-fn update_max_frame_len_at_rest() {
+#[tokio::test]
+async fn update_max_frame_len_at_rest() {
+    use futures::StreamExt;
+
     let _ = env_logger::try_init();
     // TODO: add test for updating max frame length in flight as well?
     let mut codec = raw_codec! {
@@ -205,7 +212,7 @@ fn update_max_frame_len_at_rest() {
 
     assert_eq!(codec.max_recv_frame_size(), 16_384);
     assert_eq!(
-        codec.poll().unwrap_err().description(),
+        codec.next().await.unwrap().unwrap_err().description(),
         "frame with invalid size"
     );
 }
