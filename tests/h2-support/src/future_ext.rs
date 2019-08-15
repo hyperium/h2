@@ -1,220 +1,54 @@
-use futures::{Async, Future, Poll};
-
-use std::fmt;
+use futures::FutureExt;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Future extension helpers that are useful for tests
-pub trait FutureExt: Future {
-    /// Panic on error
-    fn unwrap(self) -> Unwrap<Self>
-    where
-        Self: Sized,
-        Self::Error: fmt::Debug,
-    {
-        Unwrap {
-            inner: self,
-        }
-    }
-
-    /// Panic on success, yielding the content of an `Err`.
-    fn unwrap_err(self) -> UnwrapErr<Self>
-    where
-        Self: Sized,
-        Self::Error: fmt::Debug,
-    {
-        UnwrapErr {
-            inner: self,
-        }
-    }
-
-    /// Panic on success, with a message.
-    fn expect_err<T>(self, msg: T) -> ExpectErr<Self>
-    where
-        Self: Sized,
-        Self::Error: fmt::Debug,
-        T: fmt::Display,
-    {
-        ExpectErr{
-            inner: self,
-            msg: msg.to_string(),
-        }
-    }
-
-    /// Panic on error, with a message.
-    fn expect<T>(self, msg: T) -> Expect<Self>
-    where
-        Self: Sized,
-        Self::Error: fmt::Debug,
-        T: fmt::Display,
-    {
-        Expect {
-            inner: self,
-            msg: msg.to_string(),
-        }
-    }
-
+pub trait TestFuture: Future {
     /// Drive `other` by polling `self`.
     ///
     /// `self` must not resolve before `other` does.
-    fn drive<T>(self, other: T) -> Drive<Self, T>
+    fn drive<T>(&mut self, other: T) -> Drive<'_, Self, T>
     where
         T: Future,
-        T::Error: fmt::Debug,
-        Self: Future<Item = ()> + Sized,
-        Self::Error: fmt::Debug,
+        Self: Future + Sized,
     {
         Drive {
-            driver: Some(self),
-            future: other,
-        }
-    }
-
-    /// Wrap this future in one that will yield NotReady once before continuing.
-    ///
-    /// This allows the executor to poll other futures before trying this one
-    /// again.
-    fn yield_once(self) -> Box<dyn Future<Item = Self::Item, Error = Self::Error>>
-    where
-        Self: Future + Sized + 'static,
-    {
-        Box::new(super::util::yield_once().then(move |_| self))
-    }
-}
-
-impl<T: Future> FutureExt for T {}
-
-// ===== Unwrap ======
-
-/// Panic on error
-pub struct Unwrap<T> {
-    inner: T,
-}
-
-impl<T> Future for Unwrap<T>
-where
-    T: Future,
-    T::Item: fmt::Debug,
-    T::Error: fmt::Debug,
-{
-    type Item = T::Item;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<T::Item, ()> {
-        Ok(self.inner.poll().unwrap())
-    }
-}
-
-// ===== UnwrapErr ======
-
-/// Panic on success.
-pub struct UnwrapErr<T> {
-    inner: T,
-}
-
-impl<T> Future for UnwrapErr<T>
-where
-    T: Future,
-    T::Item: fmt::Debug,
-    T::Error: fmt::Debug,
-{
-    type Item = T::Error;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<T::Error, ()> {
-        match self.inner.poll() {
-            Ok(Async::Ready(v)) => panic!("Future::unwrap_err() on an Ok value: {:?}", v),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(e) => Ok(Async::Ready(e)),
+            driver: self,
+            future: Box::pin(other),
         }
     }
 }
 
-
-
-// ===== Expect ======
-
-/// Panic on error
-pub struct Expect<T> {
-    inner: T,
-    msg: String,
-}
-
-impl<T> Future for Expect<T>
-where
-    T: Future,
-    T::Item: fmt::Debug,
-    T::Error: fmt::Debug,
-{
-    type Item = T::Item;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<T::Item, ()> {
-        Ok(self.inner.poll().expect(&self.msg))
-    }
-}
-
-// ===== ExpectErr ======
-
-/// Panic on success
-pub struct ExpectErr<T> {
-    inner: T,
-    msg: String,
-}
-
-impl<T> Future for ExpectErr<T>
-where
-    T: Future,
-    T::Item: fmt::Debug,
-    T::Error: fmt::Debug,
-{
-    type Item = T::Error;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<T::Error, ()> {
-        match self.inner.poll() {
-            Ok(Async::Ready(v)) => panic!("{}: {:?}", self.msg, v),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(e) => Ok(Async::Ready(e)),
-        }
-    }
-}
+impl<T: Future> TestFuture for T {}
 
 // ===== Drive ======
 
 /// Drive a future to completion while also polling the driver
 ///
 /// This is useful for H2 futures that also require the connection to be polled.
-pub struct Drive<T, U> {
-    driver: Option<T>,
-    future: U,
+pub struct Drive<'a, T, U> {
+    driver: &'a mut T,
+    future: Pin<Box<U>>,
 }
 
-impl<T, U> Future for Drive<T, U>
+impl<'a, T, U> Future for Drive<'a, T, U>
 where
-    T: Future<Item = ()>,
+    T: Future + Unpin,
     U: Future,
-    T::Error: fmt::Debug,
-    U::Error: fmt::Debug,
 {
-    type Item = (T, U::Item);
-    type Error = ();
+    type Output = U::Output;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut looped = false;
-
         loop {
-            match self.future.poll() {
-                Ok(Async::Ready(val)) => {
-                    // Get the driver
-                    let driver = self.driver.take().unwrap();
-
-                    return Ok((driver, val).into());
-                },
-                Ok(_) => {},
-                Err(e) => panic!("unexpected error; {:?}", e),
+            match self.future.poll_unpin(cx) {
+                Poll::Ready(val) => return Poll::Ready(val),
+                Poll::Pending => {}
             }
 
-            match self.driver.as_mut().unwrap().poll() {
-                Ok(Async::Ready(_)) => {
+            match self.driver.poll_unpin(cx) {
+                Poll::Ready(_) => {
                     if looped {
                         // Try polling the future one last time
                         panic!("driver resolved before future")
@@ -222,12 +56,11 @@ where
                         looped = true;
                         continue;
                     }
-                },
-                Ok(Async::NotReady) => {},
-                Err(e) => panic!("unexpected error; {:?}", e),
+                }
+                Poll::Pending => {}
             }
 
-            return Ok(Async::NotReady);
+            return Poll::Pending;
         }
     }
 }

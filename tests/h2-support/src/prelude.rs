@@ -1,14 +1,13 @@
-
 // Re-export H2 crate
 pub use h2;
 
-pub use h2::*;
 pub use h2::client;
 pub use h2::frame::StreamId;
 pub use h2::server;
+pub use h2::*;
 
 // Re-export mock
-pub use super::mock::{self, HandleFutureExt};
+pub use super::mock::{self, idle_ms};
 
 // Re-export frames helpers
 pub use super::frames;
@@ -23,28 +22,32 @@ pub use super::util;
 pub use super::{Codec, SendFrame};
 
 // Re-export macros
-pub use super::{assert_ping, assert_data, assert_headers, assert_closed,
-                raw_codec, poll_frame, poll_err};
+pub use super::{
+    assert_closed, assert_data, assert_default_settings, assert_headers, assert_ping, poll_err,
+    poll_frame, raw_codec,
+};
+
+pub use super::assert::assert_frame_eq;
 
 // Re-export useful crates
-pub use {bytes, env_logger, futures, http, tokio_io};
 pub use super::mock_io;
+pub use {bytes, env_logger, futures, http, tokio::io as tokio_io};
 
 // Re-export primary future types
-pub use futures::{Future, IntoFuture, Sink, Stream};
+pub use futures::{Future, Sink, Stream};
 
 // And our Future extensions
-pub use super::future_ext::{FutureExt, Unwrap};
+pub use super::future_ext::TestFuture;
 
 // Our client_ext helpers
-pub use super::client_ext::{SendRequestExt};
+pub use super::client_ext::SendRequestExt;
 
 // Re-export HTTP types
 pub use http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
 pub use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 
-pub use tokio_io::{AsyncRead, AsyncWrite};
+pub use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use std::thread;
 pub use std::time::Duration;
@@ -52,7 +55,10 @@ pub use std::time::Duration;
 // ===== Everything under here shouldn't be used =====
 // TODO: work on deleting this code
 
+use futures::future;
 pub use futures::future::poll_fn;
+use futures::future::Either::*;
+use std::pin::Pin;
 
 pub trait MockH2 {
     fn handshake(&mut self) -> &mut Self;
@@ -69,29 +75,33 @@ impl MockH2 for super::mock_io::Builder {
 }
 
 pub trait ClientExt {
-    fn run<F: Future>(&mut self, f: F) -> Result<F::Item, F::Error>;
+    fn run<'a, F: Future + Unpin + 'a>(
+        &'a mut self,
+        f: F,
+    ) -> Pin<Box<dyn Future<Output = F::Output> + 'a>>;
 }
 
 impl<T, B> ClientExt for client::Connection<T, B>
 where
-    T: AsyncRead + AsyncWrite + 'static,
-    B: IntoBuf + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + 'static,
+    B: IntoBuf + Unpin + 'static,
+    B::Buf: Unpin,
 {
-    fn run<F: Future>(&mut self, f: F) -> Result<F::Item, F::Error> {
-        use futures::future;
-        use futures::future::Either::*;
-
-        let res = future::poll_fn(|| self.poll()).select2(f).wait();
-
-        match res {
-            Ok(A((_, b))) => {
-                // Connection is done...
-                b.wait()
-            },
-            Ok(B((v, _))) => return Ok(v),
-            Err(A((e, _))) => panic!("err: {:?}", e),
-            Err(B((e, _))) => return Err(e),
-        }
+    fn run<'a, F: Future + Unpin + 'a>(
+        &'a mut self,
+        f: F,
+    ) -> Pin<Box<dyn Future<Output = F::Output> + 'a>> {
+        let res = future::select(self, f);
+        Box::pin(async {
+            match res.await {
+                Left((Ok(_), b)) => {
+                    // Connection is done...
+                    b.await
+                }
+                Right((v, _)) => return v,
+                Left((Err(e), _)) => panic!("err: {:?}", e),
+            }
+        })
     }
 }
 

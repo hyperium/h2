@@ -74,9 +74,9 @@
 
 #![allow(deprecated)]
 
-use std::{cmp, io};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+use std::{cmp, io};
 
 /// An I/O handle that follows a predefined script.
 ///
@@ -85,13 +85,12 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct Mock {
     inner: Inner,
-    tokio: tokio::Inner,
-    r#async: Option<bool>,
+    tokio: tokio_::Inner,
 }
 
 #[derive(Debug)]
 pub struct Handle {
-    inner: tokio::Handle,
+    inner: tokio_::Handle,
 }
 
 /// Builds `Mock` instances.
@@ -99,9 +98,6 @@ pub struct Handle {
 pub struct Builder {
     // Sequence of actions for the Mock to take
     actions: VecDeque<Action>,
-
-    // true for Tokio, false for blocking, None to auto detect
-    r#async: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +155,7 @@ impl Builder {
 
     /// Build a `Mock` value paired with a handle
     pub fn build_with_handle(&mut self) -> (Mock, Handle) {
-        let (tokio, handle) = tokio::Inner::new();
+        let (tokio, handle) = tokio_::Inner::new();
 
         let src = self.clone();
 
@@ -169,7 +165,6 @@ impl Builder {
                 waiting: None,
             },
             tokio: tokio,
-            r#async: src.r#async,
         };
 
         let handle = Handle { inner: handle };
@@ -198,45 +193,10 @@ impl Handle {
     }
 }
 
-impl Mock {
-    fn sync_read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
-        use std::thread;
-
-        loop {
-            match self.inner.read(dst) {
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if let Some(rem) = self.inner.remaining_wait() {
-                        thread::sleep(rem);
-                    } else {
-                        // We've entered a dead lock scenario. The peer expects
-                        // a write but we are reading.
-                        panic!("mock_io::Mock expects write but currently blocked in read");
-                    }
-                }
-                ret => return ret,
-            }
-        }
-    }
-
-    fn sync_write(&mut self, src: &[u8]) -> io::Result<usize> {
-        match self.inner.write(src) {
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                panic!("mock_io::Mock not currently expecting a write");
-            }
-            ret => ret,
-        }
-    }
-
-    /// Returns `true` if running in a futures-rs task context
-    fn is_async(&self) -> bool {
-        self.r#async.unwrap_or(tokio::is_task_ctx())
-    }
-}
-
 impl Inner {
     fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
         match self.action() {
-            Some(&mut Action::Read(ref mut data)) =>{
+            Some(&mut Action::Read(ref mut data)) => {
                 // Figure out how much to copy
                 let n = cmp::min(dst.len(), data.len());
 
@@ -253,9 +213,7 @@ impl Inner {
                 // Either waiting or expecting a write
                 Err(io::ErrorKind::WouldBlock.into())
             }
-            None => {
-                 Ok(0)
-            }
+            None => Ok(0),
         }
     }
 
@@ -347,55 +305,25 @@ impl Inner {
     }
 }
 
-impl io::Read for Mock {
-    fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
-        if self.is_async() {
-            tokio::async_read(self, dst)
-        } else {
-            self.sync_read(dst)
-        }
-    }
-}
-
-impl io::Write for Mock {
-    fn write(&mut self, src: &[u8]) -> io::Result<usize> {
-        if self.is_async() {
-            tokio::async_write(self, src)
-        } else {
-            self.sync_write(src)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 // use tokio::*;
 
-mod tokio {
+mod tokio_ {
     use super::*;
 
-    use futures::{Future, Stream, Poll, Async};
-    use futures::sync::mpsc;
-    use futures::task::{self, Task};
-    use tokio_io::{AsyncRead, AsyncWrite};
-    use tokio_timer::{Timer, Sleep};
+    use futures::channel::mpsc;
+    use futures::{ready, FutureExt, Stream};
+    use std::task::{Context, Poll, Waker};
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio::timer::Delay;
+
+    use std::pin::Pin;
 
     use std::io;
 
-    impl Builder {
-        pub fn set_async(&mut self, is_async: bool) -> &mut Self {
-            self.r#async = Some(is_async);
-            self
-        }
-    }
-
     #[derive(Debug)]
     pub struct Inner {
-        timer: Timer,
-        sleep: Option<Sleep>,
-        read_wait: Option<Task>,
+        sleep: Option<Delay>,
+        read_wait: Option<Waker>,
         rx: mpsc::UnboundedReceiver<Action>,
     }
 
@@ -408,11 +336,11 @@ mod tokio {
 
     impl Handle {
         pub fn read(&mut self, buf: &[u8]) {
-            mpsc::UnboundedSender::send(&mut self.tx, Action::Read(buf.into())).unwrap();
+            self.tx.unbounded_send(Action::Read(buf.into())).unwrap();
         }
 
         pub fn write(&mut self, buf: &[u8]) {
-            mpsc::UnboundedSender::send(&mut self.tx, Action::Write(buf.into())).unwrap();
+            self.tx.unbounded_send(Action::Write(buf.into())).unwrap();
         }
     }
 
@@ -420,16 +348,9 @@ mod tokio {
 
     impl Inner {
         pub fn new() -> (Inner, Handle) {
-            // TODO: We probably want a higher resolution timer.
-            let timer = tokio_timer::wheel()
-                .tick_duration(Duration::from_millis(1))
-                .max_timeout(Duration::from_secs(3600))
-                .build();
-
             let (tx, rx) = mpsc::unbounded();
 
             let inner = Inner {
-                timer: timer,
                 sleep: None,
                 read_wait: None,
                 rx: rx,
@@ -440,8 +361,8 @@ mod tokio {
             (inner, handle)
         }
 
-        pub(super) fn poll_action(&mut self) -> Poll<Option<Action>, ()> {
-            self.rx.poll()
+        pub(super) fn poll_action(&mut self, cx: &mut Context) -> Poll<Option<Action>> {
+            Pin::new(&mut self.rx).poll_next(cx)
         }
     }
 
@@ -450,7 +371,7 @@ mod tokio {
             match self.inner.action() {
                 Some(&mut Action::Read(_)) | None => {
                     if let Some(task) = self.tokio.read_wait.take() {
-                        task.notify();
+                        task.wake();
                     }
                 }
                 _ => {}
@@ -458,105 +379,112 @@ mod tokio {
         }
     }
 
-    pub fn async_read(me: &mut Mock, dst: &mut [u8]) -> io::Result<usize> {
-        loop {
-            if let Some(ref mut sleep) = me.tokio.sleep {
-                let res = r#try!(sleep.poll());
-
-                if !res.is_ready() {
-                    return Err(io::ErrorKind::WouldBlock.into());
-                }
-            }
-
-            // If a sleep is set, it has already fired
-            me.tokio.sleep = None;
-
-            match me.inner.read(dst) {
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if let Some(rem) = me.inner.remaining_wait() {
-                        me.tokio.sleep = Some(me.tokio.timer.sleep(rem));
-                    } else {
-                        me.tokio.read_wait = Some(task::current());
-                        return Err(io::ErrorKind::WouldBlock.into());
-                    }
-                }
-                Ok(0) => {
-                    // TODO: Extract
-                    match me.tokio.poll_action().unwrap() {
-                        Async::Ready(Some(action)) => {
-                            me.inner.actions.push_back(action);
-                            continue;
-                        }
-                        Async::Ready(None) => {
-                            return Ok(0);
-                        }
-                        Async::NotReady => {
-                            return Err(io::ErrorKind::WouldBlock.into());
-                        }
-                    }
-                }
-                ret => return ret,
-            }
-        }
-    }
-
-    pub fn async_write(me: &mut Mock, src: &[u8]) -> io::Result<usize> {
-        loop {
-            if let Some(ref mut sleep) = me.tokio.sleep {
-                let res = r#try!(sleep.poll());
-
-                if !res.is_ready() {
-                    return Err(io::ErrorKind::WouldBlock.into());
-                }
-            }
-
-            // If a sleep is set, it has already fired
-            me.tokio.sleep = None;
-
-            match me.inner.write(src) {
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if let Some(rem) = me.inner.remaining_wait() {
-                        me.tokio.sleep = Some(me.tokio.timer.sleep(rem));
-                    } else {
-                        panic!("unexpected WouldBlock");
-                    }
-                }
-                Ok(0) => {
-                    // TODO: Is this correct?
-                    if !me.inner.actions.is_empty() {
-                        return Err(io::ErrorKind::WouldBlock.into());
-                    }
-
-                    // TODO: Extract
-                    match me.tokio.poll_action().unwrap() {
-                        Async::Ready(Some(action)) => {
-                            me.inner.actions.push_back(action);
-                            continue;
-                        }
-                        Async::Ready(None) => {
-                            panic!("unexpected write");
-                        }
-                        Async::NotReady => {
-                            return Err(io::ErrorKind::WouldBlock.into());
-                        }
-                    }
-                }
-                ret => {
-                    me.maybe_wakeup_reader();
-                    return ret;
-                }
-            }
-        }
-    }
-
     impl AsyncRead for Mock {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            loop {
+                if let Some(sleep) = &mut self.tokio.sleep {
+                    ready!(sleep.poll_unpin(cx));
+                }
+
+                // If a sleep is set, it has already fired
+                self.tokio.sleep = None;
+
+                match self.inner.read(buf) {
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        if let Some(rem) = self.inner.remaining_wait() {
+                            self.tokio.sleep = Some(Delay::new(Instant::now() + rem));
+                        } else {
+                            self.tokio.read_wait = Some(cx.waker().clone());
+                            return Poll::Pending;
+                        }
+                    }
+                    Ok(0) => {
+                        // TODO: Extract
+                        match self.tokio.poll_action(cx) {
+                            Poll::Ready(Some(action)) => {
+                                self.inner.actions.push_back(action);
+                                continue;
+                            }
+                            Poll::Ready(None) => {
+                                return Poll::Ready(Ok(0));
+                            }
+                            Poll::Pending => {
+                                return Poll::Pending;
+                            }
+                        }
+                    }
+                    ret => return Poll::Ready(ret),
+                }
+            }
+        }
     }
 
     impl AsyncWrite for Mock {
-        fn shutdown(&mut self) -> Poll<(), io::Error> {
-            Ok(Async::Ready(()))
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            loop {
+                if let Some(sleep) = &mut self.tokio.sleep {
+                    ready!(sleep.poll_unpin(cx));
+                }
+
+                // If a sleep is set, it has already fired
+                self.tokio.sleep = None;
+
+                match self.inner.write(buf) {
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        if let Some(rem) = self.inner.remaining_wait() {
+                            self.tokio.sleep = Some(Delay::new(Instant::now() + rem));
+                        } else {
+                            panic!("unexpected WouldBlock");
+                        }
+                    }
+                    Ok(0) => {
+                        // TODO: Is this correct?
+                        if !self.inner.actions.is_empty() {
+                            return Poll::Pending;
+                        }
+
+                        // TODO: Extract
+                        match self.tokio.poll_action(cx) {
+                            Poll::Ready(Some(action)) => {
+                                self.inner.actions.push_back(action);
+                                continue;
+                            }
+                            Poll::Ready(None) => {
+                                panic!("unexpected write");
+                            }
+                            Poll::Pending => return Poll::Pending,
+                        }
+                    }
+                    ret => {
+                        self.maybe_wakeup_reader();
+                        return Poll::Ready(ret);
+                    }
+                }
+            }
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), io::Error>> {
+            Poll::Ready(Ok(()))
         }
     }
+
+    /*
+    TODO: Is this required?
 
     /// Returns `true` if called from the context of a futures-rs Task
     pub fn is_task_ctx() -> bool {
@@ -577,4 +505,5 @@ mod tokio {
         // Return the result
         r
     }
+    */
 }

@@ -1,3 +1,4 @@
+#![feature(async_await)]
 //! Utilities to support tests.
 
 #[macro_use]
@@ -16,7 +17,7 @@ mod client_ext;
 mod future_ext;
 
 pub use crate::client_ext::{SendRequestExt};
-pub use crate::future_ext::{FutureExt, Unwrap};
+pub use crate::future_ext::TestFuture;
 
 pub type WindowSize = usize;
 pub const DEFAULT_WINDOW_SIZE: WindowSize = (1 << 16) - 1;
