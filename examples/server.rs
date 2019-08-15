@@ -1,62 +1,50 @@
+#![feature(async_await)]
+
 use h2::server;
 
 use bytes::*;
 use futures::*;
-use http::*;
+use http::{Response, StatusCode};
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+use std::error::Error;
 
-pub fn main() {
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn Error>> {
     let _ = env_logger::try_init();
 
     let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap()).unwrap();
 
     println!("listening on {:?}", listener.local_addr());
+    let mut incoming = listener.incoming();
 
-    let server = listener.incoming().for_each(move |socket| {
-        // let socket = io_dump::Dump::to_stdout(socket);
+    while let Some(socket) = incoming.next().await {
+        tokio::spawn(async move {
+            if let Err(e) = handle(socket).await {
+                println!("  -> err={:?}", e); 
+            }
+        });
+    }
 
-        let connection = server::handshake(socket)
-            .and_then(|conn| {
-                println!("H2 connection bound");
+    Ok(())
+}
 
-                conn.for_each(|(request, mut respond)| {
-                    println!("GOT request: {:?}", request);
+async fn handle(socket: io::Result<TcpStream>) -> Result<(), Box<dyn Error>> {
+    let mut connection = server::handshake(socket?).await?;
+    println!("H2 connection bound");
 
-                    let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+    while let Some(result) = connection.next().await {
+        let (request, mut respond) = result?;
+        println!("GOT request: {:?}", request);
+        let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
-                    let mut send = match respond.send_response(response, false) {
-                        Ok(send) => send,
-                        Err(e) => {
-                            println!(" error respond; err={:?}", e);
-                            return Ok(());
-                        }
-                    };
+        let mut send = respond.send_response(response, false)?;
 
-                    println!(">>>> sending data");
-                    if let Err(e) = send.send_data(Bytes::from_static(b"hello world"), true) {
-                        println!("  -> err={:?}", e);
-                    }
+        println!(">>>> sending data");
+        send.send_data(Bytes::from_static(b"hello world"), true)?;
+    }
 
-                    Ok(())
-                })
-            })
-            .and_then(|_| {
-                println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
-                Ok(())
-            })
-            .then(|res| {
-                if let Err(e) = res {
-                    println!("  -> err={:?}", e);
-                }
-
-                Ok(())
-            });
-
-        tokio::spawn(Box::new(connection));
-        Ok(())
-    })
-    .map_err(|e| eprintln!("accept error: {}", e));
-
-    tokio::run(server);
+    println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
+    
+    Ok(())
 }
