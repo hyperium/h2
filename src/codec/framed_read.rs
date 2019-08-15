@@ -1,24 +1,29 @@
 use crate::codec::RecvError;
 use crate::frame::{self, Frame, Kind, Reason};
-use crate::frame::{DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE};
+use crate::frame::{
+    DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE,
+};
 
 use crate::hpack;
 
-use futures::*;
+use futures::{ready, Stream};
 
 use bytes::BytesMut;
 
 use std::io;
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio_codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
+use tokio_codec::FramedRead as InnerFramedRead;
 use tokio_io::AsyncRead;
-use tokio_io::codec::length_delimited;
 
 // 16 MB "sane default" taken from golang http2
 const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
-    inner: length_delimited::FramedRead<T>,
+    inner: InnerFramedRead<T, LengthDelimitedCodec>,
 
     // hpack decoder state
     hpack: hpack::Decoder,
@@ -45,7 +50,7 @@ enum Continuable {
 }
 
 impl<T> FramedRead<T> {
-    pub fn new(inner: length_delimited::FramedRead<T>) -> FramedRead<T> {
+    pub fn new(inner: InnerFramedRead<T, LengthDelimitedCodec>) -> FramedRead<T> {
         FramedRead {
             inner: inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
@@ -138,24 +143,27 @@ impl<T> FramedRead<T> {
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
+                })?
+                .into()
+            }
             Kind::Ping => {
                 let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load PING frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
+                })?
+                .into()
+            }
             Kind::WindowUpdate => {
                 let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
+                })?
+                .into()
+            }
             Kind::Data => {
                 let _ = bytes.split_to(frame::HEADER_LEN);
                 let res = frame::Data::load(head, bytes.freeze());
@@ -164,28 +172,27 @@ impl<T> FramedRead<T> {
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load DATA frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
-            Kind::Headers => {
-                header_block!(Headers, head, bytes)
-            },
+                })?
+                .into()
+            }
+            Kind::Headers => header_block!(Headers, head, bytes),
             Kind::Reset => {
                 let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load RESET frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
+                })?
+                .into()
+            }
             Kind::GoAway => {
                 let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
                 res.map_err(|e| {
                     proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
                     Connection(Reason::PROTOCOL_ERROR)
-                })?.into()
-            },
-            Kind::PushPromise => {
-                header_block!(PushPromise, head, bytes)
-            },
+                })?
+                .into()
+            }
+            Kind::PushPromise => header_block!(PushPromise, head, bytes),
             Kind::Priority => {
                 if head.stream_id() == 0 {
                     // Invalid stream identifier
@@ -205,13 +212,13 @@ impl<T> FramedRead<T> {
                             id,
                             reason: Reason::PROTOCOL_ERROR,
                         });
-                    },
+                    }
                     Err(e) => {
                         proto_err!(conn: "failed to load PRIORITY frame; err={:?};", e);
                         return Err(Connection(Reason::PROTOCOL_ERROR));
                     }
                 }
-            },
+            }
             Kind::Continuation => {
                 let is_end_headers = (head.flag() & 0x4) == 0x4;
 
@@ -228,8 +235,6 @@ impl<T> FramedRead<T> {
                     proto_err!(conn: "CONTINUATION frame stream ID does not match previous frame stream ID");
                     return Err(Connection(Reason::PROTOCOL_ERROR));
                 }
-
-
 
                 // Extend the buf
                 if partial.buf.is_empty() {
@@ -257,9 +262,14 @@ impl<T> FramedRead<T> {
                     partial.buf.extend_from_slice(&bytes[frame::HEADER_LEN..]);
                 }
 
-                match partial.frame.load_hpack(&mut partial.buf, self.max_header_list_size, &mut self.hpack) {
-                    Ok(_) => {},
-                    Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
+                match partial.frame.load_hpack(
+                    &mut partial.buf,
+                    self.max_header_list_size,
+                    &mut self.hpack,
+                ) {
+                    Ok(_) => {}
+                    Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_)))
+                        if !is_end_headers => {}
                     Err(frame::Error::MalformedMessage) => {
                         let id = head.stream_id();
                         proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
@@ -267,11 +277,11 @@ impl<T> FramedRead<T> {
                             id,
                             reason: Reason::PROTOCOL_ERROR,
                         });
-                    },
+                    }
                     Err(e) => {
                         proto_err!(conn: "failed HPACK decoding; err={:?}", e);
                         return Err(Connection(Reason::PROTOCOL_ERROR));
-                    },
+                    }
                 }
 
                 if is_end_headers {
@@ -280,11 +290,11 @@ impl<T> FramedRead<T> {
                     self.partial = Some(partial);
                     return Ok(None);
                 }
-            },
+            }
             Kind::Unknown => {
                 // Unknown frames are ignored
                 return Ok(None);
-            },
+            }
         };
 
         Ok(Some(frame))
@@ -302,7 +312,7 @@ impl<T> FramedRead<T> {
     #[cfg(feature = "unstable")]
     #[inline]
     pub fn max_frame_size(&self) -> usize {
-        self.inner.max_frame_length()
+        self.inner.decoder().max_frame_length()
     }
 
     /// Updates the max frame size setting.
@@ -311,7 +321,7 @@ impl<T> FramedRead<T> {
     #[inline]
     pub fn set_max_frame_size(&mut self, val: usize) {
         assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
-        self.inner.set_max_frame_length(val)
+        self.inner.decoder_mut().set_max_frame_length(val)
     }
 
     /// Update the max header list size setting.
@@ -323,34 +333,32 @@ impl<T> FramedRead<T> {
 
 impl<T> Stream for FramedRead<T>
 where
-    T: AsyncRead,
+    T: AsyncRead + Unpin,
 {
-    type Item = Frame;
-    type Error = RecvError;
+    type Item = Result<Frame, RecvError>;
 
-    fn poll(&mut self) -> Poll<Option<Frame>, Self::Error> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             log::trace!("poll");
-            let bytes = match try_ready!(self.inner.poll().map_err(map_err)) {
-                Some(bytes) => bytes,
-                None => return Ok(Async::Ready(None)),
+            let bytes = match ready!(Pin::new(&mut self.inner).poll_next(cx)) {
+                Some(Ok(bytes)) => bytes,
+                Some(Err(e)) => return Poll::Ready(Some(Err(map_err(e)))),
+                None => return Poll::Ready(None),
             };
 
             log::trace!("poll; bytes={}B", bytes.len());
             if let Some(frame) = self.decode_frame(bytes)? {
                 log::debug!("received; frame={:?}", frame);
-                return Ok(Async::Ready(Some(frame)));
+                return Poll::Ready(Some(Ok(frame)));
             }
         }
     }
 }
 
 fn map_err(err: io::Error) -> RecvError {
-    use tokio_io::codec::length_delimited::FrameTooBig;
-
     if let io::ErrorKind::InvalidData = err.kind() {
         if let Some(custom) = err.get_ref() {
-            if custom.is::<FrameTooBig>() {
+            if custom.is::<LengthDelimitedCodecError>() {
                 return RecvError::Connection(Reason::FRAME_SIZE_ERROR);
             }
         }

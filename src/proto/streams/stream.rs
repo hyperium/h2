@@ -2,6 +2,7 @@ use super::*;
 
 use std::time::Instant;
 use std::usize;
+use std::task::{Context, Waker};
 
 /// Tracks Stream related state
 ///
@@ -47,7 +48,7 @@ pub(super) struct Stream {
     pub buffered_send_data: WindowSize,
 
     /// Task tracking additional send capacity (i.e. window updates).
-    send_task: Option<task::Task>,
+    send_task: Option<Waker>,
 
     /// Frames pending for this stream being sent to the socket
     pub pending_send: buffer::Deque,
@@ -96,7 +97,7 @@ pub(super) struct Stream {
     pub pending_recv: buffer::Deque,
 
     /// Task tracking receiving frames
-    pub recv_task: Option<task::Task>,
+    pub recv_task: Option<Waker>,
 
     /// The stream's pending push promises
     pub pending_push_promises: store::Queue<NextAccept>,
@@ -280,17 +281,17 @@ impl Stream {
 
     pub fn notify_send(&mut self) {
         if let Some(task) = self.send_task.take() {
-            task.notify();
+            task.wake();
         }
     }
 
-    pub fn wait_send(&mut self) {
-        self.send_task = Some(task::current());
+    pub fn wait_send(&mut self, cx: &Context) {
+        self.send_task = Some(cx.waker().clone());
     }
 
     pub fn notify_recv(&mut self) {
         if let Some(task) = self.recv_task.take() {
-            task.notify();
+            task.wake();
         }
     }
 }

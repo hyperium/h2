@@ -7,10 +7,10 @@ use crate::codec::UserError;
 use crate::codec::UserError::*;
 
 use bytes::buf::Take;
-use futures::try_ready;
-
+use futures::ready;
 use std::{cmp, fmt, mem};
 use std::io;
+use std::task::{Context, Poll, Waker};
 
 /// # Warning
 ///
@@ -104,14 +104,14 @@ impl Prioritize {
         frame: Frame<B>,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) {
         // Queue the frame in the buffer
         stream.pending_send.push_back(buffer, frame);
         self.schedule_send(stream, task);
     }
 
-    pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Task>) {
+    pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
         // If the stream is waiting to be opened, nothing more to do.
         if !stream.is_pending_open {
             log::trace!("schedule_send; {:?}", stream.id);
@@ -120,7 +120,7 @@ impl Prioritize {
 
             // Notify the connection.
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
     }
@@ -136,7 +136,7 @@ impl Prioritize {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError>
     where
         B: Buf,
@@ -483,17 +483,18 @@ impl Prioritize {
 
     pub fn poll_complete<T, B>(
         &mut self,
+        cx: &mut Context,
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         // Ensure codec is ready
-        try_ready!(dst.poll_ready());
+        ready!(dst.poll_ready(cx))?;
 
         // Reclaim any frame that has previously been written
         self.reclaim_frame(buffer, store, dst);
@@ -517,18 +518,18 @@ impl Prioritize {
                     dst.buffer(frame).ok().expect("invalid frame");
 
                     // Ensure the codec is ready to try the loop again.
-                    try_ready!(dst.poll_ready());
+                    ready!(dst.poll_ready(cx))?;
 
                     // Because, always try to reclaim...
                     self.reclaim_frame(buffer, store, dst);
                 },
                 None => {
                     // Try to flush the codec.
-                    try_ready!(dst.flush());
+                    ready!(dst.flush(cx))?;
 
                     // This might release a data frame...
                     if !self.reclaim_frame(buffer, store, dst) {
-                        return Ok(().into());
+                        return Poll::Ready(Ok(()))
                     }
 
                     // No need to poll ready as poll_complete() does this for
