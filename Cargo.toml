@@ -41,9 +41,9 @@ members = [
 ]
 
 [dependencies]
-futures-preview = "0.3.0-alpha.18"
-tokio-io = { git = "https://github.com/tokio-rs/tokio" }
-tokio-codec = { git = "https://github.com/tokio-rs/tokio" }
+futures-preview = "0.3.0-alpha.17"
+tokio-io = "0.2.0-alpha.1"
+tokio-codec = "0.2.0-alpha.1"
 bytes = "0.4.7"
 http = "0.1.8"
 log = "0.4.1"
@@ -65,7 +65,7 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Akamai example
-tokio = { git = "https://github.com/tokio-rs/tokio" }
+tokio = "0.2.0-alpha.1"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"

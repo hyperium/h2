@@ -289,8 +289,8 @@ where
             // The order here matters:
             // - poll_go_away may buffer a graceful shutdown GOAWAY frame
             // - If it has, we've also added a PING to be sent in poll_ready
-            match ready!(self.poll_go_away(cx)) {
-                Some(Ok(reason)) => {
+            match ready!(self.poll_go_away(cx)?) {
+                Some(reason) => {
                     if self.go_away.should_close_now() {
                         if self.go_away.is_user_initiated() {
                             // A user initiated abrupt shutdown shouldn't return
@@ -307,33 +307,32 @@ where
                         "graceful GOAWAY should be NO_ERROR"
                     );
                 }
-                Some(Err(e)) => return Poll::Ready(Err(e.into())),
                 None => (),
             }
             ready!(self.poll_ready(cx))?;
 
-            match ready!(Pin::new(&mut self.codec).poll_next(cx)) {
-                Some(Ok(Headers(frame))) => {
+            match ready!(Pin::new(&mut self.codec).poll_next(cx)?) {
+                Some(Headers(frame)) => {
                     log::trace!("recv HEADERS; frame={:?}", frame);
                     self.streams.recv_headers(frame)?;
                 }
-                Some(Ok(Data(frame))) => {
+                Some(Data(frame)) => {
                     log::trace!("recv DATA; frame={:?}", frame);
                     self.streams.recv_data(frame)?;
                 }
-                Some(Ok(Reset(frame))) => {
+                Some(Reset(frame)) => {
                     log::trace!("recv RST_STREAM; frame={:?}", frame);
                     self.streams.recv_reset(frame)?;
                 }
-                Some(Ok(PushPromise(frame))) => {
+                Some(PushPromise(frame)) => {
                     log::trace!("recv PUSH_PROMISE; frame={:?}", frame);
                     self.streams.recv_push_promise(frame)?;
                 }
-                Some(Ok(Settings(frame))) => {
+                Some(Settings(frame)) => {
                     log::trace!("recv SETTINGS; frame={:?}", frame);
                     self.settings.recv_settings(frame);
                 }
-                Some(Ok(GoAway(frame))) => {
+                Some(GoAway(frame)) => {
                     log::trace!("recv GOAWAY; frame={:?}", frame);
                     // This should prevent starting new streams,
                     // but should allow continuing to process current streams
@@ -342,7 +341,7 @@ where
                     self.streams.recv_go_away(&frame)?;
                     self.error = Some(frame.reason());
                 }
-                Some(Ok(Ping(frame))) => {
+                Some(Ping(frame)) => {
                     log::trace!("recv PING; frame={:?}", frame);
                     let status = self.ping_pong.recv_ping(frame);
                     if status.is_shutdown() {
@@ -355,15 +354,14 @@ where
                         self.go_away(last_processed_id, Reason::NO_ERROR);
                     }
                 }
-                Some(Ok(WindowUpdate(frame))) => {
+                Some(WindowUpdate(frame)) => {
                     log::trace!("recv WINDOW_UPDATE; frame={:?}", frame);
                     self.streams.recv_window_update(frame)?;
                 }
-                Some(Ok(Priority(frame))) => {
+                Some(Priority(frame)) => {
                     log::trace!("recv PRIORITY; frame={:?}", frame);
                     // TODO: handle
                 }
-                Some(Err(e)) => return Poll::Ready(Err(e)),
                 None => {
                     log::trace!("codec closed");
                     self.streams.recv_eof(false).ok().expect("mutex poisoned");

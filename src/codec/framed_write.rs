@@ -280,6 +280,14 @@ impl<T: AsyncRead + Unpin, B: Unpin> AsyncRead for FramedWrite<T, B> {
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.inner).poll_read(cx, buf)
     }
+
+    fn poll_read_buf<Buf: BufMut>(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut Buf,
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_read_buf(cx, buf)
+    }
 }
 
 #[cfg(feature = "unstable")]

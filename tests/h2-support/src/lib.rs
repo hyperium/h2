@@ -7,16 +7,15 @@ pub mod assert;
 pub mod raw;
 
 pub mod frames;
-pub mod prelude;
 pub mod mock;
 pub mod mock_io;
-pub mod notify;
+pub mod prelude;
 pub mod util;
 
 mod client_ext;
 mod future_ext;
 
-pub use crate::client_ext::{SendRequestExt};
+pub use crate::client_ext::SendRequestExt;
 pub use crate::future_ext::TestFuture;
 
 pub type WindowSize = usize;
