@@ -1,47 +1,13 @@
 #![feature(async_await)]
 
-use futures::{ready, Stream};
+use futures::future::poll_fn;
+use futures::StreamExt;
 use h2::client;
-use h2::RecvStream;
 use http::{HeaderMap, Request};
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use std::error::Error;
 
 use tokio::net::TcpStream;
-
-struct Process {
-    body: RecvStream,
-    trailers: bool,
-}
-
-impl Future for Process {
-    type Output = Result<(), h2::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            if self.trailers {
-                let trailers = ready!(self.body.poll_trailers(cx));
-
-                println!("GOT TRAILERS: {:?}", trailers);
-
-                return Poll::Ready(Ok(()));
-            } else {
-                match ready!(Pin::new(&mut self.body).poll_next(cx)) {
-                    Some(Ok(chunk)) => {
-                        println!("GOT CHUNK = {:?}", chunk);
-                    }
-                    Some(Err(e)) => return Poll::Ready(Err(e)),
-                    None => {
-                        self.trailers = true;
-                    }
-                }
-            }
-        }
-    }
-}
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
@@ -76,12 +42,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     println!("GOT RESPONSE: {:?}", response);
 
     // Get the body
-    let (_, body) = response.into_parts();
+    let (_, mut body) = response.into_parts();
 
-    Process {
-        body,
-        trailers: false,
+    while let Some(chunk) = body.next().await {
+        println!("GOT CHUNK = {:?}", chunk?);
     }
-    .await?;
+
+    if let Some(trailers) = poll_fn(|cx| body.poll_trailers(cx)).await {
+        println!("GOT TRAILERS: {:?}", trailers?);
+    }
+
     Ok(())
 }

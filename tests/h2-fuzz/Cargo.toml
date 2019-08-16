@@ -9,7 +9,7 @@ edition = "2018"
 h2 = { path = "../.." }
 
 env_logger = { version = "0.5.3", default-features = false }
-futures-preview = "0.3.0-alpha.18"
+futures-preview = "0.3.0-alpha.17"
 honggfuzz = "0.5"
 http = "0.1.3"
-tokio = { git = "https://github.com/tokio-rs/tokio" }
+tokio = "0.2.0-alpha.1"
