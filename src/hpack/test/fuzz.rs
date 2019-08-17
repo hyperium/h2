@@ -78,17 +78,16 @@ impl FuzzHpack {
                     let low = rng.gen_range(0, high);
 
                     frame.resizes.extend(&[low, high]);
-                },
+                }
                 1..=3 => {
                     frame.resizes.push(rng.gen_range(128, MAX_CHUNK * 2));
-                },
-                _ => {},
+                }
+                _ => {}
             }
 
             let mut is_name_required = true;
 
             for _ in 0..rng.gen_range(1, (num - added) + 1) {
-
                 let x: f64 = rng.gen_range(0.0, 1.0);
                 let x = x.powi(skew);
 
@@ -100,10 +99,10 @@ impl FuzzHpack {
                         if is_name_required {
                             continue;
                         }
-                    },
+                    }
                     Header::Field { .. } => {
                         is_name_required = false;
-                    },
+                    }
                     _ => {
                         // pseudos can't be followed by a header with no name
                         is_name_required = true;
@@ -153,7 +152,7 @@ impl FuzzHpack {
                             _ => None,
                         };
                         expect.push(h);
-                    },
+                    }
                     Err(value) => {
                         expect.push(Header::Field {
                             name: prev_name.as_ref().cloned().expect("previous header name"),
@@ -161,7 +160,6 @@ impl FuzzHpack {
                         });
                     }
                 }
-
             }
 
             let mut input = frame.headers.into_iter();
@@ -193,7 +191,7 @@ impl FuzzHpack {
                             .expect("partial decode");
 
                         buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
-                    },
+                    }
                 }
             }
 
@@ -224,7 +222,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             0 => {
                 let value = gen_string(g, 4, 20);
                 Header::Authority(to_shared(value))
-            },
+            }
             1 => {
                 let method = match g.next_u32() % 6 {
                     0 => Method::GET,
@@ -239,12 +237,12 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                             .collect();
 
                         Method::from_bytes(&bytes).unwrap()
-                    },
+                    }
                     _ => unreachable!(),
                 };
 
                 Header::Method(method)
-            },
+            }
             2 => {
                 let value = match g.next_u32() % 2 {
                     0 => "http",
@@ -253,7 +251,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                 };
 
                 Header::Scheme(to_shared(value.to_string()))
-            },
+            }
             3 => {
                 let value = match g.next_u32() % 100 {
                     0 => "/".to_string(),
@@ -262,12 +260,12 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                 };
 
                 Header::Path(to_shared(value))
-            },
+            }
             4 => {
                 let status = (g.gen::<u16>() % 500) + 100;
 
                 Header::Status(StatusCode::from_u16(status).unwrap())
-            },
+            }
             _ => unreachable!(),
         }
     } else {
@@ -282,10 +280,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
             value.set_sensitive(true);
         }
 
-        Header::Field {
-            name,
-            value,
-        }
+        Header::Field { name, value }
     }
 }
 
@@ -368,8 +363,9 @@ fn gen_header_name(g: &mut StdRng) -> HeaderName {
             header::X_DNS_PREFETCH_CONTROL,
             header::X_FRAME_OPTIONS,
             header::X_XSS_PROTECTION,
-        ]).unwrap()
-            .clone()
+        ])
+        .unwrap()
+        .clone()
     } else {
         let value = gen_string(g, 1, 25);
         HeaderName::from_bytes(value.as_bytes()).unwrap()

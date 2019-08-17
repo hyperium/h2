@@ -6,8 +6,8 @@ use bytes::*;
 use futures::*;
 use http::{Response, StatusCode};
 
-use tokio::net::{TcpListener, TcpStream};
 use std::error::Error;
+use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
@@ -21,7 +21,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     while let Some(socket) = incoming.next().await {
         tokio::spawn(async move {
             if let Err(e) = handle(socket).await {
-                println!("  -> err={:?}", e); 
+                println!("  -> err={:?}", e);
             }
         });
     }
@@ -45,6 +45,6 @@ async fn handle(socket: io::Result<TcpStream>) -> Result<(), Box<dyn Error>> {
     }
 
     println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
-    
+
     Ok(())
 }

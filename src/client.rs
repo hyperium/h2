@@ -77,7 +77,7 @@
 //! #[tokio::main]
 //! pub async fn main() -> Result<(), Box<dyn Error>> {
 //!     let addr = "127.0.0.1:5928".parse().unwrap();
-//!     
+//!
 //!     // Establish TCP connection to the server.
 //!     let tcp = TcpStream::connect(&addr).await?;
 //!     let (h2, connection) = client::handshake(tcp).await?;
@@ -96,7 +96,7 @@
 //!     // Send the request. The second tuple item allows the caller
 //!     // to stream a request body.
 //!     let (response, _) = h2.send_request(request, true).unwrap();
-//!     
+//!
 //!     let (head, mut body) = response.await?.into_parts();
 //!
 //!     println!("Received response: {:?}", head);
@@ -585,7 +585,7 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match &mut self.inner {
             Some(send_request) => {
-                let _ = ready!(send_request.poll_ready(cx))?;
+                ready!(send_request.poll_ready(cx))?;
             }
             None => panic!("called `poll` after future completed"),
         }
@@ -1269,7 +1269,7 @@ impl Future for ResponseFuture {
         let (parts, _) = ready!(self.inner.poll_response(cx))?.into_parts();
         let body = RecvStream::new(ReleaseCapacity::new(self.inner.clone()));
 
-        Poll::Ready(Ok(Response::from_parts(parts, body).into()))
+        Poll::Ready(Ok(Response::from_parts(parts, body)))
     }
 }
 

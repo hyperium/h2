@@ -118,9 +118,7 @@ impl Store {
         use self::indexmap::map::Entry::*;
 
         match self.ids.entry(id) {
-            Occupied(e) => Entry::Occupied(OccupiedEntry {
-                ids: e,
-            }),
+            Occupied(e) => Entry::Occupied(OccupiedEntry { ids: e }),
             Vacant(e) => Entry::Vacant(VacantEntry {
                 ids: e,
                 slab: &mut self.slab,
@@ -143,10 +141,7 @@ impl Store {
             };
 
             f(Ptr {
-                key: Key {
-                    index,
-                    stream_id,
-                },
+                key: Key { index, stream_id },
                 store: self,
             })?;
 
@@ -167,10 +162,7 @@ impl Store {
 
 impl Resolve for Store {
     fn resolve(&mut self, key: Key) -> Ptr {
-        Ptr {
-            key: key,
-            store: self,
-        }
+        Ptr { key, store: self }
     }
 }
 
@@ -267,14 +259,14 @@ where
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
-            },
+            }
             None => {
                 log::trace!(" -> first entry");
                 self.indices = Some(store::Indices {
                     head: stream.key(),
                     tail: stream.key(),
                 });
-            },
+            }
         }
 
         true
@@ -356,7 +348,7 @@ impl<'a> Ptr<'a> {
 impl<'a> Resolve for Ptr<'a> {
     fn resolve(&mut self, key: Key) -> Ptr {
         Ptr {
-            key: key,
+            key,
             store: &mut *self.store,
         }
     }
@@ -388,10 +380,7 @@ impl<'a> OccupiedEntry<'a> {
     pub fn key(&self) -> Key {
         let stream_id = *self.ids.key();
         let index = *self.ids.get();
-        Key {
-            index,
-            stream_id,
-        }
+        Key { index, stream_id }
     }
 }
 
@@ -406,9 +395,6 @@ impl<'a> VacantEntry<'a> {
         // Insert the handle in the ID map
         self.ids.insert(index);
 
-        Key {
-            index,
-            stream_id,
-        }
+        Key { index, stream_id }
     }
 }

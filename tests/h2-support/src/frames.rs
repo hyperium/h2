@@ -137,8 +137,7 @@ impl Mock<frame::Headers> {
         Mock(frame)
     }
 
-    pub fn scheme(self, value: &str) -> Self
-    {
+    pub fn scheme(self, value: &str) -> Self {
         let (id, mut pseudo, fields) = self.into_parts();
         let value = value.parse().unwrap();
 
@@ -206,7 +205,6 @@ impl From<Mock<frame::Data>> for SendFrame {
     }
 }
 
-
 // PushPromise helpers
 
 impl Mock<frame::PushPromise> {
@@ -239,7 +237,6 @@ impl Mock<frame::PushPromise> {
         let frame = frame::PushPromise::new(id, promised, pseudo, fields);
         Mock(frame)
     }
-
 
     fn into_parts(self) -> (StreamId, StreamId, frame::Pseudo, HeaderMap) {
         assert!(self.0.is_end_headers(), "unset eoh will be lost");
@@ -280,10 +277,7 @@ impl Mock<frame::GoAway> {
     }
 
     pub fn reason(self, reason: frame::Reason) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            reason,
-        ))
+        Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
     }
 }
 

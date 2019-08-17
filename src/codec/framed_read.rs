@@ -14,8 +14,8 @@ use std::io;
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
 use tokio_codec::FramedRead as InnerFramedRead;
+use tokio_codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
 use tokio_io::AsyncRead;
 
 // 16 MB "sane default" taken from golang http2
@@ -52,7 +52,7 @@ enum Continuable {
 impl<T> FramedRead<T> {
     pub fn new(inner: InnerFramedRead<T, LengthDelimitedCodec>) -> FramedRead<T> {
         FramedRead {
-            inner: inner,
+            inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
             max_header_list_size: DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
             partial: None,

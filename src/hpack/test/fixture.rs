@@ -5,8 +5,8 @@ use hex::FromHex;
 use serde_json::Value;
 
 use std::fs::File;
-use std::io::Cursor;
 use std::io::prelude::*;
+use std::io::Cursor;
 use std::path::Path;
 use std::str;
 
@@ -30,13 +30,15 @@ fn test_story(story: Value) {
             .map(|case| {
                 let case = case.as_object().unwrap();
 
-                let size = case.get("header_table_size")
+                let size = case
+                    .get("header_table_size")
                     .map(|v| v.as_u64().unwrap() as usize);
 
                 let wire = case.get("wire").unwrap().as_str().unwrap();
                 let wire: Vec<u8> = FromHex::from_hex(wire.as_bytes()).unwrap();
 
-                let expect: Vec<_> = case.get("headers")
+                let expect: Vec<_> = case
+                    .get("headers")
                     .unwrap()
                     .as_array()
                     .unwrap()
@@ -92,7 +94,8 @@ fn test_story(story: Value) {
                 decoder.queue_size_update(size);
             }
 
-            let mut input: Vec<_> = case.expect
+            let mut input: Vec<_> = case
+                .expect
                 .iter()
                 .map(|&(ref name, ref value)| {
                     Header::new(name.clone().into(), value.clone().into())
@@ -123,9 +126,7 @@ struct Case {
 
 fn key_str(e: &Header) -> &str {
     match *e {
-        Header::Field {
-            ref name, ..
-        } => name.as_str(),
+        Header::Field { ref name, .. } => name.as_str(),
         Header::Authority(..) => ":authority",
         Header::Method(..) => ":method",
         Header::Scheme(..) => ":scheme",
@@ -136,9 +137,7 @@ fn key_str(e: &Header) -> &str {
 
 fn value_str(e: &Header) -> &str {
     match *e {
-        Header::Field {
-            ref value, ..
-        } => value.to_str().unwrap(),
+        Header::Field { ref value, .. } => value.to_str().unwrap(),
         Header::Authority(ref v) => &**v,
         Header::Method(ref m) => m.as_str(),
         Header::Scheme(ref v) => &**v,

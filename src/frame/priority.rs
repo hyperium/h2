@@ -30,7 +30,7 @@ impl Priority {
 
         Ok(Priority {
             stream_id: head.stream_id(),
-            dependency: dependency,
+            dependency,
         })
     }
 }

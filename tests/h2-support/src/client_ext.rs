@@ -1,6 +1,6 @@
 use bytes::IntoBuf;
-use http::Request;
 use h2::client::{ResponseFuture, SendRequest};
+use http::Request;
 
 /// Extend the `h2::client::SendRequest` type with convenience methods.
 pub trait SendRequestExt {
@@ -22,7 +22,7 @@ where
             .expect("valid uri");
 
         let (fut, _tx) = self
-            .send_request(req, /*eos =*/true)
+            .send_request(req, /*eos =*/ true)
             .expect("send_request");
 
         fut

@@ -1,8 +1,8 @@
 use walkdir::WalkDir;
 
+use std::collections::HashMap;
 use std::env;
 use std::path::Path;
-use std::collections::HashMap;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -30,7 +30,9 @@ fn main() {
         // Now, split that into the group and the name
         let module = fixture_path.split("/").next().unwrap();
 
-        tests.entry(module.to_string()).or_insert(vec![])
+        tests
+            .entry(module.to_string())
+            .or_insert(vec![])
             .push(fixture_path.to_string());
     }
 
@@ -49,9 +51,7 @@ fn main() {
         println!("    {} => {{", module);
 
         for test in tests {
-            let ident = test
-                .split("/").nth(1).unwrap()
-                .split(".").next().unwrap();
+            let ident = test.split("/").nth(1).unwrap().split(".").next().unwrap();
 
             println!("        ({}, {:?});", ident, test);
         }

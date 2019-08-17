@@ -137,7 +137,7 @@ impl GoAway {
             }
 
             let reason = frame.reason();
-            dst.buffer(frame.into()).ok().expect("invalid GOAWAY frame");
+            dst.buffer(frame.into()).expect("invalid GOAWAY frame");
 
             return Poll::Ready(Some(Ok(reason)));
         } else if self.should_close_now() {

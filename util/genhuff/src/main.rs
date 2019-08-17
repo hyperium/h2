@@ -98,18 +98,17 @@ impl Node {
         }
     }
 
-    fn compute_transition(&self,
-                          byte: Option<usize>,
-                          start: &Node,
-                          root: &Node,
-                          steps_remaining: usize)
-    {
+    fn compute_transition(
+        &self,
+        byte: Option<usize>,
+        start: &Node,
+        root: &Node,
+        steps_remaining: usize,
+    ) {
         if steps_remaining == 0 {
             let (byte, target) = match byte {
                 Some(256) => (None, None),
-                _ => {
-                    (byte, Some(self.id.unwrap_or(0)))
-                }
+                _ => (byte, Some(self.id.unwrap_or(0))),
             };
 
             start.transitions.borrow_mut().push(Transition {
@@ -256,8 +255,6 @@ pub fn main() {
 
     println!("];");
 }
-
-
 
 const TABLE: &'static str = r##"
     (  0)  |11111111|11000                             1ff8  [13]

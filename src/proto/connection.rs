@@ -96,11 +96,11 @@ where
         Connection {
             state: State::Open,
             error: None,
-            codec: codec,
+            codec,
             go_away: GoAway::new(),
             ping_pong: PingPong::new(),
             settings: Settings::new(),
-            streams: streams,
+            streams,
             _phantom: PhantomData,
         }
     }
@@ -210,11 +210,11 @@ where
                             // This will also handle flushing `self.codec`
                             ready!(self.streams.poll_complete(cx, &mut self.codec))?;
 
-                            if self.error.is_some() || self.go_away.should_close_on_idle() {
-                                if !self.streams.has_streams() {
-                                    self.go_away_now(Reason::NO_ERROR);
-                                    continue;
-                                }
+                            if (self.error.is_some() || self.go_away.should_close_on_idle())
+                                && !self.streams.has_streams()
+                            {
+                                self.go_away_now(Reason::NO_ERROR);
+                                continue;
                             }
 
                             return Poll::Pending;
@@ -289,25 +289,22 @@ where
             // The order here matters:
             // - poll_go_away may buffer a graceful shutdown GOAWAY frame
             // - If it has, we've also added a PING to be sent in poll_ready
-            match ready!(self.poll_go_away(cx)?) {
-                Some(reason) => {
-                    if self.go_away.should_close_now() {
-                        if self.go_away.is_user_initiated() {
-                            // A user initiated abrupt shutdown shouldn't return
-                            // the same error back to the user.
-                            return Poll::Ready(Ok(()));
-                        } else {
-                            return Poll::Ready(Err(RecvError::Connection(reason)));
-                        }
+            if let Some(reason) = ready!(self.poll_go_away(cx)?) {
+                if self.go_away.should_close_now() {
+                    if self.go_away.is_user_initiated() {
+                        // A user initiated abrupt shutdown shouldn't return
+                        // the same error back to the user.
+                        return Poll::Ready(Ok(()));
+                    } else {
+                        return Poll::Ready(Err(RecvError::Connection(reason)));
                     }
-                    // Only NO_ERROR should be waiting for idle
-                    debug_assert_eq!(
-                        reason,
-                        Reason::NO_ERROR,
-                        "graceful GOAWAY should be NO_ERROR"
-                    );
                 }
-                None => (),
+                // Only NO_ERROR should be waiting for idle
+                debug_assert_eq!(
+                    reason,
+                    Reason::NO_ERROR,
+                    "graceful GOAWAY should be NO_ERROR"
+                );
             }
             ready!(self.poll_ready(cx))?;
 
@@ -364,7 +361,7 @@ where
                 }
                 None => {
                     log::trace!("codec closed");
-                    self.streams.recv_eof(false).ok().expect("mutex poisoned");
+                    self.streams.recv_eof(false).expect("mutex poisoned");
                     return Poll::Ready(Ok(()));
                 }
             }

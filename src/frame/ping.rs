@@ -1,5 +1,5 @@
-use bytes::{Buf, BufMut, IntoBuf};
 use crate::frame::{Error, Frame, Head, Kind, StreamId};
+use bytes::{Buf, BufMut, IntoBuf};
 
 const ACK_FLAG: u8 = 0x1;
 
@@ -17,7 +17,6 @@ const SHUTDOWN_PAYLOAD: Payload = [0x0b, 0x7b, 0xa2, 0xf0, 0x8b, 0x9b, 0xfe, 0x5
 const USER_PAYLOAD: Payload = [0x3b, 0x7c, 0xdb, 0x7a, 0x0b, 0x87, 0x16, 0xb4];
 
 impl Ping {
-
     #[cfg(feature = "unstable")]
     pub const SHUTDOWN: Payload = SHUTDOWN_PAYLOAD;
 
@@ -38,10 +37,7 @@ impl Ping {
     }
 
     pub fn pong(payload: Payload) -> Ping {
-        Ping {
-            ack: true,
-            payload,
-        }
+        Ping { ack: true, payload }
     }
 
     pub fn is_ack(&self) -> bool {
@@ -84,10 +80,7 @@ impl Ping {
         //    endpoint MUST NOT respond to PING frames containing this flag.
         let ack = head.flag() & ACK_FLAG != 0;
 
-        Ok(Ping {
-            ack,
-            payload,
-        })
+        Ok(Ping { ack, payload })
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
