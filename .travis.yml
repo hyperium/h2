@@ -21,9 +21,13 @@ matrix:
 #    - rust: nightly
 
 before_script:
+  - rustup component add rustfmt-preview
   - cargo clean
 
 script:
+  # Check formatting
+  - cargo fmt --all -- --check
+
   # Build without unstable flag
   - cargo build
 
