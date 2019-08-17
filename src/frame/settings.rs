@@ -1,7 +1,7 @@
 use std::fmt;
 
-use bytes::{BufMut, BytesMut};
 use crate::frame::{util, Error, Frame, FrameSize, Head, Kind, StreamId};
+use bytes::{BufMut, BytesMut};
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Settings {
@@ -121,7 +121,7 @@ impl Settings {
 
         if flag.is_ack() {
             // Ensure that the payload is empty
-            if payload.len() > 0 {
+            if !payload.is_empty() {
                 return Err(Error::InvalidPayloadLength);
             }
 
@@ -142,34 +142,36 @@ impl Settings {
             match Setting::load(raw) {
                 Some(HeaderTableSize(val)) => {
                     settings.header_table_size = Some(val);
-                },
+                }
                 Some(EnablePush(val)) => match val {
                     0 | 1 => {
                         settings.enable_push = Some(val);
-                    },
+                    }
                     _ => {
                         return Err(Error::InvalidSettingValue);
-                    },
+                    }
                 },
                 Some(MaxConcurrentStreams(val)) => {
                     settings.max_concurrent_streams = Some(val);
-                },
-                Some(InitialWindowSize(val)) => if val as usize > MAX_INITIAL_WINDOW_SIZE {
-                    return Err(Error::InvalidSettingValue);
-                } else {
-                    settings.initial_window_size = Some(val);
-                },
+                }
+                Some(InitialWindowSize(val)) => {
+                    if val as usize > MAX_INITIAL_WINDOW_SIZE {
+                        return Err(Error::InvalidSettingValue);
+                    } else {
+                        settings.initial_window_size = Some(val);
+                    }
+                }
                 Some(MaxFrameSize(val)) => {
                     if val < DEFAULT_MAX_FRAME_SIZE || val > MAX_MAX_FRAME_SIZE {
                         return Err(Error::InvalidSettingValue);
                     } else {
                         settings.max_frame_size = Some(val);
                     }
-                },
+                }
                 Some(MaxHeaderListSize(val)) => {
                     settings.max_header_list_size = Some(val);
-                },
-                None => {},
+                }
+                None => {}
             }
         }
 
@@ -294,7 +296,7 @@ impl Setting {
     ///
     /// If given a buffer shorter than 6 bytes, the function will panic.
     fn load(raw: &[u8]) -> Option<Setting> {
-        let id: u16 = ((raw[0] as u16) << 8) | (raw[1] as u16);
+        let id: u16 = (u16::from(raw[0]) << 8) | u16::from(raw[1]);
         let val: u32 = unpack_octets_4!(raw, 2, u32);
 
         Setting::from_id(id, val)

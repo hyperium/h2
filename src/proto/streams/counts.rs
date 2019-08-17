@@ -133,16 +133,18 @@ impl Counts {
 
     // TODO: move this to macro?
     pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
-        log::trace!("transition_after; stream={:?}; state={:?}; is_closed={:?}; \
-               pending_send_empty={:?}; buffered_send_data={}; \
-               num_recv={}; num_send={}",
-               stream.id,
-               stream.state,
-               stream.is_closed(),
-               stream.pending_send.is_empty(),
-               stream.buffered_send_data,
-               self.num_recv_streams,
-               self.num_send_streams);
+        log::trace!(
+            "transition_after; stream={:?}; state={:?}; is_closed={:?}; \
+             pending_send_empty={:?}; buffered_send_data={}; \
+             num_recv={}; num_send={}",
+            stream.id,
+            stream.state,
+            stream.is_closed(),
+            stream.pending_send.is_empty(),
+            stream.buffered_send_data,
+            self.num_recv_streams,
+            self.num_send_streams
+        );
 
         if stream.is_closed() {
             if !stream.is_pending_reset_expiration() {

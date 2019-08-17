@@ -1,5 +1,5 @@
-use bytes::{Buf, BufMut, Bytes};
 use crate::frame::{util, Error, Frame, Head, Kind, StreamId};
+use bytes::{Buf, BufMut, Bytes};
 
 use std::fmt;
 
@@ -29,7 +29,7 @@ impl<T> Data<T> {
         assert!(!stream_id.is_zero());
 
         Data {
-            stream_id: stream_id,
+            stream_id,
             data: payload,
             flags: DataFlags::default(),
             pad_len: None,
@@ -135,8 +135,8 @@ impl Data<Bytes> {
         Ok(Data {
             stream_id: head.stream_id(),
             data: payload,
-            flags: flags,
-            pad_len: pad_len,
+            flags,
+            pad_len,
         })
     }
 }

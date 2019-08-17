@@ -465,13 +465,10 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Always try to advance the internal state. Getting Pending also is
         // needed to allow this function to return Pending.
-        match self.poll_close(cx)? {
-            Poll::Ready(_) => {
-                // If the socket is closed, don't return anything
-                // TODO: drop any pending streams
-                return Poll::Ready(None);
-            }
-            _ => {}
+        if let Poll::Ready(_) = self.poll_close(cx)? {
+            // If the socket is closed, don't return anything
+            // TODO: drop any pending streams
+            return Poll::Ready(None);
         }
 
         if let Some(inner) = self.connection.next_incoming() {

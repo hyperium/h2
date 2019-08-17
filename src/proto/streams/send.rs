@@ -325,13 +325,7 @@ impl Send {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             log::debug!("recv_stream_window_update !!; err={:?}", e);
 
-            self.send_reset(
-                Reason::FLOW_CONTROL_ERROR.into(),
-                buffer,
-                stream,
-                counts,
-                task,
-            );
+            self.send_reset(Reason::FLOW_CONTROL_ERROR, buffer, stream, counts, task);
 
             return Err(e);
         }

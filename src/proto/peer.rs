@@ -17,7 +17,9 @@ pub(crate) trait Peer {
     fn is_server() -> bool;
 
     fn convert_poll_message(
-        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+        pseudo: Pseudo,
+        fields: HeaderMap,
+        stream_id: StreamId,
     ) -> Result<Self::Poll, RecvError>;
 
     fn is_local_init(id: StreamId) -> bool {
@@ -54,7 +56,10 @@ impl Dyn {
     }
 
     pub fn convert_poll_message(
-        &self, pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+        &self,
+        pseudo: Pseudo,
+        fields: HeaderMap,
+        stream_id: StreamId,
     ) -> Result<PollMessage, RecvError> {
         if self.is_server() {
             crate::server::Peer::convert_poll_message(pseudo, fields, stream_id)

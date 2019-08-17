@@ -76,9 +76,7 @@ impl error::Error for RecvError {
 
         match *self {
             Connection(ref reason) => reason.description(),
-            Stream {
-                ref reason, ..
-            } => reason.description(),
+            Stream { ref reason, .. } => reason.description(),
             Io(ref e) => e.description(),
         }
     }

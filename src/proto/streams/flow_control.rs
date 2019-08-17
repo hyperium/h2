@@ -200,7 +200,6 @@ impl PartialEq<WindowSize> for Window {
     }
 }
 
-
 impl PartialEq<Window> for WindowSize {
     fn eq(&self, other: &Window) -> bool {
         other.eq(self)
@@ -226,7 +225,6 @@ impl PartialOrd<Window> for WindowSize {
         }
     }
 }
-
 
 impl ::std::ops::SubAssign<WindowSize> for Window {
     fn sub_assign(&mut self, other: WindowSize) {
