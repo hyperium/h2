@@ -1,13 +1,13 @@
 #![feature(async_await)]
-use std::future::Future;
-use futures::Stream;
-use std::task::{Context, Poll};
-use std::pin::Pin;
 use futures::future;
-use http::{Method, Request};
-use std::io;
-use tokio_io::{AsyncRead, AsyncWrite};
 use futures::stream::FuturesUnordered;
+use futures::Stream;
+use http::{Method, Request};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 struct MockIo<'a> {
     input: &'a [u8],
@@ -33,7 +33,11 @@ impl<'a> AsyncRead for MockIo<'a> {
         false
     }
 
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let mut len = self.next_u32() as usize;
         if self.input.is_empty() {
             Poll::Ready(Ok(0))
@@ -56,7 +60,11 @@ impl<'a> AsyncRead for MockIo<'a> {
 }
 
 impl<'a> AsyncWrite for MockIo<'a> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let len = std::cmp::min(self.next_u32() as usize, buf.len());
         if len == 0 {
             if self.input.is_empty() {
@@ -73,7 +81,6 @@ impl<'a> AsyncWrite for MockIo<'a> {
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
-    
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
@@ -111,7 +118,6 @@ async fn run(script: &[u8]) -> Result<(), h2::Error> {
         }
         Poll::Pending
     });
-    
     future.await?;
     Ok(())
 }
