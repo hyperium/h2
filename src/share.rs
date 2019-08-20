@@ -8,6 +8,7 @@ use http::HeaderMap;
 use crate::PollExt;
 use futures::ready;
 use std::fmt;
+#[cfg(feature = "stream")]
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -415,7 +416,22 @@ impl RecvStream {
         &mut self.inner
     }
 
-    /// Returns received trailers.
+    /// Get the next data frame.
+    pub async fn data(&mut self) -> Option<Result<Bytes, crate::Error>> {
+        futures::future::poll_fn(move |cx| self.poll_data(cx)).await
+    }
+
+    /// Get optional trailers for this stream.
+    pub async fn trailers(&mut self) -> Option<Result<HeaderMap, crate::Error>> {
+        futures::future::poll_fn(move |cx| self.poll_trailers(cx)).await
+    }
+
+    #[doc(hidden)]
+    pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, crate::Error>>> {
+        self.inner.inner.poll_data(cx).map_err_(Into::into)
+    }
+
+    #[doc(hidden)]
     pub fn poll_trailers(
         &mut self,
         cx: &mut Context,
@@ -433,11 +449,12 @@ impl RecvStream {
     }
 }
 
+#[cfg(feature = "stream")]
 impl futures::Stream for RecvStream {
     type Item = Result<Bytes, crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.inner.poll_data(cx).map_err_(Into::into)
+        self.poll_data(cx)
     }
 }
 
