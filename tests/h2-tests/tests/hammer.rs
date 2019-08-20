@@ -1,10 +1,7 @@
 #![feature(async_await)]
 
-use futures::{ready, FutureExt, StreamExt, TryFutureExt};
+use futures::{FutureExt, StreamExt, TryFutureExt};
 use h2_support::prelude::*;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use std::io;
 use std::{
@@ -89,31 +86,6 @@ where
     Ok(())
 }
 
-struct Process {
-    body: RecvStream,
-    trailers: bool,
-}
-
-impl Future for Process {
-    type Output = Result<(), h2::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            if self.trailers {
-                ready!(self.body.poll_trailers(cx));
-                return Poll::Ready(Ok(()));
-            } else {
-                match ready!(Pin::new(&mut self.body).poll_next(cx)) {
-                    None => {
-                        self.trailers = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
 #[test]
 fn hammer_client_concurrency() {
     // This reproduces issue #326.
@@ -150,11 +122,14 @@ fn hammer_client_concurrency() {
 
                 response
                     .and_then(|response| {
-                        let (_, body) = response.into_parts();
+                        let mut body = response.into_body();
 
-                        Process {
-                            body,
-                            trailers: false,
+                        async move {
+                            while let Some(res) = body.data().await {
+                                res?;
+                            }
+                            body.trailers().await?;
+                            Ok(())
                         }
                     })
                     .map_err(|e| {

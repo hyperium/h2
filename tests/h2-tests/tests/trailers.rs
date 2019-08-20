@@ -100,7 +100,7 @@ async fn send_trailers_immediately() {
     let chunk = h2.run(body.next()).await;
     assert!(chunk.is_none());
 
-    let trailers = h2.run(poll_fn(|cx| body.poll_trailers(cx))).await;
+    let trailers = h2.run(poll_fn(|cx| body.poll_trailers(cx))).await.unwrap();
     assert!(trailers.is_none());
 
     h2.await.unwrap();

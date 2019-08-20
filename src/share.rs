@@ -422,7 +422,7 @@ impl RecvStream {
     }
 
     /// Get optional trailers for this stream.
-    pub async fn trailers(&mut self) -> Option<Result<HeaderMap, crate::Error>> {
+    pub async fn trailers(&mut self) -> Result<Option<HeaderMap>, crate::Error> {
         futures::future::poll_fn(move |cx| self.poll_trailers(cx)).await
     }
 
@@ -435,8 +435,12 @@ impl RecvStream {
     pub fn poll_trailers(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<Option<Result<HeaderMap, crate::Error>>> {
-        self.inner.inner.poll_trailers(cx).map_err_(Into::into)
+    ) -> Poll<Result<Option<HeaderMap>, crate::Error>> {
+        match ready!(self.inner.inner.poll_trailers(cx)) {
+            Some(Ok(map)) => Poll::Ready(Ok(Some(map))),
+            Some(Err(e)) => Poll::Ready(Err(e.into())),
+            None => Poll::Ready(Ok(None)),
+        }
     }
 
     /// Returns the stream ID of this stream.
