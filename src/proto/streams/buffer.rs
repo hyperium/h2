@@ -93,10 +93,12 @@ impl Deque {
         }
     }
 
+    /*
     pub fn peek_front<'a, T>(&self, buf: &'a Buffer<T>) -> Option<&'a T> {
         match self.indices {
             Some(idxs) => Some(&buf.slab[idxs.head].value),
             None => None,
         }
     }
+    */
 }

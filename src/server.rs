@@ -405,15 +405,6 @@ where
         self.connection.poll(cx).map_err(Into::into)
     }
 
-    #[deprecated(
-        note = "use abrupt_shutdown or graceful_shutdown instead",
-        since = "0.1.4"
-    )]
-    #[doc(hidden)]
-    pub fn close_connection(&mut self) {
-        self.graceful_shutdown();
-    }
-
     /// Sets the connection to a GOAWAY state.
     ///
     /// Does not terminate the connection. Must continue being polled to close

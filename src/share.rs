@@ -400,13 +400,6 @@ impl RecvStream {
         RecvStream { inner }
     }
 
-    #[deprecated(since = "0.0.0")]
-    #[doc(hidden)]
-    pub fn is_empty(&self) -> bool {
-        // If the recv side is closed and the receive queue is empty, the body is empty.
-        self.inner.inner.body_is_empty()
-    }
-
     /// Returns true if the receive half has reached the end of stream.
     ///
     /// A return value of `true` means that calls to `poll` and `poll_trailers`

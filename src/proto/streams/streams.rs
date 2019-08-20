@@ -1104,15 +1104,6 @@ impl OpaqueStreamRef {
             })
     }
 
-    pub fn body_is_empty(&self) -> bool {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let stream = me.store.resolve(self.key);
-
-        me.actions.recv.body_is_empty(&stream)
-    }
-
     pub fn is_end_stream(&self) -> bool {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
