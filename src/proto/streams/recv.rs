@@ -456,18 +456,6 @@ impl Recv {
         }
     }
 
-    pub fn body_is_empty(&self, stream: &store::Ptr) -> bool {
-        if !stream.state.is_recv_closed() {
-            return false;
-        }
-
-        stream
-            .pending_recv
-            .peek_front(&self.buffer)
-            .map(|event| !event.is_data())
-            .unwrap_or(true)
-    }
-
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
         if !stream.state.is_recv_closed() {
             return false;
@@ -1046,17 +1034,6 @@ impl Recv {
         } else {
             // No more frames will be received
             Poll::Ready(None)
-        }
-    }
-}
-
-// ===== impl Event =====
-
-impl Event {
-    fn is_data(&self) -> bool {
-        match *self {
-            Event::Data(..) => true,
-            _ => false,
         }
     }
 }

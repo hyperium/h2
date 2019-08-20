@@ -1,6 +1,3 @@
-// Until tokio-rs/tokio#680 is fixed
-#![allow(deprecated)]
-
 mod error;
 mod framed_read;
 mod framed_write;
