@@ -46,8 +46,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         println!("GOT CHUNK = {:?}", chunk?);
     }
 
-    if let Some(trailers) = body.trailers().await {
-        println!("GOT TRAILERS: {:?}", trailers?);
+    if let Some(trailers) = body.trailers().await? {
+        println!("GOT TRAILERS: {:?}", trailers);
     }
 
     Ok(())
