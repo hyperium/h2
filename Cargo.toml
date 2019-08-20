@@ -24,6 +24,9 @@ repository = "hyperium/h2"
 branch = "master"
 
 [features]
+# Enables `futures::Stream` implementations for various types.
+# This is an optional feature due to `Stream` not being stable.
+stream = []
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards
 # compatibility guarantees. In other words, you should not use this feature for
@@ -65,7 +68,7 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Akamai example
-tokio = "0.2.0-alpha.1"
+tokio = "0.2.0-alpha.2"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"

@@ -69,7 +69,6 @@
 //!
 //! use h2::client;
 //!
-//! use futures::*;
 //! use http::{Request, Method};
 //! use std::error::Error;
 //! use tokio::net::TcpStream;
@@ -109,7 +108,7 @@
 //!     // the data from memory.
 //!     let mut release_capacity = body.release_capacity().clone();
 //!
-//!     while let Some(chunk) = body.next().await {
+//!     while let Some(chunk) = body.data().await {
 //!         let chunk = chunk?;
 //!         println!("RX: {:?}", chunk);
 //!
@@ -145,7 +144,7 @@ use crate::proto;
 use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
 use bytes::{Bytes, IntoBuf};
-use futures::{ready, FutureExt, Stream};
+use futures::{ready, FutureExt};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
 use std::fmt;
 use std::future::Future;
@@ -1301,10 +1300,17 @@ impl ResponseFuture {
 
 // ===== impl PushPromises =====
 
-impl Stream for PushPromises {
-    type Item = Result<PushPromise, crate::Error>;
+impl PushPromises {
+    /// Get the next `PushPromise`.
+    pub async fn push_promise(&mut self) -> Option<Result<PushPromise, crate::Error>> {
+        futures::future::poll_fn(move |cx| self.poll_push_promise(cx)).await
+    }
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    #[doc(hidden)]
+    pub fn poll_push_promise(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<PushPromise, crate::Error>>> {
         match self.inner.poll_pushed(cx) {
             Poll::Ready(Some(Ok((request, response)))) => {
                 let response = PushedResponseFuture {
@@ -1319,6 +1325,15 @@ impl Stream for PushPromises {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(feature = "stream")]
+impl futures::Stream for PushPromises {
+    type Item = Result<PushPromise, crate::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_push_promise(cx)
     }
 }
 

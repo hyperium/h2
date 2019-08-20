@@ -1,7 +1,5 @@
 #![feature(async_await)]
 
-use futures::future::poll_fn;
-use futures::StreamExt;
 use h2::client;
 use http::{HeaderMap, Request};
 
@@ -42,13 +40,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     println!("GOT RESPONSE: {:?}", response);
 
     // Get the body
-    let (_, mut body) = response.into_parts();
+    let mut body = response.into_body();
 
-    while let Some(chunk) = body.next().await {
+    while let Some(chunk) = body.data().await {
         println!("GOT CHUNK = {:?}", chunk?);
     }
 
-    if let Some(trailers) = poll_fn(|cx| body.poll_trailers(cx)).await {
+    if let Some(trailers) = body.trailers().await {
         println!("GOT TRAILERS: {:?}", trailers?);
     }
 

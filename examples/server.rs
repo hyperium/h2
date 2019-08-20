@@ -3,7 +3,6 @@
 use h2::server;
 
 use bytes::*;
-use futures::*;
 use http::{Response, StatusCode};
 
 use std::error::Error;
@@ -13,27 +12,26 @@ use tokio::net::{TcpListener, TcpStream};
 pub async fn main() -> Result<(), Box<dyn Error>> {
     let _ = env_logger::try_init();
 
-    let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap()).unwrap();
+    let mut listener = TcpListener::bind(&"127.0.0.1:5928".parse()?)?;
 
     println!("listening on {:?}", listener.local_addr());
-    let mut incoming = listener.incoming();
 
-    while let Some(socket) = incoming.next().await {
-        tokio::spawn(async move {
-            if let Err(e) = handle(socket).await {
-                println!("  -> err={:?}", e);
-            }
-        });
+    loop {
+        if let Ok((socket, _peer_addr)) = listener.accept().await {
+            tokio::spawn(async move {
+                if let Err(e) = handle(socket).await {
+                    println!("  -> err={:?}", e);
+                }
+            });
+        }
     }
-
-    Ok(())
 }
 
-async fn handle(socket: io::Result<TcpStream>) -> Result<(), Box<dyn Error>> {
-    let mut connection = server::handshake(socket?).await?;
+async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut connection = server::handshake(socket).await?;
     println!("H2 connection bound");
 
-    while let Some(result) = connection.next().await {
+    while let Some(result) = connection.accept().await {
         let (request, mut respond) = result?;
         println!("GOT request: {:?}", request);
         let response = Response::builder().status(StatusCode::OK).body(()).unwrap();

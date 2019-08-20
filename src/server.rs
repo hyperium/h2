@@ -63,46 +63,44 @@
 //! knowledge], i.e. both the client and the server assume that the TCP socket
 //! will use the HTTP/2.0 protocol without prior negotiation.
 //!
-//! ```rust
+//! ```no_run
 //! #![feature(async_await)]
-//! use futures::StreamExt;
 //! use h2::server;
 //! use http::{Response, StatusCode};
 //! use tokio::net::TcpListener;
 //!
 //! #[tokio::main]
-//! pub async fn main ()  {
+//! pub async fn main() {
 //!     let addr = "127.0.0.1:5928".parse().unwrap();
-//!     let listener = TcpListener::bind(&addr,).unwrap();
+//!     let mut listener = TcpListener::bind(&addr).unwrap();
 //!
 //!     // Accept all incoming TCP connections.
-//!     let mut incoming = listener.incoming();
-//!     # futures::future::select(Box::pin(async {
-//!     while let Some(socket) = incoming.next().await {
-//!         // Spawn a new task to process each connection.
-//!         tokio::spawn(async {
-//!             // Start the HTTP/2.0 connection handshake
-//!             let mut h2 = server::handshake(socket.unwrap()).await.unwrap();
-//!             // Accept all inbound HTTP/2.0 streams sent over the
-//!             // connection.
-//!             while let Some(request) = h2.next().await {
-//!                 let (request, mut respond) = request.unwrap();
-//!                 println!("Received request: {:?}", request);
+//!     loop {
+//!         if let Ok((socket, _peer_addr)) = listener.accept().await {
+//!             // Spawn a new task to process each connection.
+//!             tokio::spawn(async {
+//!                 // Start the HTTP/2.0 connection handshake
+//!                 let mut h2 = server::handshake(socket).await.unwrap();
+//!                 // Accept all inbound HTTP/2.0 streams sent over the
+//!                 // connection.
+//!                 while let Some(request) = h2.accept().await {
+//!                     let (request, mut respond) = request.unwrap();
+//!                     println!("Received request: {:?}", request);
 //!
-//!                 // Build a response with no body
-//!                 let response = Response::builder()
-//!                     .status(StatusCode::OK)
-//!                     .body(())
-//!                     .unwrap();
-//!
-//!                 // Send the response back to the client
-//!                 respond.send_response(response, true)
+//!                     // Build a response with no body
+//!                     let response = Response::builder()
+//!                         .status(StatusCode::OK)
+//!                         .body(())
 //!                         .unwrap();
-//!             }
 //!
-//!         });
+//!                     // Send the response back to the client
+//!                     respond.send_response(response, true)
+//!                         .unwrap();
+//!                 }
+//!
+//!             });
+//!         }
 //!     }
-//!     # }), Box::pin(async {})).await;
 //! }
 //! ```
 //!
@@ -178,14 +176,13 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 ///
 /// ```
 /// # #![feature(async_await)]
-/// # use futures::StreamExt;
 /// # use tokio_io::*;
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
 /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T) {
 /// let mut server = server::handshake(my_io).await.unwrap();
-/// while let Some(request) = server.next().await {
+/// while let Some(request) = server.accept().await {
 ///     let (request, respond) = request.unwrap();
 ///     // Process the request and send the response back to the client
 ///     // using `respond`.
@@ -341,7 +338,7 @@ impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B::Buf: Unpin + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -364,6 +361,40 @@ where
         let state = Handshaking::from(codec);
 
         Handshake { builder, state }
+    }
+
+    /// Accept the next incoming request on this connection.
+    pub async fn accept(
+        &mut self,
+    ) -> Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>> {
+        futures::future::poll_fn(move |cx| self.poll_accept(cx)).await
+    }
+
+    #[doc(hidden)]
+    pub fn poll_accept(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>>> {
+        // Always try to advance the internal state. Getting Pending also is
+        // needed to allow this function to return Pending.
+        if let Poll::Ready(_) = self.poll_closed(cx)? {
+            // If the socket is closed, don't return anything
+            // TODO: drop any pending streams
+            return Poll::Ready(None);
+        }
+
+        if let Some(inner) = self.connection.next_incoming() {
+            log::trace!("received incoming");
+            let (head, _) = inner.take_request().into_parts();
+            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
+
+            let request = Request::from_parts(head, body);
+            let respond = SendResponse { inner };
+
+            return Poll::Ready(Some(Ok((request, respond))));
+        }
+
+        Poll::Pending
     }
 
     /// Sets the target window size for the whole connection.
@@ -390,19 +421,25 @@ where
 
     /// Returns `Ready` when the underlying connection has closed.
     ///
-    /// If any new inbound streams are received during a call to `poll_close`,
-    /// they will be queued and returned on the next call to [`poll`].
+    /// If any new inbound streams are received during a call to `poll_closed`,
+    /// they will be queued and returned on the next call to [`poll_accept`].
     ///
     /// This function will advance the internal connection state, driving
     /// progress on all the other handles (e.g. [`RecvStream`] and [`SendStream`]).
     ///
     /// See [here](index.html#managing-the-connection) for more details.
     ///
-    /// [`poll`]: struct.Connection.html#method.poll
+    /// [`poll_accept`]: struct.Connection.html#method.poll_accept
     /// [`RecvStream`]: ../struct.RecvStream.html
     /// [`SendStream`]: ../struct.SendStream.html
-    pub fn poll_close(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
+    pub fn poll_closed(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
         self.connection.poll(cx).map_err(Into::into)
+    }
+
+    #[doc(hidden)]
+    #[deprecated(note = "renamed to poll_closed")]
+    pub fn poll_close(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
+        self.poll_closed(cx)
     }
 
     /// Sets the connection to a GOAWAY state.
@@ -445,6 +482,7 @@ where
     }
 }
 
+#[cfg(feature = "stream")]
 impl<T, B> futures::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -454,26 +492,7 @@ where
     type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Always try to advance the internal state. Getting Pending also is
-        // needed to allow this function to return Pending.
-        if let Poll::Ready(_) = self.poll_close(cx)? {
-            // If the socket is closed, don't return anything
-            // TODO: drop any pending streams
-            return Poll::Ready(None);
-        }
-
-        if let Some(inner) = self.connection.next_incoming() {
-            log::trace!("received incoming");
-            let (head, _) = inner.take_request().into_parts();
-            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
-
-            let request = Request::from_parts(head, body);
-            let respond = SendResponse { inner };
-
-            return Poll::Ready(Some(Ok((request, respond))));
-        }
-
-        Poll::Pending
+        self.poll_accept(cx)
     }
 }
 
@@ -1035,7 +1054,7 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B::Buf: Unpin + 'static,
 {
     type Output = Result<Connection<T, B>, crate::Error>;
 
