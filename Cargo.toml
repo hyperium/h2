@@ -44,9 +44,9 @@ members = [
 ]
 
 [dependencies]
-futures-preview = "0.3.0-alpha.17"
-tokio-io = "0.2.0-alpha.1"
-tokio-codec = "0.2.0-alpha.1"
+futures-preview = "0.3.0-alpha.18"
+tokio-io = "0.2.0-alpha.2"
+tokio-codec = "0.2.0-alpha.2"
 bytes = "0.4.7"
 http = "0.1.8"
 log = "0.4.1"
