@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use h2::server;
 
 use bytes::*;

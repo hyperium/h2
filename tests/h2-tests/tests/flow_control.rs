@@ -1,4 +1,3 @@
-#![feature(async_await)]
 use futures::future::{join, join4};
 use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;

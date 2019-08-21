@@ -64,7 +64,6 @@
 //! will use the HTTP/2.0 protocol without prior negotiation.
 //!
 //! ```no_run
-//! #![feature(async_await)]
 //! use h2::server;
 //! use http::{Response, StatusCode};
 //! use tokio::net::TcpListener;
@@ -175,7 +174,6 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # Examples
 ///
 /// ```
-/// # #![feature(async_await)]
 /// # use tokio_io::*;
 /// # use h2::server;
 /// # use h2::server::*;
@@ -311,7 +309,6 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
-/// # #![feature(async_await)]
 /// # use tokio_io::*;
 /// # use h2::server;
 /// # use h2::server::*;
