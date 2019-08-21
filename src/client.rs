@@ -65,7 +65,6 @@
 //! # Example
 //!
 //! ```rust, no_run
-//! #![feature(async_await)]
 //!
 //! use h2::client;
 //!
@@ -212,7 +211,6 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # #![feature(async_await)]
 /// # use tokio_io::*;
 /// # use h2::client;
 /// # use h2::client::*;
@@ -291,7 +289,6 @@ pub struct PushPromises {
 /// # Examples
 ///
 /// ```
-/// # #![feature(async_await)]
 /// # use tokio_io::*;
 /// # use h2::client::*;
 /// # use bytes::Bytes;
@@ -373,7 +370,6 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # #![feature(async_await)]
     /// # use h2::client::*;
     /// # use http::*;
     /// # async fn doc(send_request: SendRequest<&'static [u8]>)
@@ -433,7 +429,6 @@ where
     /// Sending a request with no body
     ///
     /// ```rust
-    /// # #![feature(async_await)]
     /// # use h2::client::*;
     /// # use http::*;
     /// # async fn doc(send_request: SendRequest<&'static [u8]>)
@@ -458,7 +453,6 @@ where
     /// Sending a request with a body and trailers
     ///
     /// ```rust
-    /// # #![feature(async_await)]
     /// # use h2::client::*;
     /// # use http::*;
     /// # async fn doc(send_request: SendRequest<&'static [u8]>)
@@ -604,7 +598,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -647,7 +640,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -683,7 +675,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -718,7 +709,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -759,7 +749,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -809,7 +798,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -851,7 +839,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -897,7 +884,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -943,7 +929,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use std::time::Duration;
@@ -982,7 +967,6 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use std::time::Duration;
@@ -1042,7 +1026,6 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// # use bytes::Bytes;
@@ -1064,7 +1047,6 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # use tokio_io::*;
     /// # use h2::client::*;
     /// #
@@ -1119,7 +1101,6 @@ impl Default for Builder {
 /// # Examples
 ///
 /// ```
-/// # #![feature(async_await)]
 /// # use tokio_io::*;
 /// # use h2::client;
 /// # use h2::client::*;

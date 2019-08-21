@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use futures::StreamExt;
 use h2_support::prelude::*;
 

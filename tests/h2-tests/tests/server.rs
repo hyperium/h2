@@ -1,4 +1,3 @@
-#![feature(async_await)]
 #![deny(warnings)]
 
 use futures::future::{join, poll_fn};

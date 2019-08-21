@@ -1,5 +1,3 @@
-#![feature(async_await)]
-
 use futures::channel::oneshot;
 use futures::future::join;
 use futures::{StreamExt, TryStreamExt};

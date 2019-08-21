@@ -3,8 +3,6 @@ fn main() {
 }
 
 /*
-#![feature(async_await)]
-
 use h2::client;
 
 use futures::*;

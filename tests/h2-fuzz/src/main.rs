@@ -1,4 +1,3 @@
-#![feature(async_await)]
 use futures::future;
 use futures::stream::FuturesUnordered;
 use futures::Stream;

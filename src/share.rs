@@ -268,7 +268,6 @@ impl<B: IntoBuf> SendStream<B> {
     /// is sent. For example:
     ///
     /// ```rust
-    /// # #![feature(async_await)]
     /// # use h2::*;
     /// # async fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
@@ -571,7 +570,6 @@ impl PingPong {
     /// # Example
     ///
     /// ```
-    /// # #![feature(async_await)]
     /// # async fn doc(mut ping_pong: h2::PingPong) {
     /// // let mut ping_pong = ...
     ///
