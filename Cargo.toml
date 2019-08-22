@@ -45,7 +45,7 @@ members = [
 
 [dependencies]
 futures-preview = "0.3.0-alpha.18"
-tokio-io = "0.2.0-alpha.2"
+tokio-io = { version = "0.2.0-alpha.2", features = ["util"] }
 tokio-codec = "0.2.0-alpha.2"
 bytes = "0.4.7"
 http = "0.1.8"
