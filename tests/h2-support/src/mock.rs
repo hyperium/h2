@@ -7,14 +7,13 @@ use futures::future::poll_fn;
 use futures::{ready, Stream, StreamExt};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::timer::Delay;
 
 use super::assert::assert_frame_eq;
 use futures::executor::block_on;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{cmp, io, usize};
 
 /// A mock I/O
@@ -483,5 +482,5 @@ impl AsyncWrite for Pipe {
 }
 
 pub async fn idle_ms(ms: u64) {
-    Delay::new(Instant::now() + Duration::from_millis(ms)).await
+    tokio::timer::delay(tokio::clock::now() + Duration::from_millis(ms)).await
 }

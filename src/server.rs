@@ -70,8 +70,7 @@
 //!
 //! #[tokio::main]
 //! pub async fn main() {
-//!     let addr = "127.0.0.1:5928".parse().unwrap();
-//!     let mut listener = TcpListener::bind(&addr).unwrap();
+//!     let mut listener = TcpListener::bind("127.0.0.1:5928").await.unwrap();
 //!
 //!     // Accept all incoming TCP connections.
 //!     loop {
