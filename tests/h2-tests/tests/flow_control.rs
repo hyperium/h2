@@ -947,7 +947,6 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     use futures::channel::oneshot;
     use futures::future::{select, Either};
     use std::time::Instant;
-    use tokio::timer::Delay;
 
     let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
@@ -979,7 +978,11 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
         //
         // A timeout is used here to avoid blocking forever if there is a
         // failure
-        let result = select(rx2, Delay::new(Instant::now() + Duration::from_secs(5))).await;
+        let result = select(
+            rx2,
+            tokio::timer::delay(Instant::now() + Duration::from_secs(5)),
+        )
+        .await;
         if let Either::Right((_, _)) = result {
             panic!("Timed out");
         }
@@ -1011,7 +1014,11 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     });
 
     // Wait for server handshake to complete.
-    let result = select(rx1, Delay::new(Instant::now() + Duration::from_secs(5))).await;
+    let result = select(
+        rx1,
+        tokio::timer::delay(Instant::now() + Duration::from_secs(5)),
+    )
+    .await;
     if let Either::Right((_, _)) = result {
         panic!("Timed out");
     }

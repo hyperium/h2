@@ -9,7 +9,7 @@ h2 = { path = "../..", features = ["stream", "unstable"] }
 
 bytes = "0.4.7"
 env_logger = "0.5.9"
-futures-preview = "0.3.0-alpha.17"
+futures-preview = "=0.3.0-alpha.18"
 http = "0.1.5"
 string = "0.2"
-tokio = "0.2.0-alpha.1"
+tokio = "=0.2.0-alpha.4"

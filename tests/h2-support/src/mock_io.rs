@@ -396,7 +396,7 @@ mod tokio_ {
                 match self.inner.read(buf) {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         if let Some(rem) = self.inner.remaining_wait() {
-                            self.tokio.sleep = Some(Delay::new(Instant::now() + rem));
+                            self.tokio.sleep = Some(tokio::timer::delay(Instant::now() + rem));
                         } else {
                             self.tokio.read_wait = Some(cx.waker().clone());
                             return Poll::Pending;
@@ -440,7 +440,7 @@ mod tokio_ {
                 match self.inner.write(buf) {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         if let Some(rem) = self.inner.remaining_wait() {
-                            self.tokio.sleep = Some(Delay::new(Instant::now() + rem));
+                            self.tokio.sleep = Some(tokio::timer::delay(Instant::now() + rem));
                         } else {
                             panic!("unexpected WouldBlock");
                         }

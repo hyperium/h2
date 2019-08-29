@@ -74,10 +74,8 @@
 //!
 //! #[tokio::main]
 //! pub async fn main() -> Result<(), Box<dyn Error>> {
-//!     let addr = "127.0.0.1:5928".parse().unwrap();
-//!
 //!     // Establish TCP connection to the server.
-//!     let tcp = TcpStream::connect(&addr).await?;
+//!     let tcp = TcpStream::connect("127.0.0.1:5928").await?;
 //!     let (h2, connection) = client::handshake(tcp).await?;
 //!     tokio::spawn(async move {
 //!         connection.await.unwrap();

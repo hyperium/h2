@@ -26,7 +26,10 @@ impl Server {
     {
         let mk_data = Arc::new(mk_data);
 
-        let listener = TcpListener::bind(&SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let listener = rt
+            .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
+            .unwrap();
         let addr = listener.local_addr().unwrap();
         let reqs = Arc::new(AtomicUsize::new(0));
         let reqs2 = reqs.clone();
@@ -44,7 +47,6 @@ impl Server {
                 }
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(server);
         });
 
