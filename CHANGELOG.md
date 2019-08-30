@@ -1,3 +1,9 @@
+# 0.2.0-alpha.1 (August 30, 2019)
+
+* Update from `futures` 0.1 to `std::future::Future`.
+* Update `AsyncRead`/`AsyncWrite` to `tokio-io` 0.2 alpha.
+* Change `Stream` implementations to be optional, default disabled. Specific async and poll functions are now inherent, and `Stream` can be re-enabled with the `stream` cargo feature.
+
 # 0.1.25 (June 28, 2019)
 
 * Fix to send a `RST_STREAM` instead of `GOAWAY` if receiving a frame on a previously closed stream.
