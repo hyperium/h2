@@ -6,7 +6,6 @@ use bytes::{Bytes, IntoBuf};
 use http::HeaderMap;
 
 use crate::PollExt;
-use futures::ready;
 use std::fmt;
 #[cfg(feature = "stream")]
 use std::pin::Pin;
@@ -272,9 +271,6 @@ impl<B: IntoBuf> SendStream<B> {
     /// # async fn doc(mut send_stream: SendStream<&'static [u8]>) {
     /// send_stream.reserve_capacity(100);
     ///
-    /// let capacity = futures::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await;
-    /// // capacity == 5;
-    ///
     /// send_stream.send_data(b"hello", false).unwrap();
     /// // At this point, the total amount of requested capacity is 95 bytes.
     ///
@@ -417,12 +413,12 @@ impl RecvStream {
 
     /// Get the next data frame.
     pub async fn data(&mut self) -> Option<Result<Bytes, crate::Error>> {
-        futures::future::poll_fn(move |cx| self.poll_data(cx)).await
+        futures_util::future::poll_fn(move |cx| self.poll_data(cx)).await
     }
 
     /// Get optional trailers for this stream.
     pub async fn trailers(&mut self) -> Result<Option<HeaderMap>, crate::Error> {
-        futures::future::poll_fn(move |cx| self.poll_trailers(cx)).await
+        futures_util::future::poll_fn(move |cx| self.poll_trailers(cx)).await
     }
 
     #[doc(hidden)]
@@ -453,7 +449,7 @@ impl RecvStream {
 }
 
 #[cfg(feature = "stream")]
-impl futures::Stream for RecvStream {
+impl futures_core::Stream for RecvStream {
     type Item = Result<Bytes, crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -538,21 +534,13 @@ impl PingPong {
         PingPong { inner }
     }
 
-    /// Send a `PING` frame to the peer.
-    ///
-    /// Only one ping can be pending at a time, so trying to send while
-    /// a pong has not be received means this will return a user error.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # fn doc(mut ping_pong: h2::PingPong) {
-    /// // let mut ping_pong = ...
-    /// ping_pong
-    ///     .send_ping(h2::Ping::opaque())
-    ///     .unwrap();
-    /// # }
-    /// ```
+    /// Send a PING frame and wait for the peer to send the pong.
+    pub async fn ping(&mut self, ping: Ping) -> Result<Pong, crate::Error> {
+        self.send_ping(ping)?;
+        futures_util::future::poll_fn(|cx| self.poll_pong(cx)).await
+    }
+
+    #[doc(hidden)]
     pub fn send_ping(&mut self, ping: Ping) -> Result<(), crate::Error> {
         // Passing a `Ping` here is just to be forwards-compatible with
         // eventually allowing choosing a ping payload. For now, we can
@@ -565,28 +553,7 @@ impl PingPong {
         })
     }
 
-    /// Polls for the acknowledgement of a previously [sent][] `PING` frame.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # async fn doc(mut ping_pong: h2::PingPong) {
-    /// // let mut ping_pong = ...
-    ///
-    /// // First, send a PING.
-    /// ping_pong
-    ///     .send_ping(h2::Ping::opaque())
-    ///     .unwrap();
-    ///
-    /// // And then wait for the PONG.
-    /// futures::future::poll_fn(move |cx| {
-    ///     ping_pong.poll_pong(cx)
-    /// }).await.unwrap();
-    /// # }
-    /// # fn main() {}
-    /// ```
-    ///
-    /// [sent]: struct.PingPong.html#method.send_ping
+    #[doc(hidden)]
     pub fn poll_pong(&mut self, cx: &mut Context) -> Poll<Result<Pong, crate::Error>> {
         ready!(self.inner.poll_pong(cx))?;
         Poll::Ready(Ok(Pong { _p: () }))

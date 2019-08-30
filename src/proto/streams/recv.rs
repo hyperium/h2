@@ -4,7 +4,6 @@ use crate::frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 use crate::{frame, proto};
 use std::task::Context;
 
-use futures::ready;
 use http::{HeaderMap, Method, Request, Response};
 
 use std::io;

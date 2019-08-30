@@ -44,9 +44,12 @@ members = [
 ]
 
 [dependencies]
-futures-preview = "=0.3.0-alpha.18"
-tokio-io = { version = "=0.2.0-alpha.4", features = ["util"] }
+futures-core-preview = "=0.3.0-alpha.18"
+futures-sink-preview = "=0.3.0-alpha.18"
+futures-util-preview = "=0.3.0-alpha.18"
 tokio-codec = "=0.2.0-alpha.4"
+tokio-io = { version = "=0.2.0-alpha.4", features = ["util"] }
+tokio-sync = "=0.2.0-alpha.4"
 bytes = "0.4.7"
 http = "0.1.8"
 log = "0.4.1"

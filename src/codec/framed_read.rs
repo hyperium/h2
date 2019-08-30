@@ -6,7 +6,7 @@ use crate::frame::{
 
 use crate::hpack;
 
-use futures::{ready, Stream};
+use futures_core::Stream;
 
 use bytes::BytesMut;
 

@@ -141,7 +141,6 @@ use crate::proto;
 use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
 use bytes::{Bytes, IntoBuf};
-use futures::{ready, FutureExt};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
 use std::fmt;
 use std::future::Future;
@@ -1282,7 +1281,7 @@ impl ResponseFuture {
 impl PushPromises {
     /// Get the next `PushPromise`.
     pub async fn push_promise(&mut self) -> Option<Result<PushPromise, crate::Error>> {
-        futures::future::poll_fn(move |cx| self.poll_push_promise(cx)).await
+        futures_util::future::poll_fn(move |cx| self.poll_push_promise(cx)).await
     }
 
     #[doc(hidden)]
@@ -1308,7 +1307,7 @@ impl PushPromises {
 }
 
 #[cfg(feature = "stream")]
-impl futures::Stream for PushPromises {
+impl futures_core::Stream for PushPromises {
     type Item = Result<PushPromise, crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -1342,7 +1341,7 @@ impl Future for PushedResponseFuture {
     type Output = Result<Response<RecvStream>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.inner.poll_unpin(cx)
+        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
