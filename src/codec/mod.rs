@@ -9,9 +9,9 @@ use self::framed_write::FramedWrite;
 
 use crate::frame::{self, Data, Frame};
 
-use futures::*;
-
 use bytes::Buf;
+use futures_core::Stream;
+use futures_sink::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_codec::length_delimited;

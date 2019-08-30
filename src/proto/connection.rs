@@ -6,7 +6,7 @@ use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
 use bytes::{Bytes, IntoBuf};
-use futures::{ready, Stream};
+use futures_core::Stream;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;

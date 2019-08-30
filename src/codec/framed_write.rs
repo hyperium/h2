@@ -4,7 +4,6 @@ use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
 use bytes::{Buf, BufMut, BytesMut};
-use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_io::{AsyncRead, AsyncWrite};

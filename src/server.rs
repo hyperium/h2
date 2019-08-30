@@ -121,7 +121,6 @@ use crate::proto::{self, Config, Prioritized};
 use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
 use bytes::{Buf, Bytes, IntoBuf};
-use futures::ready;
 use http::{HeaderMap, Request, Response};
 use std::future::Future;
 use std::pin::Pin;
@@ -363,7 +362,7 @@ where
     pub async fn accept(
         &mut self,
     ) -> Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>> {
-        futures::future::poll_fn(move |cx| self.poll_accept(cx)).await
+        futures_util::future::poll_fn(move |cx| self.poll_accept(cx)).await
     }
 
     #[doc(hidden)]
@@ -479,7 +478,7 @@ where
 }
 
 #[cfg(feature = "stream")]
-impl<T, B> futures::Stream for Connection<T, B>
+impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     B: IntoBuf + Unpin,

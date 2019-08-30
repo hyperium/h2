@@ -7,7 +7,6 @@ use crate::proto::{peer, Open, Peer, WindowSize};
 use crate::{client, proto, server};
 
 use bytes::{Buf, Bytes};
-use futures::ready;
 use http::{HeaderMap, Request, Response};
 use std::task::{Context, Poll, Waker};
 use tokio_io::AsyncWrite;

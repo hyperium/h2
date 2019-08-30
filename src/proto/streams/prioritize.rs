@@ -7,7 +7,6 @@ use crate::codec::UserError;
 use crate::codec::UserError::*;
 
 use bytes::buf::Take;
-use futures::ready;
 use std::io;
 use std::task::{Context, Poll, Waker};
 use std::{cmp, fmt, mem};

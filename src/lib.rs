@@ -91,6 +91,15 @@ macro_rules! proto_err {
     };
 }
 
+macro_rules! ready {
+    ($e:expr) => {
+        match $e {
+            ::std::task::Poll::Ready(r) => r,
+            ::std::task::Poll::Pending => return ::std::task::Poll::Pending,
+        }
+    };
+}
+
 #[cfg_attr(feature = "unstable", allow(missing_docs))]
 mod codec;
 mod error;
