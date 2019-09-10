@@ -137,8 +137,7 @@ impl Mock<frame::Headers> {
         Mock(frame)
     }
 
-    pub fn scheme(self, value: &str) -> Self
-    {
+    pub fn scheme(self, value: &str) -> Self {
         let (id, mut pseudo, fields) = self.into_parts();
         let value = value.parse().unwrap();
 
@@ -180,6 +179,11 @@ impl From<Mock<frame::Headers>> for SendFrame {
 // Data helpers
 
 impl Mock<frame::Data> {
+    pub fn padded(mut self) -> Self {
+        self.0.set_padded();
+        self
+    }
+
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream(true);
         self
@@ -190,13 +194,16 @@ impl From<Mock<frame::Data>> for SendFrame {
     fn from(src: Mock<frame::Data>) -> Self {
         let id = src.0.stream_id();
         let eos = src.0.is_end_stream();
+        let is_padded = src.0.is_padded();
         let payload = src.0.into_payload();
         let mut frame = frame::Data::new(id, payload.into_buf());
         frame.set_end_stream(eos);
+        if is_padded {
+            frame.set_padded();
+        }
         Frame::Data(frame)
     }
 }
-
 
 // PushPromise helpers
 
@@ -231,7 +238,6 @@ impl Mock<frame::PushPromise> {
         Mock(frame)
     }
 
-
     fn into_parts(self) -> (StreamId, StreamId, frame::Pseudo, HeaderMap) {
         assert!(self.0.is_end_headers(), "unset eoh will be lost");
         let id = self.0.stream_id();
@@ -251,31 +257,27 @@ impl From<Mock<frame::PushPromise>> for SendFrame {
 
 impl Mock<frame::GoAway> {
     pub fn protocol_error(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::PROTOCOL_ERROR,
-        ))
+        self.reason(frame::Reason::PROTOCOL_ERROR)
+    }
+
+    pub fn internal_error(self) -> Self {
+        self.reason(frame::Reason::INTERNAL_ERROR)
     }
 
     pub fn flow_control(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::FLOW_CONTROL_ERROR,
-        ))
+        self.reason(frame::Reason::FLOW_CONTROL_ERROR)
     }
 
     pub fn frame_size(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::FRAME_SIZE_ERROR,
-        ))
+        self.reason(frame::Reason::FRAME_SIZE_ERROR)
     }
 
     pub fn no_error(self) -> Self {
-        Mock(frame::GoAway::new(
-            self.0.last_stream_id(),
-            frame::Reason::NO_ERROR,
-        ))
+        self.reason(frame::Reason::NO_ERROR)
+    }
+
+    pub fn reason(self, reason: frame::Reason) -> Self {
+        Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
     }
 }
 
@@ -308,9 +310,19 @@ impl Mock<frame::Reset> {
         Mock(frame::Reset::new(id, frame::Reason::CANCEL))
     }
 
+    pub fn stream_closed(self) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, frame::Reason::STREAM_CLOSED))
+    }
+
     pub fn internal_error(self) -> Self {
         let id = self.0.stream_id();
         Mock(frame::Reset::new(id, frame::Reason::INTERNAL_ERROR))
+    }
+
+    pub fn reason(self, reason: frame::Reason) -> Self {
+        let id = self.0.stream_id();
+        Mock(frame::Reset::new(id, reason))
     }
 }
 

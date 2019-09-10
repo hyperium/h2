@@ -1,69 +1,46 @@
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate h2;
-extern crate http;
-extern crate tokio;
-
 use h2::server;
 
 use bytes::*;
-use futures::*;
-use http::*;
+use http::{Response, StatusCode};
 
-use tokio::net::TcpListener;
+use std::error::Error;
+use tokio::net::{TcpListener, TcpStream};
 
-pub fn main() {
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn Error>> {
     let _ = env_logger::try_init();
 
-    let listener = TcpListener::bind(&"127.0.0.1:5928".parse().unwrap()).unwrap();
+    let mut listener = TcpListener::bind("127.0.0.1:5928").await?;
 
     println!("listening on {:?}", listener.local_addr());
 
-    let server = listener.incoming().for_each(move |socket| {
-        // let socket = io_dump::Dump::to_stdout(socket);
-
-        let connection = server::handshake(socket)
-            .and_then(|conn| {
-                println!("H2 connection bound");
-
-                conn.for_each(|(request, mut respond)| {
-                    println!("GOT request: {:?}", request);
-
-                    let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
-
-                    let mut send = match respond.send_response(response, false) {
-                        Ok(send) => send,
-                        Err(e) => {
-                            println!(" error respond; err={:?}", e);
-                            return Ok(());
-                        }
-                    };
-
-                    println!(">>>> sending data");
-                    if let Err(e) = send.send_data(Bytes::from_static(b"hello world"), true) {
-                        println!("  -> err={:?}", e);
-                    }
-
-                    Ok(())
-                })
-            })
-            .and_then(|_| {
-                println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
-                Ok(())
-            })
-            .then(|res| {
-                if let Err(e) = res {
+    loop {
+        if let Ok((socket, _peer_addr)) = listener.accept().await {
+            tokio::spawn(async move {
+                if let Err(e) = handle(socket).await {
                     println!("  -> err={:?}", e);
                 }
-
-                Ok(())
             });
+        }
+    }
+}
 
-        tokio::spawn(Box::new(connection));
-        Ok(())
-    })
-    .map_err(|e| eprintln!("accept error: {}", e));
+async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut connection = server::handshake(socket).await?;
+    println!("H2 connection bound");
 
-    tokio::run(server);
+    while let Some(result) = connection.accept().await {
+        let (request, mut respond) = result?;
+        println!("GOT request: {:?}", request);
+        let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+
+        let mut send = respond.send_response(response, false)?;
+
+        println!(">>>> sending data");
+        send.send_data(Bytes::from_static(b"hello world"), true)?;
+    }
+
+    println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
+
+    Ok(())
 }

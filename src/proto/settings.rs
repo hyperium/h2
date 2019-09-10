@@ -1,6 +1,7 @@
-use codec::RecvError;
-use frame;
-use proto::*;
+use crate::codec::RecvError;
+use crate::frame;
+use crate::proto::*;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub(crate) struct Settings {
@@ -12,14 +13,12 @@ pub(crate) struct Settings {
 
 impl Settings {
     pub fn new() -> Self {
-        Settings {
-            pending: None,
-        }
+        Settings { pending: None }
     }
 
     pub fn recv_settings(&mut self, frame: frame::Settings) {
         if frame.is_ack() {
-            debug!("received remote settings ack");
+            log::debug!("received remote settings ack");
         // TODO: handle acks
         } else {
             assert!(self.pending.is_none());
@@ -29,32 +28,31 @@ impl Settings {
 
     pub fn send_pending_ack<T, B, C, P>(
         &mut self,
+        cx: &mut Context,
         dst: &mut Codec<T, B>,
         streams: &mut Streams<C, P>,
-    ) -> Poll<(), RecvError>
+    ) -> Poll<Result<(), RecvError>>
     where
-        T: AsyncWrite,
-        B: Buf,
-        C: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
+        C: Buf + Unpin,
         P: Peer,
     {
-        trace!("send_pending_ack; pending={:?}", self.pending);
+        log::trace!("send_pending_ack; pending={:?}", self.pending);
 
-        if let Some(ref settings) = self.pending {
-            if !dst.poll_ready()?.is_ready() {
-                trace!("failed to send ACK");
-                return Ok(Async::NotReady);
+        if let Some(settings) = &self.pending {
+            if !dst.poll_ready(cx)?.is_ready() {
+                log::trace!("failed to send ACK");
+                return Poll::Pending;
             }
 
             // Create an ACK settings frame
             let frame = frame::Settings::ack();
 
             // Buffer the settings frame
-            dst.buffer(frame.into())
-                .ok()
-                .expect("invalid settings frame");
+            dst.buffer(frame.into()).expect("invalid settings frame");
 
-            trace!("ACK sent; applying settings");
+            log::trace!("ACK sent; applying settings");
 
             if let Some(val) = settings.max_frame_size() {
                 dst.set_max_send_frame_size(val as usize);
@@ -65,6 +63,6 @@ impl Settings {
 
         self.pending = None;
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 }

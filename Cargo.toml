@@ -1,30 +1,30 @@
 [package]
 name = "h2"
 # When releasing to crates.io:
-# - Deploy docs.
 # - Update doc URL.
-#   - Cargo.toml
-#   - README
 #   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.1.13"
+version = "0.2.0-alpha.1"
 license = "MIT"
 authors = ["Carl Lerche <me@carllerche.com>"]
 description = "An HTTP/2.0 client and server"
-documentation = "http://rust-doc.s3-website-us-east-1.amazonaws.com/h2/v0.1.13/h2"
-homepage = "https://github.com/carllerche/h2"
-repository = "https://github.com/carllerche/h2"
+documentation = "https://docs.rs/h2/0.2.0-alpha.1/h2/"
+repository = "https://github.com/hyperium/h2"
 readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
-exclude = ["fixtures/**"]
+exclude = ["fixtures/**", "ci/**"]
+edition = "2018"
 
 [badges.travis-ci]
-repository = "carllerche/h2"
+repository = "hyperium/h2"
 branch = "master"
 
 [features]
+# Enables `futures::Stream` implementations for various types.
+# This is an optional feature due to `Stream` not being stable.
+stream = []
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards
 # compatibility guarantees. In other words, you should not use this feature for
@@ -42,15 +42,18 @@ members = [
 ]
 
 [dependencies]
-futures = "0.1"
-tokio-io = "0.1.4"
+futures-core-preview = "=0.3.0-alpha.18"
+futures-sink-preview = "=0.3.0-alpha.18"
+futures-util-preview = "=0.3.0-alpha.18"
+tokio-codec = "=0.2.0-alpha.4"
+tokio-io = { version = "=0.2.0-alpha.4", features = ["util"] }
+tokio-sync = "=0.2.0-alpha.4"
 bytes = "0.4.7"
 http = "0.1.8"
-byteorder = "1.0"
 log = "0.4.1"
 fnv = "1.0.5"
 slab = "0.4.0"
-string = "0.1"
+string = "0.2"
 indexmap = "1.0"
 
 [dev-dependencies]
@@ -66,9 +69,9 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Akamai example
-tokio = "0.1.8"
+tokio = "=0.2.0-alpha.4"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"
-webpki = "0.18.0-alpha"
+webpki = "0.18"
 webpki-roots = "0.14"

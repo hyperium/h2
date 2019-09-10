@@ -55,7 +55,7 @@
 //! # Shutting down the server
 //!
 //! Graceful shutdown of the server is [not yet
-//! implemented](https://github.com/carllerche/h2/issues/69).
+//! implemented](https://github.com/hyperium/h2/issues/69).
 //!
 //! # Example
 //!
@@ -63,56 +63,42 @@
 //! knowledge], i.e. both the client and the server assume that the TCP socket
 //! will use the HTTP/2.0 protocol without prior negotiation.
 //!
-//! ```rust
-//! extern crate futures;
-//! extern crate h2;
-//! extern crate http;
-//! extern crate tokio;
-//!
-//! use futures::{Future, Stream};
-//! # use futures::future::ok;
+//! ```no_run
 //! use h2::server;
 //! use http::{Response, StatusCode};
 //! use tokio::net::TcpListener;
 //!
-//! pub fn main () {
-//!     let addr = "127.0.0.1:5928".parse().unwrap();
-//!     let listener = TcpListener::bind(&addr,).unwrap();
+//! #[tokio::main]
+//! pub async fn main() {
+//!     let mut listener = TcpListener::bind("127.0.0.1:5928").await.unwrap();
 //!
-//!     tokio::run({
-//!         // Accept all incoming TCP connections.
-//!         listener.incoming().for_each(move |socket| {
+//!     // Accept all incoming TCP connections.
+//!     loop {
+//!         if let Ok((socket, _peer_addr)) = listener.accept().await {
 //!             // Spawn a new task to process each connection.
-//!             tokio::spawn({
+//!             tokio::spawn(async {
 //!                 // Start the HTTP/2.0 connection handshake
-//!                 server::handshake(socket)
-//!                     .and_then(|h2| {
-//!                         // Accept all inbound HTTP/2.0 streams sent over the
-//!                         // connection.
-//!                         h2.for_each(|(request, mut respond)| {
-//!                             println!("Received request: {:?}", request);
+//!                 let mut h2 = server::handshake(socket).await.unwrap();
+//!                 // Accept all inbound HTTP/2.0 streams sent over the
+//!                 // connection.
+//!                 while let Some(request) = h2.accept().await {
+//!                     let (request, mut respond) = request.unwrap();
+//!                     println!("Received request: {:?}", request);
 //!
-//!                             // Build a response with no body
-//!                             let response = Response::builder()
-//!                                 .status(StatusCode::OK)
-//!                                 .body(())
-//!                                 .unwrap();
+//!                     // Build a response with no body
+//!                     let response = Response::builder()
+//!                         .status(StatusCode::OK)
+//!                         .body(())
+//!                         .unwrap();
 //!
-//!                             // Send the response back to the client
-//!                             respond.send_response(response, true)
-//!                                 .unwrap();
+//!                     // Send the response back to the client
+//!                     respond.send_response(response, true)
+//!                         .unwrap();
+//!                 }
 //!
-//!                             Ok(())
-//!                         })
-//!                     })
-//!                     .map_err(|e| panic!("unexpected error = {:?}", e))
 //!             });
-//!
-//!             Ok(())
-//!         })
-//!         .map_err(|e| panic!("failed to run HTTP/2.0 server: {:?}", e))
-//!  #      .select(ok(())).map(|_|()).map_err(|_|())
-//!     });
+//!         }
+//!     }
 //! }
 //! ```
 //!
@@ -129,16 +115,18 @@
 //! [`SendStream`]: ../struct.SendStream.html
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
-use {SendStream, RecvStream, ReleaseCapacity};
-use codec::{Codec, RecvError, UserError};
-use frame::{self, Pseudo, Reason, Settings, StreamId};
-use proto::{self, Config, Prioritized};
+use crate::codec::{Codec, RecvError, UserError};
+use crate::frame::{self, Pseudo, Reason, Settings, StreamId};
+use crate::proto::{self, Config, Prioritized};
+use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
 use bytes::{Buf, Bytes, IntoBuf};
-use futures::{self, Async, Future, Poll};
 use http::{HeaderMap, Request, Response};
-use std::{convert, fmt, io, mem};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use std::{convert, fmt, io, mem};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 /// In progress HTTP/2.0 connection handshake future.
@@ -160,7 +148,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
     /// The config to pass to Connection::new after handshake succeeds.
     builder: Builder,
     /// The current state of the handshake.
-    state: Handshaking<T, B>
+    state: Handshaking<T, B>,
 }
 
 /// Accepts inbound HTTP/2.0 streams on a connection.
@@ -184,24 +172,17 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # Examples
 ///
 /// ```
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
-/// # use futures::{Future, Stream};
 /// # use tokio_io::*;
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
-/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T) {
-/// server::handshake(my_io)
-///     .and_then(|server| {
-///         server.for_each(|(request, respond)| {
-///             // Process the request and send the response back to the client
-///             // using `respond`.
-///             # Ok(())
-///         })
-///     })
-/// # .wait().unwrap();
+/// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T) {
+/// let mut server = server::handshake(my_io).await.unwrap();
+/// while let Some(request) = server.accept().await {
+///     let (request, respond) = request.unwrap();
+///     // Process the request and send the response back to the client
+///     // using `respond`.
+/// }
 /// # }
 /// #
 /// # pub fn main() {}
@@ -229,12 +210,10 @@ pub struct Connection<T, B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use tokio_io::*;
 /// # use h2::server::*;
 /// #
-/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
 /// # -> Handshake<T>
 /// # {
 /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -302,7 +281,9 @@ pub struct SendPushedResponse<B: IntoBuf> {
 }
 
 impl<B: IntoBuf + fmt::Debug> fmt::Debug for SendPushedResponse<B>
-where <B as bytes::IntoBuf>::Buf: std::fmt::Debug {
+where
+    <B as bytes::IntoBuf>::Buf: std::fmt::Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SendPushedResponse {{ {:?} }}", self.inner)
     }
@@ -352,29 +333,22 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
-/// # extern crate futures;
-/// # extern crate h2;
-/// # extern crate tokio_io;
 /// # use tokio_io::*;
-/// # use futures::*;
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
-/// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+/// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
 /// # {
-/// server::handshake(my_io)
-///     .and_then(|connection| {
-///         // The HTTP/2.0 handshake has completed, now use `connection` to
-///         // accept inbound HTTP/2.0 streams.
-///         # Ok(())
-///     })
-///     # .wait().unwrap();
+/// let connection = server::handshake(my_io).await.unwrap();
+/// // The HTTP/2.0 handshake has completed, now use `connection` to
+/// // accept inbound HTTP/2.0 streams.
 /// # }
 /// #
 /// # pub fn main() {}
 /// ```
 pub fn handshake<T>(io: T) -> Handshake<T, Bytes>
-where T: AsyncRead + AsyncWrite,
+where
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     Builder::new().handshake(io)
 }
@@ -383,8 +357,9 @@ where T: AsyncRead + AsyncWrite,
 
 impl<T, B> Connection<T, B>
 where
-    T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    T: AsyncRead + AsyncWrite + Unpin,
+    B: IntoBuf + Unpin,
+    B::Buf: Unpin + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -407,6 +382,40 @@ where
         let state = Handshaking::from(codec);
 
         Handshake { builder, state }
+    }
+
+    /// Accept the next incoming request on this connection.
+    pub async fn accept(
+        &mut self,
+    ) -> Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>> {
+        futures_util::future::poll_fn(move |cx| self.poll_accept(cx)).await
+    }
+
+    #[doc(hidden)]
+    pub fn poll_accept(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>>> {
+        // Always try to advance the internal state. Getting Pending also is
+        // needed to allow this function to return Pending.
+        if let Poll::Ready(_) = self.poll_closed(cx)? {
+            // If the socket is closed, don't return anything
+            // TODO: drop any pending streams
+            return Poll::Ready(None);
+        }
+
+        if let Some(inner) = self.connection.next_incoming() {
+            log::trace!("received incoming");
+            let (head, _) = inner.take_request().into_parts();
+            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
+
+            let request = Request::from_parts(head, body);
+            let respond = SendResponse { inner };
+
+            return Poll::Ready(Some(Ok((request, respond))));
+        }
+
+        Poll::Pending
     }
 
     /// Sets the target window size for the whole connection.
@@ -433,25 +442,25 @@ where
 
     /// Returns `Ready` when the underlying connection has closed.
     ///
-    /// If any new inbound streams are received during a call to `poll_close`,
-    /// they will be queued and returned on the next call to [`poll`].
+    /// If any new inbound streams are received during a call to `poll_closed`,
+    /// they will be queued and returned on the next call to [`poll_accept`].
     ///
     /// This function will advance the internal connection state, driving
     /// progress on all the other handles (e.g. [`RecvStream`] and [`SendStream`]).
     ///
     /// See [here](index.html#managing-the-connection) for more details.
     ///
-    /// [`poll`]: struct.Connection.html#method.poll
+    /// [`poll_accept`]: struct.Connection.html#method.poll_accept
     /// [`RecvStream`]: ../struct.RecvStream.html
     /// [`SendStream`]: ../struct.SendStream.html
-    pub fn poll_close(&mut self) -> Poll<(), ::Error> {
-        self.connection.poll().map_err(Into::into)
+    pub fn poll_closed(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
+        self.connection.poll(cx).map_err(Into::into)
     }
 
-    #[deprecated(note="use abrupt_shutdown or graceful_shutdown instead", since="0.1.4")]
     #[doc(hidden)]
-    pub fn close_connection(&mut self) {
-        self.graceful_shutdown();
+    #[deprecated(note = "renamed to poll_closed")]
+    pub fn poll_close(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
+        self.poll_closed(cx)
     }
 
     /// Sets the connection to a GOAWAY state.
@@ -467,7 +476,7 @@ where
     ///
     /// For graceful shutdowns, see [`graceful_shutdown`](Connection::graceful_shutdown).
     pub fn abrupt_shutdown(&mut self, reason: Reason) {
-        self.connection.go_away_now(reason);
+        self.connection.go_away_from_user(reason);
     }
 
     /// Starts a [graceful shutdown][1] process.
@@ -483,41 +492,28 @@ where
     pub fn graceful_shutdown(&mut self) {
         self.connection.go_away_gracefully();
     }
+
+    /// Takes a `PingPong` instance from the connection.
+    ///
+    /// # Note
+    ///
+    /// This may only be called once. Calling multiple times will return `None`.
+    pub fn ping_pong(&mut self) -> Option<PingPong> {
+        self.connection.take_user_pings().map(PingPong::new)
+    }
 }
 
-impl<T, B> futures::Stream for Connection<T, B>
+#[cfg(feature = "stream")]
+impl<T, B> futures_core::Stream for Connection<T, B>
 where
-    T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
-    B::Buf: 'static,
+    T: AsyncRead + AsyncWrite + Unpin,
+    B: IntoBuf + Unpin,
+    B::Buf: Unpin + 'static,
 {
-    type Item = (Request<RecvStream>, SendResponse<B>);
-    type Error = ::Error;
+    type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, ::Error> {
-        // Always try to advance the internal state. Getting NotReady also is
-        // needed to allow this function to return NotReady.
-        match self.poll_close()? {
-            Async::Ready(_) => {
-                // If the socket is closed, don't return anything
-                // TODO: drop any pending streams
-                return Ok(None.into());
-            },
-            _ => {},
-        }
-
-        if let Some(inner) = self.connection.next_incoming() {
-            trace!("received incoming");
-            let (head, _) = inner.take_request().into_parts();
-            let body = RecvStream::new(ReleaseCapacity::new(inner.clone_to_opaque()));
-
-            let request = Request::from_parts(head, body);
-            let respond = SendResponse { inner };
-
-            return Ok(Some((request, respond)).into());
-        }
-
-        Ok(Async::NotReady)
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_accept(cx)
     }
 }
 
@@ -545,12 +541,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -586,12 +580,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -622,12 +614,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -657,12 +647,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -698,12 +686,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -748,12 +734,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -796,12 +780,10 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -844,13 +826,11 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// # use std::time::Duration;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -889,12 +869,10 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -911,12 +889,10 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # extern crate h2;
-    /// # extern crate tokio_io;
     /// # use tokio_io::*;
     /// # use h2::server::*;
     /// #
-    /// # fn doc<T: AsyncRead + AsyncWrite>(my_io: T)
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Handshake<T, &'static [u8]>
     /// # {
     /// // `server_fut` is a future representing the completion of the HTTP/2.0
@@ -930,9 +906,9 @@ impl Builder {
     /// ```
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
-        T: AsyncRead + AsyncWrite,
-        B: IntoBuf,
-        B::Buf: 'static,
+        T: AsyncRead + AsyncWrite + Unpin,
+        B: IntoBuf + Unpin,
+        B::Buf: Unpin + 'static,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -967,13 +943,12 @@ impl<B: IntoBuf> SendResponse<B> {
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<SendStream<B>, ::Error> {
+    ) -> Result<SendStream<B>, crate::Error> {
         self.inner
             .send_response(response, end_of_stream)
             .map(|_| SendStream::new(self.inner.clone()))
             .map_err(Into::into)
     }
-
 
     /// Push a request and response to the client
     ///
@@ -983,10 +958,12 @@ impl<B: IntoBuf> SendResponse<B> {
     pub fn push_request(
         &mut self,
         request: Request<()>,
-    ) -> Result<SendPushedResponse<B>, ::Error> {
+    ) -> Result<SendPushedResponse<B>, crate::Error> {
         self.inner
             .send_push_promise(request)
-            .map(|inner| SendPushedResponse{inner: SendResponse{inner}})
+            .map(|inner| SendPushedResponse {
+                inner: SendResponse { inner },
+            })
             .map_err(Into::into)
     }
 
@@ -1011,7 +988,7 @@ impl<B: IntoBuf> SendResponse<B> {
 
     /// Polls to be notified when the client resets this stream.
     ///
-    /// If stream is still open, this returns `Ok(Async::NotReady)`, and
+    /// If stream is still open, this returns `Poll::Pending`, and
     /// registers the task to be notified if a `RST_STREAM` is received.
     ///
     /// If a `RST_STREAM` frame is received for this stream, calling this
@@ -1021,8 +998,8 @@ impl<B: IntoBuf> SendResponse<B> {
     ///
     /// Calling this method after having called `send_response` will return
     /// a user error.
-    pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
-        self.inner.poll_reset(proto::PollReset::AwaitingHeaders)
+    pub fn poll_reset(&mut self, cx: &mut Context) -> Poll<Result<Reason, crate::Error>> {
+        self.inner.poll_reset(cx, proto::PollReset::AwaitingHeaders)
     }
 
     /// Returns the stream ID of the response stream.
@@ -1030,8 +1007,8 @@ impl<B: IntoBuf> SendResponse<B> {
     /// # Panics
     ///
     /// If the lock on the strean store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
-        ::StreamId::from_internal(self.inner.stream_id())
+    pub fn stream_id(&self) -> crate::StreamId {
+        crate::StreamId::from_internal(self.inner.stream_id())
     }
 }
 
@@ -1058,10 +1035,9 @@ impl<B: IntoBuf> SendPushedResponse<B> {
         &mut self,
         response: Response<()>,
         end_of_stream: bool,
-    ) -> Result<SendStream<B>, ::Error> {
+    ) -> Result<SendStream<B>, crate::Error> {
         self.inner.send_response(response, end_of_stream)
     }
-
 
     /// Send a stream reset to the peer.
     ///
@@ -1094,8 +1070,8 @@ impl<B: IntoBuf> SendPushedResponse<B> {
     ///
     /// Calling this method after having called `send_response` will return
     /// a user error.
-    pub fn poll_reset(&mut self) -> Poll<Reason, ::Error> {
-        self.inner.poll_reset()
+    pub fn poll_reset(&mut self, cx: &mut Context) -> Poll<Result<Reason, crate::Error>> {
+        self.inner.poll_reset(cx)
     }
 
     /// Returns the stream ID of the response stream.
@@ -1103,36 +1079,32 @@ impl<B: IntoBuf> SendPushedResponse<B> {
     /// # Panics
     ///
     /// If the lock on the strean store has been poisoned.
-    pub fn stream_id(&self) -> ::StreamId {
+    pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }
 }
-
 
 // ===== impl Flush =====
 
 impl<T, B: Buf> Flush<T, B> {
     fn new(codec: Codec<T, B>) -> Self {
-        Flush {
-            codec: Some(codec),
-        }
+        Flush { codec: Some(codec) }
     }
 }
 
 impl<T, B> Future for Flush<T, B>
 where
-    T: AsyncWrite,
-    B: Buf,
+    T: AsyncWrite + Unpin,
+    B: Buf + Unpin,
 {
-    type Item = Codec<T, B>;
-    type Error = ::Error;
+    type Output = Result<Codec<T, B>, crate::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Flush the codec
-        try_ready!(self.codec.as_mut().unwrap().flush());
+        ready!(self.codec.as_mut().unwrap().flush(cx))?;
 
         // Return the codec
-        Ok(Async::Ready(self.codec.take().unwrap()))
+        Poll::Ready(Ok(self.codec.take().unwrap()))
     }
 }
 
@@ -1151,62 +1123,64 @@ impl<T, B: Buf> ReadPreface<T, B> {
 
 impl<T, B> Future for ReadPreface<T, B>
 where
-    T: AsyncRead,
-    B: Buf,
+    T: AsyncRead + Unpin,
+    B: Buf + Unpin,
 {
-    type Item = Codec<T, B>;
-    type Error = ::Error;
+    type Output = Result<Codec<T, B>, crate::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut buf = [0; 24];
         let mut rem = PREFACE.len() - self.pos;
 
         while rem > 0 {
-            let n = try_nb!(self.inner_mut().read(&mut buf[..rem]));
+            let n = ready!(Pin::new(self.inner_mut()).poll_read(cx, &mut buf[..rem]))?;
             if n == 0 {
-                return Err(io::Error::new(
+                return Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "connection closed unexpectedly",
-                ).into());
+                )
+                .into()));
             }
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {
+                proto_err!(conn: "read_preface: invalid preface");
                 // TODO: Should this just write the GO_AWAY frame directly?
-                return Err(Reason::PROTOCOL_ERROR.into());
+                return Poll::Ready(Err(Reason::PROTOCOL_ERROR.into()));
             }
 
             self.pos += n;
             rem -= n; // TODO test
         }
 
-        Ok(Async::Ready(self.codec.take().unwrap()))
+        Poll::Ready(Ok(self.codec.take().unwrap()))
     }
 }
 
 // ===== impl Handshake =====
 
 impl<T, B: IntoBuf> Future for Handshake<T, B>
-    where T: AsyncRead + AsyncWrite,
-          B: IntoBuf,
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+    B: IntoBuf + Unpin,
+    B::Buf: Unpin + 'static,
 {
-    type Item = Connection<T, B>;
-    type Error = ::Error;
+    type Output = Result<Connection<T, B>, crate::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        trace!("Handshake::poll(); state={:?};", self.state);
-        use server::Handshaking::*;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        log::trace!("Handshake::poll(); state={:?};", self.state);
+        use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {
             // We're currently flushing a pending SETTINGS frame. Poll the
             // flush future, and, if it's completed, advance our state to wait
             // for the client preface.
-            let codec = match flush.poll()? {
-                Async::NotReady => {
-                    trace!("Handshake::poll(); flush.poll()=NotReady");
-                    return Ok(Async::NotReady);
-                },
-                Async::Ready(flushed) => {
-                    trace!("Handshake::poll(); flush.poll()=Ready");
+            let codec = match Pin::new(flush).poll(cx)? {
+                Poll::Pending => {
+                    log::trace!("Handshake::poll(); flush.poll()=Pending");
+                    return Poll::Pending;
+                }
+                Poll::Ready(flushed) => {
+                    log::trace!("Handshake::poll(); flush.poll()=Ready");
                     flushed
                 }
             };
@@ -1222,38 +1196,41 @@ impl<T, B: IntoBuf> Future for Handshake<T, B>
             // We're now waiting for the client preface. Poll the `ReadPreface`
             // future. If it has completed, we will create a `Connection` handle
             // for the connection.
-            read.poll()
-            // Actually creating the `Connection` has to occur outside of this
-            // `if let` block, because we've borrowed `self` mutably in order
-            // to poll the state and won't be able to borrow the SETTINGS frame
-            // as well until we release the borrow for `poll()`.
+            Pin::new(read).poll(cx)
+        // Actually creating the `Connection` has to occur outside of this
+        // `if let` block, because we've borrowed `self` mutably in order
+        // to poll the state and won't be able to borrow the SETTINGS frame
+        // as well until we release the borrow for `poll()`.
         } else {
             unreachable!("Handshake::poll() state was not advanced completely!")
         };
-        let server = poll?.map(|codec| {
-            let connection = proto::Connection::new(codec, Config {
-                next_stream_id: 2.into(),
-                // Server does not need to locally initiate any streams
-                initial_max_send_streams: 0,
-                reset_stream_duration: self.builder.reset_stream_duration,
-                reset_stream_max: self.builder.reset_stream_max,
-                settings: self.builder.settings.clone(),
-            });
+        poll?.map(|codec| {
+            let connection = proto::Connection::new(
+                codec,
+                Config {
+                    next_stream_id: 2.into(),
+                    // Server does not need to locally initiate any streams
+                    initial_max_send_streams: 0,
+                    reset_stream_duration: self.builder.reset_stream_duration,
+                    reset_stream_max: self.builder.reset_stream_max,
+                    settings: self.builder.settings.clone(),
+                },
+            );
 
-            trace!("Handshake::poll(); connection established!");
+            log::trace!("Handshake::poll(); connection established!");
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
             }
-            c
-        });
-        Ok(server)
+            Ok(c)
+        })
     }
 }
 
 impl<T, B> fmt::Debug for Handshake<T, B>
-    where T: AsyncRead + AsyncWrite + fmt::Debug,
-          B: fmt::Debug + IntoBuf,
+where
+    T: AsyncRead + AsyncWrite + fmt::Debug,
+    B: fmt::Debug + IntoBuf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "server::Handshake")
@@ -1264,16 +1241,14 @@ impl Peer {
     pub fn convert_send_message(
         id: StreamId,
         response: Response<()>,
-        end_of_stream: bool) -> frame::Headers
-    {
+        end_of_stream: bool,
+    ) -> frame::Headers {
         use http::response::Parts;
 
         // Extract the components of the HTTP request
         let (
             Parts {
-                status,
-                headers,
-                ..
+                status, headers, ..
             },
             _,
         ) = response.into_parts();
@@ -1299,7 +1274,7 @@ impl Peer {
     ) -> Result<frame::PushPromise, UserError> {
         use http::request::Parts;
 
-        if !frame::PushPromise::validate_request(&request) {
+        if let Err(_) = frame::PushPromise::validate_request(&request) {
             return Err(UserError::MalformedHeaders);
         }
 
@@ -1320,7 +1295,7 @@ impl Peer {
             stream_id,
             promised_id,
             pseudo,
-            headers
+            headers,
         ))
     }
 }
@@ -1332,12 +1307,14 @@ impl proto::Peer for Peer {
         true
     }
 
-    fn dyn() -> proto::DynPeer {
+    fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Server
     }
 
     fn convert_poll_message(
-        pseudo: Pseudo, fields: HeaderMap, stream_id: StreamId
+        pseudo: Pseudo,
+        fields: HeaderMap,
+        stream_id: StreamId,
     ) -> Result<Self::Poll, RecvError> {
         use http::{uri, Version};
 
@@ -1345,7 +1322,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
-                debug!($($arg)*);
+                log::debug!($($arg)*);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -1363,22 +1340,45 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
+            log::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
         // Convert the URI
         let mut parts = uri::Parts::default();
 
-        if let Some(scheme) = pseudo.scheme {
-            parts.scheme = Some(uri::Scheme::from_shared(scheme.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed scheme"))?);
-        } else {
-            malformed!("malformed headers: missing scheme");
+        // A request translated from HTTP/1 must not include the :authority
+        // header
+        if let Some(authority) = pseudo.authority {
+            let maybe_authority = uri::Authority::from_shared(authority.clone().into_inner());
+            parts.authority = Some(maybe_authority.or_else(|why| {
+                malformed!(
+                    "malformed headers: malformed authority ({:?}): {}",
+                    authority,
+                    why,
+                )
+            })?);
         }
 
-        if let Some(authority) = pseudo.authority {
-            parts.authority = Some(uri::Authority::from_shared(authority.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed authority"))?);
+        // A :scheme is always required.
+        if let Some(scheme) = pseudo.scheme {
+            let maybe_scheme = uri::Scheme::from_shared(scheme.clone().into_inner());
+            let scheme = maybe_scheme.or_else(|why| {
+                malformed!(
+                    "malformed headers: malformed scheme ({:?}): {}",
+                    scheme,
+                    why,
+                )
+            })?;
+
+            // It's not possible to build an `Uri` from a scheme and path. So,
+            // after validating is was a valid scheme, we just have to drop it
+            // if there isn't an :authority.
+            if parts.authority.is_some() {
+                parts.scheme = Some(scheme);
+            }
+        } else {
+            malformed!("malformed headers: missing scheme");
         }
 
         if let Some(path) = pseudo.path {
@@ -1387,22 +1387,25 @@ impl proto::Peer for Peer {
                 malformed!("malformed headers: missing path");
             }
 
-            parts.path_and_query = Some(uri::PathAndQuery::from_shared(path.into_inner())
-                .or_else(|_| malformed!("malformed headers: malformed path"))?);
+            let maybe_path = uri::PathAndQuery::from_shared(path.clone().into_inner());
+            parts.path_and_query = Some(maybe_path.or_else(|why| {
+                malformed!("malformed headers: malformed path ({:?}): {}", path, why,)
+            })?);
         }
 
         b.uri(parts);
 
         let mut request = match b.body(()) {
             Ok(request) => request,
-            Err(_) => {
+            Err(e) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
+                proto_err!(stream: "error building request: {}; stream={:?}", e, stream_id);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
                 });
-            },
+            }
         };
 
         *request.headers_mut() = fields;
@@ -1415,18 +1418,15 @@ impl proto::Peer for Peer {
 
 impl<T, B> fmt::Debug for Handshaking<T, B>
 where
-    B: IntoBuf
+    B: IntoBuf,
 {
-    #[inline] fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
-            Handshaking::Flushing(_) =>
-                write!(f, "Handshaking::Flushing(_)"),
-            Handshaking::ReadingPreface(_) =>
-                write!(f, "Handshaking::ReadingPreface(_)"),
-            Handshaking::Empty =>
-                write!(f, "Handshaking::Empty"),
+            Handshaking::Flushing(_) => write!(f, "Handshaking::Flushing(_)"),
+            Handshaking::ReadingPreface(_) => write!(f, "Handshaking::ReadingPreface(_)"),
+            Handshaking::Empty => write!(f, "Handshaking::Empty"),
         }
-
     }
 }
 
@@ -1435,18 +1435,19 @@ where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    #[inline] fn from(flush: Flush<T, Prioritized<B::Buf>>) -> Self {
+    #[inline]
+    fn from(flush: Flush<T, Prioritized<B::Buf>>) -> Self {
         Handshaking::Flushing(flush)
     }
 }
 
-impl<T, B> convert::From<ReadPreface<T, Prioritized<B::Buf>>> for
-    Handshaking<T, B>
+impl<T, B> convert::From<ReadPreface<T, Prioritized<B::Buf>>> for Handshaking<T, B>
 where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    #[inline] fn from(read: ReadPreface<T, Prioritized<B::Buf>>) -> Self {
+    #[inline]
+    fn from(read: ReadPreface<T, Prioritized<B::Buf>>) -> Self {
         Handshaking::ReadingPreface(read)
     }
 }
@@ -1456,7 +1457,8 @@ where
     T: AsyncRead + AsyncWrite,
     B: IntoBuf,
 {
-    #[inline] fn from(codec: Codec<T, Prioritized<B::Buf>>) -> Self {
+    #[inline]
+    fn from(codec: Codec<T, Prioritized<B::Buf>>) -> Self {
         Handshaking::from(Flush::new(codec))
     }
 }

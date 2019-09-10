@@ -1,16 +1,19 @@
-use super::{StreamDependency, StreamId};
-use frame::{Error, Frame, Head, Kind};
-use hpack;
+use super::{util, StreamDependency, StreamId};
+use crate::frame::{Error, Frame, Head, Kind};
+use crate::hpack;
 
-use http::{uri, Request, HeaderMap, Method, StatusCode, Uri};
 use http::header::{self, HeaderName, HeaderValue};
+use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
-use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 use string::String;
 
 use std::fmt;
 use std::io::Cursor;
+
+// Minimum MAX_FRAME_SIZE is 16kb, so save some arbitrary space for frame
+// head and other header bits.
+const MAX_HEADER_LENGTH: usize = 1024 * 16 - 100;
 
 /// Header frame
 ///
@@ -115,12 +118,12 @@ impl Headers {
     /// Create a new HEADERS frame
     pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap) -> Self {
         Headers {
-            stream_id: stream_id,
+            stream_id,
             stream_dep: None,
             header_block: HeaderBlock {
-                fields: fields,
+                fields,
                 is_over_size: false,
-                pseudo: pseudo,
+                pseudo,
             },
             flags: HeadersFlag::default(),
         }
@@ -134,11 +137,11 @@ impl Headers {
             stream_id,
             stream_dep: None,
             header_block: HeaderBlock {
-                fields: fields,
+                fields,
                 is_over_size: false,
                 pseudo: Pseudo::default(),
             },
-            flags: flags,
+            flags,
         }
     }
 
@@ -149,11 +152,11 @@ impl Headers {
         let flags = HeadersFlag(head.flag());
         let mut pad = 0;
 
-        trace!("loading headers; flags={:?}", flags);
+        log::trace!("loading headers; flags={:?}", flags);
 
         // Read the padding length
         if flags.is_padded() {
-            if src.len() < 1 {
+            if src.is_empty() {
                 return Err(Error::MalformedMessage);
             }
             pad = src[0] as usize;
@@ -192,19 +195,24 @@ impl Headers {
 
         let headers = Headers {
             stream_id: head.stream_id(),
-            stream_dep: stream_dep,
+            stream_dep,
             header_block: HeaderBlock {
                 fields: HeaderMap::new(),
                 is_over_size: false,
                 pseudo: Pseudo::default(),
             },
-            flags: flags,
+            flags,
         };
 
         Ok((headers, src))
     }
 
-    pub fn load_hpack(&mut self, src: &mut BytesMut, max_header_list_size: usize, decoder: &mut hpack::Decoder) -> Result<(), Error> {
+    pub fn load_hpack(
+        &mut self,
+        src: &mut BytesMut,
+        max_header_list_size: usize,
+        decoder: &mut hpack::Decoder,
+    ) -> Result<(), Error> {
         self.header_block.load(src, max_header_list_size, decoder)
     }
 
@@ -232,6 +240,10 @@ impl Headers {
         self.header_block.is_over_size
     }
 
+    pub(crate) fn has_too_big_field(&self) -> bool {
+        self.header_block.has_too_big_field()
+    }
+
     pub fn into_parts(self) -> (Pseudo, HeaderMap) {
         (self.header_block.pseudo, self.header_block.fields)
     }
@@ -256,9 +268,9 @@ impl Headers {
         // Get the HEADERS frame head
         let head = self.head();
 
-        self.header_block.into_encoding()
-            .encode(&head, encoder, dst, |_| {
-            })
+        self.header_block
+            .into_encoding()
+            .encode(&head, encoder, dst, |_| {})
     }
 
     fn head(&self) -> Head {
@@ -274,12 +286,17 @@ impl<T> From<Headers> for Frame<T> {
 
 impl fmt::Debug for Headers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Headers")
+        let mut builder = f.debug_struct("Headers");
+        builder
             .field("stream_id", &self.stream_id)
-            .field("stream_dep", &self.stream_dep)
-            .field("flags", &self.flags)
-            // `fields` and `pseudo` purposefully not included
-            .finish()
+            .field("flags", &self.flags);
+
+        if let Some(ref dep) = self.stream_dep {
+            builder.field("stream_dep", dep);
+        }
+
+        // `fields` and `pseudo` purposefully not included
+        builder.finish()
     }
 }
 
@@ -307,6 +324,12 @@ pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
 
 // ===== impl PushPromise =====
 
+#[derive(Debug)]
+pub enum PushPromiseHeaderError {
+    InvalidContentLength(Result<u64, ()>),
+    NotSafeAndCacheable,
+}
+
 impl PushPromise {
     pub fn new(
         stream_id: StreamId,
@@ -326,24 +349,26 @@ impl PushPromise {
         }
     }
 
-    pub fn validate_request(req: &Request<()>) -> bool {
+    pub fn validate_request(req: &Request<()>) -> Result<(), PushPromiseHeaderError> {
+        use PushPromiseHeaderError::*;
         // The spec has some requirements for promised request headers
         // [https://httpwg.org/specs/rfc7540.html#PushRequests]
 
         // A promised request "that indicates the presence of a request body
         // MUST reset the promised stream with a stream error"
         if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
-            if parse_u64(content_length.as_bytes()) != Ok(0) {
-                return false;
+            let parsed_length = parse_u64(content_length.as_bytes());
+            if parsed_length != Ok(0) {
+                return Err(InvalidContentLength(parsed_length));
             }
         }
         // "The server MUST include a method in the :method pseudo-header field
         // that is safe and cacheable"
         if !Self::safe_and_cacheable(req.method()) {
-            return false;
+            return Err(NotSafeAndCacheable);
         }
 
-        true
+        Ok(())
     }
 
     fn safe_and_cacheable(method: &Method) -> bool {
@@ -351,7 +376,6 @@ impl PushPromise {
         // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
         return method == Method::GET || method == Method::HEAD;
     }
-
 
     pub fn fields(&self) -> &HeaderMap {
         &self.header_block.fields
@@ -371,7 +395,7 @@ impl PushPromise {
 
         // Read the padding length
         if flags.is_padded() {
-            if src.len() < 1 {
+            if src.is_empty() {
                 return Err(Error::MalformedMessage);
             }
 
@@ -400,19 +424,24 @@ impl PushPromise {
         }
 
         let frame = PushPromise {
-            flags: flags,
+            flags,
             header_block: HeaderBlock {
                 fields: HeaderMap::new(),
                 is_over_size: false,
                 pseudo: Pseudo::default(),
             },
-            promised_id: promised_id,
+            promised_id,
             stream_id: head.stream_id(),
         };
         Ok((frame, src))
     }
 
-    pub fn load_hpack(&mut self, src: &mut BytesMut, max_header_list_size: usize, decoder: &mut hpack::Decoder) -> Result<(), Error> {
+    pub fn load_hpack(
+        &mut self,
+        src: &mut BytesMut,
+        max_header_list_size: usize,
+        decoder: &mut hpack::Decoder,
+    ) -> Result<(), Error> {
         self.header_block.load(src, max_header_list_size, decoder)
     }
 
@@ -445,7 +474,8 @@ impl PushPromise {
         let head = self.head();
         let promised_id = self.promised_id;
 
-        self.header_block.into_encoding()
+        self.header_block
+            .into_encoding()
             .encode(&head, encoder, dst, |dst| {
                 dst.put_u32_be(promised_id.into());
             })
@@ -489,9 +519,7 @@ impl Continuation {
         // Get the CONTINUATION frame head
         let head = self.head();
 
-        self.header_block
-            .encode(&head, encoder, dst, |_| {
-            })
+        self.header_block.encode(&head, encoder, dst, |_| {})
     }
 }
 
@@ -504,7 +532,7 @@ impl Pseudo {
         let mut path = parts
             .path_and_query
             .map(|v| v.into())
-            .unwrap_or_else(|| Bytes::new());
+            .unwrap_or_else(Bytes::new);
 
         if path.is_empty() && method != Method::OPTIONS {
             path = Bytes::from_static(b"/");
@@ -560,13 +588,15 @@ fn to_string(src: Bytes) -> String<Bytes> {
 // ===== impl EncodingHeaderBlock =====
 
 impl EncodingHeaderBlock {
-    fn encode<F>(mut self,
-                 head: &Head,
-                 encoder: &mut hpack::Encoder,
-                 dst: &mut BytesMut,
-                 f: F)
-        -> Option<Continuation>
-    where F: FnOnce(&mut BytesMut),
+    fn encode<F>(
+        mut self,
+        head: &Head,
+        encoder: &mut hpack::Encoder,
+        dst: &mut BytesMut,
+        f: F,
+    ) -> Option<Continuation>
+    where
+        F: FnOnce(&mut BytesMut),
     {
         let head_pos = dst.len();
 
@@ -595,7 +625,9 @@ impl EncodingHeaderBlock {
         let payload_len = (dst.len() - payload_pos) as u64;
 
         // Write the frame length
-        BigEndian::write_uint(&mut dst[head_pos..head_pos + 3], payload_len, 3);
+        let payload_len_be = payload_len.to_be_bytes();
+        assert!(payload_len_be[0..5].iter().all(|b| *b == 0));
+        (&mut dst[head_pos..head_pos + 3]).copy_from_slice(&payload_len_be[5..]);
 
         if continuation.is_some() {
             // There will be continuation frames, so the `is_end_headers` flag
@@ -615,7 +647,7 @@ impl Iterator for Iter {
     type Item = hpack::Header<Option<HeaderName>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use hpack::Header::*;
+        use crate::hpack::Header::*;
 
         if let Some(ref mut pseudo) = self.pseudo {
             if let Some(method) = pseudo.method.take() {
@@ -641,12 +673,9 @@ impl Iterator for Iter {
 
         self.pseudo = None;
 
-        self.fields.next().map(|(name, value)| {
-            Field {
-                name: name,
-                value: value,
-            }
-        })
+        self.fields
+            .next()
+            .map(|(name, value)| Field { name, value })
     }
 }
 
@@ -701,11 +730,11 @@ impl From<HeadersFlag> for u8 {
 
 impl fmt::Debug for HeadersFlag {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("HeadersFlag")
-            .field("end_stream", &self.is_end_stream())
-            .field("end_headers", &self.is_end_headers())
-            .field("padded", &self.is_padded())
-            .field("priority", &self.is_priority())
+        util::debug_flags(fmt, self.0)
+            .flag_if(self.is_end_headers(), "END_HEADERS")
+            .flag_if(self.is_end_stream(), "END_STREAM")
+            .flag_if(self.is_padded(), "PADDED")
+            .flag_if(self.is_priority(), "PRIORITY")
             .finish()
     }
 }
@@ -749,18 +778,22 @@ impl From<PushPromiseFlag> for u8 {
 
 impl fmt::Debug for PushPromiseFlag {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("PushPromiseFlag")
-            .field("end_headers", &self.is_end_headers())
-            .field("padded", &self.is_padded())
+        util::debug_flags(fmt, self.0)
+            .flag_if(self.is_end_headers(), "END_HEADERS")
+            .flag_if(self.is_padded(), "PADDED")
             .finish()
     }
 }
 
 // ===== HeaderBlock =====
 
-
 impl HeaderBlock {
-    fn load(&mut self, src: &mut BytesMut, max_header_list_size: usize, decoder: &mut hpack::Decoder) -> Result<(), Error> {
+    fn load(
+        &mut self,
+        src: &mut BytesMut,
+        max_header_list_size: usize,
+        decoder: &mut hpack::Decoder,
+    ) -> Result<(), Error> {
         let mut reg = !self.fields.is_empty();
         let mut malformed = false;
         let mut headers_size = self.calculate_header_list_size();
@@ -768,22 +801,23 @@ impl HeaderBlock {
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
                 if reg {
-                    trace!("load_hpack; header malformed -- pseudo not at head of block");
+                    log::trace!("load_hpack; header malformed -- pseudo not at head of block");
                     malformed = true;
                 } else if self.pseudo.$field.is_some() {
-                    trace!("load_hpack; header malformed -- repeated pseudo");
+                    log::trace!("load_hpack; header malformed -- repeated pseudo");
                     malformed = true;
                 } else {
                     let __val = $val;
-                    headers_size += decoded_header_size(stringify!($ident).len() + 1, __val.as_str().len());
+                    headers_size +=
+                        decoded_header_size(stringify!($ident).len() + 1, __val.as_str().len());
                     if headers_size < max_header_list_size {
                         self.pseudo.$field = Some(__val);
                     } else if !self.is_over_size {
-                        trace!("load_hpack; header list size over max");
+                        log::trace!("load_hpack; header list size over max");
                         self.is_over_size = true;
                     }
                 }
-            }}
+            }};
         }
 
         let mut cursor = Cursor::new(src);
@@ -793,13 +827,10 @@ impl HeaderBlock {
         // the hpack state is connection level. In order to maintain correct
         // state for other streams, the hpack decoding process must complete.
         let res = decoder.decode(&mut cursor, |header| {
-            use hpack::Header::*;
+            use crate::hpack::Header::*;
 
             match header {
-                Field {
-                    name,
-                    value,
-                } => {
+                Field { name, value } => {
                     // Connection level header fields are not supported and must
                     // result in a protocol error.
 
@@ -809,10 +840,10 @@ impl HeaderBlock {
                         || name == "keep-alive"
                         || name == "proxy-connection"
                     {
-                        trace!("load_hpack; connection level header");
+                        log::trace!("load_hpack; connection level header");
                         malformed = true;
                     } else if name == header::TE && value != "trailers" {
-                        trace!("load_hpack; TE header not set to trailers; val={:?}", value);
+                        log::trace!("load_hpack; TE header not set to trailers; val={:?}", value);
                         malformed = true;
                     } else {
                         reg = true;
@@ -821,11 +852,11 @@ impl HeaderBlock {
                         if headers_size < max_header_list_size {
                             self.fields.append(name, value);
                         } else if !self.is_over_size {
-                            trace!("load_hpack; header list size over max");
+                            log::trace!("load_hpack; header list size over max");
                             self.is_over_size = true;
                         }
                     }
-                },
+                }
                 Authority(v) => set_pseudo!(authority, v),
                 Method(v) => set_pseudo!(method, v),
                 Scheme(v) => set_pseudo!(scheme, v),
@@ -835,13 +866,13 @@ impl HeaderBlock {
         });
 
         if let Err(e) = res {
-            trace!("hpack decoding error; err={:?}", e);
+            log::trace!("hpack decoding error; err={:?}", e);
             return Err(e.into());
         }
 
         if malformed {
-            trace!("malformed message");
-            return Err(Error::MalformedMessage.into());
+            log::trace!("malformed message");
+            return Err(Error::MalformedMessage);
         }
 
         Ok(())
@@ -866,23 +897,65 @@ impl HeaderBlock {
     /// > overhead of 32 octets for each header field.
     fn calculate_header_list_size(&self) -> usize {
         macro_rules! pseudo_size {
-            ($name:ident) => ({
+            ($name:ident) => {{
                 self.pseudo
                     .$name
                     .as_ref()
                     .map(|m| decoded_header_size(stringify!($name).len() + 1, m.as_str().len()))
                     .unwrap_or(0)
-            });
+            }};
         }
 
-        pseudo_size!(method) +
-        pseudo_size!(scheme) +
-        pseudo_size!(status) +
-        pseudo_size!(authority) +
-        pseudo_size!(path) +
-        self.fields.iter()
-            .map(|(name, value)| decoded_header_size(name.as_str().len(), value.len()))
-            .sum::<usize>()
+        pseudo_size!(method)
+            + pseudo_size!(scheme)
+            + pseudo_size!(status)
+            + pseudo_size!(authority)
+            + pseudo_size!(path)
+            + self
+                .fields
+                .iter()
+                .map(|(name, value)| decoded_header_size(name.as_str().len(), value.len()))
+                .sum::<usize>()
+    }
+
+    /// Iterate over all pseudos and headers to see if any individual pair
+    /// would be too large to encode.
+    pub(crate) fn has_too_big_field(&self) -> bool {
+        macro_rules! pseudo_size {
+            ($name:ident) => {{
+                self.pseudo
+                    .$name
+                    .as_ref()
+                    .map(|m| decoded_header_size(stringify!($name).len() + 1, m.as_str().len()))
+                    .unwrap_or(0)
+            }};
+        }
+
+        if pseudo_size!(method) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(scheme) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(authority) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        if pseudo_size!(path) > MAX_HEADER_LENGTH {
+            return true;
+        }
+
+        // skip :status, its never going to be too big
+
+        for (name, value) in &self.fields {
+            if decoded_header_size(name.as_str().len(), value.len()) > MAX_HEADER_LENGTH {
+                return true;
+            }
+        }
+
+        false
     }
 }
 

@@ -1,5 +1,5 @@
-use super::{huffman, Header};
 use super::table::{Index, Table};
+use super::{huffman, Header};
 
 use bytes::{BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};
@@ -47,27 +47,31 @@ impl Encoder {
     #[allow(dead_code)]
     pub fn update_max_size(&mut self, val: usize) {
         match self.size_update {
-            Some(SizeUpdate::One(old)) => if val > old {
-                if old > self.table.max_size() {
+            Some(SizeUpdate::One(old)) => {
+                if val > old {
+                    if old > self.table.max_size() {
+                        self.size_update = Some(SizeUpdate::One(val));
+                    } else {
+                        self.size_update = Some(SizeUpdate::Two(old, val));
+                    }
+                } else {
+                    self.size_update = Some(SizeUpdate::One(val));
+                }
+            }
+            Some(SizeUpdate::Two(min, _)) => {
+                if val < min {
                     self.size_update = Some(SizeUpdate::One(val));
                 } else {
-                    self.size_update = Some(SizeUpdate::Two(old, val));
+                    self.size_update = Some(SizeUpdate::Two(min, val));
                 }
-            } else {
-                self.size_update = Some(SizeUpdate::One(val));
-            },
-            Some(SizeUpdate::Two(min, _)) => if val < min {
-                self.size_update = Some(SizeUpdate::One(val));
-            } else {
-                self.size_update = Some(SizeUpdate::Two(min, val));
-            },
+            }
             None => {
                 if val != self.table.max_size() {
                     // Don't bother writing a frame if the value already matches
                     // the table's max size.
                     self.size_update = Some(SizeUpdate::One(val));
                 }
-            },
+            }
         }
     }
 
@@ -88,8 +92,10 @@ impl Encoder {
                 dst.truncate(len);
             }
 
-            unreachable!();
+            unreachable!("encode_size_updates errored");
         }
+
+        let mut last_index = None;
 
         if let Some(resume) = resume {
             let len = dst.len();
@@ -103,9 +109,8 @@ impl Encoder {
                 dst.truncate(len);
                 return Encode::Partial(resume);
             }
+            last_index = Some(resume.index);
         }
-
-        let mut last_index = None;
 
         for header in headers {
             let len = dst.len();
@@ -119,30 +124,32 @@ impl Encoder {
 
                     if res.is_err() {
                         dst.truncate(len);
-                        return Encode::Partial(EncodeState {
-                            index: index,
-                            value: None,
-                        });
+                        return Encode::Partial(EncodeState { index, value: None });
                     }
 
                     last_index = Some(index);
-                },
+                }
                 // The header does not have an associated name. This means that
                 // the name is the same as the previously yielded header. In
                 // which case, we skip table lookup and just use the same index
                 // as the previous entry.
                 Err(value) => {
-                    let res =
-                        self.encode_header_without_name(last_index.as_ref().unwrap(), &value, dst);
+                    let res = self.encode_header_without_name(
+                        last_index.as_ref().unwrap_or_else(|| {
+                            panic!("encoding header without name, but no previous index to use for name");
+                        }),
+                        &value,
+                        dst,
+                    );
 
                     if res.is_err() {
                         dst.truncate(len);
                         return Encode::Partial(EncodeState {
-                            index: last_index.unwrap(),
+                            index: last_index.unwrap(), // checked just above
                             value: Some(value),
                         });
                     }
-                },
+                }
             };
         }
 
@@ -154,14 +161,14 @@ impl Encoder {
             Some(SizeUpdate::One(val)) => {
                 self.table.resize(val);
                 encode_size_update(val, dst)?;
-            },
+            }
             Some(SizeUpdate::Two(min, max)) => {
                 self.table.resize(min);
                 self.table.resize(max);
                 encode_size_update(min, dst)?;
                 encode_size_update(max, dst)?;
-            },
-            None => {},
+            }
+            None => {}
         }
 
         Ok(())
@@ -171,12 +178,12 @@ impl Encoder {
         match *index {
             Index::Indexed(idx, _) => {
                 encode_int(idx, 7, 0x80, dst)?;
-            },
+            }
             Index::Name(idx, _) => {
                 let header = self.table.resolve(&index);
 
                 encode_not_indexed(idx, header.value_slice(), header.is_sensitive(), dst)?;
-            },
+            }
             Index::Inserted(_) => {
                 let header = self.table.resolve(&index);
 
@@ -186,19 +193,19 @@ impl Encoder {
                     return Err(EncoderError::BufferOverflow);
                 }
 
-                dst.put_u8(0b01000000);
+                dst.put_u8(0b0100_0000);
 
                 encode_str(header.name().as_slice(), dst)?;
                 encode_str(header.value_slice(), dst)?;
-            },
+            }
             Index::InsertedValue(idx, _) => {
                 let header = self.table.resolve(&index);
 
                 assert!(!header.is_sensitive());
 
-                encode_int(idx, 6, 0b01000000, dst)?;
+                encode_int(idx, 6, 0b0100_0000, dst)?;
                 encode_str(header.value_slice(), dst)?;
-            },
+            }
             Index::NotIndexed(_) => {
                 let header = self.table.resolve(&index);
 
@@ -208,7 +215,7 @@ impl Encoder {
                     header.is_sensitive(),
                     dst,
                 )?;
-            },
+            }
         }
 
         Ok(())
@@ -221,14 +228,14 @@ impl Encoder {
         dst: &mut BytesMut,
     ) -> Result<(), EncoderError> {
         match *last {
-            Index::Indexed(..) |
-            Index::Name(..) |
-            Index::Inserted(..) |
-            Index::InsertedValue(..) => {
+            Index::Indexed(..)
+            | Index::Name(..)
+            | Index::Inserted(..)
+            | Index::InsertedValue(..) => {
                 let idx = self.table.resolve_idx(last);
 
                 encode_not_indexed(idx, value.as_ref(), value.is_sensitive(), dst)?;
-            },
+            }
             Index::NotIndexed(_) => {
                 let last = self.table.resolve(last);
 
@@ -238,7 +245,7 @@ impl Encoder {
                     value.is_sensitive(),
                     dst,
                 )?;
-            },
+            }
         }
 
         Ok(())
@@ -252,7 +259,7 @@ impl Default for Encoder {
 }
 
 fn encode_size_update<B: BufMut>(val: usize, dst: &mut B) -> Result<(), EncoderError> {
-    encode_int(val, 5, 0b00100000, dst)
+    encode_int(val, 5, 0b0010_0000, dst)
 }
 
 fn encode_not_indexed(
@@ -299,7 +306,7 @@ fn encode_str(val: &[u8], dst: &mut BytesMut) -> Result<(), EncoderError> {
         return Err(EncoderError::BufferOverflow);
     }
 
-    if val.len() != 0 {
+    if !val.is_empty() {
         let idx = dst.len();
 
         // Push a placeholder byte for the length header
@@ -372,7 +379,7 @@ fn encode_int<B: BufMut>(
 
     value -= low;
 
-    if value > 0x0fffffff {
+    if value > 0x0fff_ffff {
         panic!("value out of range");
     }
 
@@ -384,10 +391,10 @@ fn encode_int<B: BufMut>(
             return Err(EncoderError::BufferOverflow);
         }
 
-        dst.put_u8(0b10000000 | value as u8);
+        dst.put_u8(0b1000_0000 | value as u8);
         rem -= 1;
 
-        value = value >> 7;
+        value >>= 7;
     }
 
     if rem == 0 {
@@ -407,7 +414,7 @@ fn encode_int_one_byte(value: usize, prefix_bits: usize) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hpack::Header;
+    use crate::hpack::Header;
     use http::*;
 
     #[test]
@@ -441,6 +448,23 @@ mod test {
 
         assert_eq!(1 << 7 | 62, res[0]);
         assert_eq!(1, res.len());
+    }
+
+    #[test]
+    fn test_encode_indexed_name_literal_value() {
+        let mut encoder = Encoder::default();
+        let res = encode(&mut encoder, vec![header("content-language", "foo")]);
+
+        assert_eq!(res[0], 0b01000000 | 27); // Indexed name
+        assert_eq!(res[1], 0x80 | 2); // header value w/ huffman coding
+
+        assert_eq!("foo", huff_decode(&res[2..4]));
+
+        // Same name, new value should still use incremental
+        let res = encode(&mut encoder, vec![header("content-language", "bar")]);
+        assert_eq!(res[0], 0b01000000 | 27); // Indexed name
+        assert_eq!(res[1], 0x80 | 3); // header value w/ huffman coding
+        assert_eq!("bar", huff_decode(&res[2..5]));
     }
 
     #[test]
@@ -537,7 +561,7 @@ mod test {
 
         let header = Header::Field {
             name: Some(name),
-            value: value,
+            value,
         };
 
         // Now, try to encode the sensitive header
@@ -557,7 +581,7 @@ mod test {
 
         let header = Header::Field {
             name: Some(name),
-            value: value,
+            value,
         };
 
         let mut encoder = Encoder::default();
@@ -581,7 +605,7 @@ mod test {
 
         let header = Header::Field {
             name: Some(name),
-            value: value,
+            value,
         };
         let res = encode(&mut encoder, vec![header]);
 
@@ -770,7 +794,7 @@ mod test {
     #[test]
     fn test_nameless_header_at_resume() {
         let mut encoder = Encoder::default();
-        let mut dst = BytesMut::from(Vec::with_capacity(11));
+        let mut dst = BytesMut::from(Vec::with_capacity(15));
 
         let mut input = vec![
             Header::Field {
@@ -781,7 +805,12 @@ mod test {
                 name: None,
                 value: HeaderValue::from_bytes(b"zomg").unwrap(),
             },
-        ].into_iter();
+            Header::Field {
+                name: None,
+                value: HeaderValue::from_bytes(b"sup").unwrap(),
+            },
+        ]
+        .into_iter();
 
         let resume = match encoder.encode(None, &mut input, &mut dst) {
             Encode::Partial(r) => r,
@@ -796,13 +825,15 @@ mod test {
         dst.clear();
 
         match encoder.encode(Some(resume), &mut input, &mut dst) {
-            Encode::Full => {},
-            _ => panic!(),
+            Encode::Full => {}
+            unexpected => panic!("resume returned unexpected: {:?}", unexpected),
         }
 
         // Next is not indexed
         assert_eq!(&[15, 47, 0x80 | 3], &dst[0..3]);
-        assert_eq!("zomg", huff_decode(&dst[3..]));
+        assert_eq!("zomg", huff_decode(&dst[3..6]));
+        assert_eq!(&[15, 47, 0x80 | 3], &dst[6..9]);
+        assert_eq!("sup", huff_decode(&dst[9..]));
     }
 
     #[test]
@@ -822,14 +853,12 @@ mod test {
     }
 
     fn header(name: &str, val: &str) -> Header<Option<HeaderName>> {
-        use http::header::{HeaderName, HeaderValue};
-
         let name = HeaderName::from_bytes(name.as_bytes()).unwrap();
         let value = HeaderValue::from_bytes(val.as_bytes()).unwrap();
 
         Header::Field {
             name: Some(name),
-            value: value,
+            value,
         }
     }
 

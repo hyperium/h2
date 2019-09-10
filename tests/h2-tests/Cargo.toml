@@ -3,9 +3,12 @@ name = "h2-tests"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 publish = false
+edition = "2018"
 
 [dependencies]
 
 [dev-dependencies]
 h2-support = { path = "../h2-support" }
 log = "0.4.1"
+futures-preview = "=0.3.0-alpha.18"
+tokio = "=0.2.0-alpha.4"

@@ -3,12 +3,13 @@ name = "h2-fuzz"
 version = "0.0.0"
 publish = false
 license = "MIT"
+edition = "2018"
 
 [dependencies]
 h2 = { path = "../.." }
 
 env_logger = { version = "0.5.3", default-features = false }
-futures = "0.1.21"
+futures-preview = "=0.3.0-alpha.18"
 honggfuzz = "0.5"
 http = "0.1.3"
-tokio-io = "0.1.4"
+tokio = "=0.2.0-alpha.4"

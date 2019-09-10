@@ -15,15 +15,19 @@ addons:
 matrix:
   include:
   - rust: nightly
-  - rust: stable
+#  - rust: stable
     before_deploy: cargo doc --no-deps
-  allow_failures:
-    - rust: nightly
+#  allow_failures:
+#    - rust: nightly
 
 before_script:
+  - rustup component add rustfmt-preview
   - cargo clean
 
 script:
+  # Check formatting
+  - cargo fmt --all -- --check
+
   # Build without unstable flag
   - cargo build
 
@@ -39,8 +43,8 @@ script:
   # Run integration tests
   - cargo test -p h2-tests
 
-  # Run h2spec on stable
-  - if [ "${TRAVIS_RUST_VERSION}" = "stable" ]; then ./ci/h2spec.sh; fi
+  # Run h2spec on nightly for the time being. TODO: Change it to stable after Rust 1.38 release
+  - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then ./ci/h2spec.sh; fi
 
   # Check minimal versions
   - if [ "${TRAVIS_RUST_VERSION}" = "nightly" ]; then cargo clean; cargo check -Z minimal-versions; fi
@@ -53,7 +57,7 @@ deploy:
   local_dir: target/doc
   on:
     branch: master
-    repo: carllerche/h2
+    repo: hyperium/h2
     rust: stable
 
 env:

@@ -1,14 +1,13 @@
-use codec::{RecvError, UserError};
-use frame::{self, Reason};
 use super::{
-    store, Buffer, Codec, Config, Counts, Frame, Prioritize,
-    Prioritized, Store, Stream, StreamId, StreamIdOverflow, WindowSize,
+    store, Buffer, Codec, Config, Counts, Frame, Prioritize, Prioritized, Store, Stream, StreamId,
+    StreamIdOverflow, WindowSize,
 };
+use crate::codec::{RecvError, UserError};
+use crate::frame::{self, Reason};
 
 use bytes::Buf;
 use http;
-use futures::{Async, Poll};
-use futures::task::Task;
+use std::task::{Context, Poll, Waker};
 use tokio_io::AsyncWrite;
 
 use std::io;
@@ -60,9 +59,7 @@ impl Send {
         Ok(stream_id)
     }
 
-    fn check_headers(
-        fields: &http::HeaderMap
-    ) -> Result<(), UserError> {
+    fn check_headers(fields: &http::HeaderMap) -> Result<(), UserError> {
         // 8.1.2.2. Connection-Specific Header Fields
         if fields.contains_key(http::header::CONNECTION)
             || fields.contains_key(http::header::TRANSFER_ENCODING)
@@ -70,11 +67,11 @@ impl Send {
             || fields.contains_key("keep-alive")
             || fields.contains_key("proxy-connection")
         {
-            debug!("illegal connection-specific headers found");
+            log::debug!("illegal connection-specific headers found");
             return Err(UserError::MalformedHeaders);
         } else if let Some(te) = fields.get(http::header::TE) {
             if te != "trailers" {
-                debug!("illegal connection-specific headers found");
+                log::debug!("illegal connection-specific headers found");
                 return Err(UserError::MalformedHeaders);
             }
         }
@@ -86,9 +83,9 @@ impl Send {
         frame: frame::PushPromise,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
-        trace!(
+        log::trace!(
             "send_push_promise; frame={:?}; init_window={:?}",
             frame,
             self.init_window_sz
@@ -97,7 +94,8 @@ impl Send {
         Self::check_headers(frame.fields())?;
 
         // Queue the frame for sending
-        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
 
         Ok(())
     }
@@ -108,15 +106,19 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
-        trace!(
+        log::trace!(
             "send_headers; frame={:?}; init_window={:?}",
             frame,
             self.init_window_sz
         );
 
         Self::check_headers(frame.fields())?;
+
+        if frame.has_too_big_field() {
+            return Err(UserError::HeaderTooBig);
+        }
 
         let end_stream = frame.is_end_stream();
 
@@ -136,37 +138,32 @@ impl Send {
         }
 
         // Queue the frame for sending
-        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
 
         Ok(())
     }
 
     /// Send an explicit RST_STREAM frame
-    ///
-    /// # Arguments
-    /// + `reason`: the error code for the RST_STREAM frame
-    /// + `clear_queue`: if true, all pending outbound frames will be cleared,
-    ///    if false, the RST_STREAM frame will be appended to the end of the
-    ///    send queue.
     pub fn send_reset<B>(
         &mut self,
         reason: Reason,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
 
-        trace!(
+        log::trace!(
             "send_reset(..., reason={:?}, stream={:?}, ..., \
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
-            ",
-            stream.id,
+             ",
             reason,
+            stream.id,
             is_reset,
             is_closed,
             is_empty,
@@ -175,7 +172,7 @@ impl Send {
 
         if is_reset {
             // Don't double reset
-            trace!(
+            log::trace!(
                 " -> not sending RST_STREAM ({:?} is already reset)",
                 stream.id
             );
@@ -188,9 +185,9 @@ impl Send {
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
         if is_closed && is_empty {
-            trace!(
+            log::trace!(
                 " -> not sending explicit RST_STREAM ({:?} was closed \
-                     and send queue was flushed)",
+                 and send queue was flushed)",
                 stream.id
             );
             return;
@@ -204,8 +201,9 @@ impl Send {
 
         let frame = frame::Reset::new(stream.id, reason);
 
-        trace!("send_reset -- queueing; frame={:?}", frame);
-        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+        log::trace!("send_reset -- queueing; frame={:?}", frame);
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
         self.prioritize.reclaim_all_capacity(stream, counts);
     }
 
@@ -214,7 +212,7 @@ impl Send {
         stream: &mut store::Ptr,
         reason: Reason,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) {
         if stream.state.is_closed() {
             // Stream is already closed, nothing more to do
@@ -233,11 +231,13 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError>
-        where B: Buf,
+    where
+        B: Buf,
     {
-        self.prioritize.send_data(frame, buffer, stream, counts, task)
+        self.prioritize
+            .send_data(frame, buffer, stream, counts, task)
     }
 
     pub fn send_trailers<B>(
@@ -246,17 +246,22 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
         // TODO: Should this logic be moved into state.rs?
         if !stream.state.is_send_streaming() {
             return Err(UserError::UnexpectedFrameType);
         }
 
+        if frame.has_too_big_field() {
+            return Err(UserError::HeaderTooBig);
+        }
+
         stream.state.send_close();
 
-        trace!("send_trailers -- queuing; frame={:?}", frame);
-        self.prioritize.queue_frame(frame.into(), buffer, stream, task);
+        log::trace!("send_trailers -- queuing; frame={:?}", frame);
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
 
         // Release any excess capacity
         self.prioritize.reserve_capacity(0, stream, counts);
@@ -266,15 +271,18 @@ impl Send {
 
     pub fn poll_complete<T, B>(
         &mut self,
+        cx: &mut Context,
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
-    where T: AsyncWrite,
-          B: Buf,
+    ) -> Poll<io::Result<()>>
+    where
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
-        self.prioritize.poll_complete(buffer, store, counts, dst)
+        self.prioritize
+            .poll_complete(cx, buffer, store, counts, dst)
     }
 
     /// Request capacity to send data
@@ -282,27 +290,28 @@ impl Send {
         &mut self,
         capacity: WindowSize,
         stream: &mut store::Ptr,
-        counts: &mut Counts)
-    {
+        counts: &mut Counts,
+    ) {
         self.prioritize.reserve_capacity(capacity, stream, counts)
     }
 
     pub fn poll_capacity(
         &mut self,
+        cx: &Context,
         stream: &mut store::Ptr,
-    ) -> Poll<Option<WindowSize>, UserError> {
+    ) -> Poll<Option<Result<WindowSize, UserError>>> {
         if !stream.state.is_send_streaming() {
-            return Ok(Async::Ready(None));
+            return Poll::Ready(None);
         }
 
         if !stream.send_capacity_inc {
-            stream.wait_send();
-            return Ok(Async::NotReady);
+            stream.wait_send(cx);
+            return Poll::Pending;
         }
 
         stream.send_capacity_inc = false;
 
-        Ok(Async::Ready(Some(self.capacity(stream))))
+        Poll::Ready(Some(Ok(self.capacity(stream))))
     }
 
     /// Current available stream send capacity
@@ -319,15 +328,16 @@ impl Send {
 
     pub fn poll_reset(
         &self,
+        cx: &Context,
         stream: &mut Stream,
         mode: PollReset,
-    ) -> Poll<Reason, ::Error> {
+    ) -> Poll<Result<Reason, crate::Error>> {
         match stream.state.ensure_reason(mode)? {
-            Some(reason) => Ok(reason.into()),
+            Some(reason) => Poll::Ready(Ok(reason)),
             None => {
-                stream.wait_send();
-                Ok(Async::NotReady)
-            },
+                stream.wait_send(cx);
+                Poll::Pending
+            }
         }
     }
 
@@ -347,14 +357,12 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
-            debug!("recv_stream_window_update !!; err={:?}", e);
+            log::debug!("recv_stream_window_update !!; err={:?}", e);
 
-            self.send_reset(
-                Reason::FLOW_CONTROL_ERROR.into(),
-                buffer, stream, counts, task);
+            self.send_reset(Reason::FLOW_CONTROL_ERROR, buffer, stream, counts, task);
 
             return Err(e);
         }
@@ -379,7 +387,7 @@ impl Send {
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
         counts: &mut Counts,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), RecvError> {
         // Applies an update to the remote endpoint's initial window size.
         //
@@ -405,7 +413,7 @@ impl Send {
             if val < old_val {
                 // We must decrease the (remote) window on every open stream.
                 let dec = old_val - val;
-                trace!("decrementing all windows; dec={}", dec);
+                log::trace!("decrementing all windows; dec={}", dec);
 
                 let mut total_reclaimed = 0;
                 store.for_each(|mut stream| {
@@ -431,7 +439,7 @@ impl Send {
                         0
                     };
 
-                    trace!(
+                    log::trace!(
                         "decremented stream window; id={:?}; decr={}; reclaimed={}; flow={:?}",
                         stream.id,
                         dec,
@@ -479,6 +487,17 @@ impl Send {
     }
 
     pub fn ensure_next_stream_id(&self) -> Result<StreamId, UserError> {
-        self.next_stream_id.map_err(|_| UserError::OverflowedStreamId)
+        self.next_stream_id
+            .map_err(|_| UserError::OverflowedStreamId)
+    }
+
+    pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        if let Ok(next_id) = self.next_stream_id {
+            // Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated(),);
+            id < next_id
+        } else {
+            true
+        }
     }
 }

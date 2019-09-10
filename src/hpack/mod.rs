@@ -1,6 +1,6 @@
-mod encoder;
 mod decoder;
-mod header;
+mod encoder;
+pub(crate) mod header;
 mod huffman;
 mod table;
 

@@ -1,6 +1,6 @@
 use super::StreamId;
 
-use bytes::{BufMut};
+use bytes::BufMut;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Head {
@@ -30,9 +30,9 @@ pub enum Kind {
 impl Head {
     pub fn new(kind: Kind, flag: u8, stream_id: StreamId) -> Head {
         Head {
-            kind: kind,
-            flag: flag,
-            stream_id: stream_id,
+            kind,
+            flag,
+            stream_id,
         }
     }
 

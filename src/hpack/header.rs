@@ -1,8 +1,8 @@
 use super::{DecoderError, NeedMore};
 
 use bytes::Bytes;
-use http::{Method, StatusCode};
 use http::header::{HeaderName, HeaderValue};
+use http::{Method, StatusCode};
 use string::{String, TryFrom};
 
 /// HTTP/2.0 Header
@@ -41,14 +41,8 @@ impl Header<Option<HeaderName>> {
             Field {
                 name: Some(n),
                 value,
-            } => Field {
-                name: n,
-                value: value,
-            },
-            Field {
-                name: None,
-                value,
-            } => return Err(value),
+            } => Field { name: n, value },
+            Field { name: None, value } => return Err(value),
             Authority(v) => Authority(v),
             Method(v) => Method(v),
             Scheme(v) => Scheme(v),
@@ -60,7 +54,7 @@ impl Header<Option<HeaderName>> {
 
 impl Header {
     pub fn new(name: Bytes, value: Bytes) -> Result<Header, DecoderError> {
-        if name.len() == 0 {
+        if name.is_empty() {
             return Err(DecoderError::NeedMore(NeedMore::UnexpectedEndOfStream));
         }
         if name[0] == b':' {
@@ -68,23 +62,23 @@ impl Header {
                 b"authority" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Authority(value))
-                },
+                }
                 b"method" => {
                     let method = Method::from_bytes(&value)?;
                     Ok(Header::Method(method))
-                },
+                }
                 b"scheme" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Scheme(value))
-                },
+                }
                 b"path" => {
                     let value = String::try_from(value)?;
                     Ok(Header::Path(value))
-                },
+                }
                 b"status" => {
                     let status = StatusCode::from_bytes(&value)?;
                     Ok(Header::Status(status))
-                },
+                }
                 _ => Err(DecoderError::InvalidPseudoheader),
             }
         } else {
@@ -92,10 +86,7 @@ impl Header {
             let name = HeaderName::from_lowercase(&name)?;
             let value = HeaderValue::from_bytes(&value)?;
 
-            Ok(Header::Field {
-                name: name,
-                value: value,
-            })
+            Ok(Header::Field { name, value })
         }
     }
 
@@ -116,9 +107,7 @@ impl Header {
     /// Returns the header name
     pub fn name(&self) -> Name {
         match *self {
-            Header::Field {
-                ref name, ..
-            } => Name::Field(name),
+            Header::Field { ref name, .. } => Name::Field(name),
             Header::Authority(..) => Name::Authority,
             Header::Method(..) => Name::Method,
             Header::Scheme(..) => Name::Scheme,
@@ -129,9 +118,7 @@ impl Header {
 
     pub fn value_slice(&self) -> &[u8] {
         match *self {
-            Header::Field {
-                ref value, ..
-            } => value.as_ref(),
+            Header::Field { ref value, .. } => value.as_ref(),
             Header::Authority(ref v) => v.as_ref(),
             Header::Method(ref v) => v.as_ref().as_ref(),
             Header::Scheme(ref v) => v.as_ref(),
@@ -142,17 +129,13 @@ impl Header {
 
     pub fn value_eq(&self, other: &Header) -> bool {
         match *self {
-            Header::Field {
-                ref value, ..
-            } => {
+            Header::Field { ref value, .. } => {
                 let a = value;
                 match *other {
-                    Header::Field {
-                        ref value, ..
-                    } => a == value,
+                    Header::Field { ref value, .. } => a == value,
                     _ => false,
                 }
-            },
+            }
             Header::Authority(ref a) => match *other {
                 Header::Authority(ref b) => a == b,
                 _ => false,
@@ -178,9 +161,7 @@ impl Header {
 
     pub fn is_sensitive(&self) -> bool {
         match *self {
-            Header::Field {
-                ref value, ..
-            } => value.is_sensitive(),
+            Header::Field { ref value, .. } => value.is_sensitive(),
             // TODO: Technically these other header values can be sensitive too.
             _ => false,
         }
@@ -190,18 +171,16 @@ impl Header {
         use http::header;
 
         match *self {
-            Header::Field {
-                ref name, ..
-            } => match *name {
-                header::AGE |
-                header::AUTHORIZATION |
-                header::CONTENT_LENGTH |
-                header::ETAG |
-                header::IF_MODIFIED_SINCE |
-                header::IF_NONE_MATCH |
-                header::LOCATION |
-                header::COOKIE |
-                header::SET_COOKIE => true,
+            Header::Field { ref name, .. } => match *name {
+                header::AGE
+                | header::AUTHORIZATION
+                | header::CONTENT_LENGTH
+                | header::ETAG
+                | header::IF_MODIFIED_SINCE
+                | header::IF_NONE_MATCH
+                | header::LOCATION
+                | header::COOKIE
+                | header::SET_COOKIE => true,
                 _ => false,
             },
             Header::Path(..) => true,
@@ -214,10 +193,7 @@ impl Header {
 impl From<Header> for Header<Option<HeaderName>> {
     fn from(src: Header) -> Self {
         match src {
-            Header::Field {
-                name,
-                value,
-            } => Header::Field {
+            Header::Field { name, value } => Header::Field {
                 name: Some(name),
                 value,
             },
@@ -247,7 +223,7 @@ impl<'a> Name<'a> {
                     // TODO: better error handling
                     Err(_) => Err(DecoderError::InvalidStatusCode),
                 }
-            },
+            }
         }
     }
 

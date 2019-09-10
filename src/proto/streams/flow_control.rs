@@ -1,5 +1,5 @@
-use frame::Reason;
-use proto::{WindowSize, MAX_WINDOW_SIZE};
+use crate::frame::Reason;
+use crate::proto::{WindowSize, MAX_WINDOW_SIZE};
 
 use std::fmt;
 
@@ -120,7 +120,7 @@ impl FlowControl {
             return Err(Reason::FLOW_CONTROL_ERROR);
         }
 
-        trace!(
+        log::trace!(
             "inc_window; sz={}; old={}; new={}",
             sz,
             self.window_size,
@@ -136,7 +136,7 @@ impl FlowControl {
     /// This is called after receiving a SETTINGS frame with a lower
     /// INITIAL_WINDOW_SIZE value.
     pub fn dec_window(&mut self, sz: WindowSize) {
-        trace!(
+        log::trace!(
             "dec_window; sz={}; window={}, available={}",
             sz,
             self.window_size,
@@ -149,7 +149,7 @@ impl FlowControl {
     /// Decrements the window reflecting data has actually been sent. The caller
     /// must ensure that the window has capacity.
     pub fn send_data(&mut self, sz: WindowSize) {
-        trace!(
+        log::trace!(
             "send_data; sz={}; window={}; available={}",
             sz,
             self.window_size,
@@ -200,7 +200,6 @@ impl PartialEq<WindowSize> for Window {
     }
 }
 
-
 impl PartialEq<Window> for WindowSize {
     fn eq(&self, other: &Window) -> bool {
         other.eq(self)
@@ -226,7 +225,6 @@ impl PartialOrd<Window> for WindowSize {
         }
     }
 }
-
 
 impl ::std::ops::SubAssign<WindowSize> for Window {
     fn sub_assign(&mut self, other: WindowSize) {

@@ -1,11 +1,13 @@
 use super::*;
-use {frame, proto};
-use codec::{RecvError, UserError};
-use frame::{Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use crate::codec::{RecvError, UserError};
+use crate::frame::{PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use crate::{frame, proto};
+use std::task::Context;
 
-use http::{HeaderMap, Response, Request};
+use http::{HeaderMap, Request, Response};
 
 use std::io;
+use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -95,7 +97,7 @@ impl Recv {
 
         Recv {
             init_window_sz: config.local_init_window_sz,
-            flow: flow,
+            flow,
             in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),
             pending_window_updates: store::Queue::new(),
@@ -135,7 +137,7 @@ impl Recv {
 
         let next_id = self.next_stream_id()?;
         if id < next_id {
-            trace!("id ({:?}) < next_id ({:?}), PROTOCOL_ERROR", id, next_id);
+            proto_err!(conn: "id ({:?}) < next_id ({:?})", id, next_id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -158,7 +160,7 @@ impl Recv {
         stream: &mut store::Ptr,
         counts: &mut Counts,
     ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
-        trace!("opening stream; init_window={}", self.init_window_sz);
+        log::trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(frame.is_end_stream())?;
 
         if is_initial {
@@ -178,12 +180,14 @@ impl Recv {
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(_) => {
+                    Err(()) => {
+                        proto_err!(stream: "could not parse content-length; stream={:?}", stream.id);
                         return Err(RecvError::Stream {
                             id: stream.id,
                             reason: Reason::PROTOCOL_ERROR,
-                        }.into())
-                    },
+                        }
+                        .into());
+                    }
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
@@ -202,12 +206,16 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            trace!("recv_headers; frame for {:?} is over size", stream.id);
+            log::debug!(
+                "stream error REQUEST_HEADER_FIELDS_TOO_LARGE -- \
+                 recv_headers: frame is over size; stream={:?}",
+                stream.id
+            );
             return if counts.peer().is_server() && is_initial {
                 let mut res = frame::Headers::new(
                     stream.id,
                     frame::Pseudo::response(::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
-                    HeaderMap::new()
+                    HeaderMap::new(),
                 );
                 res.set_end_stream();
                 Err(RecvHeaderBlockError::Oversize(Some(res)))
@@ -218,7 +226,9 @@ impl Recv {
 
         let stream_id = frame.stream_id();
         let (pseudo, fields) = frame.into_parts();
-        let message = counts.peer().convert_poll_message(pseudo, fields, stream_id)?;
+        let message = counts
+            .peer()
+            .convert_poll_message(pseudo, fields, stream_id)?;
 
         // Push the frame onto the stream's recv buffer
         stream
@@ -238,9 +248,7 @@ impl Recv {
     /// Called by the server to get the request
     ///
     /// TODO: Should this fn return `Result`?
-    pub fn take_request(&mut self, stream: &mut store::Ptr)
-        -> Request<()>
-    {
+    pub fn take_request(&mut self, stream: &mut store::Ptr) -> Request<()> {
         use super::peer::PollMessage::*;
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
@@ -251,31 +259,32 @@ impl Recv {
 
     /// Called by the client to get pushed response
     pub fn poll_pushed(
-        &mut self, stream: &mut store::Ptr
-    ) -> Poll<Option<(Request<()>, store::Key)>, proto::Error> {
+        &mut self,
+        cx: &Context,
+        stream: &mut store::Ptr,
+    ) -> Poll<Option<Result<(Request<()>, store::Key), proto::Error>>> {
         use super::peer::PollMessage::*;
 
         let mut ppp = stream.pending_push_promises.take();
-        let pushed = ppp.pop(stream.store_mut()).map(
-            |mut pushed| match pushed.pending_recv.pop_front(&mut self.buffer) {
-                Some(Event::Headers(Server(headers))) =>
-                    Async::Ready(Some((headers, pushed.key()))),
+        let pushed = ppp.pop(stream.store_mut()).map(|mut pushed| {
+            match pushed.pending_recv.pop_front(&mut self.buffer) {
+                Some(Event::Headers(Server(headers))) => (headers, pushed.key()),
                 // When frames are pushed into the queue, it is verified that
                 // the first frame is a HEADERS frame.
-                _ => panic!("Headers not set on pushed stream")
+                _ => panic!("Headers not set on pushed stream"),
             }
-        );
+        });
         stream.pending_push_promises = ppp;
         if let Some(p) = pushed {
-            Ok(p)
+            Poll::Ready(Some(Ok(p)))
         } else {
             let is_open = stream.state.ensure_recv_open()?;
 
             if is_open {
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
+                stream.recv_task = Some(cx.waker().clone());
+                Poll::Pending
             } else {
-                Ok(Async::Ready(None))
+                Poll::Ready(None)
             }
         }
     }
@@ -283,21 +292,22 @@ impl Recv {
     /// Called by the client to get the response
     pub fn poll_response(
         &mut self,
+        cx: &Context,
         stream: &mut store::Ptr,
-    ) -> Poll<Response<()>, proto::Error> {
+    ) -> Poll<Result<Response<()>, proto::Error>> {
         use super::peer::PollMessage::*;
 
         // If the buffer is not empty, then the first frame must be a HEADERS
         // frame or the user violated the contract.
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Client(response))) => Ok(response.into()),
+            Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response)),
             Some(_) => panic!("poll_response called after response returned"),
             None => {
                 stream.state.ensure_recv_open()?;
 
-                stream.recv_task = Some(task::current());
-                Ok(Async::NotReady)
-            },
+                stream.recv_task = Some(cx.waker().clone());
+                Poll::Pending
+            }
         }
     }
 
@@ -311,6 +321,7 @@ impl Recv {
         stream.state.recv_close()?;
 
         if stream.ensure_content_length_zero().is_err() {
+            proto_err!(stream: "recv_trailers: content-length is not zero; stream={:?};",  stream.id);
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -329,12 +340,12 @@ impl Recv {
     }
 
     /// Releases capacity of the connection
-    pub fn release_connection_capacity(
-        &mut self,
-        capacity: WindowSize,
-        task: &mut Option<Task>,
-    ) {
-        trace!("release_connection_capacity; size={}", capacity);
+    pub fn release_connection_capacity(&mut self, capacity: WindowSize, task: &mut Option<Waker>) {
+        log::trace!(
+            "release_connection_capacity; size={}, connection in_flight_data={}",
+            capacity,
+            self.in_flight_data,
+        );
 
         // Decrement in-flight data
         self.in_flight_data -= capacity;
@@ -344,7 +355,7 @@ impl Recv {
 
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
     }
@@ -354,9 +365,9 @@ impl Recv {
         &mut self,
         capacity: WindowSize,
         stream: &mut store::Ptr,
-        task: &mut Option<Task>,
+        task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
-        trace!("release_capacity; size={}", capacity);
+        log::trace!("release_capacity; size={}", capacity);
 
         if capacity > stream.in_flight_recv_data {
             return Err(UserError::ReleaseCapacityTooBig);
@@ -370,17 +381,36 @@ impl Recv {
         // Assign capacity to stream
         stream.recv_flow.assign_capacity(capacity);
 
-
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
             self.pending_window_updates.push(stream);
 
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
 
         Ok(())
+    }
+
+    /// Release any unclaimed capacity for a closed stream.
+    pub fn release_closed_capacity(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
+        debug_assert_eq!(stream.ref_count, 0);
+
+        if stream.in_flight_recv_data == 0 {
+            return;
+        }
+
+        log::trace!(
+            "auto-release closed stream ({:?}) capacity: {:?}",
+            stream.id,
+            stream.in_flight_recv_data,
+        );
+
+        self.release_connection_capacity(stream.in_flight_recv_data, task);
+        stream.in_flight_recv_data = 0;
+
+        self.clear_recv_buffer(stream);
     }
 
     /// Set the "target" connection window size.
@@ -395,8 +425,8 @@ impl Recv {
     ///
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.
-    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Task>) {
-        trace!(
+    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Waker>) {
+        log::trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
             self.flow.available(),
@@ -420,21 +450,9 @@ impl Recv {
         // a connection WINDOW_UPDATE.
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
-                task.notify();
+                task.wake();
             }
         }
-    }
-
-    pub fn body_is_empty(&self, stream: &store::Ptr) -> bool {
-        if !stream.state.is_recv_closed() {
-            return false;
-        }
-
-        stream
-            .pending_recv
-            .peek_front(&self.buffer)
-            .map(|event| !event.is_data())
-            .unwrap_or(true)
     }
 
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
@@ -442,9 +460,7 @@ impl Recv {
             return false;
         }
 
-        stream
-            .pending_recv
-            .is_empty()
+        stream.pending_recv.is_empty()
     }
 
     pub fn recv_data(
@@ -468,37 +484,28 @@ impl Recv {
 
             // Receiving a DATA frame when not expecting one is a protocol
             // error.
+            proto_err!(conn: "unexpected DATA frame; stream={:?}", stream.id);
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
-        trace!(
+        log::trace!(
             "recv_data; size={}; connection={}; stream={}",
             sz,
             self.flow.window_size(),
             stream.recv_flow.window_size()
         );
 
+        if is_ignoring_frame {
+            log::trace!(
+                "recv_data; frame ignored on locally reset {:?} for some time",
+                stream.id,
+            );
+            return self.ignore_data(sz);
+        }
+
         // Ensure that there is enough capacity on the connection before acting
         // on the stream.
         self.consume_connection_window(sz)?;
-
-        if is_ignoring_frame {
-            trace!(
-                "recv_data frame ignored on locally reset {:?} for some time",
-                stream.id,
-            );
-            // we just checked for enough connection window capacity, and
-            // consumed it. Since we are ignoring this frame "for some time",
-            // we aren't returning the frame to the user. That means they
-            // have no way to release the capacity back to the connection. So
-            // we have to release it automatically.
-            //
-            // This call doesn't send a WINDOW_UPDATE immediately, just marks
-            // the capacity as available to be reclaimed. When the available
-            // capacity meets a threshold, a WINDOW_UPDATE is then sent.
-            self.release_connection_capacity(sz, &mut None);
-            return Ok(());
-        }
 
         if stream.recv_flow.window_size() < sz {
             // http://httpwg.org/specs/rfc7540.html#WINDOW_UPDATE
@@ -515,14 +522,12 @@ impl Recv {
             });
         }
 
-        // Update stream level flow control
-        stream.recv_flow.send_data(sz);
-
-        // Track the data as in-flight
-        stream.in_flight_recv_data += sz;
-
         if stream.dec_content_length(frame.payload().len()).is_err() {
-            trace!("content-length overflow");
+            proto_err!(stream:
+                "recv_data: content-length overflow; stream={:?}; len={:?}",
+                stream.id,
+                frame.payload().len(),
+            );
             return Err(RecvError::Stream {
                 id: stream.id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -531,7 +536,11 @@ impl Recv {
 
         if frame.is_end_stream() {
             if stream.ensure_content_length_zero().is_err() {
-                trace!("content-length underflow");
+                proto_err!(stream:
+                    "recv_data: content-length underflow; stream={:?}; len={:?}",
+                    stream.id,
+                    frame.payload().len(),
+                );
                 return Err(RecvError::Stream {
                     id: stream.id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -539,10 +548,16 @@ impl Recv {
             }
 
             if stream.state.recv_close().is_err() {
-                trace!("failed to transition to closed state");
+                proto_err!(conn: "recv_data: failed to transition to closed state; stream={:?}", stream.id);
                 return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
             }
         }
+
+        // Update stream level flow control
+        stream.recv_flow.send_data(sz);
+
+        // Track the data as in-flight
+        stream.in_flight_recv_data += sz;
 
         let event = Event::Data(frame.into_payload());
 
@@ -553,8 +568,29 @@ impl Recv {
         Ok(())
     }
 
+    pub fn ignore_data(&mut self, sz: WindowSize) -> Result<(), RecvError> {
+        // Ensure that there is enough capacity on the connection...
+        self.consume_connection_window(sz)?;
+
+        // Since we are ignoring this frame,
+        // we aren't returning the frame to the user. That means they
+        // have no way to release the capacity back to the connection. So
+        // we have to release it automatically.
+        //
+        // This call doesn't send a WINDOW_UPDATE immediately, just marks
+        // the capacity as available to be reclaimed. When the available
+        // capacity meets a threshold, a WINDOW_UPDATE is then sent.
+        self.release_connection_capacity(sz, &mut None);
+        Ok(())
+    }
+
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), RecvError> {
         if self.flow.window_size() < sz {
+            log::debug!(
+                "connection error FLOW_CONTROL_ERROR -- window_size ({:?}) < sz ({:?});",
+                self.flow.window_size(),
+                sz,
+            );
             return Err(RecvError::Connection(Reason::FLOW_CONTROL_ERROR));
         }
 
@@ -584,7 +620,11 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            trace!("recv_push_promise; frame for {:?} is over size", frame.promised_id());
+            log::debug!(
+                "stream error REFUSED_STREAM -- recv_push_promise: \
+                 headers frame is over size; promised_id={:?};",
+                frame.promised_id(),
+            );
             return Err(RecvError::Stream {
                 id: frame.promised_id(),
                 reason: Reason::REFUSED_STREAM,
@@ -593,9 +633,24 @@ impl Recv {
 
         let promised_id = frame.promised_id();
         let (pseudo, fields) = frame.into_parts();
-        let req = ::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
+        let req = crate::server::Peer::convert_poll_message(pseudo, fields, promised_id)?;
 
-        if !frame::PushPromise::validate_request(&req) {
+        if let Err(e) = frame::PushPromise::validate_request(&req) {
+            use PushPromiseHeaderError::*;
+            match e {
+                NotSafeAndCacheable => proto_err!(
+                    stream:
+                    "recv_push_promise: method {} is not safe and cacheable; promised_id={:?}",
+                    req.method(),
+                    promised_id,
+                ),
+                InvalidContentLength(e) => proto_err!(
+                    stream:
+                    "recv_push_promise; promised request has content-length {:?}; promised_id={:?}",
+                    e,
+                    promised_id,
+                ),
+            }
             return Err(RecvError::Stream {
                 id: promised_id,
                 reason: Reason::PROTOCOL_ERROR,
@@ -603,7 +658,9 @@ impl Recv {
         }
 
         use super::peer::PollMessage::*;
-        stream.pending_recv.push_back(&mut self.buffer, Event::Headers(Server(req)));
+        stream
+            .pending_recv
+            .push_back(&mut self.buffer, Event::Headers(Server(req)));
         stream.notify_recv();
         Ok(())
     }
@@ -612,7 +669,10 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                trace!("stream ID implicitly closed");
+                log::debug!(
+                    "stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}",
+                    id
+                );
                 return Err(Reason::PROTOCOL_ERROR);
             }
         }
@@ -624,7 +684,9 @@ impl Recv {
     /// Handle remote sending an explicit RST_STREAM.
     pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
         // Notify the stream
-        stream.state.recv_reset(frame.reason(), stream.is_pending_send);
+        stream
+            .state
+            .recv_reset(frame.reason(), stream.is_pending_send);
 
         stream.notify_send();
         stream.notify_recv();
@@ -651,6 +713,12 @@ impl Recv {
         stream.notify_recv();
     }
 
+    pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
+        while let Some(_) = stream.pending_recv.pop_front(&mut self.buffer) {
+            // drop it
+        }
+    }
+
     /// Get the max ID of streams we can receive.
     ///
     /// This gets lowered if we send a GOAWAY frame.
@@ -658,7 +726,7 @@ impl Recv {
         self.max_stream_id
     }
 
-    fn next_stream_id(&self) -> Result<StreamId, RecvError> {
+    pub fn next_stream_id(&self) -> Result<StreamId, RecvError> {
         if let Ok(id) = self.next_stream_id {
             Ok(id)
         } else {
@@ -666,12 +734,20 @@ impl Recv {
         }
     }
 
+    pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        if let Ok(next_id) = self.next_stream_id {
+            // Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated(),);
+            id < next_id
+        } else {
+            true
+        }
+    }
+
     /// Returns true if the remote peer can reserve a stream with the given ID.
-    pub fn ensure_can_reserve(&self)
-        -> Result<(), RecvError>
-    {
+    pub fn ensure_can_reserve(&self) -> Result<(), RecvError> {
         if !self.is_push_enabled {
-            trace!("recv_push_promise; error push is disabled");
+            proto_err!(conn: "recv_push_promise: push is disabled");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 
@@ -679,16 +755,12 @@ impl Recv {
     }
 
     /// Add a locally reset stream to queue to be eventually reaped.
-    pub fn enqueue_reset_expiration(
-        &mut self,
-        stream: &mut store::Ptr,
-        counts: &mut Counts,
-    ) {
+    pub fn enqueue_reset_expiration(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         if !stream.state.is_local_reset() || stream.is_pending_reset_expiration() {
             return;
         }
 
-        trace!("enqueue_reset_expiration; {:?}", stream.id);
+        log::trace!("enqueue_reset_expiration; {:?}", stream.id);
 
         if !counts.can_inc_num_reset_streams() {
             // try to evict 1 stream if possible
@@ -708,27 +780,26 @@ impl Recv {
     /// Send any pending refusals.
     pub fn send_pending_refusal<T, B>(
         &mut self,
+        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(stream_id) = self.refused {
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Create the RST_STREAM frame
             let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
 
             // Buffer the frame
-            dst.buffer(frame.into())
-                .ok()
-                .expect("invalid RST_STREAM frame");
+            dst.buffer(frame.into()).expect("invalid RST_STREAM frame");
         }
 
         self.refused = None;
 
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -742,11 +813,12 @@ impl Recv {
         }
     }
 
-    pub fn clear_queues(&mut self,
-                        clear_pending_accept: bool,
-                        store: &mut Store,
-                        counts: &mut Counts)
-    {
+    pub fn clear_queues(
+        &mut self,
+        clear_pending_accept: bool,
+        store: &mut Store,
+        counts: &mut Counts,
+    ) {
         self.clear_stream_window_update_queue(store, counts);
         self.clear_all_reset_streams(store, counts);
 
@@ -758,7 +830,7 @@ impl Recv {
     fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_window_updates.pop(store) {
             counts.transition(stream, |_, stream| {
-                trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
+                log::trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
             })
         }
     }
@@ -778,76 +850,77 @@ impl Recv {
 
     pub fn poll_complete<T, B>(
         &mut self,
+        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         // Send any pending connection level window updates
-        try_ready!(self.send_connection_window_update(dst));
+        ready!(self.send_connection_window_update(cx, dst))?;
 
         // Send any pending stream level window updates
-        try_ready!(self.send_stream_window_updates(store, counts, dst));
+        ready!(self.send_stream_window_updates(cx, store, counts, dst))?;
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 
     /// Send connection level window update
     fn send_connection_window_update<T, B>(
         &mut self,
+        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         if let Some(incr) = self.flow.unclaimed_capacity() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             // Ensure the codec has capacity
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Buffer the WINDOW_UPDATE frame
             dst.buffer(frame.into())
-                .ok()
                 .expect("invalid WINDOW_UPDATE frame");
 
             // Update flow control
             self.flow
                 .inc_window(incr)
-                .ok()
                 .expect("unexpected flow control state");
         }
 
-        Ok(().into())
+        Poll::Ready(Ok(()))
     }
 
     /// Send stream level window update
     pub fn send_stream_window_updates<T, B>(
         &mut self,
+        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<(), io::Error>
+    ) -> Poll<io::Result<()>>
     where
-        T: AsyncWrite,
-        B: Buf,
+        T: AsyncWrite + Unpin,
+        B: Buf + Unpin,
     {
         loop {
             // Ensure the codec has capacity
-            try_ready!(dst.poll_ready());
+            ready!(dst.poll_ready(cx))?;
 
             // Get the next stream
             let stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
-                None => return Ok(().into()),
+                None => return Poll::Ready(Ok(())),
             };
 
             counts.transition(stream, |_, stream| {
-                trace!("pending_window_updates -- pop; stream={:?}", stream.id);
+                log::trace!("pending_window_updates -- pop; stream={:?}", stream.id);
                 debug_assert!(!stream.is_pending_window_update);
 
                 if !stream.state.is_recv_streaming() {
@@ -867,14 +940,12 @@ impl Recv {
 
                     // Buffer it
                     dst.buffer(frame.into())
-                        .ok()
                         .expect("invalid WINDOW_UPDATE frame");
 
                     // Update flow control
                     stream
                         .recv_flow
                         .inc_window(incr)
-                        .ok()
                         .expect("unexpected flow control state");
                 }
             })
@@ -885,10 +956,14 @@ impl Recv {
         self.pending_accept.pop(store).map(|ptr| ptr.key())
     }
 
-    pub fn poll_data(&mut self, stream: &mut Stream) -> Poll<Option<Bytes>, proto::Error> {
+    pub fn poll_data(
+        &mut self,
+        cx: &Context,
+        stream: &mut Stream,
+    ) -> Poll<Option<Result<Bytes, proto::Error>>> {
         // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Data(payload)) => Ok(Some(payload).into()),
+            Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
             Some(event) => {
                 // Frame is trailer
                 stream.pending_recv.push_front(&mut self.buffer, event);
@@ -904,47 +979,41 @@ impl Recv {
                 stream.notify_recv();
 
                 // No more data frames
-                Ok(None.into())
-            },
-            None => self.schedule_recv(stream),
+                Poll::Ready(None)
+            }
+            None => self.schedule_recv(cx, stream),
         }
     }
 
     pub fn poll_trailers(
         &mut self,
+        cx: &Context,
         stream: &mut Stream,
-    ) -> Poll<Option<HeaderMap>, proto::Error> {
+    ) -> Poll<Option<Result<HeaderMap, proto::Error>>> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Trailers(trailers)) => Ok(Some(trailers).into()),
+            Some(Event::Trailers(trailers)) => Poll::Ready(Some(Ok(trailers))),
             Some(event) => {
                 // Frame is not trailers.. not ready to poll trailers yet.
                 stream.pending_recv.push_front(&mut self.buffer, event);
 
-                Ok(Async::NotReady)
-            },
-            None => self.schedule_recv(stream),
+                Poll::Pending
+            }
+            None => self.schedule_recv(cx, stream),
         }
     }
 
-    fn schedule_recv<T>(&mut self, stream: &mut Stream) -> Poll<Option<T>, proto::Error> {
+    fn schedule_recv<T>(
+        &mut self,
+        cx: &Context,
+        stream: &mut Stream,
+    ) -> Poll<Option<Result<T, proto::Error>>> {
         if stream.state.ensure_recv_open()? {
             // Request to get notified once more frames arrive
-            stream.recv_task = Some(task::current());
-            Ok(Async::NotReady)
+            stream.recv_task = Some(cx.waker().clone());
+            Poll::Pending
         } else {
             // No more frames will be received
-            Ok(None.into())
-        }
-    }
-}
-
-// ===== impl Event =====
-
-impl Event {
-    fn is_data(&self) -> bool {
-        match *self {
-            Event::Data(..) => true,
-            _ => false,
+            Poll::Ready(None)
         }
     }
 }

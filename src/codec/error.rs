@@ -1,4 +1,4 @@
-use frame::{Reason, StreamId};
+use crate::frame::{Reason, StreamId};
 
 use std::{error, fmt, io};
 
@@ -35,6 +35,9 @@ pub enum UserError {
     /// The payload size is too big
     PayloadTooBig,
 
+    /// A header size is too big
+    HeaderTooBig,
+
     /// The application attempted to initiate too many streams to remote.
     Rejected,
 
@@ -54,6 +57,9 @@ pub enum UserError {
 
     /// Calls `SendResponse::poll_reset` after having called `send_response`.
     PollResetAfterSendResponse,
+
+    /// Calls `PingPong::send_ping` before receiving a pong.
+    SendPingWhilePending,
 }
 
 // ===== impl RecvError =====
@@ -70,9 +76,7 @@ impl error::Error for RecvError {
 
         match *self {
             Connection(ref reason) => reason.description(),
-            Stream {
-                ref reason, ..
-            } => reason.description(),
+            Stream { ref reason, .. } => reason.description(),
             Io(ref e) => e.description(),
         }
     }
@@ -128,12 +132,14 @@ impl error::Error for UserError {
             InactiveStreamId => "inactive stream",
             UnexpectedFrameType => "unexpected frame type",
             PayloadTooBig => "payload too big",
+            HeaderTooBig => "header too big",
             Rejected => "rejected",
             ReleaseCapacityTooBig => "release capacity too big",
             OverflowedStreamId => "stream ID overflowed",
             MalformedHeaders => "malformed headers",
             MissingUriSchemeAndAuthority => "request URI missing scheme and authority",
             PollResetAfterSendResponse => "poll_reset after send_response is illegal",
+            SendPingWhilePending => "send_ping before received previous pong",
         }
     }
 }

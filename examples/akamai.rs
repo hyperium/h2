@@ -1,13 +1,8 @@
-extern crate env_logger;
-extern crate futures;
-extern crate h2;
-extern crate http;
-extern crate rustls;
-extern crate tokio;
-extern crate tokio_rustls;
-extern crate webpki;
-extern crate webpki_roots;
+fn main() {
+    // Enable the below code once tokio_rustls moves to std::future
+}
 
+/*
 use h2::client;
 
 use futures::*;
@@ -20,10 +15,12 @@ use tokio_rustls::ClientConfigExt;
 use webpki::DNSNameRef;
 
 use std::net::ToSocketAddrs;
+use std::error::Error;
 
 const ALPN_H2: &str = "h2";
 
-pub fn main() {
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn Error>> {
     let _ = env_logger::try_init();
 
     let tls_client_config = std::sync::Arc::new({
@@ -43,49 +40,30 @@ pub fn main() {
 
     println!("ADDR: {:?}", addr);
 
-    let tcp = TcpStream::connect(&addr);
+    let tcp = TcpStream::connect(&addr).await?;
     let dns_name = DNSNameRef::try_from_ascii_str("http2.akamai.com").unwrap();
+    let res = tls_client_config.connect_async(dns_name, tcp).await;
+    let tls = res.unwrap();
+    {
+        let (_, session) = tls.get_ref();
+        let negotiated_protocol = session.get_alpn_protocol();
+        assert_eq!(Some(ALPN_H2), negotiated_protocol.as_ref().map(|x| &**x));
+    }
 
-    let tcp = tcp.then(move |res| {
-        let tcp = res.unwrap();
-        tls_client_config
-            .connect_async(dns_name, tcp)
-            .then(|res| {
-                let tls = res.unwrap();
-                {
-                    let (_, session) = tls.get_ref();
-                    let negotiated_protocol = session.get_alpn_protocol();
-                    assert_eq!(Some(ALPN_H2), negotiated_protocol.as_ref().map(|x| &**x));
-                }
+    println!("Starting client handshake");
+    let (mut client, h2) = client::handshake(tls).await?;
 
-                println!("Starting client handshake");
-                client::handshake(tls)
-            })
-            .then(|res| {
-                let (mut client, h2) = res.unwrap();
-
-                let request = Request::builder()
+    let request = Request::builder()
                     .method(Method::GET)
                     .uri("https://http2.akamai.com/")
                     .body(())
                     .unwrap();
 
-                let (response, _) = client.send_request(request, true).unwrap();
-
-                let stream = response.and_then(|response| {
-                    let (_, body) = response.into_parts();
-
-                    body.for_each(|chunk| {
-                        println!("RX: {:?}", chunk);
-                        Ok(())
-                    })
-                });
-
-                h2.join(stream)
-            })
-    })
-        .map_err(|e| eprintln!("ERROR: {:?}", e))
-        .map(|((), ())| ());
-
-    tokio::run(tcp);
+    let (response, _) = client.send_request(request, true).unwrap();
+    let (_, mut body) = response.await?.into_parts();
+    while let Some(chunk) = body.next().await {
+        println!("RX: {:?}", chunk?);
+    }
+    Ok(())
 }
+*/
