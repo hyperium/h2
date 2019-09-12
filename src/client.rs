@@ -1306,7 +1306,7 @@ impl PushPromises {
     }
 }
 
-#[cfg(feature = "stream")]
+#[cfg(feature = "unstable-stream")]
 impl futures_core::Stream for PushPromises {
     type Item = Result<PushPromise, crate::Error>;
 
