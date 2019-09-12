@@ -7,7 +7,7 @@ use http::HeaderMap;
 
 use crate::PollExt;
 use std::fmt;
-#[cfg(feature = "stream")]
+#[cfg(feature = "unstable-stream")]
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -448,7 +448,7 @@ impl RecvStream {
     }
 }
 
-#[cfg(feature = "stream")]
+#[cfg(feature = "unstable-stream")]
 impl futures_core::Stream for RecvStream {
     type Item = Result<Bytes, crate::Error>;
 
