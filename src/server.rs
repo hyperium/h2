@@ -116,7 +116,7 @@
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
 use crate::codec::{Codec, RecvError, UserError};
-use crate::frame::{self, Pseudo, Reason, Settings, StreamId};
+use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, StreamId};
 use crate::proto::{self, Config, Prioritized};
 use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
@@ -280,6 +280,7 @@ pub struct SendPushedResponse<B: IntoBuf> {
     inner: SendResponse<B>,
 }
 
+// Manual implementation necessary because of rust-lang/rust#26925
 impl<B: IntoBuf + fmt::Debug> fmt::Debug for SendPushedResponse<B>
 where
     <B as bytes::IntoBuf>::Buf: std::fmt::Debug,
@@ -1060,7 +1061,7 @@ impl<B: IntoBuf> SendPushedResponse<B> {
 
     /// Polls to be notified when the client resets this stream.
     ///
-    /// If stream is still open, this returns `Ok(Async::NotReady)`, and
+    /// If stream is still open, this returns `Poll::Pending`, and
     /// registers the task to be notified if a `RST_STREAM` is received.
     ///
     /// If a `RST_STREAM` frame is received for this stream, calling this
@@ -1274,7 +1275,20 @@ impl Peer {
     ) -> Result<frame::PushPromise, UserError> {
         use http::request::Parts;
 
-        if let Err(_) = frame::PushPromise::validate_request(&request) {
+        if let Err(e) = frame::PushPromise::validate_request(&request) {
+            use PushPromiseHeaderError::*;
+            match e {
+                NotSafeAndCacheable => log::debug!(
+                    "convert_push_message: method {} is not safe and cacheable; promised_id={:?}",
+                    request.method(),
+                    promised_id,
+                ),
+                InvalidContentLength(e) => log::debug!(
+                    "convert_push_message; promised request has invalid content-length {:?}; promised_id={:?}",
+                    e,
+                    promised_id,
+                ),
+            }
             return Err(UserError::MalformedHeaders);
         }
 

@@ -646,7 +646,7 @@ impl Recv {
                 ),
                 InvalidContentLength(e) => proto_err!(
                     stream:
-                    "recv_push_promise; promised request has content-length {:?}; promised_id={:?}",
+                    "recv_push_promise; promised request has invalid content-length {:?}; promised_id={:?}",
                     e,
                     promised_id,
                 ),
