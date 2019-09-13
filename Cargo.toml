@@ -24,7 +24,7 @@ branch = "master"
 [features]
 # Enables `futures::Stream` implementations for various types.
 # This is an optional feature due to `Stream` not being stable.
-stream = []
+unstable-stream = []
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards
 # compatibility guarantees. In other words, you should not use this feature for

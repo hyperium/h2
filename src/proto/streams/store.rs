@@ -341,7 +341,7 @@ impl<'a> Ptr<'a> {
     /// concerned.
     pub fn unlink(&mut self) {
         let id = self.key.stream_id;
-        self.store.ids.remove(&id);
+        self.store.ids.swap_remove(&id);
     }
 }
 
