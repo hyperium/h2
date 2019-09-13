@@ -47,16 +47,27 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("Starting client handshake");
-    let (mut client, _h2) = client::handshake(tls).await?;
+    let (mut client, h2) = client::handshake(tls).await?;
 
+    println!("building request");
     let request = Request::builder()
         .method(Method::GET)
         .uri("https://http2.akamai.com/")
         .body(())
         .unwrap();
 
-    let (response, _) = client.send_request(request, true).unwrap();
+    println!("sending request");
+    let (response, other) = client.send_request(request, true).unwrap();
+
+    tokio::spawn(async move {
+        if let Err(e) = h2.await {
+            println!("GOT ERR={:?}", e);
+        }
+    });
+
+    println!("waiting on response : {:?}", other);
     let (_, mut body) = response.await?.into_parts();
+    println!("processing body");
     while let Some(chunk) = body.data().await {
         println!("RX: {:?}", chunk?);
     }
