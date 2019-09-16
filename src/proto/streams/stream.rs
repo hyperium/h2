@@ -69,6 +69,9 @@ pub(super) struct Stream {
     /// Set to true when the stream is pending to be opened
     pub is_pending_open: bool,
 
+    /// Set to true when a push is pending for this stream
+    pub is_pending_push: bool,
+
     // ===== Fields related to receiving =====
     /// Next node in the accept linked list
     pub next_pending_accept: Option<store::Key>,
@@ -165,6 +168,7 @@ impl Stream {
             send_capacity_inc: false,
             is_pending_open: false,
             next_open: None,
+            is_pending_push: false,
 
             // ===== Fields related to receiving =====
             next_pending_accept: None,
@@ -198,6 +202,26 @@ impl Stream {
     /// a local reset.
     pub fn is_pending_reset_expiration(&self) -> bool {
         self.reset_at.is_some()
+    }
+
+    /// Returns true if frames for this stream are ready to be sent over the wire
+    pub fn is_send_ready(&self) -> bool {
+        // Why do we check pending_open?
+        //
+        // We allow users to call send_request() which schedules a stream to be pending_open
+        // if there is no room according to the concurrency limit (max_send_streams), and we
+        // also allow data to be buffered for send with send_data() if there is no capacity for
+        // the stream to send the data, which attempts to place the stream in pending_send.
+        // If the stream is not open, we don't want the stream to be scheduled for
+        // execution (pending_send). Note that if the stream is in pending_open, it will be
+        // pushed to pending_send when there is room for an open stream.
+        //
+        // In pending_push we track whether a PushPromise still needs to be sent
+        // from a different stream before we can start sending frames on this one.
+        // This is different from the "open" check because reserved streams don't count
+        // toward the concurrency limit.
+        // See https://httpwg.org/specs/rfc7540.html#rfc.section.5.1.2
+        !self.is_pending_open && !self.is_pending_push
     }
 
     /// Returns true if the stream is closed

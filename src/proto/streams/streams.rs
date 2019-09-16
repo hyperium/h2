@@ -973,6 +973,56 @@ impl<B> StreamRef<B> {
         })
     }
 
+    pub fn send_push_promise(&mut self, request: Request<()>) -> Result<StreamRef<B>, UserError> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
+        let actions = &mut me.actions;
+        let promised_id = actions.send.reserve_local()?;
+
+        let child_key = {
+            let mut child_stream = me.store.insert(
+                promised_id,
+                Stream::new(
+                    promised_id,
+                    actions.send.init_window_sz(),
+                    actions.recv.init_window_sz(),
+                ),
+            );
+            child_stream.state.reserve_local()?;
+            child_stream.is_pending_push = true;
+            child_stream.key()
+        };
+
+        let pushed = {
+            let mut stream = me.store.resolve(self.opaque.key);
+
+            let frame = crate::server::Peer::convert_push_message(stream.id, promised_id, request)?;
+
+            actions
+                .send
+                .send_push_promise(frame, send_buffer, &mut stream, &mut actions.task)
+        };
+
+        if let Err(err) = pushed {
+            let mut child_stream = me.store.resolve(child_key);
+            child_stream.unlink();
+            child_stream.remove();
+            return Err(err.into());
+        }
+
+        let opaque =
+            OpaqueStreamRef::new(self.opaque.inner.clone(), &mut me.store.resolve(child_key));
+
+        Ok(StreamRef {
+            opaque,
+            send_buffer: self.send_buffer.clone(),
+        })
+    }
+
     /// Called by the server after the stream is accepted. Given that clients
     /// initialize streams by sending HEADERS, the request will always be
     /// available.

@@ -105,6 +105,307 @@ async fn serve_request() {
     join(client, srv).await;
 }
 
+#[tokio::test]
+async fn push_request() {
+    let _ = env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(4).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Promise stream 2
+        let mut pushed_s2 = {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            stream.push_request(req).unwrap()
+        };
+
+        // Promise stream 4 and push response headers
+        {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style2.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // Push response to stream 2
+        {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            pushed_s2.send_response(rsp, true).unwrap();
+        }
+
+        // Send response for stream 1
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn push_request_against_concurrency() {
+    let _ = env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client.recv_frame(frames::headers(2).response(200)).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"),
+            )
+            .await;
+        client.recv_frame(frames::data(2, &b""[..]).eos()).await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(4).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Promise stream 2 and start response (concurrency limit reached)
+        let mut s2_tx = {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let mut pushed_stream = stream.push_request(req).unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            pushed_stream.send_response(rsp, false).unwrap()
+        };
+
+        // Promise stream 4 and push response
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style2.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // Send and finish response for stream 1
+        {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+        }
+
+        // Finish response for stream 2 (at which point stream 4 will be sent)
+        s2_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn push_request_with_data() {
+    let _ = env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client.recv_frame(frames::headers(2).response(200)).await;
+        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        client.recv_frame(frames::data(2, &b"\x00"[..]).eos()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Start response to stream 1
+        let mut s1_tx = {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, false).unwrap()
+        };
+
+        // Promise stream 2, push response headers and send data
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut push_tx = stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, false)
+                .unwrap();
+            // Make sure nothing can queue our pushed stream before we have the PushPromise sent
+            push_tx.send_data(vec![0; 1].into(), true).unwrap();
+            push_tx.reserve_capacity(1);
+        }
+
+        // End response for stream 1
+        s1_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn push_request_between_data() {
+    let _ = env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, &b""[..])).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Push response to stream 1 and send some data
+        let mut s1_tx = {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(vec![0; 0].into(), false).unwrap();
+            tx
+        };
+
+        // Promise stream 2 and push response headers
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // End response for stream 1
+        s1_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
 #[test]
 #[ignore]
 fn accept_with_pending_connections_after_socket_close() {}

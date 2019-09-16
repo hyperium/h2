@@ -111,7 +111,7 @@ impl Prioritize {
 
     pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
         // If the stream is waiting to be opened, nothing more to do.
-        if !stream.is_pending_open {
+        if stream.is_send_ready() {
             log::trace!("schedule_send; {:?}", stream.id);
             // Queue the stream
             self.pending_send.push(stream);
@@ -445,19 +445,9 @@ impl Prioritize {
             self.pending_capacity.push(stream);
         }
 
-        // If data is buffered and the stream is not pending open, then
+        // If data is buffered and the stream is send ready, then
         // schedule the stream for execution
-        //
-        // Why do we not push into pending_send when the stream is in pending_open?
-        //
-        // We allow users to call send_request() which schedules a stream to be pending_open
-        // if there is no room according to the concurrency limit (max_send_streams), and we
-        // also allow data to be buffered for send with send_data() if there is no capacity for
-        // the stream to send the data, which attempts to place the stream in pending_send.
-        // If the stream is not open, we don't want the stream to be scheduled for
-        // execution (pending_send). Note that if the stream is in pending_open, it will be
-        // pushed to pending_send when there is room for an open stream.
-        if stream.buffered_send_data > 0 && !stream.is_pending_open {
+        if stream.buffered_send_data > 0 && stream.is_send_ready() {
             // TODO: This assertion isn't *exactly* correct. There can still be
             // buffered send data while the stream's pending send queue is
             // empty. This can happen when a large data frame is in the process
@@ -765,6 +755,22 @@ impl Prioritize {
                                 end_of_stream: eos,
                                 stream: stream.key(),
                             }))
+                        }
+                        Some(Frame::PushPromise(pp)) => {
+                            let mut pushed =
+                                stream.store_mut().find_mut(&pp.promised_id()).unwrap();
+                            pushed.is_pending_push = false;
+                            // Transition stream from pending_push to pending_open
+                            // if possible
+                            if !pushed.pending_send.is_empty() {
+                                if counts.can_inc_num_send_streams() {
+                                    counts.inc_num_send_streams(&mut pushed);
+                                    self.pending_send.push(&mut pushed);
+                                } else {
+                                    self.queue_open(&mut pushed);
+                                }
+                            }
+                            Frame::PushPromise(pp)
                         }
                         Some(frame) => frame.map(|_| {
                             unreachable!(

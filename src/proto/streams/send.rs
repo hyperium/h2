@@ -53,6 +53,53 @@ impl Send {
         Ok(stream_id)
     }
 
+    pub fn reserve_local(&mut self) -> Result<StreamId, UserError> {
+        let stream_id = self.ensure_next_stream_id()?;
+        self.next_stream_id = stream_id.next_id();
+        Ok(stream_id)
+    }
+
+    fn check_headers(fields: &http::HeaderMap) -> Result<(), UserError> {
+        // 8.1.2.2. Connection-Specific Header Fields
+        if fields.contains_key(http::header::CONNECTION)
+            || fields.contains_key(http::header::TRANSFER_ENCODING)
+            || fields.contains_key(http::header::UPGRADE)
+            || fields.contains_key("keep-alive")
+            || fields.contains_key("proxy-connection")
+        {
+            log::debug!("illegal connection-specific headers found");
+            return Err(UserError::MalformedHeaders);
+        } else if let Some(te) = fields.get(http::header::TE) {
+            if te != "trailers" {
+                log::debug!("illegal connection-specific headers found");
+                return Err(UserError::MalformedHeaders);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn send_push_promise<B>(
+        &mut self,
+        frame: frame::PushPromise,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
+        task: &mut Option<Waker>,
+    ) -> Result<(), UserError> {
+        log::trace!(
+            "send_push_promise; frame={:?}; init_window={:?}",
+            frame,
+            self.init_window_sz
+        );
+
+        Self::check_headers(frame.fields())?;
+
+        // Queue the frame for sending
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
+
+        Ok(())
+    }
+
     pub fn send_headers<B>(
         &mut self,
         frame: frame::Headers,
@@ -67,21 +114,7 @@ impl Send {
             self.init_window_sz
         );
 
-        // 8.1.2.2. Connection-Specific Header Fields
-        if frame.fields().contains_key(http::header::CONNECTION)
-            || frame.fields().contains_key(http::header::TRANSFER_ENCODING)
-            || frame.fields().contains_key(http::header::UPGRADE)
-            || frame.fields().contains_key("keep-alive")
-            || frame.fields().contains_key("proxy-connection")
-        {
-            log::debug!("illegal connection-specific headers found");
-            return Err(UserError::MalformedHeaders);
-        } else if let Some(te) = frame.fields().get(http::header::TE) {
-            if te != "trailers" {
-                log::debug!("illegal connection-specific headers found");
-                return Err(UserError::MalformedHeaders);
-            }
-        }
+        Self::check_headers(frame.fields())?;
 
         if frame.has_too_big_field() {
             return Err(UserError::HeaderTooBig);
@@ -93,10 +126,14 @@ impl Send {
         stream.state.send_open(end_stream)?;
 
         if counts.peer().is_local_init(frame.stream_id()) {
-            if counts.can_inc_num_send_streams() {
-                counts.inc_num_send_streams(stream);
-            } else {
-                self.prioritize.queue_open(stream);
+            // If we're waiting on a PushPromise anyway
+            // handle potentially queueing the stream at that point
+            if !stream.is_pending_push {
+                if counts.can_inc_num_send_streams() {
+                    counts.inc_num_send_streams(stream);
+                } else {
+                    self.prioritize.queue_open(stream);
+                }
             }
         }
 

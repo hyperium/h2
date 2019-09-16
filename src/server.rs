@@ -115,8 +115,8 @@
 //! [`SendStream`]: ../struct.SendStream.html
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
-use crate::codec::{Codec, RecvError};
-use crate::frame::{self, Pseudo, Reason, Settings, StreamId};
+use crate::codec::{Codec, RecvError, UserError};
+use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, StreamId};
 use crate::proto::{self, Config, Prioritized};
 use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
 
@@ -249,8 +249,7 @@ pub struct Builder {
 /// explicitly reset the stream with a custom reason.
 ///
 /// It will also be used to initiate push promises linked with the associated
-/// stream. This is [not yet
-/// implemented](https://github.com/hyperium/h2/issues/185).
+/// stream.
 ///
 /// If the `SendResponse` instance is dropped without sending a response, then
 /// the HTTP/2.0 stream will be reset.
@@ -261,6 +260,34 @@ pub struct Builder {
 #[derive(Debug)]
 pub struct SendResponse<B: IntoBuf> {
     inner: proto::StreamRef<B::Buf>,
+}
+
+/// Send a response to a promised request
+///
+/// A `SendPushedResponse` instance is provided when promising a request and is used
+/// to send the associated response to the client. It is also used to
+/// explicitly reset the stream with a custom reason.
+///
+/// It can not be used to initiate push promises.
+///
+/// If the `SendPushedResponse` instance is dropped without sending a response, then
+/// the HTTP/2.0 stream will be reset.
+///
+/// See [module] level docs for more details.
+///
+/// [module]: index.html
+pub struct SendPushedResponse<B: IntoBuf> {
+    inner: SendResponse<B>,
+}
+
+// Manual implementation necessary because of rust-lang/rust#26925
+impl<B: IntoBuf + fmt::Debug> fmt::Debug for SendPushedResponse<B>
+where
+    <B as bytes::IntoBuf>::Buf: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SendPushedResponse {{ {:?} }}", self.inner)
+    }
 }
 
 /// Stages of an in-progress handshake.
@@ -924,6 +951,23 @@ impl<B: IntoBuf> SendResponse<B> {
             .map_err(Into::into)
     }
 
+    /// Push a request and response to the client
+    ///
+    /// On success, a [`SendResponse`] instance is returned.
+    ///
+    /// [`SendResponse`]: #
+    pub fn push_request(
+        &mut self,
+        request: Request<()>,
+    ) -> Result<SendPushedResponse<B>, crate::Error> {
+        self.inner
+            .send_push_promise(request)
+            .map(|inner| SendPushedResponse {
+                inner: SendResponse { inner },
+            })
+            .map_err(Into::into)
+    }
+
     /// Send a stream reset to the peer.
     ///
     /// This essentially cancels the stream, including any inbound or outbound
@@ -967,8 +1011,78 @@ impl<B: IntoBuf> SendResponse<B> {
     pub fn stream_id(&self) -> crate::StreamId {
         crate::StreamId::from_internal(self.inner.stream_id())
     }
+}
 
-    // TODO: Support reserving push promises.
+// ===== impl SendPushedResponse =====
+
+impl<B: IntoBuf> SendPushedResponse<B> {
+    /// Send a response to a promised request.
+    ///
+    /// On success, a [`SendStream`] instance is returned. This instance can be
+    /// used to stream the response body and send trailers.
+    ///
+    /// If a body or trailers will be sent on the returned [`SendStream`]
+    /// instance, then `end_of_stream` must be set to `false` when calling this
+    /// function.
+    ///
+    /// The [`SendPushedResponse`] instance is associated with a promised
+    /// request.  This function may only be called once per instance and only if
+    /// [`send_reset`] has not been previously called.
+    ///
+    /// [`SendPushedResponse`]: #
+    /// [`SendStream`]: ../struct.SendStream.html
+    /// [`send_reset`]: #method.send_reset
+    pub fn send_response(
+        &mut self,
+        response: Response<()>,
+        end_of_stream: bool,
+    ) -> Result<SendStream<B>, crate::Error> {
+        self.inner.send_response(response, end_of_stream)
+    }
+
+    /// Send a stream reset to the peer.
+    ///
+    /// This essentially cancels the stream, including any inbound or outbound
+    /// data streams.
+    ///
+    /// If this function is called before [`send_response`], a call to
+    /// [`send_response`] will result in an error.
+    ///
+    /// If this function is called while a [`SendStream`] instance is active,
+    /// any further use of the instance will result in an error.
+    ///
+    /// This function should only be called once.
+    ///
+    /// [`send_response`]: #method.send_response
+    /// [`SendStream`]: ../struct.SendStream.html
+    pub fn send_reset(&mut self, reason: Reason) {
+        self.inner.send_reset(reason)
+    }
+
+    /// Polls to be notified when the client resets this stream.
+    ///
+    /// If stream is still open, this returns `Poll::Pending`, and
+    /// registers the task to be notified if a `RST_STREAM` is received.
+    ///
+    /// If a `RST_STREAM` frame is received for this stream, calling this
+    /// method will yield the `Reason` for the reset.
+    ///
+    /// # Error
+    ///
+    /// Calling this method after having called `send_response` will return
+    /// a user error.
+    pub fn poll_reset(&mut self, cx: &mut Context) -> Poll<Result<Reason, crate::Error>> {
+        self.inner.poll_reset(cx)
+    }
+
+    /// Returns the stream ID of the response stream.
+    ///
+    /// # Panics
+    ///
+    /// If the lock on the strean store has been poisoned.
+    pub fn stream_id(&self) -> crate::StreamId {
+        self.inner.stream_id()
+    }
 }
 
 // ===== impl Flush =====
@@ -1152,6 +1266,51 @@ impl Peer {
         }
 
         frame
+    }
+
+    pub fn convert_push_message(
+        stream_id: StreamId,
+        promised_id: StreamId,
+        request: Request<()>,
+    ) -> Result<frame::PushPromise, UserError> {
+        use http::request::Parts;
+
+        if let Err(e) = frame::PushPromise::validate_request(&request) {
+            use PushPromiseHeaderError::*;
+            match e {
+                NotSafeAndCacheable => log::debug!(
+                    "convert_push_message: method {} is not safe and cacheable; promised_id={:?}",
+                    request.method(),
+                    promised_id,
+                ),
+                InvalidContentLength(e) => log::debug!(
+                    "convert_push_message; promised request has invalid content-length {:?}; promised_id={:?}",
+                    e,
+                    promised_id,
+                ),
+            }
+            return Err(UserError::MalformedHeaders);
+        }
+
+        // Extract the components of the HTTP request
+        let (
+            Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            _,
+        ) = request.into_parts();
+
+        let pseudo = Pseudo::request(method, uri);
+
+        Ok(frame::PushPromise::new(
+            stream_id,
+            promised_id,
+            pseudo,
+            headers,
+        ))
     }
 }
 

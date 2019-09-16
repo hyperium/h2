@@ -57,7 +57,7 @@ pub struct State {
 enum Inner {
     Idle,
     // TODO: these states shouldn't count against concurrency limits:
-    //ReservedLocal,
+    ReservedLocal,
     ReservedRemote,
     Open { local: Peer, remote: Peer },
     HalfClosedLocal(Peer), // TODO: explicitly name this value
@@ -114,7 +114,7 @@ impl State {
                     Open { local, remote }
                 }
             }
-            HalfClosedRemote(AwaitingHeaders) => {
+            HalfClosedRemote(AwaitingHeaders) | ReservedLocal => {
                 if eos {
                     Closed(Cause::EndStream)
                 } else {
@@ -197,6 +197,17 @@ impl State {
                 proto_err!(conn: "reserve_remote: in unexpected state {:?}", state);
                 Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
             }
+        }
+    }
+
+    /// Transition from Idle -> ReservedLocal
+    pub fn reserve_local(&mut self) -> Result<(), UserError> {
+        match self.inner {
+            Idle => {
+                self.inner = ReservedLocal;
+                Ok(())
+            }
+            _ => Err(UserError::UnexpectedFrameType),
         }
     }
 
@@ -384,7 +395,7 @@ impl State {
 
     pub fn is_recv_closed(&self) -> bool {
         match self.inner {
-            Closed(..) | HalfClosedRemote(..) => true,
+            Closed(..) | HalfClosedRemote(..) | ReservedLocal => true,
             _ => false,
         }
     }
@@ -410,7 +421,7 @@ impl State {
             | Closed(Cause::LocallyReset(reason))
             | Closed(Cause::Scheduled(reason)) => Err(proto::Error::Proto(reason)),
             Closed(Cause::Io) => Err(proto::Error::Io(io::ErrorKind::BrokenPipe.into())),
-            Closed(Cause::EndStream) | HalfClosedRemote(..) => Ok(false),
+            Closed(Cause::EndStream) | HalfClosedRemote(..) | ReservedLocal => Ok(false),
             _ => Ok(true),
         }
     }

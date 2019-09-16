@@ -3,7 +3,7 @@ use crate::frame::{Error, Frame, Head, Kind};
 use crate::hpack;
 
 use http::header::{self, HeaderName, HeaderValue};
-use http::{uri, HeaderMap, Method, StatusCode, Uri};
+use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
 use bytes::{Bytes, BytesMut};
 use string::String;
@@ -300,9 +300,92 @@ impl fmt::Debug for Headers {
     }
 }
 
+// ===== util =====
+
+pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
+    if src.len() > 19 {
+        // At danger for overflow...
+        return Err(());
+    }
+
+    let mut ret = 0;
+
+    for &d in src {
+        if d < b'0' || d > b'9' {
+            return Err(());
+        }
+
+        ret *= 10;
+        ret += (d - b'0') as u64;
+    }
+
+    Ok(ret)
+}
+
 // ===== impl PushPromise =====
 
+#[derive(Debug)]
+pub enum PushPromiseHeaderError {
+    InvalidContentLength(Result<u64, ()>),
+    NotSafeAndCacheable,
+}
+
 impl PushPromise {
+    pub fn new(
+        stream_id: StreamId,
+        promised_id: StreamId,
+        pseudo: Pseudo,
+        fields: HeaderMap,
+    ) -> Self {
+        PushPromise {
+            flags: PushPromiseFlag::default(),
+            header_block: HeaderBlock {
+                fields,
+                is_over_size: false,
+                pseudo,
+            },
+            promised_id,
+            stream_id,
+        }
+    }
+
+    pub fn validate_request(req: &Request<()>) -> Result<(), PushPromiseHeaderError> {
+        use PushPromiseHeaderError::*;
+        // The spec has some requirements for promised request headers
+        // [https://httpwg.org/specs/rfc7540.html#PushRequests]
+
+        // A promised request "that indicates the presence of a request body
+        // MUST reset the promised stream with a stream error"
+        if let Some(content_length) = req.headers().get(header::CONTENT_LENGTH) {
+            let parsed_length = parse_u64(content_length.as_bytes());
+            if parsed_length != Ok(0) {
+                return Err(InvalidContentLength(parsed_length));
+            }
+        }
+        // "The server MUST include a method in the :method pseudo-header field
+        // that is safe and cacheable"
+        if !Self::safe_and_cacheable(req.method()) {
+            return Err(NotSafeAndCacheable);
+        }
+
+        Ok(())
+    }
+
+    fn safe_and_cacheable(method: &Method) -> bool {
+        // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
+        // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
+        return method == Method::GET || method == Method::HEAD;
+    }
+
+    pub fn fields(&self) -> &HeaderMap {
+        &self.header_block.fields
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn into_fields(self) -> HeaderMap {
+        self.header_block.fields
+    }
+
     /// Loads the push promise frame but doesn't actually do HPACK decoding.
     ///
     /// HPACK decoding is done in the `load_hpack` step.
@@ -401,41 +484,10 @@ impl PushPromise {
     fn head(&self) -> Head {
         Head::new(Kind::PushPromise, self.flags.into(), self.stream_id)
     }
-}
 
-impl PushPromise {
     /// Consume `self`, returning the parts of the frame
     pub fn into_parts(self) -> (Pseudo, HeaderMap) {
         (self.header_block.pseudo, self.header_block.fields)
-    }
-}
-
-#[cfg(feature = "unstable")]
-impl PushPromise {
-    pub fn new(
-        stream_id: StreamId,
-        promised_id: StreamId,
-        pseudo: Pseudo,
-        fields: HeaderMap,
-    ) -> Self {
-        PushPromise {
-            flags: PushPromiseFlag::default(),
-            header_block: HeaderBlock {
-                fields,
-                is_over_size: false,
-                pseudo,
-            },
-            promised_id,
-            stream_id,
-        }
-    }
-
-    pub fn fields(&self) -> &HeaderMap {
-        &self.header_block.fields
-    }
-
-    pub fn into_fields(self) -> HeaderMap {
-        self.header_block.fields
     }
 }
 
