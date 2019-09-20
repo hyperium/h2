@@ -11,4 +11,4 @@ edition = "2018"
 h2-support = { path = "../h2-support" }
 log = "0.4.1"
 futures-preview = "=0.3.0-alpha.18"
-tokio = "=0.2.0-alpha.4"
+tokio = "=0.2.0-alpha.5"

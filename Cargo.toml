@@ -45,9 +45,9 @@ members = [
 futures-core-preview = "=0.3.0-alpha.18"
 futures-sink-preview = "=0.3.0-alpha.18"
 futures-util-preview = "=0.3.0-alpha.18"
-tokio-codec = "=0.2.0-alpha.4"
-tokio-io = { version = "=0.2.0-alpha.4", features = ["util"] }
-tokio-sync = "=0.2.0-alpha.4"
+tokio-codec = "=0.2.0-alpha.5"
+tokio-io = { version = "=0.2.0-alpha.5", features = ["util"] }
+tokio-sync = "=0.2.0-alpha.5"
 bytes = "0.4.7"
 http = "0.1.8"
 log = "0.4.1"
@@ -69,7 +69,7 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Akamai example
-tokio = "=0.2.0-alpha.4"
+tokio = "=0.2.0-alpha.5"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.12"
 tokio-rustls = "0.5.0"
