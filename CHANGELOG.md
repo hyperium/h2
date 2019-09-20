@@ -1,3 +1,9 @@
+# 0.2.0-alpha.2 (September 20, 2019)
+
+* Add server support for `PUSH_PROMISE`s (#327).
+* Update to tokio `0.2.0-alpha.5`.
+* Change `stream` feature to `unstable-stream`.
+
 # 0.2.0-alpha.1 (August 30, 2019)
 
 * Update from `futures` 0.1 to `std::future::Future`.
