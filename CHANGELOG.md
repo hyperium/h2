@@ -1,3 +1,8 @@
+# 0.2.0-alpha.3 (October 1, 2019)
+
+* Update to futures `0.3.0-alpha.19`.
+* Update to tokio `0.2.0-alpha.6`.
+
 # 0.2.0-alpha.2 (September 20, 2019)
 
 * Add server support for `PUSH_PROMISE`s (#327).
