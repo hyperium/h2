@@ -72,7 +72,6 @@ serde_json = "1.0.0"
 tokio = "=0.2.0-alpha.6"
 env_logger = { version = "0.5.3", default-features = false }
 rustls = "0.16"
-# tokio-rustls = "0.12.0-alpha.2"
-tokio-rustls = { git = "https://github.com/taiki-e/tokio-rustls", branch = "tokio02alpha6" }
+tokio-rustls = "0.12.0-alpha.4"
 webpki = "0.21"
 webpki-roots = "0.17"
