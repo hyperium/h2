@@ -15,13 +15,14 @@ addons:
 matrix:
   include:
   - rust: nightly
+  - rust: beta
 #  - rust: stable
     before_deploy: cargo doc --no-deps
-#  allow_failures:
-#    - rust: nightly
+  allow_failures:
+    - rust: nightly
 
 before_script:
-  - rustup component add rustfmt-preview
+  - rustup component add rustfmt
   - cargo clean
 
 script:
