@@ -1168,6 +1168,204 @@ async fn decrease_target_window_size() {
 }
 
 #[tokio::test]
+async fn client_update_initial_window_size() {
+    let _ = env_logger::try_init();
+    let (io, mut srv) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE * 2;
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::window_update(0, window_size - 65_535))
+            .await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![b'a'; 16_384])).await;
+        srv.send_frame(frames::data(1, vec![b'b'; 16_384])).await;
+        srv.send_frame(frames::data(1, vec![b'c'; 16_384])).await;
+        srv.recv_frame(frames::settings().initial_window_size(window_size))
+            .await;
+        srv.send_frame(frames::settings_ack()).await;
+        // we never got a WINDOW_UPDATE, but initial update allows more
+        srv.send_frame(frames::data(1, vec![b'd'; 16_384])).await;
+        srv.send_frame(frames::data(1, vec![b'e'; 16_384]).eos())
+            .await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        conn.set_target_window_size(window_size);
+
+        // We'll never release_capacity back...
+        async fn data(body: &mut h2::RecvStream, expect: &str) {
+            let buf = body.data().await.expect(expect).expect(expect);
+            assert_eq!(buf.len(), 16_384, "{}", expect);
+        }
+
+        let res_fut = client.get("https://http2.akamai.com/");
+
+        // Receive most of the stream's window...
+        let body = conn
+            .drive(async move {
+                let resp = res_fut.await.expect("response");
+                let mut body = resp.into_body();
+
+                data(&mut body, "data1").await;
+                data(&mut body, "data2").await;
+                data(&mut body, "data3").await;
+
+                body
+            })
+            .await;
+
+        // Update the initial window size to double
+        conn.set_initial_window_size(window_size).expect("update");
+
+        // And then ensure we got the data normally "over" the smaller
+        // initial_window_size...
+        let f = async move {
+            let mut body = body;
+            data(&mut body, "data4").await;
+            data(&mut body, "data5").await;
+            assert!(body.data().await.is_none(), "eos");
+        };
+
+        join(async move { conn.await.expect("client") }, f).await;
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn client_decrease_initial_window_size() {
+    let _ = env_logger::try_init();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![b'a'; 100])).await;
+
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+        srv.send_frame(frames::data(3, vec![b'a'; 100])).await;
+
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200)).await;
+        srv.send_frame(frames::data(5, vec![b'a'; 100])).await;
+
+        srv.recv_frame(frames::settings().initial_window_size(0))
+            .await;
+        // check settings haven't applied before ACK
+        srv.send_frame(frames::data(1, vec![b'a'; 100]).eos()).await;
+        srv.send_frame(frames::settings_ack()).await;
+
+        // check stream 3 has no window
+        srv.send_frame(frames::data(3, vec![b'a'; 1])).await;
+        srv.recv_frame(frames::reset(3).flow_control()).await;
+
+        // check stream 5 can release capacity
+        srv.recv_frame(frames::window_update(5, 100)).await;
+
+        srv.recv_frame(frames::settings().initial_window_size(16_384))
+            .await;
+        srv.send_frame(frames::settings_ack()).await;
+
+        srv.send_frame(frames::data(5, vec![b'a'; 100])).await;
+        srv.send_frame(frames::data(5, vec![b'a'; 100]).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+
+        async fn req(client: &mut client::SendRequest<Bytes>) -> h2::RecvStream {
+            let res_fut = client.get("https://http2.akamai.com/");
+
+            // Use some of the recv window
+            let resp = res_fut.await.expect("response");
+            let mut body = resp.into_body();
+
+            data(&mut body, "data1").await;
+
+            body
+        }
+
+        async fn data(body: &mut h2::RecvStream, expect: &str) {
+            let buf = body.data().await.expect(expect).expect(expect);
+            assert_eq!(buf.len(), 100, "{}", expect);
+        }
+
+        let mut body1 = conn.drive(req(&mut client)).await;
+        let mut body3 = conn.drive(req(&mut client)).await;
+        let mut body5 = conn.drive(req(&mut client)).await;
+
+        // Remove *all* window size of streams
+        conn.set_initial_window_size(0).expect("update0");
+        conn.drive(yield_once()).await;
+
+        // stream 1 received before settings ACK
+        conn.drive(async {
+            data(&mut body1, "body1 data2").await;
+            assert!(body1.is_end_stream());
+        })
+        .await;
+
+        // stream 3 received after ACK, which is stream error
+        conn.drive(async {
+            body3.data().await.expect("body3").expect_err("data2");
+        })
+        .await;
+
+        // stream 5 went negative, so release back to 0
+        body5
+            .release_capacity()
+            .release_capacity(100)
+            .expect("release_capacity");
+        conn.drive(yield_once()).await;
+
+        // open up again
+        conn.set_initial_window_size(16_384).expect("update16");
+        conn.drive(yield_once()).await;
+
+        // get stream 5 data after opening up
+        conn.drive(async {
+            data(&mut body5, "body5 data2").await;
+            data(&mut body5, "body5 data3").await;
+            assert!(body3.is_end_stream());
+        })
+        .await;
+
+        conn.await.expect("client")
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn server_target_window_size() {
     let _ = env_logger::try_init();
     let (io, mut client) = mock::new();

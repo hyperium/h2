@@ -441,6 +441,25 @@ where
         self.connection.set_target_window_size(size);
     }
 
+    /// Set a new `INITIAL_WINDOW_SIZE` setting (in octets) for stream-level
+    /// flow control for received data.
+    ///
+    /// The `SETTINGS` will be sent to the remote, and only applied once the
+    /// remote acknowledges the change.
+    ///
+    /// This can be used to increase or decrease the window size for existing
+    /// streams.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a previous call is still pending acknowledgement
+    /// from the remote endpoint.
+    pub fn set_initial_window_size(&mut self, size: u32) -> Result<(), crate::Error> {
+        assert!(size <= proto::MAX_WINDOW_SIZE);
+        self.connection.set_initial_window_size(size)?;
+        Ok(())
+    }
+
     /// Returns `Ready` when the underlying connection has closed.
     ///
     /// If any new inbound streams are received during a call to `poll_closed`,

@@ -131,11 +131,11 @@ impl FlowControl {
         Ok(())
     }
 
-    /// Decrement the window size.
+    /// Decrement the send-side window size.
     ///
     /// This is called after receiving a SETTINGS frame with a lower
     /// INITIAL_WINDOW_SIZE value.
-    pub fn dec_window(&mut self, sz: WindowSize) {
+    pub fn dec_send_window(&mut self, sz: WindowSize) {
         log::trace!(
             "dec_window; sz={}; window={}, available={}",
             sz,
@@ -144,6 +144,22 @@ impl FlowControl {
         );
         // This should not be able to overflow `window_size` from the bottom.
         self.window_size -= sz;
+    }
+
+    /// Decrement the recv-side window size.
+    ///
+    /// This is called after receiving a SETTINGS ACK frame with a lower
+    /// INITIAL_WINDOW_SIZE value.
+    pub fn dec_recv_window(&mut self, sz: WindowSize) {
+        log::trace!(
+            "dec_recv_window; sz={}; window={}, available={}",
+            sz,
+            self.window_size,
+            self.available
+        );
+        // This should not be able to overflow `window_size` from the bottom.
+        self.window_size -= sz;
+        self.available -= sz;
     }
 
     /// Decrements the window reflecting data has actually been sent. The caller

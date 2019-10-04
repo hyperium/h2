@@ -60,6 +60,9 @@ pub enum UserError {
 
     /// Calls `PingPong::send_ping` before receiving a pong.
     SendPingWhilePending,
+
+    /// Tries to update local SETTINGS while ACK has not been received.
+    SendSettingsWhilePending,
 }
 
 // ===== impl RecvError =====
@@ -140,6 +143,7 @@ impl error::Error for UserError {
             MissingUriSchemeAndAuthority => "request URI missing scheme and authority",
             PollResetAfterSendResponse => "poll_reset after send_response is illegal",
             SendPingWhilePending => "send_ping before received previous pong",
+            SendSettingsWhilePending => "sending SETTINGS before received previous ACK",
         }
     }
 }
