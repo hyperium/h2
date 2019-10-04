@@ -214,3 +214,26 @@ async fn update_max_frame_len_at_rest() {
         "frame with invalid size"
     );
 }
+
+#[tokio::test]
+async fn read_goaway_with_debug_data() {
+    let mut codec = raw_codec! {
+        read => [
+            // head
+            0, 0, 22, 7, 0, 0, 0, 0, 0,
+            // last_stream_id
+            0, 0, 0, 1,
+            // error_code
+            0, 0, 0, 11,
+            // debug_data
+            "too_many_pings",
+        ];
+    };
+
+    let data = poll_frame!(GoAway, codec);
+    assert_eq!(data.reason(), Reason::ENHANCE_YOUR_CALM);
+    assert_eq!(data.last_stream_id(), 1);
+    assert_eq!(data.debug_data(), b"too_many_pings");
+
+    assert_closed!(codec);
+}
