@@ -17,10 +17,6 @@ categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
 edition = "2018"
 
-[badges.travis-ci]
-repository = "hyperium/h2"
-branch = "master"
-
 [features]
 # Enables `futures::Stream` implementations for various types.
 # This is an optional feature due to `Stream` not being stable.
