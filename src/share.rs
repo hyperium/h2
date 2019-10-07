@@ -123,7 +123,7 @@ pub struct StreamId(u32);
 /// control.
 ///
 /// See method level documentation for more details on receiving data. See
-/// [`ReleaseCapacity`] for more details on inbound flow control.
+/// [`FlowControl`] for more details on inbound flow control.
 ///
 /// Note that this type implements [`Stream`], yielding the received data frames.
 /// When this implementation is used, the capacity is immediately released when
@@ -132,11 +132,11 @@ pub struct StreamId(u32);
 ///
 /// [`client::ResponseFuture`]: client/struct.ResponseFuture.html
 /// [`server::Connection`]: server/struct.Connection.html
-/// [`ReleaseCapacity`]: struct.ReleaseCapacity.html
+/// [`FlowControl`]: struct.FlowControl.html
 /// [`Stream`]: https://docs.rs/futures/0.1/futures/stream/trait.Stream.html
 #[must_use = "streams do nothing unless polled"]
 pub struct RecvStream {
-    inner: ReleaseCapacity,
+    inner: FlowControl,
 }
 
 /// A handle to release window capacity to a remote stream.
@@ -190,9 +190,9 @@ pub struct RecvStream {
 /// data.
 ///
 /// [flow control]: ../index.html#flow-control
-/// [`release_capacity`]: struct.ReleaseCapacity.html#method.release_capacity
-#[derive(Debug)]
-pub struct ReleaseCapacity {
+/// [`release_capacity`]: struct.FlowControl.html#method.release_capacity
+#[derive(Clone, Debug)]
+pub struct FlowControl {
     inner: proto::OpaqueStreamRef,
 }
 
@@ -392,23 +392,8 @@ impl StreamId {
 // ===== impl RecvStream =====
 
 impl RecvStream {
-    pub(crate) fn new(inner: ReleaseCapacity) -> Self {
+    pub(crate) fn new(inner: FlowControl) -> Self {
         RecvStream { inner }
-    }
-
-    /// Returns true if the receive half has reached the end of stream.
-    ///
-    /// A return value of `true` means that calls to `poll` and `poll_trailers`
-    /// will both return `None`.
-    pub fn is_end_stream(&self) -> bool {
-        self.inner.inner.is_end_stream()
-    }
-
-    /// Get a mutable reference to this streams `ReleaseCapacity`.
-    ///
-    /// It can be used immediately, or cloned to be used later.
-    pub fn release_capacity(&mut self) -> &mut ReleaseCapacity {
-        &mut self.inner
     }
 
     /// Get the next data frame.
@@ -436,6 +421,21 @@ impl RecvStream {
             Some(Err(e)) => Poll::Ready(Err(e.into())),
             None => Poll::Ready(Ok(None)),
         }
+    }
+
+    /// Returns true if the receive half has reached the end of stream.
+    ///
+    /// A return value of `true` means that calls to `poll` and `poll_trailers`
+    /// will both return `None`.
+    pub fn is_end_stream(&self) -> bool {
+        self.inner.inner.is_end_stream()
+    }
+
+    /// Get a mutable reference to this stream's `FlowControl`.
+    ///
+    /// It can be used immediately, or cloned to be used later.
+    pub fn flow_control(&mut self) -> &mut FlowControl {
+        &mut self.inner
     }
 
     /// Returns the stream ID of this stream.
@@ -476,21 +476,29 @@ impl Drop for RecvStream {
     }
 }
 
-// ===== impl ReleaseCapacity =====
+// ===== impl FlowControl =====
 
-impl ReleaseCapacity {
+impl FlowControl {
     pub(crate) fn new(inner: proto::OpaqueStreamRef) -> Self {
-        ReleaseCapacity { inner }
+        FlowControl { inner }
     }
 
     /// Returns the stream ID of the stream whose capacity will
-    /// be released by this `ReleaseCapacity`.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
+    /// be released by this `FlowControl`.
     pub fn stream_id(&self) -> StreamId {
         StreamId::from_internal(self.inner.stream_id())
+    }
+
+    /// Get the current available capacity of data this stream *could* receive.
+    pub fn available_capacity(&self) -> isize {
+        self.inner.available_recv_capacity()
+    }
+
+    /// Get the currently *used* capacity for this stream.
+    ///
+    /// This is the amount of bytes that can be released back to the remote.
+    pub fn used_capacity(&self) -> usize {
+        self.inner.used_recv_capacity() as usize
     }
 
     /// Release window capacity back to remote stream.
@@ -500,16 +508,15 @@ impl ReleaseCapacity {
     ///
     /// See [struct level] documentation for more details.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// This function panics if increasing the receive window size by `sz` would
-    /// result in a window size greater than the target window size set by
-    /// [`set_target_window_size`]. In other words, the caller cannot release
-    /// more capacity than data has been received. If 1024 bytes of data have
-    /// been received, at most 1024 bytes can be released.
+    /// This function errors if increasing the receive window size by `sz` would
+    /// result in a window size greater than the target window size. In other
+    /// words, the caller cannot release more capacity than data has been
+    /// received. If 1024 bytes of data have been received, at most 1024 bytes
+    /// can be released.
     ///
     /// [struct level]: #
-    /// [`set_target_window_size`]: server/struct.Server.html#method.set_target_window_size
     pub fn release_capacity(&mut self, sz: usize) -> Result<(), crate::Error> {
         if sz > proto::MAX_WINDOW_SIZE as usize {
             return Err(UserError::ReleaseCapacityTooBig.into());
@@ -517,13 +524,6 @@ impl ReleaseCapacity {
         self.inner
             .release_capacity(sz as proto::WindowSize)
             .map_err(Into::into)
-    }
-}
-
-impl Clone for ReleaseCapacity {
-    fn clone(&self) -> Self {
-        let inner = self.inner.clone();
-        ReleaseCapacity { inner }
     }
 }
 

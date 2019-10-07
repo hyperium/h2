@@ -97,20 +97,20 @@
 //!
 //!     println!("Received response: {:?}", head);
 //!
-//!     // The `release_capacity` handle allows the caller to manage
+//!     // The `flow_control` handle allows the caller to manage
 //!     // flow control.
 //!     //
 //!     // Whenever data is received, the caller is responsible for
 //!     // releasing capacity back to the server once it has freed
 //!     // the data from memory.
-//!     let mut release_capacity = body.release_capacity().clone();
+//!     let mut flow_control = body.flow_control().clone();
 //!
 //!     while let Some(chunk) = body.data().await {
 //!         let chunk = chunk?;
 //!         println!("RX: {:?}", chunk);
 //!
 //!         // Let the server send more data.
-//!         let _ = release_capacity.release_capacity(chunk.len());
+//!         let _ = flow_control.release_capacity(chunk.len());
 //!     }
 //!
 //!     Ok(())
@@ -138,7 +138,7 @@
 use crate::codec::{Codec, RecvError, SendError, UserError};
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto;
-use crate::{PingPong, RecvStream, ReleaseCapacity, SendStream};
+use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Bytes, IntoBuf};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
@@ -628,11 +628,11 @@ impl Builder {
     /// flow control for received data.
     ///
     /// The initial window of a stream is used as part of flow control. For more
-    /// details, see [`ReleaseCapacity`].
+    /// details, see [`FlowControl`].
     ///
     /// The default value is 65,535.
     ///
-    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    /// [`FlowControl`]: ../struct.FlowControl.html
     ///
     /// # Examples
     ///
@@ -663,11 +663,11 @@ impl Builder {
     /// for received data.
     ///
     /// The initial window of a connection is used as part of flow control. For more details,
-    /// see [`ReleaseCapacity`].
+    /// see [`FlowControl`].
     ///
     /// The default value is 65,535.
     ///
-    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    /// [`FlowControl`]: ../struct.FlowControl.html
     ///
     /// # Examples
     ///
@@ -1187,14 +1187,14 @@ where
     ///
     /// If `size` is less than the current value, nothing will happen
     /// immediately. However, as window capacity is released by
-    /// [`ReleaseCapacity`] instances, no `WINDOW_UPDATE` frames will be sent
+    /// [`FlowControl`] instances, no `WINDOW_UPDATE` frames will be sent
     /// out until the number of "in flight" bytes drops below `size`.
     ///
     /// The default value is 65,535.
     ///
-    /// See [`ReleaseCapacity`] documentation for more details.
+    /// See [`FlowControl`] documentation for more details.
     ///
-    /// [`ReleaseCapacity`]: ../struct.ReleaseCapacity.html
+    /// [`FlowControl`]: ../struct.FlowControl.html
     /// [library level]: ../index.html#flow-control
     pub fn set_target_window_size(&mut self, size: u32) {
         assert!(size <= proto::MAX_WINDOW_SIZE);
@@ -1263,7 +1263,7 @@ impl Future for ResponseFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (parts, _) = ready!(self.inner.poll_response(cx))?.into_parts();
-        let body = RecvStream::new(ReleaseCapacity::new(self.inner.clone()));
+        let body = RecvStream::new(FlowControl::new(self.inner.clone()));
 
         Poll::Ready(Ok(Response::from_parts(parts, body)))
     }

@@ -266,3 +266,9 @@ impl fmt::Display for Window {
         fmt::Display::fmt(&self.0, f)
     }
 }
+
+impl From<Window> for isize {
+    fn from(w: Window) -> isize {
+        w.0 as isize
+    }
+}
