@@ -1136,7 +1136,7 @@ where
         log::debug!("binding client connection");
 
         let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        io.write_all(msg).await?;
+        io.write_all(msg).await.map_err(crate::Error::from_io)?;
 
         log::debug!("client connection bound");
 

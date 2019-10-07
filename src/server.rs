@@ -1121,7 +1121,7 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Flush the codec
-        ready!(self.codec.as_mut().unwrap().flush(cx))?;
+        ready!(self.codec.as_mut().unwrap().flush(cx)).map_err(crate::Error::from_io)?;
 
         // Return the codec
         Poll::Ready(Ok(self.codec.take().unwrap()))
@@ -1153,13 +1153,13 @@ where
         let mut rem = PREFACE.len() - self.pos;
 
         while rem > 0 {
-            let n = ready!(Pin::new(self.inner_mut()).poll_read(cx, &mut buf[..rem]))?;
+            let n = ready!(Pin::new(self.inner_mut()).poll_read(cx, &mut buf[..rem]))
+                .map_err(crate::Error::from_io)?;
             if n == 0 {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "connection closed unexpectedly",
-                )
-                .into()));
+                return Poll::Ready(Err(crate::Error::from_io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed before reading preface",
+                ))));
             }
 
             if PREFACE[self.pos..self.pos + n] != buf[..n] {

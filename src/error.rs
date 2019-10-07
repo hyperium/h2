@@ -73,6 +73,12 @@ impl Error {
             _ => None,
         }
     }
+
+    pub(crate) fn from_io(err: io::Error) -> Self {
+        Error {
+            kind: Kind::Io(err),
+        }
+    }
 }
 
 impl From<proto::Error> for Error {
@@ -84,14 +90,6 @@ impl From<proto::Error> for Error {
                 Proto(reason) => Kind::Proto(reason),
                 Io(e) => Kind::Io(e),
             },
-        }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(src: io::Error) -> Error {
-        Error {
-            kind: Kind::Io(src),
         }
     }
 }
@@ -109,7 +107,7 @@ impl From<SendError> for Error {
         match src {
             SendError::User(e) => e.into(),
             SendError::Connection(reason) => reason.into(),
-            SendError::Io(e) => e.into(),
+            SendError::Io(e) => Error::from_io(e),
         }
     }
 }
