@@ -664,6 +664,13 @@ where
         )
     }
 
+    pub fn apply_local_settings(&mut self, frame: &frame::Settings) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions.recv.apply_local_settings(frame, &mut me.store)
+    }
+
     pub fn send_request(
         &mut self,
         request: Request<()>,

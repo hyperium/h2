@@ -455,6 +455,67 @@ impl Recv {
         }
     }
 
+    pub(crate) fn apply_local_settings(
+        &mut self,
+        settings: &frame::Settings,
+        store: &mut Store,
+    ) -> Result<(), RecvError> {
+        let target = if let Some(val) = settings.initial_window_size() {
+            val
+        } else {
+            return Ok(());
+        };
+
+        let old_sz = self.init_window_sz;
+        self.init_window_sz = target;
+
+        log::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
+
+        // Per RFC 7540 §6.9.2:
+        //
+        // In addition to changing the flow-control window for streams that are
+        // not yet active, a SETTINGS frame can alter the initial flow-control
+        // window size for streams with active flow-control windows (that is,
+        // streams in the "open" or "half-closed (remote)" state). When the
+        // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
+        // the size of all stream flow-control windows that it maintains by the
+        // difference between the new value and the old value.
+        //
+        // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
+        // space in a flow-control window to become negative. A sender MUST
+        // track the negative flow-control window and MUST NOT send new
+        // flow-controlled frames until it receives WINDOW_UPDATE frames that
+        // cause the flow-control window to become positive.
+
+        if target < old_sz {
+            // We must decrease the (local) window on every open stream.
+            let dec = old_sz - target;
+            log::trace!("decrementing all windows; dec={}", dec);
+
+            store.for_each(|mut stream| {
+                stream.recv_flow.dec_recv_window(dec);
+                Ok(())
+            })
+        } else if target > old_sz {
+            // We must increase the (local) window on every open stream.
+            let inc = target - old_sz;
+            log::trace!("incrementing all windows; inc={}", inc);
+            store.for_each(|mut stream| {
+                // XXX: Shouldn't the peer have already noticed our
+                // overflow and sent us a GOAWAY?
+                stream
+                    .recv_flow
+                    .inc_window(inc)
+                    .map_err(RecvError::Connection)?;
+                stream.recv_flow.assign_capacity(inc);
+                Ok(())
+            })
+        } else {
+            // size is the same... so do nothing
+            Ok(())
+        }
+    }
+
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
         if !stream.state.is_recv_closed() {
             return false;

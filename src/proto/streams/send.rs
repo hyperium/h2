@@ -419,7 +419,7 @@ impl Send {
                 store.for_each(|mut stream| {
                     let stream = &mut *stream;
 
-                    stream.send_flow.dec_window(dec);
+                    stream.send_flow.dec_send_window(dec);
 
                     // It's possible that decreasing the window causes
                     // `window_size` (the stream-specific window) to fall below

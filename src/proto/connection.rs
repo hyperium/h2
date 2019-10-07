@@ -1,4 +1,4 @@
-use crate::codec::RecvError;
+use crate::codec::{RecvError, UserError};
 use crate::frame::{Reason, StreamId};
 use crate::{client, frame, proto, server};
 
@@ -99,14 +99,22 @@ where
             codec,
             go_away: GoAway::new(),
             ping_pong: PingPong::new(),
-            settings: Settings::new(),
+            settings: Settings::new(config.settings),
             streams,
             _phantom: PhantomData,
         }
     }
 
-    pub fn set_target_window_size(&mut self, size: WindowSize) {
+    /// connection flow control
+    pub(crate) fn set_target_window_size(&mut self, size: WindowSize) {
         self.streams.set_target_connection_window_size(size);
+    }
+
+    /// Send a new SETTINGS frame with an updated initial window size.
+    pub(crate) fn set_initial_window_size(&mut self, size: WindowSize) -> Result<(), UserError> {
+        let mut settings = frame::Settings::default();
+        settings.set_initial_window_size(Some(size));
+        self.settings.send_settings(settings)
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.
@@ -119,7 +127,7 @@ where
         ready!(self.ping_pong.send_pending_ping(cx, &mut self.codec))?;
         ready!(self
             .settings
-            .send_pending_ack(cx, &mut self.codec, &mut self.streams))?;
+            .poll_send(cx, &mut self.codec, &mut self.streams))?;
         ready!(self.streams.send_pending_refusal(cx, &mut self.codec))?;
 
         Poll::Ready(Ok(()))
@@ -327,7 +335,8 @@ where
                 }
                 Some(Settings(frame)) => {
                     log::trace!("recv SETTINGS; frame={:?}", frame);
-                    self.settings.recv_settings(frame);
+                    self.settings
+                        .recv_settings(frame, &mut self.codec, &mut self.streams)?;
                 }
                 Some(GoAway(frame)) => {
                     log::trace!("recv GOAWAY; frame={:?}", frame);
