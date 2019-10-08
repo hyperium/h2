@@ -1187,6 +1187,22 @@ impl OpaqueStreamRef {
         me.actions.recv.poll_trailers(cx, &mut stream)
     }
 
+    pub(crate) fn available_recv_capacity(&self) -> isize {
+        let me = self.inner.lock().unwrap();
+        let me = &*me;
+
+        let stream = &me.store[self.key];
+        stream.recv_flow.available().into()
+    }
+
+    pub(crate) fn used_recv_capacity(&self) -> WindowSize {
+        let me = self.inner.lock().unwrap();
+        let me = &*me;
+
+        let stream = &me.store[self.key];
+        stream.in_flight_recv_data
+    }
+
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
     pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {

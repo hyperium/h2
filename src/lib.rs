@@ -62,7 +62,7 @@
 //! There is also a **connection level** window governing data sent across all
 //! streams.
 //!
-//! Managing flow control for inbound data is done through [`ReleaseCapacity`].
+//! Managing flow control for inbound data is done through [`FlowControl`].
 //! Managing flow control for outbound data is done through [`SendStream`]. See
 //! the struct level documentation for those two types for more details.
 //!
@@ -71,7 +71,7 @@
 //! [`client`]: client/index.html
 //! [`server`]: server/index.html
 //! [Flow control]: http://httpwg.org/specs/rfc7540.html#FlowControl
-//! [`ReleaseCapacity`]: struct.ReleaseCapacity.html
+//! [`FlowControl`]: struct.FlowControl.html
 //! [`SendStream`]: struct.SendStream.html
 //! [Starting HTTP/2]: http://httpwg.org/specs/rfc7540.html#starting
 //! [upgrade]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism
@@ -118,7 +118,7 @@ pub mod server;
 mod share;
 
 pub use crate::error::{Error, Reason};
-pub use crate::share::{Ping, PingPong, Pong, RecvStream, ReleaseCapacity, SendStream, StreamId};
+pub use crate::share::{FlowControl, Ping, PingPong, Pong, RecvStream, SendStream, StreamId};
 
 #[cfg(feature = "unstable")]
 pub use codec::{Codec, RecvError, SendError, UserError};

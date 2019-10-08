@@ -101,9 +101,7 @@ async fn release_capacity_sends_window_update() {
 
             let buf = body.next().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
-            body.release_capacity()
-                .release_capacity(buf.len() * 2)
-                .unwrap();
+            body.flow_control().release_capacity(buf.len() * 2).unwrap();
 
             let buf = body.next().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
@@ -158,7 +156,7 @@ async fn release_capacity_of_small_amount_does_not_send_window_update() {
             let buf = body.next().await.unwrap().unwrap();
             // read the small body and then release it
             assert_eq!(buf.len(), 16);
-            body.release_capacity().release_capacity(buf.len()).unwrap();
+            body.flow_control().release_capacity(buf.len()).unwrap();
             let buf = body.next().await;
             assert!(buf.is_none());
         };
@@ -342,7 +340,7 @@ async fn stream_error_release_connection_capacity() {
                 .expect("response");
             assert_eq!(resp.status(), StatusCode::OK);
             let mut body = resp.into_parts().1;
-            let mut cap = body.release_capacity().clone();
+            let mut cap = body.flow_control().clone();
             let to_release = 16_384 * 2;
             let mut should_recv_bytes = to_release;
             let mut should_recv_frames = 2usize;
@@ -787,7 +785,7 @@ async fn connection_notified_on_released_capacity() {
     idle_ms(100).await;
 
     // Release the capacity
-    a.release_capacity().release_capacity(16_384).unwrap();
+    a.flow_control().release_capacity(16_384).unwrap();
 
     th1_rx.await.unwrap();
     th2_rx.await.unwrap();
@@ -1156,7 +1154,7 @@ async fn decrease_target_window_size() {
         let res = conn.drive(resp).await.expect("response");
         conn.set_target_window_size(16_384);
         let mut body = res.into_parts().1;
-        let mut cap = body.release_capacity().clone();
+        let mut cap = body.flow_control().clone();
 
         let bytes = conn.drive(body.try_concat()).await.expect("concat");
         assert_eq!(bytes.len(), 65_535);
@@ -1341,8 +1339,10 @@ async fn client_decrease_initial_window_size() {
         .await;
 
         // stream 5 went negative, so release back to 0
+        assert_eq!(body5.flow_control().available_capacity(), -100);
+        assert_eq!(body5.flow_control().used_capacity(), 100);
         body5
-            .release_capacity()
+            .flow_control()
             .release_capacity(100)
             .expect("release_capacity");
         conn.drive(yield_once()).await;
