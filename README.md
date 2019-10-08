@@ -7,7 +7,6 @@
 
 A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
-[![Build Status](https://travis-ci.org/hyperium/h2.svg?branch=master)](https://travis-ci.org/hyperium/h2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/h2.svg)](https://crates.io/crates/h2)
 [![Documentation](https://docs.rs/h2/badge.svg)][dox]
