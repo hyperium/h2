@@ -36,7 +36,7 @@ async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error>> {
         println!("GOT request: {:?}", request);
         let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
 
-        let mut pushed_uri_parts: uri::Parts  = request.into_parts().0.uri.into();
+        let mut pushed_uri_parts: uri::Parts = request.into_parts().0.uri.into();
         pushed_uri_parts.path_and_query = uri::PathAndQuery::from_static("/pushed").into();
         let uri1 = uri::Uri::from_parts(pushed_uri_parts).unwrap();
         println!("uri1 {}", uri1);
@@ -46,15 +46,9 @@ async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error>> {
 
         println!("uri2 {}", uri2);
 
-        let pushed_req = Request::builder()
-            .uri(uri1)
-            .body(())
-            .unwrap();
+        let pushed_req = Request::builder().uri(uri1).body(()).unwrap();
 
-        let pushed_req2 = Request::builder()
-            .uri(uri2)
-            .body(())
-            .unwrap();
+        let pushed_req2 = Request::builder().uri(uri2).body(()).unwrap();
 
         let pushed_rsp = http::Response::builder().status(200).body(()).unwrap();
         let pushed_rsp2 = http::Response::builder().status(200).body(()).unwrap();
