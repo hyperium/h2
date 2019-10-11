@@ -984,6 +984,8 @@ impl<B> StreamRef<B> {
         let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
+        me.refs += 1;
+
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
