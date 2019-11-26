@@ -1,5 +1,5 @@
 use crate::frame::{Error, Frame, Head, Kind, StreamId};
-use bytes::{Buf, BufMut, IntoBuf};
+use bytes::BufMut;
 
 const ACK_FLAG: u8 = 0x1;
 
@@ -71,7 +71,7 @@ impl Ping {
         }
 
         let mut payload = [0; 8];
-        bytes.into_buf().copy_to_slice(&mut payload);
+        payload.copy_from_slice(bytes);
 
         // The PING frame defines the following flags:
         //

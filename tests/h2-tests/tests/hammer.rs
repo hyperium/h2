@@ -26,8 +26,8 @@ impl Server {
     {
         let mk_data = Arc::new(mk_data);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let listener = rt
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        let mut listener = rt
             .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
             .unwrap();
         let addr = listener.local_addr().unwrap();
@@ -35,8 +35,8 @@ impl Server {
         let reqs2 = reqs.clone();
         let join = thread::spawn(move || {
             let server = async move {
-                let mut incoming = listener.incoming();
-                while let Some(socket) = incoming.next().await {
+                loop {
+                    let socket = listener.accept().await.map(|(s, _)| s);
                     let reqs = reqs2.clone();
                     let mk_data = mk_data.clone();
                     tokio::spawn(async move {
@@ -140,7 +140,7 @@ fn hammer_client_concurrency() {
                     })
             });
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(tcp);
         println!("...done");
     }

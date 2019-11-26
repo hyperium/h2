@@ -9,7 +9,7 @@ use h2_support::util::yield_once;
 async fn send_data_without_requesting_capacity() {
     let _ = env_logger::try_init();
 
-    let payload = [0; 1024];
+    let payload = vec![0; 1024];
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -42,7 +42,7 @@ async fn send_data_without_requesting_capacity() {
     assert_eq!(stream.capacity(), 0);
 
     // Send the data
-    stream.send_data(payload[..].into(), true).unwrap();
+    stream.send_data(payload.into(), true).unwrap();
 
     // Get the response
     let resp = h2.run(response).await.unwrap();
@@ -93,17 +93,17 @@ async fn release_capacity_sends_window_update() {
             let mut body = resp.into_parts().1;
 
             // read some body to use up window size to below half
-            let buf = body.next().await.unwrap().unwrap();
+            let buf = body.data().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
 
-            let buf = body.next().await.unwrap().unwrap();
+            let buf = body.data().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
 
-            let buf = body.next().await.unwrap().unwrap();
+            let buf = body.data().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
             body.flow_control().release_capacity(buf.len() * 2).unwrap();
 
-            let buf = body.next().await.unwrap().unwrap();
+            let buf = body.data().await.unwrap().unwrap();
             assert_eq!(buf.len(), payload_len);
         };
 
@@ -153,11 +153,11 @@ async fn release_capacity_of_small_amount_does_not_send_window_update() {
             assert_eq!(resp.status(), StatusCode::OK);
             let mut body = resp.into_parts().1;
             assert!(!body.is_end_stream());
-            let buf = body.next().await.unwrap().unwrap();
+            let buf = body.data().await.unwrap().unwrap();
             // read the small body and then release it
             assert_eq!(buf.len(), 16);
             body.flow_control().release_capacity(buf.len()).unwrap();
-            let buf = body.next().await;
+            let buf = body.data().await;
             assert!(buf.is_none());
         };
         join(async move { h2.await.unwrap() }, req).await;
@@ -213,7 +213,7 @@ async fn recv_data_overflows_connection_window() {
             let resp = client.send_request(request, true).unwrap().0.await.unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_parts().1;
-            let res = body.try_concat().await;
+            let res = util::concat(body).await;
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
@@ -274,7 +274,7 @@ async fn recv_data_overflows_stream_window() {
             let resp = client.send_request(request, true).unwrap().0.await.unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_parts().1;
-            let res = body.try_concat().await;
+            let res = util::concat(body).await;
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
@@ -685,8 +685,7 @@ async fn reserved_capacity_assigned_in_multi_window_updates() {
 
 #[tokio::test]
 async fn connection_notified_on_released_capacity() {
-    use futures::channel::mpsc;
-    use futures::channel::oneshot;
+    use tokio::sync::{mpsc, oneshot};
 
     let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
@@ -695,7 +694,7 @@ async fn connection_notified_on_released_capacity() {
     // notifications. This test is here, in part, to ensure that the connection
     // receives the appropriate notifications to send out window updates.
 
-    let (tx, mut rx) = mpsc::unbounded();
+    let (tx, mut rx) = mpsc::unbounded_channel();
 
     // Because threading is fun
     let (settings_tx, settings_rx) = oneshot::channel();
@@ -744,11 +743,11 @@ async fn connection_notified_on_released_capacity() {
 
     h2.drive(settings_rx).await.unwrap();
     let request = Request::get("https://example.com/a").body(()).unwrap();
-    tx.unbounded_send(client.send_request(request, true).unwrap().0)
+    tx.send(client.send_request(request, true).unwrap().0)
         .unwrap();
 
     let request = Request::get("https://example.com/b").body(()).unwrap();
-    tx.unbounded_send(client.send_request(request, true).unwrap().0)
+    tx.send(client.send_request(request, true).unwrap().0)
         .unwrap();
 
     tokio::spawn(async move {
@@ -760,8 +759,8 @@ async fn connection_notified_on_released_capacity() {
     });
 
     // Get the two requests
-    let a = rx.next().await.unwrap();
-    let b = rx.next().await.unwrap();
+    let a = rx.recv().await.unwrap();
+    let b = rx.recv().await.unwrap();
 
     // Get the first response
     let response = a.await.unwrap();
@@ -769,7 +768,7 @@ async fn connection_notified_on_released_capacity() {
     let (_, mut a) = response.into_parts();
 
     // Get the next chunk
-    let chunk = a.next().await.unwrap();
+    let chunk = a.data().await.unwrap();
     assert_eq!(16_384, chunk.unwrap().len());
 
     // Get the second response
@@ -778,7 +777,7 @@ async fn connection_notified_on_released_capacity() {
     let (_, mut b) = response.into_parts();
 
     // Get the next chunk
-    let chunk = b.next().await.unwrap();
+    let chunk = b.data().await.unwrap();
     assert_eq!(16_384, chunk.unwrap().len());
 
     // Wait a bit
@@ -944,7 +943,6 @@ async fn recv_no_init_window_then_receive_some_init_window() {
 async fn settings_lowered_capacity_returns_capacity_to_connection() {
     use futures::channel::oneshot;
     use futures::future::{select, Either};
-    use std::time::Instant;
 
     let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
@@ -976,11 +974,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
         //
         // A timeout is used here to avoid blocking forever if there is a
         // failure
-        let result = select(
-            rx2,
-            tokio::timer::delay(Instant::now() + Duration::from_secs(5)),
-        )
-        .await;
+        let result = select(rx2, tokio::time::delay_for(Duration::from_secs(5))).await;
         if let Either::Right((_, _)) = result {
             panic!("Timed out");
         }
@@ -1012,11 +1006,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     });
 
     // Wait for server handshake to complete.
-    let result = select(
-        rx1,
-        tokio::timer::delay(Instant::now() + Duration::from_secs(5)),
-    )
-    .await;
+    let result = select(rx1, tokio::time::delay_for(Duration::from_secs(5))).await;
     if let Either::Right((_, _)) = result {
         panic!("Timed out");
     }
@@ -1113,7 +1103,7 @@ async fn increase_target_window_size_after_using_some() {
         // drive an empty future to allow the WINDOW_UPDATE
         // to go out while the response capacity is still in use.
         conn.drive(yield_once()).await;
-        let _res = conn.drive(res.into_body().try_concat()).await;
+        let _res = conn.drive(util::concat(res.into_body())).await;
         conn.await.expect("client");
     };
 
@@ -1156,7 +1146,7 @@ async fn decrease_target_window_size() {
         let mut body = res.into_parts().1;
         let mut cap = body.flow_control().clone();
 
-        let bytes = conn.drive(body.try_concat()).await.expect("concat");
+        let bytes = conn.drive(util::concat(body)).await.expect("concat");
         assert_eq!(bytes.len(), 65_535);
         cap.release_capacity(bytes.len()).unwrap();
         conn.await.expect("conn");
@@ -1568,7 +1558,7 @@ async fn data_padding() {
             let resp = response.await.unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_body();
-            let bytes = body.try_concat().await.unwrap();
+            let bytes = util::concat(body).await.unwrap();
             assert_eq!(bytes.len(), 100);
         };
         join(async move { conn.await.expect("client") }, fut).await;

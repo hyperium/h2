@@ -27,10 +27,10 @@ async fn write_continuation_frames() {
         let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
 
         let mut request = Request::builder();
-        request.uri("https://http2.akamai.com/");
+        request = request.uri("https://http2.akamai.com/");
 
         for &(name, ref value) in &large {
-            request.header(name, &value[..]);
+            request = request.header(name, &value[..]);
         }
 
         let request = request.body(()).unwrap();

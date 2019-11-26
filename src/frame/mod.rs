@@ -53,6 +53,9 @@ pub use self::settings::Settings;
 pub use self::stream_id::{StreamId, StreamIdOverflow};
 pub use self::window_update::WindowUpdate;
 
+#[cfg(feature = "unstable")]
+pub use crate::hpack::BytesStr;
+
 // Re-export some constants
 
 pub use self::settings::{

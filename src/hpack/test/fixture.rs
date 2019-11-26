@@ -1,6 +1,6 @@
 use crate::hpack::{Decoder, Encoder, Header};
 
-use bytes::BytesMut;
+use bytes::{buf::BufMutExt, BytesMut};
 use hex::FromHex;
 use serde_json::Value;
 
@@ -71,8 +71,10 @@ fn test_story(story: Value) {
                 decoder.queue_size_update(size);
             }
 
+            let mut buf = BytesMut::with_capacity(case.wire.len());
+            buf.extend_from_slice(&case.wire);
             decoder
-                .decode(&mut Cursor::new(&mut case.wire.clone().into()), |e| {
+                .decode(&mut Cursor::new(&mut buf), |e| {
                     let (name, value) = expect.remove(0);
                     assert_eq!(name, key_str(&e));
                     assert_eq!(value, value_str(&e));
@@ -87,7 +89,8 @@ fn test_story(story: Value) {
 
         // Now, encode the headers
         for case in &cases {
-            let mut buf = BytesMut::with_capacity(64 * 1024);
+            let limit = 64 * 1024;
+            let mut buf = BytesMut::with_capacity(limit);
 
             if let Some(size) = case.header_table_size {
                 encoder.update_max_size(size);
@@ -104,7 +107,11 @@ fn test_story(story: Value) {
                 })
                 .collect();
 
-            encoder.encode(None, &mut input.clone().into_iter(), &mut buf);
+            encoder.encode(
+                None,
+                &mut input.clone().into_iter(),
+                &mut (&mut buf).limit(limit),
+            );
 
             decoder
                 .decode(&mut Cursor::new(&mut buf), |e| {

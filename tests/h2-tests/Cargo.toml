@@ -10,5 +10,5 @@ edition = "2018"
 [dev-dependencies]
 h2-support = { path = "../h2-support" }
 log = "0.4.1"
-futures-preview = "=0.3.0-alpha.19"
-tokio = "=0.2.0-alpha.6"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+tokio = { version = "0.2", features = ["macros", "tcp"] }

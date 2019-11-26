@@ -314,8 +314,8 @@ impl Setting {
             MaxHeaderListSize(v) => (6, v),
         };
 
-        dst.put_u16_be(kind);
-        dst.put_u32_be(val);
+        dst.put_u16(kind);
+        dst.put_u32(val);
     }
 }
 

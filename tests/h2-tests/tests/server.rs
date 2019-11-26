@@ -1,7 +1,7 @@
 #![deny(warnings)]
 
 use futures::future::{join, poll_fn};
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use h2_support::prelude::*;
 use tokio::io::AsyncWriteExt;
 
@@ -526,7 +526,7 @@ async fn abrupt_shutdown() {
         let (req, tx) = srv.next().await.unwrap().expect("server receives request");
 
         let req_fut = async move {
-            let body = req.into_body().try_concat().await;
+            let body = util::concat(req.into_body()).await;
             drop(tx);
             let err = body.expect_err("request body should error");
             assert_eq!(
@@ -608,7 +608,7 @@ async fn graceful_shutdown() {
         let body = req.into_parts().1;
 
         let body = async move {
-            let buf = body.try_concat().await.unwrap();
+            let buf = util::concat(body).await.unwrap();
             assert!(buf.is_empty());
 
             let rsp = http::Response::builder().status(200).body(()).unwrap();

@@ -8,7 +8,7 @@ use crate::frame::{self, Reason};
 use bytes::Buf;
 use http;
 use std::task::{Context, Poll, Waker};
-use tokio_io::AsyncWrite;
+use tokio::io::AsyncWrite;
 
 use std::io;
 

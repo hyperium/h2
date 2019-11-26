@@ -1,15 +1,16 @@
 use super::{util, StreamDependency, StreamId};
 use crate::frame::{Error, Frame, Head, Kind};
-use crate::hpack;
+use crate::hpack::{self, BytesStr};
 
 use http::header::{self, HeaderName, HeaderValue};
 use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
 use bytes::{Bytes, BytesMut};
-use string::String;
 
 use std::fmt;
 use std::io::Cursor;
+
+type EncodeBuf<'a> = bytes::buf::ext::Limit<&'a mut BytesMut>;
 
 // Minimum MAX_FRAME_SIZE is 16kb, so save some arbitrary space for frame
 // head and other header bits.
@@ -67,9 +68,9 @@ pub struct Continuation {
 pub struct Pseudo {
     // Request
     pub method: Option<Method>,
-    pub scheme: Option<String<Bytes>>,
-    pub authority: Option<String<Bytes>>,
-    pub path: Option<String<Bytes>>,
+    pub scheme: Option<BytesStr>,
+    pub authority: Option<BytesStr>,
+    pub path: Option<BytesStr>,
 
     // Response
     pub status: Option<StatusCode>,
@@ -261,7 +262,11 @@ impl Headers {
         self.header_block.fields
     }
 
-    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
+    pub fn encode(
+        self,
+        encoder: &mut hpack::Encoder,
+        dst: &mut EncodeBuf<'_>,
+    ) -> Option<Continuation> {
         // At this point, the `is_end_headers` flag should always be set
         debug_assert!(self.flags.is_end_headers());
 
@@ -465,7 +470,11 @@ impl PushPromise {
         self.header_block.is_over_size
     }
 
-    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
+    pub fn encode(
+        self,
+        encoder: &mut hpack::Encoder,
+        dst: &mut EncodeBuf<'_>,
+    ) -> Option<Continuation> {
         use bytes::BufMut;
 
         // At this point, the `is_end_headers` flag should always be set
@@ -477,7 +486,7 @@ impl PushPromise {
         self.header_block
             .into_encoding()
             .encode(&head, encoder, dst, |dst| {
-                dst.put_u32_be(promised_id.into());
+                dst.put_u32(promised_id.into());
             })
     }
 
@@ -515,7 +524,11 @@ impl Continuation {
         Head::new(Kind::Continuation, END_HEADERS, self.stream_id)
     }
 
-    pub fn encode(self, encoder: &mut hpack::Encoder, dst: &mut BytesMut) -> Option<Continuation> {
+    pub fn encode(
+        self,
+        encoder: &mut hpack::Encoder,
+        dst: &mut EncodeBuf<'_>,
+    ) -> Option<Continuation> {
         // Get the CONTINUATION frame head
         let head = self.head();
 
@@ -542,7 +555,7 @@ impl Pseudo {
             method: Some(method),
             scheme: None,
             authority: None,
-            path: Some(to_string(path)),
+            path: Some(unsafe { BytesStr::from_utf8_unchecked(path) }),
             status: None,
         };
 
@@ -556,7 +569,7 @@ impl Pseudo {
         // If the URI includes an authority component, add it to the pseudo
         // headers
         if let Some(authority) = parts.authority {
-            pseudo.set_authority(to_string(authority.into()));
+            pseudo.set_authority(unsafe { BytesStr::from_utf8_unchecked(authority.into()) });
         }
 
         pseudo
@@ -573,16 +586,12 @@ impl Pseudo {
     }
 
     pub fn set_scheme(&mut self, scheme: uri::Scheme) {
-        self.scheme = Some(to_string(scheme.into()));
+        self.scheme = Some(unsafe { BytesStr::from_utf8_unchecked(scheme.into()) });
     }
 
-    pub fn set_authority(&mut self, authority: String<Bytes>) {
+    pub fn set_authority(&mut self, authority: BytesStr) {
         self.authority = Some(authority);
     }
-}
-
-fn to_string(src: Bytes) -> String<Bytes> {
-    unsafe { String::from_utf8_unchecked(src) }
 }
 
 // ===== impl EncodingHeaderBlock =====
@@ -592,20 +601,20 @@ impl EncodingHeaderBlock {
         mut self,
         head: &Head,
         encoder: &mut hpack::Encoder,
-        dst: &mut BytesMut,
+        dst: &mut EncodeBuf<'_>,
         f: F,
     ) -> Option<Continuation>
     where
-        F: FnOnce(&mut BytesMut),
+        F: FnOnce(&mut EncodeBuf<'_>),
     {
-        let head_pos = dst.len();
+        let head_pos = dst.get_ref().len();
 
         // At this point, we don't know how big the h2 frame will be.
         // So, we write the head with length 0, then write the body, and
         // finally write the length once we know the size.
         head.encode(0, dst);
 
-        let payload_pos = dst.len();
+        let payload_pos = dst.get_ref().len();
 
         f(dst);
 
@@ -622,19 +631,19 @@ impl EncodingHeaderBlock {
         };
 
         // Compute the header block length
-        let payload_len = (dst.len() - payload_pos) as u64;
+        let payload_len = (dst.get_ref().len() - payload_pos) as u64;
 
         // Write the frame length
         let payload_len_be = payload_len.to_be_bytes();
         assert!(payload_len_be[0..5].iter().all(|b| *b == 0));
-        (&mut dst[head_pos..head_pos + 3]).copy_from_slice(&payload_len_be[5..]);
+        (dst.get_mut()[head_pos..head_pos + 3]).copy_from_slice(&payload_len_be[5..]);
 
         if continuation.is_some() {
             // There will be continuation frames, so the `is_end_headers` flag
             // must be unset
-            debug_assert!(dst[head_pos + 4] & END_HEADERS == END_HEADERS);
+            debug_assert!(dst.get_ref()[head_pos + 4] & END_HEADERS == END_HEADERS);
 
-            dst[head_pos + 4] -= END_HEADERS;
+            dst.get_mut()[head_pos + 4] -= END_HEADERS;
         }
 
         continuation
@@ -961,16 +970,4 @@ impl HeaderBlock {
 
 fn decoded_header_size(name: usize, value: usize) -> usize {
     name + value + 32
-}
-
-// Stupid hack to make the set_pseudo! macro happy, since all other values
-// have a method `as_str` except for `String<Bytes>`.
-trait AsStr {
-    fn as_str(&self) -> &str;
-}
-
-impl AsStr for String<Bytes> {
-    fn as_str(&self) -> &str {
-        self
-    }
 }

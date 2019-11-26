@@ -14,9 +14,9 @@ use std::io;
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_codec::FramedRead as InnerFramedRead;
-use tokio_codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
-use tokio_io::AsyncRead;
+use tokio::io::AsyncRead;
+use tokio_util::codec::FramedRead as InnerFramedRead;
+use tokio_util::codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
 
 // 16 MB "sane default" taken from golang http2
 const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;

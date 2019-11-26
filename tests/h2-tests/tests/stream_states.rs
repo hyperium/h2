@@ -5,6 +5,7 @@ use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
 use std::task::Poll;
+use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn send_recv_headers_only() {
@@ -80,7 +81,7 @@ async fn send_recv_data() {
     assert_eq!(stream.capacity(), 5);
 
     // Send the data
-    stream.send_data("hello", true).unwrap();
+    stream.send_data("hello".as_bytes(), true).unwrap();
 
     // Get the response
     let resp = h2.run(response).await.unwrap();
@@ -204,7 +205,7 @@ async fn errors_if_recv_frame_exceeds_max_frame_size() {
             let resp = client.get("https://example.com/").await.expect("response");
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_parts().1;
-            let res = body.try_concat().await;
+            let res = util::concat(body).await;
             let err = res.unwrap_err();
             assert_eq!(err.to_string(), "protocol error: frame with invalid size");
         };
@@ -252,7 +253,7 @@ async fn configure_max_frame_size() {
             let resp = client.get("https://example.com/").await.expect("response");
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_parts().1;
-            let buf = body.try_concat().await.expect("body");
+            let buf = util::concat(body).await.expect("body");
             assert_eq!(buf.len(), 16_385);
         };
 
@@ -313,7 +314,7 @@ async fn recv_goaway_finishes_processed_streams() {
                 .expect("response");
             assert_eq!(resp.status(), StatusCode::OK);
             let body = resp.into_parts().1;
-            let buf = body.try_concat().await.expect("body");
+            let buf = util::concat(body).await.expect("body");
             assert_eq!(buf.len(), 16_384);
         };
 
@@ -702,7 +703,7 @@ async fn rst_while_closing() {
     let (io, mut srv) = mock::new();
 
     // Rendevous when we've queued a trailers frame
-    let (tx, rx) = crate::futures::channel::oneshot::channel();
+    let (tx, rx) = oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -765,7 +766,7 @@ async fn rst_with_buffered_data() {
     let (io, mut srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = crate::futures::channel::oneshot::channel();
+    let (tx, rx) = oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -817,7 +818,7 @@ async fn err_with_buffered_data() {
     let (io, mut srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = crate::futures::channel::oneshot::channel();
+    let (tx, rx) = oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -872,7 +873,7 @@ async fn send_err_with_buffered_data() {
     let (io, mut srv) = mock::new_with_write_capacity(73);
 
     // Synchronize the client / server on response
-    let (tx, rx) = crate::futures::channel::oneshot::channel();
+    let (tx, rx) = oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;

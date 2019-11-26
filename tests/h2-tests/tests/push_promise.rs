@@ -45,7 +45,7 @@ async fn recv_push_works() {
                     assert_eq!(request.into_parts().0.method, Method::GET);
                     let resp = response.await.unwrap();
                     assert_eq!(resp.status(), StatusCode::OK);
-                    let b = resp.into_body().try_concat().await.unwrap();
+                    let b = util::concat(resp.into_body()).await.unwrap();
                     assert_eq!(b, "promised_data");
                     Ok(())
                 }

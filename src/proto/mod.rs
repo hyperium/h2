@@ -23,7 +23,7 @@ use crate::frame::{self, Frame};
 
 use bytes::Buf;
 
-use tokio_io::AsyncWrite;
+use tokio::io::AsyncWrite;
 
 pub type PingPayload = [u8; 8];
 

@@ -7,7 +7,7 @@ macro_rules! raw_codec {
             $fn:ident => [$($chunk:expr,)+];
         )*
     ) => {{
-        let mut b = $crate::mock_io::Builder::new();
+        let mut b = $crate::prelude::mock_io::Builder::new();
 
         $({
             let mut chunk = vec![];

@@ -3,17 +3,17 @@ use super::{DecoderError, NeedMore};
 use bytes::Bytes;
 use http::header::{HeaderName, HeaderValue};
 use http::{Method, StatusCode};
-use string::{String, TryFrom};
+use std::fmt;
 
 /// HTTP/2.0 Header
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Header<T = HeaderName> {
     Field { name: T, value: HeaderValue },
     // TODO: Change these types to `http::uri` types.
-    Authority(String<Bytes>),
+    Authority(BytesStr),
     Method(Method),
-    Scheme(String<Bytes>),
-    Path(String<Bytes>),
+    Scheme(BytesStr),
+    Path(BytesStr),
     Status(StatusCode),
 }
 
@@ -27,6 +27,10 @@ pub enum Name<'a> {
     Path,
     Status,
 }
+
+#[doc(hidden)]
+#[derive(Clone, Eq, PartialEq, Default)]
+pub struct BytesStr(Bytes);
 
 pub fn len(name: &HeaderName, value: &HeaderValue) -> usize {
     let n: &str = name.as_ref();
@@ -60,7 +64,7 @@ impl Header {
         if name[0] == b':' {
             match &name[1..] {
                 b"authority" => {
-                    let value = String::try_from(value)?;
+                    let value = BytesStr::try_from(value)?;
                     Ok(Header::Authority(value))
                 }
                 b"method" => {
@@ -68,11 +72,11 @@ impl Header {
                     Ok(Header::Method(method))
                 }
                 b"scheme" => {
-                    let value = String::try_from(value)?;
+                    let value = BytesStr::try_from(value)?;
                     Ok(Header::Scheme(value))
                 }
                 b"path" => {
-                    let value = String::try_from(value)?;
+                    let value = BytesStr::try_from(value)?;
                     Ok(Header::Path(value))
                 }
                 b"status" => {
@@ -213,10 +217,10 @@ impl<'a> Name<'a> {
                 name: name.clone(),
                 value: HeaderValue::from_bytes(&*value)?,
             }),
-            Name::Authority => Ok(Header::Authority(String::try_from(value)?)),
+            Name::Authority => Ok(Header::Authority(BytesStr::try_from(value)?)),
             Name::Method => Ok(Header::Method(Method::from_bytes(&*value)?)),
-            Name::Scheme => Ok(Header::Scheme(String::try_from(value)?)),
-            Name::Path => Ok(Header::Path(String::try_from(value)?)),
+            Name::Scheme => Ok(Header::Scheme(BytesStr::try_from(value)?)),
+            Name::Path => Ok(Header::Path(BytesStr::try_from(value)?)),
             Name::Status => {
                 match StatusCode::from_bytes(&value) {
                     Ok(status) => Ok(Header::Status(status)),
@@ -236,5 +240,47 @@ impl<'a> Name<'a> {
             Name::Path => b":path",
             Name::Status => b":status",
         }
+    }
+}
+
+// ===== impl BytesStr =====
+
+impl BytesStr {
+    pub(crate) unsafe fn from_utf8_unchecked(bytes: Bytes) -> Self {
+        BytesStr(bytes)
+    }
+
+    #[doc(hidden)]
+    pub fn try_from(bytes: Bytes) -> Result<Self, std::str::Utf8Error> {
+        std::str::from_utf8(bytes.as_ref())?;
+        Ok(BytesStr(bytes))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        // Safety: check valid utf-8 in constructor
+        unsafe { std::str::from_utf8_unchecked(self.0.as_ref()) }
+    }
+
+    pub(crate) fn into_inner(self) -> Bytes {
+        self.0
+    }
+}
+
+impl std::ops::Deref for BytesStr {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<[u8]> for BytesStr {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Debug for BytesStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }

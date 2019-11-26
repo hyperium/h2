@@ -8,7 +8,7 @@ use std::task::Context;
 async fn single_stream_send_large_body() {
     let _ = env_logger::try_init();
 
-    let payload = [0; 1024];
+    let payload = vec![0; 1024];
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -55,7 +55,7 @@ async fn single_stream_send_large_body() {
     assert_eq!(stream.capacity(), payload.len());
 
     // Send the data
-    stream.send_data(payload[..].into(), true).unwrap();
+    stream.send_data(payload.into(), true).unwrap();
 
     // Get the response
     let resp = h2.run(response).await.unwrap();
@@ -116,7 +116,7 @@ async fn multiple_streams_with_payload_greater_than_default_window() {
         stream3.reserve_capacity(payload_clone.len());
         assert_eq!(stream3.capacity(), 0);
 
-        stream1.send_data(payload_clone[..].into(), true).unwrap();
+        stream1.send_data(payload_clone.into(), true).unwrap();
 
         // hold onto streams so they don't close
         // stream1 doesn't close because response1 is used

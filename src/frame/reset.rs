@@ -45,7 +45,7 @@ impl Reset {
         );
         let head = Head::new(Kind::Reset, 0, self.stream_id);
         head.encode(4, dst);
-        dst.put_u32_be(self.error_code.into());
+        dst.put_u32(self.error_code.into());
     }
 }
 

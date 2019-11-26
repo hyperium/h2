@@ -120,14 +120,14 @@ use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, Strea
 use crate::proto::{self, Config, Prioritized};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
-use bytes::{Buf, Bytes, IntoBuf};
+use bytes::{Buf, Bytes};
 use http::{HeaderMap, Request, Response};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -144,7 +144,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 ///
 /// [module]: index.html
 #[must_use = "futures do nothing unless polled"]
-pub struct Handshake<T, B: IntoBuf = Bytes> {
+pub struct Handshake<T, B: Buf = Bytes> {
     /// The config to pass to Connection::new after handshake succeeds.
     builder: Builder,
     /// The current state of the handshake.
@@ -172,7 +172,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
@@ -188,7 +188,7 @@ pub struct Handshake<T, B: IntoBuf = Bytes> {
 /// # pub fn main() {}
 /// ```
 #[must_use = "streams do nothing unless polled"]
-pub struct Connection<T, B: IntoBuf> {
+pub struct Connection<T, B: Buf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
@@ -210,7 +210,7 @@ pub struct Connection<T, B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::server::*;
 /// #
 /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -258,8 +258,8 @@ pub struct Builder {
 ///
 /// [module]: index.html
 #[derive(Debug)]
-pub struct SendResponse<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
+pub struct SendResponse<B: Buf> {
+    inner: proto::StreamRef<B>,
 }
 
 /// Send a response to a promised request
@@ -276,26 +276,23 @@ pub struct SendResponse<B: IntoBuf> {
 /// See [module] level docs for more details.
 ///
 /// [module]: index.html
-pub struct SendPushedResponse<B: IntoBuf> {
+pub struct SendPushedResponse<B: Buf> {
     inner: SendResponse<B>,
 }
 
 // Manual implementation necessary because of rust-lang/rust#26925
-impl<B: IntoBuf + fmt::Debug> fmt::Debug for SendPushedResponse<B>
-where
-    <B as bytes::IntoBuf>::Buf: std::fmt::Debug,
-{
+impl<B: Buf + fmt::Debug> fmt::Debug for SendPushedResponse<B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SendPushedResponse {{ {:?} }}", self.inner)
     }
 }
 
 /// Stages of an in-progress handshake.
-enum Handshaking<T, B: IntoBuf> {
+enum Handshaking<T, B: Buf> {
     /// State 1. Connection is flushing pending SETTINGS frame.
-    Flushing(Flush<T, Prioritized<B::Buf>>),
+    Flushing(Flush<T, Prioritized<B>>),
     /// State 2. Connection is waiting for the client preface.
-    ReadingPreface(ReadPreface<T, Prioritized<B::Buf>>),
+    ReadingPreface(ReadPreface<T, Prioritized<B>>),
     /// Dummy state for `mem::replace`.
     Empty,
 }
@@ -334,7 +331,7 @@ const PREFACE: [u8; 24] = *b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::server;
 /// # use h2::server::*;
 /// #
@@ -359,8 +356,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -527,8 +523,7 @@ where
 impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
@@ -540,8 +535,7 @@ where
 impl<T, B> fmt::Debug for Connection<T, B>
 where
     T: fmt::Debug,
-    B: fmt::Debug + IntoBuf,
-    B::Buf: fmt::Debug,
+    B: fmt::Debug + Buf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Connection")
@@ -561,7 +555,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -600,7 +594,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -634,7 +628,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -667,7 +661,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -706,7 +700,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -754,7 +748,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -800,7 +794,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -846,7 +840,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// # use std::time::Duration;
     /// #
@@ -889,7 +883,7 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -909,7 +903,7 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::server::*;
     /// #
     /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -927,8 +921,7 @@ impl Builder {
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: IntoBuf + Unpin,
-        B::Buf: Unpin + 'static,
+        B: Buf + Unpin + 'static,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -942,7 +935,7 @@ impl Default for Builder {
 
 // ===== impl SendResponse =====
 
-impl<B: IntoBuf> SendResponse<B> {
+impl<B: Buf> SendResponse<B> {
     /// Send a response to a client request.
     ///
     /// On success, a [`SendStream`] instance is returned. This instance can be
@@ -1034,7 +1027,7 @@ impl<B: IntoBuf> SendResponse<B> {
 
 // ===== impl SendPushedResponse =====
 
-impl<B: IntoBuf> SendPushedResponse<B> {
+impl<B: Buf> SendPushedResponse<B> {
     /// Send a response to a promised request.
     ///
     /// On success, a [`SendStream`] instance is returned. This instance can be
@@ -1178,11 +1171,10 @@ where
 
 // ===== impl Handshake =====
 
-impl<T, B: IntoBuf> Future for Handshake<T, B>
+impl<T, B: Buf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     type Output = Result<Connection<T, B>, crate::Error>;
 
@@ -1250,7 +1242,7 @@ where
 impl<T, B> fmt::Debug for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + fmt::Debug,
-    B: fmt::Debug + IntoBuf,
+    B: fmt::Debug + Buf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "server::Handshake")
@@ -1363,10 +1355,10 @@ impl proto::Peer for Peer {
             }}
         };
 
-        b.version(Version::HTTP_2);
+        b = b.version(Version::HTTP_2);
 
         if let Some(method) = pseudo.method {
-            b.method(method);
+            b = b.method(method);
         } else {
             malformed!("malformed headers: missing method");
         }
@@ -1426,7 +1418,7 @@ impl proto::Peer for Peer {
             })?);
         }
 
-        b.uri(parts);
+        b = b.uri(parts);
 
         let mut request = match b.body(()) {
             Ok(request) => request,
@@ -1451,7 +1443,7 @@ impl proto::Peer for Peer {
 
 impl<T, B> fmt::Debug for Handshaking<T, B>
 where
-    B: IntoBuf,
+    B: Buf,
 {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -1463,35 +1455,35 @@ where
     }
 }
 
-impl<T, B> convert::From<Flush<T, Prioritized<B::Buf>>> for Handshaking<T, B>
+impl<T, B> convert::From<Flush<T, Prioritized<B>>> for Handshaking<T, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    B: Buf,
 {
     #[inline]
-    fn from(flush: Flush<T, Prioritized<B::Buf>>) -> Self {
+    fn from(flush: Flush<T, Prioritized<B>>) -> Self {
         Handshaking::Flushing(flush)
     }
 }
 
-impl<T, B> convert::From<ReadPreface<T, Prioritized<B::Buf>>> for Handshaking<T, B>
+impl<T, B> convert::From<ReadPreface<T, Prioritized<B>>> for Handshaking<T, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    B: Buf,
 {
     #[inline]
-    fn from(read: ReadPreface<T, Prioritized<B::Buf>>) -> Self {
+    fn from(read: ReadPreface<T, Prioritized<B>>) -> Self {
         Handshaking::ReadingPreface(read)
     }
 }
 
-impl<T, B> convert::From<Codec<T, Prioritized<B::Buf>>> for Handshaking<T, B>
+impl<T, B> convert::From<Codec<T, Prioritized<B>>> for Handshaking<T, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    B: Buf,
 {
     #[inline]
-    fn from(codec: Codec<T, Prioritized<B::Buf>>) -> Self {
+    fn from(codec: Codec<T, Prioritized<B>>) -> Self {
         Handshaking::from(Flush::new(codec))
     }
 }

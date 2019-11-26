@@ -140,7 +140,7 @@ use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto;
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
-use bytes::{Bytes, IntoBuf};
+use bytes::{Buf, Bytes};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
 use std::fmt;
 use std::future::Future;
@@ -148,7 +148,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::usize;
-use tokio_io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 /// Initializes new HTTP/2.0 streams on a connection by sending a request.
 ///
@@ -171,15 +171,15 @@ use tokio_io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 /// [`Connection`]: struct.Connection.html
 /// [`Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 /// [`Error`]: ../struct.Error.html
-pub struct SendRequest<B: IntoBuf> {
-    inner: proto::Streams<B::Buf, Peer>,
+pub struct SendRequest<B: Buf> {
+    inner: proto::Streams<B, Peer>,
     pending: Option<proto::OpaqueStreamRef>,
 }
 
 /// Returns a `SendRequest` instance once it is ready to send at least one
 /// request.
 #[derive(Debug)]
-pub struct ReadySendRequest<B: IntoBuf> {
+pub struct ReadySendRequest<B: Buf> {
     inner: Option<SendRequest<B>>,
 }
 
@@ -208,7 +208,7 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::client;
 /// # use h2::client::*;
 /// #
@@ -227,7 +227,7 @@ pub struct ReadySendRequest<B: IntoBuf> {
 /// # pub fn main() {}
 /// ```
 #[must_use = "futures do nothing unless polled"]
-pub struct Connection<T, B: IntoBuf = Bytes> {
+pub struct Connection<T, B: Buf = Bytes> {
     inner: proto::Connection<T, Peer, B>,
 }
 
@@ -286,7 +286,7 @@ pub struct PushPromises {
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::client::*;
 /// # use bytes::Bytes;
 /// #
@@ -336,8 +336,7 @@ pub(crate) struct Peer;
 
 impl<B> SendRequest<B>
 where
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     /// Returns `Ready` when the connection can initialize a new HTTP/2.0
     /// stream.
@@ -521,7 +520,7 @@ where
 
 impl<B> fmt::Debug for SendRequest<B>
 where
-    B: IntoBuf,
+    B: Buf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("SendRequest").finish()
@@ -530,7 +529,7 @@ where
 
 impl<B> Clone for SendRequest<B>
 where
-    B: IntoBuf,
+    B: Buf,
 {
     fn clone(&self) -> Self {
         SendRequest {
@@ -543,7 +542,7 @@ where
 #[cfg(feature = "unstable")]
 impl<B> SendRequest<B>
 where
-    B: IntoBuf,
+    B: Buf,
 {
     /// Returns the number of active streams.
     ///
@@ -567,8 +566,7 @@ where
 
 impl<B> Future for ReadySendRequest<B>
 where
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     type Output = Result<SendRequest<B>, crate::Error>;
 
@@ -595,7 +593,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -637,7 +635,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -672,7 +670,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -706,7 +704,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -746,7 +744,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -795,7 +793,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -836,7 +834,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -881,7 +879,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -926,7 +924,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use std::time::Duration;
     /// # use bytes::Bytes;
@@ -964,7 +962,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use std::time::Duration;
     /// # use bytes::Bytes;
@@ -1023,7 +1021,7 @@ impl Builder {
     /// Basic usage:
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// # use bytes::Bytes;
     /// #
@@ -1044,7 +1042,7 @@ impl Builder {
     /// type will be `&'static [u8]`.
     ///
     /// ```
-    /// # use tokio_io::*;
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
     /// # use h2::client::*;
     /// #
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
@@ -1065,8 +1063,7 @@ impl Builder {
     ) -> impl Future<Output = Result<(SendRequest<B>, Connection<T, B>), crate::Error>>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: IntoBuf + Unpin,
-        B::Buf: Unpin + 'static,
+        B: Buf + Unpin + 'static,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1098,7 +1095,7 @@ impl Default for Builder {
 /// # Examples
 ///
 /// ```
-/// # use tokio_io::*;
+/// # use tokio::io::{AsyncRead, AsyncWrite};
 /// # use h2::client;
 /// # use h2::client::*;
 /// #
@@ -1126,8 +1123,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B: Buf + Unpin + 'static,
 {
     async fn handshake2(
         mut io: T,
@@ -1233,8 +1229,7 @@ where
 impl<T, B> Future for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B: Buf + Unpin + 'static,
 {
     type Output = Result<(), crate::Error>;
 
@@ -1248,8 +1243,7 @@ impl<T, B> fmt::Debug for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite,
     T: fmt::Debug,
-    B: fmt::Debug + IntoBuf,
-    B::Buf: fmt::Debug,
+    B: fmt::Debug + Buf,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.inner, fmt)
@@ -1459,10 +1453,10 @@ impl proto::Peer for Peer {
     ) -> Result<Self::Poll, RecvError> {
         let mut b = Response::builder();
 
-        b.version(Version::HTTP_2);
+        b = b.version(Version::HTTP_2);
 
         if let Some(status) = pseudo.status {
-            b.status(status);
+            b = b.status(status);
         }
 
         let mut response = match b.body(()) {

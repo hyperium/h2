@@ -2,12 +2,13 @@ use crate::hpack::{Decoder, Encode, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{buf::BufMutExt, Bytes, BytesMut};
 use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
 use rand::{Rng, SeedableRng, StdRng};
 
 use std::io::Cursor;
 
+const MIN_CHUNK: usize = 16;
 const MAX_CHUNK: usize = 2 * 1024;
 
 #[test]
@@ -22,6 +23,16 @@ fn hpack_fuzz() {
         .tests(100)
         .quickcheck(prop as fn(FuzzHpack) -> TestResult)
 }
+
+/*
+// If wanting to test with a specific feed, uncomment and fill in the seed.
+#[test]
+fn hpack_fuzz_seeded() {
+    let _ = env_logger::try_init();
+    let seed = [/* fill me in*/];
+    FuzzHpack::new(seed).run();
+}
+*/
 
 #[derive(Debug, Clone)]
 struct FuzzHpack {
@@ -121,7 +132,7 @@ impl FuzzHpack {
         let mut chunks = vec![];
 
         for _ in 0..rng.gen_range(0, 100) {
-            chunks.push(rng.gen_range(0, MAX_CHUNK));
+            chunks.push(rng.gen_range(MIN_CHUNK, MAX_CHUNK));
         }
 
         FuzzHpack {
@@ -165,7 +176,8 @@ impl FuzzHpack {
             let mut input = frame.headers.into_iter();
             let mut index = None;
 
-            let mut buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
+            let mut max_chunk = chunks.pop().unwrap_or(MAX_CHUNK);
+            let mut buf = BytesMut::with_capacity(max_chunk);
 
             if let Some(max) = frame.resizes.iter().max() {
                 decoder.queue_size_update(*max);
@@ -177,7 +189,7 @@ impl FuzzHpack {
             }
 
             loop {
-                match encoder.encode(index.take(), &mut input, &mut buf) {
+                match encoder.encode(index.take(), &mut input, &mut (&mut buf).limit(max_chunk)) {
                     Encode::Full => break,
                     Encode::Partial(i) => {
                         index = Some(i);
@@ -190,7 +202,8 @@ impl FuzzHpack {
                             })
                             .expect("partial decode");
 
-                        buf = BytesMut::with_capacity(chunks.pop().unwrap_or(MAX_CHUNK));
+                        max_chunk = chunks.pop().unwrap_or(MAX_CHUNK);
+                        buf = BytesMut::with_capacity(max_chunk);
                     }
                 }
             }
@@ -390,7 +403,7 @@ fn gen_string(g: &mut StdRng, min: usize, max: usize) -> String {
     String::from_utf8(bytes).unwrap()
 }
 
-fn to_shared(src: String) -> ::string::String<Bytes> {
+fn to_shared(src: String) -> crate::hpack::BytesStr {
     let b: Bytes = src.into();
-    unsafe { ::string::String::from_utf8_unchecked(b) }
+    unsafe { crate::hpack::BytesStr::from_utf8_unchecked(b) }
 }

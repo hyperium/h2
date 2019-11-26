@@ -3,12 +3,23 @@ use crate::codec::UserError::*;
 use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{
+    buf::{BufExt, BufMutExt},
+    Buf, BufMut, BytesMut,
+};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use std::io::{self, Cursor};
+
+// A macro to get around a method needing to borrow &mut self
+macro_rules! limited_write_buf {
+    ($self:expr) => {{
+        let limit = $self.max_frame_size() + frame::HEADER_LEN;
+        $self.buf.get_mut().limit(limit)
+    }};
+}
 
 #[derive(Debug)]
 pub struct FramedWrite<T, B> {
@@ -126,12 +137,14 @@ where
                 }
             }
             Frame::Headers(v) => {
-                if let Some(continuation) = v.encode(&mut self.hpack, self.buf.get_mut()) {
+                let mut buf = limited_write_buf!(self);
+                if let Some(continuation) = v.encode(&mut self.hpack, &mut buf) {
                     self.next = Some(Next::Continuation(continuation));
                 }
             }
             Frame::PushPromise(v) => {
-                if let Some(continuation) = v.encode(&mut self.hpack, self.buf.get_mut()) {
+                let mut buf = limited_write_buf!(self);
+                if let Some(continuation) = v.encode(&mut self.hpack, &mut buf) {
                     self.next = Some(Next::Continuation(continuation));
                 }
             }
@@ -177,7 +190,7 @@ where
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         log::trace!("  -> queued data frame");
-                        let mut buf = Buf::by_ref(&mut self.buf).chain(frame.payload_mut());
+                        let mut buf = (&mut self.buf).chain(frame.payload_mut());
                         ready!(Pin::new(&mut self.inner).poll_write_buf(cx, &mut buf))?;
                     }
                     _ => {
@@ -200,7 +213,8 @@ where
                 }
                 Some(Next::Continuation(frame)) => {
                     // Buffer the continuation frame, then try to write again
-                    if let Some(continuation) = frame.encode(&mut self.hpack, self.buf.get_mut()) {
+                    let mut buf = limited_write_buf!(self);
+                    if let Some(continuation) = frame.encode(&mut self.hpack, &mut buf) {
                         // We previously had a CONTINUATION, and after encoding
                         // it, we got *another* one? Let's just double check
                         // that at least some progress is being made...
@@ -268,7 +282,7 @@ impl<T, B> FramedWrite<T, B> {
 }
 
 impl<T: AsyncRead + Unpin, B: Unpin> AsyncRead for FramedWrite<T, B> {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
         self.inner.prepare_uninitialized_buffer(buf)
     }
 
