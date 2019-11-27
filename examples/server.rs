@@ -1,13 +1,11 @@
-use h2::server;
-
-use bytes::*;
-use http::{Response, StatusCode};
-
 use std::error::Error;
+
+use bytes::Bytes;
+use h2::server;
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let _ = env_logger::try_init();
 
     let mut listener = TcpListener::bind("127.0.0.1:5928").await?;
@@ -25,14 +23,14 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error>> {
+async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut connection = server::handshake(socket).await?;
     println!("H2 connection bound");
 
     while let Some(result) = connection.accept().await {
         let (request, mut respond) = result?;
         println!("GOT request: {:?}", request);
-        let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+        let response = http::Response::new(());
 
         let mut send = respond.send_response(response, false)?;
 

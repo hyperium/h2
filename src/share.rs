@@ -2,7 +2,7 @@ use crate::codec::UserError;
 use crate::frame::Reason;
 use crate::proto::{self, WindowSize};
 
-use bytes::{Bytes, IntoBuf};
+use bytes::{Buf, Bytes};
 use http::HeaderMap;
 
 use crate::PollExt;
@@ -95,8 +95,8 @@ use std::task::{Context, Poll};
 /// [`send_trailers`]: #method.send_trailers
 /// [`send_reset`]: #method.send_reset
 #[derive(Debug)]
-pub struct SendStream<B: IntoBuf> {
-    inner: proto::StreamRef<B::Buf>,
+pub struct SendStream<B: Buf> {
+    inner: proto::StreamRef<B>,
 }
 
 /// A stream identifier, as described in [Section 5.1.1] of RFC 7540.
@@ -219,8 +219,8 @@ pub struct Pong {
 
 // ===== impl SendStream =====
 
-impl<B: IntoBuf> SendStream<B> {
-    pub(crate) fn new(inner: proto::StreamRef<B::Buf>) -> Self {
+impl<B: Buf> SendStream<B> {
+    pub(crate) fn new(inner: proto::StreamRef<B>) -> Self {
         SendStream { inner }
     }
 
@@ -333,7 +333,7 @@ impl<B: IntoBuf> SendStream<B> {
     /// [`Error`]: struct.Error.html
     pub fn send_data(&mut self, data: B, end_of_stream: bool) -> Result<(), crate::Error> {
         self.inner
-            .send_data(data.into_buf(), end_of_stream)
+            .send_data(data, end_of_stream)
             .map_err(Into::into)
     }
 

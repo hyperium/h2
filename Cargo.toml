@@ -38,18 +38,16 @@ members = [
 ]
 
 [dependencies]
-futures-core-preview = "=0.3.0-alpha.19"
-futures-sink-preview = "=0.3.0-alpha.19"
-futures-util-preview = "=0.3.0-alpha.19"
-tokio-codec = "=0.2.0-alpha.6"
-tokio-io = { version = "=0.2.0-alpha.6", features = ["util"] }
-tokio-sync = "=0.2.0-alpha.6"
-bytes = "0.4.7"
-http = "0.1.8"
+futures-core = "0.3"
+futures-sink = "0.3"
+futures-util = { version = "0.3", default-features = false, features = [] }
+tokio-util = { version = "0.2", features = ["codec"] }
+tokio = { version = "0.2", features = ["io-util", "sync"] }
+bytes = "0.5.2"
+http = { git = "https://github.com/hyperium/http" } #"0.1.8"
 log = "0.4.1"
 fnv = "1.0.5"
 slab = "0.4.0"
-string = "0.2"
 indexmap = "1.0"
 
 [dev-dependencies]
@@ -64,10 +62,12 @@ walkdir = "1.0.0"
 serde = "1.0.0"
 serde_json = "1.0.0"
 
-# Akamai example
-tokio = "=0.2.0-alpha.6"
+# Examples
+tokio = { version = "0.2", features = ["dns", "macros", "rt-core", "tcp"] }
 env_logger = { version = "0.5.3", default-features = false }
-rustls = "0.16"
-tokio-rustls = "0.12.0-alpha.4"
-webpki = "0.21"
-webpki-roots = "0.17"
+# TODO: re-enable when tokio-rustls is updated
+#rustls = "0.16"
+#tokio-rustls = "0.12.0-alpha.4"
+#webpki = "0.21"
+#webpki-roots = "0.17"
+

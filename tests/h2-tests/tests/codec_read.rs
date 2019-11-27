@@ -175,8 +175,7 @@ async fn read_continuation_frames() {
             let expected = large
                 .iter()
                 .fold(HeaderMap::new(), |mut map, &(name, ref value)| {
-                    use h2_support::frames::HttpTryInto;
-                    map.append(name, value.as_str().try_into().unwrap());
+                    map.append(name, value.parse().unwrap());
                     map
                 });
             assert_eq!(head.headers, expected);

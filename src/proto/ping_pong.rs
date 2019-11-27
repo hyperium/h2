@@ -3,12 +3,12 @@ use crate::frame::Ping;
 use crate::proto::{self, PingPayload};
 
 use bytes::Buf;
+use futures_util::task::AtomicWaker;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio_io::AsyncWrite;
-use tokio_sync::AtomicWaker;
+use tokio::io::AsyncWrite;
 
 /// Acknowledges ping requests from the remote.
 #[derive(Debug)]
@@ -190,7 +190,7 @@ impl PingPong {
                     .state
                     .store(USER_STATE_PENDING_PONG, Ordering::Release);
             } else {
-                users.0.ping_task.register_by_ref(cx.waker());
+                users.0.ping_task.register(cx.waker());
             }
         }
 
@@ -233,7 +233,7 @@ impl UserPings {
     pub(crate) fn poll_pong(&self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
         // Must register before checking state, in case state were to change
         // before we could register, and then the ping would just be lost.
-        self.0.pong_task.register_by_ref(cx.waker());
+        self.0.pong_task.register(cx.waker());
         let prev = self.0.state.compare_and_swap(
             USER_STATE_RECEIVED_PONG, // current
             USER_STATE_EMPTY,         // new

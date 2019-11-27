@@ -1,14 +1,21 @@
 use h2;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use futures::ready;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use string::{String, TryFrom};
 
-pub fn byte_str(s: &str) -> String<Bytes> {
-    String::try_from(Bytes::from(s)).unwrap()
+pub fn byte_str(s: &str) -> h2::frame::BytesStr {
+    h2::frame::BytesStr::try_from(Bytes::copy_from_slice(s.as_bytes())).unwrap()
+}
+
+pub async fn concat(mut body: h2::RecvStream) -> Result<Bytes, h2::Error> {
+    let mut vec = Vec::new();
+    while let Some(chunk) = body.data().await {
+        vec.put(chunk?);
+    }
+    Ok(vec.into())
 }
 
 pub async fn yield_once() {

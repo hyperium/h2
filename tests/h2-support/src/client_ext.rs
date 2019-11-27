@@ -1,4 +1,4 @@
-use bytes::IntoBuf;
+use bytes::Buf;
 use h2::client::{ResponseFuture, SendRequest};
 use http::Request;
 
@@ -11,8 +11,7 @@ pub trait SendRequestExt {
 
 impl<B> SendRequestExt for SendRequest<B>
 where
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin + 'static,
+    B: Buf + Unpin + 'static,
 {
     fn get(&mut self, uri: &str) -> ResponseFuture {
         let req = Request::builder()

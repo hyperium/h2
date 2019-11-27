@@ -27,7 +27,7 @@ pub use super::{
 pub use super::assert::assert_frame_eq;
 
 // Re-export useful crates
-pub use super::mock_io;
+pub use tokio_test::io as mock_io;
 pub use {bytes, env_logger, futures, http, tokio::io as tokio_io};
 
 // Re-export primary future types
@@ -42,7 +42,10 @@ pub use super::client_ext::SendRequestExt;
 // Re-export HTTP types
 pub use http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
-pub use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
+pub use bytes::{
+    buf::{BufExt, BufMutExt},
+    Buf, BufMut, Bytes, BytesMut,
+};
 
 pub use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -61,7 +64,7 @@ pub trait MockH2 {
     fn handshake(&mut self) -> &mut Self;
 }
 
-impl MockH2 for super::mock_io::Builder {
+impl MockH2 for tokio_test::io::Builder {
     fn handshake(&mut self) -> &mut Self {
         self.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
             // Settings frame
@@ -81,8 +84,7 @@ pub trait ClientExt {
 impl<T, B> ClientExt for client::Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin + 'static,
-    B: IntoBuf + Unpin + 'static,
-    B::Buf: Unpin,
+    B: Buf + Unpin + 'static,
 {
     fn run<'a, F: Future + Unpin + 'a>(
         &'a mut self,

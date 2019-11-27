@@ -14,8 +14,8 @@ use futures_core::Stream;
 use futures_sink::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_codec::length_delimited;
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::codec::length_delimited;
 
 use std::io;
 
@@ -186,7 +186,7 @@ where
 }
 
 // TODO: remove (or improve) this
-impl<T> From<T> for Codec<T, ::std::io::Cursor<::bytes::Bytes>>
+impl<T> From<T> for Codec<T, bytes::Bytes>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {

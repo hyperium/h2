@@ -1,9 +1,9 @@
+use std::convert::TryInto;
 use std::fmt;
 
-use bytes::{Bytes, IntoBuf};
-use http::{self, HeaderMap, HttpTryFrom};
+use bytes::Bytes;
+use http::{self, HeaderMap};
 
-use super::SendFrame;
 use h2::frame::{self, Frame, StreamId};
 
 pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
@@ -25,9 +25,10 @@ where
 pub fn data<T, B>(id: T, buf: B) -> Mock<frame::Data>
 where
     T: Into<StreamId>,
-    B: Into<Bytes>,
+    B: AsRef<[u8]>,
 {
-    Mock(frame::Data::new(id.into(), buf.into()))
+    let buf = Bytes::copy_from_slice(buf.as_ref());
+    Mock(frame::Data::new(id.into(), buf))
 }
 
 pub fn push_promise<T1, T2>(id: T1, promised: T2) -> Mock<frame::PushPromise>
@@ -100,8 +101,10 @@ where
 impl Mock<frame::Headers> {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
     where
-        M: HttpTryInto<http::Method>,
-        U: HttpTryInto<http::Uri>,
+        M: TryInto<http::Method>,
+        M::Error: fmt::Debug,
+        U: TryInto<http::Uri>,
+        U::Error: fmt::Debug,
     {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
@@ -112,7 +115,8 @@ impl Mock<frame::Headers> {
 
     pub fn response<S>(self, status: S) -> Self
     where
-        S: HttpTryInto<http::StatusCode>,
+        S: TryInto<http::StatusCode>,
+        S::Error: fmt::Debug,
     {
         let status = status.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
@@ -128,8 +132,10 @@ impl Mock<frame::Headers> {
 
     pub fn field<K, V>(self, key: K, value: V) -> Self
     where
-        K: HttpTryInto<http::header::HeaderName>,
-        V: HttpTryInto<http::header::HeaderValue>,
+        K: TryInto<http::header::HeaderName>,
+        K::Error: fmt::Debug,
+        V: TryInto<http::header::HeaderValue>,
+        V::Error: fmt::Debug,
     {
         let (id, pseudo, mut fields) = self.into_parts();
         fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
@@ -170,12 +176,6 @@ impl From<Mock<frame::Headers>> for frame::Headers {
     }
 }
 
-impl From<Mock<frame::Headers>> for SendFrame {
-    fn from(src: Mock<frame::Headers>) -> Self {
-        Frame::Headers(src.0)
-    }
-}
-
 // Data helpers
 
 impl Mock<frame::Data> {
@@ -190,28 +190,15 @@ impl Mock<frame::Data> {
     }
 }
 
-impl From<Mock<frame::Data>> for SendFrame {
-    fn from(src: Mock<frame::Data>) -> Self {
-        let id = src.0.stream_id();
-        let eos = src.0.is_end_stream();
-        let is_padded = src.0.is_padded();
-        let payload = src.0.into_payload();
-        let mut frame = frame::Data::new(id, payload.into_buf());
-        frame.set_end_stream(eos);
-        if is_padded {
-            frame.set_padded();
-        }
-        Frame::Data(frame)
-    }
-}
-
 // PushPromise helpers
 
 impl Mock<frame::PushPromise> {
     pub fn request<M, U>(self, method: M, uri: U) -> Self
     where
-        M: HttpTryInto<http::Method>,
-        U: HttpTryInto<http::Uri>,
+        M: TryInto<http::Method>,
+        M::Error: fmt::Debug,
+        U: TryInto<http::Uri>,
+        U::Error: fmt::Debug,
     {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
@@ -229,8 +216,10 @@ impl Mock<frame::PushPromise> {
 
     pub fn field<K, V>(self, key: K, value: V) -> Self
     where
-        K: HttpTryInto<http::header::HeaderName>,
-        V: HttpTryInto<http::header::HeaderValue>,
+        K: TryInto<http::header::HeaderName>,
+        K::Error: fmt::Debug,
+        V: TryInto<http::header::HeaderValue>,
+        V::Error: fmt::Debug,
     {
         let (id, promised, pseudo, mut fields) = self.into_parts();
         fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
@@ -244,12 +233,6 @@ impl Mock<frame::PushPromise> {
         let promised = self.0.promised_id();
         let parts = self.0.into_parts();
         (id, promised, parts.0, parts.1)
-    }
-}
-
-impl From<Mock<frame::PushPromise>> for SendFrame {
-    fn from(src: Mock<frame::PushPromise>) -> Self {
-        Frame::PushPromise(src.0)
     }
 }
 
@@ -278,12 +261,6 @@ impl Mock<frame::GoAway> {
 
     pub fn reason(self, reason: frame::Reason) -> Self {
         Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
-    }
-}
-
-impl From<Mock<frame::GoAway>> for SendFrame {
-    fn from(src: Mock<frame::GoAway>) -> Self {
-        Frame::GoAway(src.0)
     }
 }
 
@@ -326,12 +303,6 @@ impl Mock<frame::Reset> {
     }
 }
 
-impl From<Mock<frame::Reset>> for SendFrame {
-    fn from(src: Mock<frame::Reset>) -> Self {
-        Frame::Reset(src.0)
-    }
-}
-
 // ==== Settings helpers
 
 impl Mock<frame::Settings> {
@@ -357,43 +328,11 @@ impl From<Mock<frame::Settings>> for frame::Settings {
     }
 }
 
-impl From<Mock<frame::Settings>> for SendFrame {
-    fn from(src: Mock<frame::Settings>) -> Self {
-        Frame::Settings(src.0)
-    }
-}
-
 // ==== Ping helpers
 
 impl Mock<frame::Ping> {
     pub fn pong(self) -> Self {
         let payload = self.0.into_payload();
         Mock(frame::Ping::pong(payload))
-    }
-}
-
-impl From<Mock<frame::Ping>> for SendFrame {
-    fn from(src: Mock<frame::Ping>) -> Self {
-        Frame::Ping(src.0)
-    }
-}
-
-// ==== "trait alias" for types that are HttpTryFrom and have Debug Errors ====
-
-pub trait HttpTryInto<T> {
-    type Error: fmt::Debug;
-
-    fn try_into(self) -> Result<T, Self::Error>;
-}
-
-impl<T, U> HttpTryInto<T> for U
-where
-    T: HttpTryFrom<U>,
-    T::Error: fmt::Debug,
-{
-    type Error = T::Error;
-
-    fn try_into(self) -> Result<T, Self::Error> {
-        T::try_from(self)
     }
 }

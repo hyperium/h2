@@ -5,18 +5,18 @@ use crate::{client, frame, proto, server};
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
-use bytes::{Bytes, IntoBuf};
+use bytes::{Buf, Bytes};
 use futures_core::Stream;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 /// An H2 connection
 #[derive(Debug)]
-pub(crate) struct Connection<T, P, B: IntoBuf = Bytes>
+pub(crate) struct Connection<T, P, B: Buf = Bytes>
 where
     P: Peer,
 {
@@ -30,7 +30,7 @@ where
     error: Option<Reason>,
 
     /// Read / write frame values
-    codec: Codec<T, Prioritized<B::Buf>>,
+    codec: Codec<T, Prioritized<B>>,
 
     /// Pending GOAWAY frames to write.
     go_away: GoAway,
@@ -42,7 +42,7 @@ where
     settings: Settings,
 
     /// Stream state handler
-    streams: Streams<B::Buf, P>,
+    streams: Streams<B, P>,
 
     /// Client or server
     _phantom: PhantomData<P>,
@@ -73,10 +73,9 @@ impl<T, P, B> Connection<T, P, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     P: Peer,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B: Buf + Unpin,
 {
-    pub fn new(codec: Codec<T, Prioritized<B::Buf>>, config: Config) -> Connection<T, P, B> {
+    pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
         let streams = Streams::new(streams::Config {
             local_init_window_sz: config
                 .settings
@@ -385,9 +384,9 @@ where
 impl<T, B> Connection<T, client::Peer, B>
 where
     T: AsyncRead + AsyncWrite,
-    B: IntoBuf,
+    B: Buf,
 {
-    pub(crate) fn streams(&self) -> &Streams<B::Buf, client::Peer> {
+    pub(crate) fn streams(&self) -> &Streams<B, client::Peer> {
         &self.streams
     }
 }
@@ -395,10 +394,9 @@ where
 impl<T, B> Connection<T, server::Peer, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: IntoBuf + Unpin,
-    B::Buf: Unpin,
+    B: Buf + Unpin,
 {
-    pub fn next_incoming(&mut self) -> Option<StreamRef<B::Buf>> {
+    pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         self.streams.next_incoming()
     }
 
@@ -431,7 +429,7 @@ where
 impl<T, P, B> Drop for Connection<T, P, B>
 where
     P: Peer,
-    B: IntoBuf,
+    B: Buf,
 {
     fn drop(&mut self) {
         // Ignore errors as this indicates that the mutex is poisoned.

@@ -9,7 +9,6 @@ use futures::{ready, Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::assert::assert_frame_eq;
-use futures::executor::block_on;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
@@ -324,20 +323,18 @@ impl AsyncWrite for Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        block_on(async {
-            poll_fn(|cx| {
-                assert!(self.codec.shutdown(cx).is_ready());
+        // Shutdown *shouldn't* need a real Waker...
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(self.codec.shutdown(&mut cx).is_ready());
 
-                let mut me = self.codec.get_mut().inner.lock().unwrap();
-                me.closed = true;
+        if let Ok(mut me) = self.codec.get_mut().inner.lock() {
+            me.closed = true;
 
-                if let Some(task) = me.rx_task.take() {
-                    task.wake();
-                }
-                Poll::Ready(())
-            })
-            .await;
-        });
+            if let Some(task) = me.rx_task.take() {
+                task.wake();
+            }
+        }
     }
 }
 
@@ -482,5 +479,5 @@ impl AsyncWrite for Pipe {
 }
 
 pub async fn idle_ms(ms: u64) {
-    tokio::timer::delay(tokio::clock::now() + Duration::from_millis(ms)).await
+    tokio::time::delay_for(Duration::from_millis(ms)).await
 }

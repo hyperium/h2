@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use futures::future::join;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use h2_support::assert_ping;
 use h2_support::prelude::*;
 
@@ -84,7 +84,7 @@ async fn pong_has_highest_priority() {
         assert_eq!(req.method(), "POST");
         let body = req.into_parts().1;
 
-        let body = body.try_concat().await.expect("body");
+        let body = util::concat(body).await.expect("body");
         assert_eq!(body.len(), data.len());
         let res = Response::builder().status(200).body(()).unwrap();
         stream.send_response(res, true).expect("response");

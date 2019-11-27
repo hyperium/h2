@@ -41,7 +41,7 @@ impl GoAway {
 
         let (last_stream_id, _) = StreamId::parse(&payload[..4]);
         let error_code = unpack_octets_4!(payload, 4, u32);
-        let debug_data = Bytes::from(&payload[8..]);
+        let debug_data = Bytes::copy_from_slice(&payload[8..]);
 
         Ok(GoAway {
             last_stream_id,
@@ -54,8 +54,8 @@ impl GoAway {
         log::trace!("encoding GO_AWAY; code={:?}", self.error_code);
         let head = Head::new(Kind::GoAway, 0, StreamId::zero());
         head.encode(8, dst);
-        dst.put_u32_be(self.last_stream_id.into());
-        dst.put_u32_be(self.error_code.into());
+        dst.put_u32(self.last_stream_id.into());
+        dst.put_u32(self.error_code.into());
     }
 }
 

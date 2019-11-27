@@ -1,11 +1,10 @@
-use super::{huffman, Header};
+use super::{header::BytesStr, huffman, Header};
 use crate::frame;
 
 use bytes::{Buf, Bytes, BytesMut};
 use http::header;
 use http::method::{self, Method};
 use http::status::{self, StatusCode};
-use string::String;
 
 use std::cmp;
 use std::collections::VecDeque;
@@ -314,7 +313,7 @@ impl Decoder {
         if huff {
             let ret = {
                 let raw = &buf.bytes()[..len];
-                huffman::decode(raw, &mut self.buffer).map(Into::into)
+                huffman::decode(raw, &mut self.buffer).map(BytesMut::freeze)
             };
 
             buf.advance(len);
@@ -785,8 +784,8 @@ pub fn get_static(idx: usize) -> Header {
     }
 }
 
-fn from_static(s: &'static str) -> String<Bytes> {
-    unsafe { String::from_utf8_unchecked(Bytes::from_static(s.as_bytes())) }
+fn from_static(s: &'static str) -> BytesStr {
+    unsafe { BytesStr::from_utf8_unchecked(Bytes::from_static(s.as_bytes())) }
 }
 
 #[cfg(test)]
@@ -823,12 +822,11 @@ mod test {
     fn test_decode_indexed_larger_than_table() {
         let mut de = Decoder::new(0);
 
-        let mut buf = vec![0b01000000, 0x80 | 2];
+        let mut buf = BytesMut::new();
+        buf.extend(&[0b01000000, 0x80 | 2]);
         buf.extend(huff_encode(b"foo"));
         buf.extend(&[0x80 | 3]);
         buf.extend(huff_encode(b"bar"));
-
-        let mut buf = buf.into();
 
         let mut res = vec![];
         let _ = de

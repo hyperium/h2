@@ -51,7 +51,7 @@ impl WindowUpdate {
         log::trace!("encoding WINDOW_UPDATE; id={:?}", self.stream_id);
         let head = Head::new(Kind::WindowUpdate, 0, self.stream_id);
         head.encode(4, dst);
-        dst.put_u32_be(self.size_increment);
+        dst.put_u32(self.size_increment);
     }
 }
 

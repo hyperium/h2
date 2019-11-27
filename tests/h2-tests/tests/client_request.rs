@@ -418,7 +418,7 @@ async fn send_reset_notifies_recv_stream() {
         // We don't want a join, since any of the other futures notifying
         // will make the rx future polled again, but we are
         // specifically testing that rx gets notified on its own.
-        let mut unordered = FuturesUnordered::<Pin<Box<dyn Future<Output = ()>>>>::new();
+        let unordered = FuturesUnordered::<Pin<Box<dyn Future<Output = ()>>>>::new();
         unordered.push(Box::pin(rx));
         unordered.push(Box::pin(tx));
 
@@ -754,7 +754,7 @@ async fn pending_send_request_gets_reset_by_peer_properly() {
     let _ = env_logger::try_init();
     let (io, mut srv) = mock::new();
 
-    let payload = vec![0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize];
+    let payload = Bytes::from(vec![0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize]);
     let max_frame_size = frame::DEFAULT_MAX_FRAME_SIZE as usize;
 
     let srv = async {
@@ -811,7 +811,7 @@ async fn pending_send_request_gets_reset_by_peer_properly() {
         };
 
         // Send the data
-        stream.send_data(payload[..].into(), true).unwrap();
+        stream.send_data(payload.clone(), true).unwrap();
         conn.drive(response).await;
         drop(client);
         drop(stream);
@@ -897,7 +897,7 @@ async fn notify_on_send_capacity() {
     // This test ensures that the client gets notified when there is additional
     // send capacity. In other words, when the server is ready to accept a new
     // stream, the client is notified.
-    use futures::channel::oneshot;
+    use tokio::sync::oneshot;
 
     let _ = env_logger::try_init();
 
@@ -1016,13 +1016,14 @@ async fn send_stream_poll_reset() {
 async fn drop_pending_open() {
     // This test checks that a stream queued for pending open behaves correctly when its
     // client drops.
+    use tokio::sync::oneshot;
     let _ = env_logger::try_init();
 
     let (io, mut srv) = mock::new();
-    let (init_tx, init_rx) = futures::channel::oneshot::channel();
-    let (trigger_go_away_tx, trigger_go_away_rx) = futures::channel::oneshot::channel();
-    let (sent_go_away_tx, sent_go_away_rx) = futures::channel::oneshot::channel();
-    let (drop_tx, drop_rx) = futures::channel::oneshot::channel();
+    let (init_tx, init_rx) = oneshot::channel();
+    let (trigger_go_away_tx, trigger_go_away_rx) = oneshot::channel();
+    let (sent_go_away_tx, sent_go_away_rx) = oneshot::channel();
+    let (drop_tx, drop_rx) = oneshot::channel();
 
     let mut settings = frame::Settings::default();
     settings.set_max_concurrent_streams(Some(2));
@@ -1103,11 +1104,12 @@ async fn malformed_response_headers_dont_unlink_stream() {
     // This test checks that receiving malformed headers frame on a stream with
     // no remaining references correctly resets the stream, without prematurely
     // unlinking it.
+    use tokio::sync::oneshot;
     let _ = env_logger::try_init();
 
     let (io, mut srv) = mock::new();
-    let (drop_tx, drop_rx) = futures::channel::oneshot::channel();
-    let (queued_tx, queued_rx) = futures::channel::oneshot::channel();
+    let (drop_tx, drop_rx) = oneshot::channel();
+    let (queued_tx, queued_rx) = oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
