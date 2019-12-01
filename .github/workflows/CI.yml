@@ -47,9 +47,9 @@ jobs:
         # TODO: Change it to stable after Rust 1.38 release
         run: ./ci/h2spec.sh
         if: matrix.rust == 'nightly'
-      #- name: Check minimal versions
-      #  run: cargo clean; cargo update -Zminimal-versions; cargo check
-      #  if: matrix.rust == 'nightly'
+      - name: Check minimal versions
+        run: cargo clean; cargo update -Zminimal-versions; cargo check
+        if: matrix.rust == 'nightly'
 
   publish_docs:
     name: Publish Documentation
