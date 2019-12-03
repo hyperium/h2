@@ -5,7 +5,7 @@ authors = ["Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 
 [dependencies]
-h2 = { path = "../..", features = ["unstable-stream", "unstable"] }
+h2 = { path = "../..", features = ["stream", "unstable"] }
 
 bytes = "0.5"
 env_logger = "0.5.9"
