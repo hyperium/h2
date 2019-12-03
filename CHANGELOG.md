@@ -1,3 +1,12 @@
+# 0.2.0 (December 3, 2019)
+
+* Add `server::Connection::set_initial_window_size` and `client::Connection::set_initial_window_size` which can adjust the `INITIAL_WINDOW_SIZE` setting on an existing connection (#421).
+* Update to `http` v0.2.
+* Update to `tokio` v0.2.
+* Change `unstable-stream` feature to `stream`.
+* Change `ReserveCapacity` to `FlowControl` (#423).
+* Remove `From<io::Error>` for `Error`.
+
 # 0.2.0-alpha.3 (October 1, 2019)
 
 * Update to futures `0.3.0-alpha.19`.
