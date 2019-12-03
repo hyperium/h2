@@ -519,7 +519,7 @@ where
     }
 }
 
-#[cfg(feature = "unstable-stream")]
+#[cfg(feature = "stream")]
 impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
