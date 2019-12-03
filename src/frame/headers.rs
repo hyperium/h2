@@ -544,7 +544,7 @@ impl Pseudo {
 
         let mut path = parts
             .path_and_query
-            .map(|v| v.into())
+            .map(|v| Bytes::copy_from_slice(v.as_str().as_bytes()))
             .unwrap_or_else(Bytes::new);
 
         if path.is_empty() && method != Method::OPTIONS {
@@ -569,7 +569,9 @@ impl Pseudo {
         // If the URI includes an authority component, add it to the pseudo
         // headers
         if let Some(authority) = parts.authority {
-            pseudo.set_authority(unsafe { BytesStr::from_utf8_unchecked(authority.into()) });
+            pseudo.set_authority(unsafe {
+                BytesStr::from_utf8_unchecked(Bytes::copy_from_slice(authority.as_str().as_bytes()))
+            });
         }
 
         pseudo
@@ -586,7 +588,12 @@ impl Pseudo {
     }
 
     pub fn set_scheme(&mut self, scheme: uri::Scheme) {
-        self.scheme = Some(unsafe { BytesStr::from_utf8_unchecked(scheme.into()) });
+        let bytes = match scheme.as_str() {
+            "http" => Bytes::from_static(b"http"),
+            "https" => Bytes::from_static(b"https"),
+            s => Bytes::copy_from_slice(s.as_bytes()),
+        };
+        self.scheme = Some(unsafe { BytesStr::from_utf8_unchecked(bytes) });
     }
 
     pub fn set_authority(&mut self, authority: BytesStr) {

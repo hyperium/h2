@@ -11,5 +11,5 @@ h2 = { path = "../.." }
 env_logger = { version = "0.5.3", default-features = false }
 futures = { version = "0.3", default-features = false }
 honggfuzz = "0.5"
-http = { git = "https://github.com/hyperium/http" } #"0.1.3"
+http = "0.2"
 tokio = { version = "0.2", features = [] }

@@ -44,7 +44,7 @@ futures-util = { version = "0.3", default-features = false, features = [] }
 tokio-util = { version = "0.2", features = ["codec"] }
 tokio = { version = "0.2", features = ["io-util", "sync"] }
 bytes = "0.5.2"
-http = { git = "https://github.com/hyperium/http" } #"0.1.8"
+http = "0.2"
 log = "0.4.1"
 fnv = "1.0.5"
 slab = "0.4.0"

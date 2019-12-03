@@ -861,7 +861,7 @@ async fn request_options_with_star() {
     let uri = uri::Uri::from_parts({
         let mut parts = uri::Parts::default();
         parts.scheme = Some(uri::Scheme::HTTP);
-        parts.authority = Some(uri::Authority::from_shared("example.com".into()).unwrap());
+        parts.authority = Some(uri::Authority::from_static("example.com"));
         parts.path_and_query = Some(uri::PathAndQuery::from_static("*"));
         parts
     })
