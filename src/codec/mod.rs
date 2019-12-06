@@ -27,7 +27,7 @@ pub struct Codec<T, B> {
 impl<T, B> Codec<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     /// Returns a new `Codec` with the default max frame size
     #[inline]
@@ -118,7 +118,7 @@ impl<T, B> Codec<T, B> {
 impl<T, B> Codec<T, B>
 where
     T: AsyncWrite + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     /// Returns `Ready` when the codec can buffer a frame
     pub fn poll_ready(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
@@ -149,7 +149,6 @@ where
 impl<T, B> Stream for Codec<T, B>
 where
     T: AsyncRead + Unpin,
-    B: Unpin,
 {
     type Item = Result<Frame, RecvError>;
 
@@ -161,7 +160,7 @@ where
 impl<T, B> Sink<Frame<B>> for Codec<T, B>
 where
     T: AsyncWrite + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     type Error = SendError;
 

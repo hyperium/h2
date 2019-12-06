@@ -356,7 +356,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         // Create the codec.
@@ -523,7 +523,7 @@ where
 impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
@@ -921,7 +921,7 @@ impl Builder {
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + Unpin + 'static,
+        B: Buf + 'static,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1108,7 +1108,7 @@ impl<T, B: Buf> Flush<T, B> {
 impl<T, B> Future for Flush<T, B>
 where
     T: AsyncWrite + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     type Output = Result<Codec<T, B>, crate::Error>;
 
@@ -1137,7 +1137,7 @@ impl<T, B: Buf> ReadPreface<T, B> {
 impl<T, B> Future for ReadPreface<T, B>
 where
     T: AsyncRead + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     type Output = Result<Codec<T, B>, crate::Error>;
 
@@ -1174,7 +1174,7 @@ where
 impl<T, B: Buf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     type Output = Result<Connection<T, B>, crate::Error>;
 

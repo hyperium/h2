@@ -279,7 +279,7 @@ impl Send {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         self.prioritize
             .poll_complete(cx, buffer, store, counts, dst)

@@ -336,7 +336,7 @@ pub(crate) struct Peer;
 
 impl<B> SendRequest<B>
 where
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     /// Returns `Ready` when the connection can initialize a new HTTP/2.0
     /// stream.
@@ -566,7 +566,7 @@ where
 
 impl<B> Future for ReadySendRequest<B>
 where
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     type Output = Result<SendRequest<B>, crate::Error>;
 
@@ -1063,7 +1063,7 @@ impl Builder {
     ) -> impl Future<Output = Result<(SendRequest<B>, Connection<T, B>), crate::Error>>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + Unpin + 'static,
+        B: Buf + 'static,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1123,7 +1123,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     async fn handshake2(
         mut io: T,
@@ -1229,7 +1229,7 @@ where
 impl<T, B> Future for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin + 'static,
+    B: Buf + 'static,
 {
     type Output = Result<(), crate::Error>;
 
