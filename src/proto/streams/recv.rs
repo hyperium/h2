@@ -846,7 +846,7 @@ impl Recv {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         if let Some(stream_id) = self.refused {
             ready!(dst.poll_ready(cx))?;
@@ -918,7 +918,7 @@ impl Recv {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         // Send any pending connection level window updates
         ready!(self.send_connection_window_update(cx, dst))?;
@@ -937,7 +937,7 @@ impl Recv {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         if let Some(incr) = self.flow.unclaimed_capacity() {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
@@ -968,7 +968,7 @@ impl Recv {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         loop {
             // Ensure the codec has capacity

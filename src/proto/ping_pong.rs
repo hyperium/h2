@@ -142,7 +142,7 @@ impl PingPong {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         if let Some(pong) = self.pending_pong.take() {
             if !dst.poll_ready(cx)?.is_ready() {
@@ -165,7 +165,7 @@ impl PingPong {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         if let Some(ref mut ping) = self.pending_ping {
             if !ping.sent {

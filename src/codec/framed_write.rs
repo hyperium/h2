@@ -281,7 +281,7 @@ impl<T, B> FramedWrite<T, B> {
     }
 }
 
-impl<T: AsyncRead + Unpin, B: Unpin> AsyncRead for FramedWrite<T, B> {
+impl<T: AsyncRead + Unpin, B> AsyncRead for FramedWrite<T, B> {
     unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
         self.inner.prepare_uninitialized_buffer(buf)
     }
@@ -302,6 +302,9 @@ impl<T: AsyncRead + Unpin, B: Unpin> AsyncRead for FramedWrite<T, B> {
         Pin::new(&mut self.inner).poll_read_buf(cx, buf)
     }
 }
+
+// We never project the Pin to `B`.
+impl<T: Unpin, B> Unpin for FramedWrite<T, B> {}
 
 #[cfg(feature = "unstable")]
 mod unstable {

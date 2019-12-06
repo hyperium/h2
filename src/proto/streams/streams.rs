@@ -94,7 +94,7 @@ struct SendBuffer<B> {
 
 impl<B, P> Streams<B, P>
 where
-    B: Buf + Unpin,
+    B: Buf,
     P: Peer,
 {
     pub fn new(config: Config) -> Self {
@@ -596,7 +596,6 @@ where
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Unpin,
     {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;

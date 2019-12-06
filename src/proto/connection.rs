@@ -73,7 +73,7 @@ impl<T, P, B> Connection<T, P, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     P: Peer,
-    B: Buf + Unpin,
+    B: Buf,
 {
     pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
         let streams = Streams::new(streams::Config {
@@ -394,7 +394,7 @@ where
 impl<T, B> Connection<T, server::Peer, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + Unpin,
+    B: Buf,
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         self.streams.next_incoming()

@@ -474,7 +474,7 @@ impl Prioritize {
     ) -> Poll<io::Result<()>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         // Ensure codec is ready
         ready!(dst.poll_ready(cx))?;

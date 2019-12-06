@@ -128,7 +128,7 @@ impl GoAway {
     ) -> Poll<Option<io::Result<Reason>>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
+        B: Buf,
     {
         if let Some(frame) = self.pending.take() {
             if !dst.poll_ready(cx)?.is_ready() {

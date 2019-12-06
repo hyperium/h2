@@ -43,8 +43,8 @@ impl Settings {
     ) -> Result<(), RecvError>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
-        C: Buf + Unpin,
+        B: Buf,
+        C: Buf,
         P: Peer,
     {
         if frame.is_ack() {
@@ -100,8 +100,8 @@ impl Settings {
     ) -> Poll<Result<(), RecvError>>
     where
         T: AsyncWrite + Unpin,
-        B: Buf + Unpin,
-        C: Buf + Unpin,
+        B: Buf,
+        C: Buf,
         P: Peer,
     {
         if let Some(settings) = &self.remote {
