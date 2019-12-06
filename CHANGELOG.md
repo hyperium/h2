@@ -1,3 +1,7 @@
+# 0.2.1 (December 6, 2019)
+
+* Relax `Unpin` bounds on the send `Buf` generic.
+
 # 0.2.0 (December 3, 2019)
 
 * Add `server::Connection::set_initial_window_size` and `client::Connection::set_initial_window_size` which can adjust the `INITIAL_WINDOW_SIZE` setting on an existing connection (#421).
