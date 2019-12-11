@@ -1,10 +1,5 @@
 # H2
 
-> **NOTE**: h2's [`master`](https://github.com/hyperium/h2/tree/master) branch
-> is currently in the process of moving to `std::future`. For the most recent
-> release, please see the [`0.1.x`](https://github.com/hyperium/h2/tree/0.1.x)
-> branch.
-
 A Tokio aware, HTTP/2.0 client & server implementation for Rust.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -42,7 +37,7 @@ To use `h2`, first add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-h2 = "0.1"
+h2 = "0.2"
 ```
 
 Next, add this to your crate:
