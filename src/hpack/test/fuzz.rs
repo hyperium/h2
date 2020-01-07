@@ -2,7 +2,7 @@ use crate::hpack::{Decoder, Encode, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use bytes::{buf::BufMut, Bytes, BytesMut};
+use bytes::{buf::BufMut, BytesMut};
 use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
 use rand::{Rng, SeedableRng, StdRng};
 
@@ -404,6 +404,5 @@ fn gen_string(g: &mut StdRng, min: usize, max: usize) -> String {
 }
 
 fn to_shared(src: String) -> crate::hpack::BytesStr {
-    let b: Bytes = src.into();
-    unsafe { crate::hpack::BytesStr::from_utf8_unchecked(b) }
+    crate::hpack::BytesStr::from(src.as_str())
 }
