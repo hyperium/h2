@@ -5,7 +5,7 @@ use crate::hpack::{self, BytesStr};
 use http::header::{self, HeaderName, HeaderValue};
 use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use std::fmt;
 use std::io::Cursor;
@@ -549,13 +549,13 @@ impl Pseudo {
 
         let mut path = parts
             .path_and_query
-            .map(|v| Bytes::copy_from_slice(v.as_str().as_bytes()))
-            .unwrap_or_else(Bytes::new);
+            .map(|v| BytesStr::from(v.as_str()))
+            .unwrap_or(BytesStr::from_static(""));
 
         match method {
             Method::OPTIONS | Method::CONNECT => {}
             _ if path.is_empty() => {
-                path = Bytes::from_static(b"/");
+                path = BytesStr::from_static("/");
             }
             _ => {}
         }
@@ -564,7 +564,7 @@ impl Pseudo {
             method: Some(method),
             scheme: None,
             authority: None,
-            path: Some(unsafe { BytesStr::from_utf8_unchecked(path) }).filter(|p| !p.is_empty()),
+            path: Some(path).filter(|p| !p.is_empty()),
             status: None,
         };
 
@@ -578,9 +578,7 @@ impl Pseudo {
         // If the URI includes an authority component, add it to the pseudo
         // headers
         if let Some(authority) = parts.authority {
-            pseudo.set_authority(unsafe {
-                BytesStr::from_utf8_unchecked(Bytes::copy_from_slice(authority.as_str().as_bytes()))
-            });
+            pseudo.set_authority(BytesStr::from(authority.as_str()));
         }
 
         pseudo
@@ -597,12 +595,12 @@ impl Pseudo {
     }
 
     pub fn set_scheme(&mut self, scheme: uri::Scheme) {
-        let bytes = match scheme.as_str() {
-            "http" => Bytes::from_static(b"http"),
-            "https" => Bytes::from_static(b"https"),
-            s => Bytes::copy_from_slice(s.as_bytes()),
+        let bytes_str = match scheme.as_str() {
+            "http" => BytesStr::from_static("http"),
+            "https" => BytesStr::from_static("https"),
+            s => BytesStr::from(s),
         };
-        self.scheme = Some(unsafe { BytesStr::from_utf8_unchecked(bytes) });
+        self.scheme = Some(bytes_str);
     }
 
     pub fn set_authority(&mut self, authority: BytesStr) {
