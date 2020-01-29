@@ -132,14 +132,4 @@ impl fmt::Display for Error {
     }
 }
 
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        use self::Kind::*;
-
-        match self.kind {
-            Io(ref e) => error::Error::description(e),
-            Proto(ref reason) => reason.description(),
-            User(ref user) => user.description(),
-        }
-    }
-}
+impl error::Error for Error {}
