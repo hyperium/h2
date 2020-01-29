@@ -73,43 +73,33 @@ impl From<io::Error> for RecvError {
     }
 }
 
-impl error::Error for RecvError {
-    fn description(&self) -> &str {
-        use self::RecvError::*;
-
-        match *self {
-            Connection(ref reason) => reason.description(),
-            Stream { ref reason, .. } => reason.description(),
-            Io(ref e) => e.description(),
-        }
-    }
-}
+impl error::Error for RecvError {}
 
 impl fmt::Display for RecvError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use std::error::Error;
-        write!(fmt, "{}", self.description())
+        use self::RecvError::*;
+
+        match *self {
+            Connection(ref reason) => reason.fmt(fmt),
+            Stream { ref reason, .. } => reason.fmt(fmt),
+            Io(ref e) => e.fmt(fmt),
+        }
     }
 }
 
 // ===== impl SendError =====
 
-impl error::Error for SendError {
-    fn description(&self) -> &str {
-        use self::SendError::*;
-
-        match *self {
-            User(ref e) => e.description(),
-            Connection(ref reason) => reason.description(),
-            Io(ref e) => e.description(),
-        }
-    }
-}
+impl error::Error for SendError {}
 
 impl fmt::Display for SendError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use std::error::Error;
-        write!(fmt, "{}", self.description())
+        use self::SendError::*;
+
+        match *self {
+            User(ref e) => e.fmt(fmt),
+            Connection(ref reason) => reason.fmt(fmt),
+            Io(ref e) => e.fmt(fmt),
+        }
     }
 }
 
@@ -127,11 +117,13 @@ impl From<UserError> for SendError {
 
 // ===== impl UserError =====
 
-impl error::Error for UserError {
-    fn description(&self) -> &str {
+impl error::Error for UserError {}
+
+impl fmt::Display for UserError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         use self::UserError::*;
 
-        match *self {
+        fmt.write_str(match *self {
             InactiveStreamId => "inactive stream",
             UnexpectedFrameType => "unexpected frame type",
             PayloadTooBig => "payload too big",
@@ -144,13 +136,6 @@ impl error::Error for UserError {
             PollResetAfterSendResponse => "poll_reset after send_response is illegal",
             SendPingWhilePending => "send_ping before received previous pong",
             SendSettingsWhilePending => "sending SETTINGS before received previous ACK",
-        }
-    }
-}
-
-impl fmt::Display for UserError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use std::error::Error;
-        write!(fmt, "{}", self.description())
+        })
     }
 }
