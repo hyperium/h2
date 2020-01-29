@@ -346,15 +346,13 @@ async fn stream_error_release_connection_capacity() {
             let mut should_recv_frames = 2usize;
 
             let err = body
-                .try_for_each(|bytes| {
-                    async move {
-                        should_recv_bytes -= bytes.len();
-                        should_recv_frames -= 1;
-                        if should_recv_bytes == 0 {
-                            assert_eq!(should_recv_bytes, 0);
-                        }
-                        Ok(())
+                .try_for_each(|bytes| async move {
+                    should_recv_bytes -= bytes.len();
+                    should_recv_frames -= 1;
+                    if should_recv_bytes == 0 {
+                        assert_eq!(should_recv_bytes, 0);
                     }
+                    Ok(())
                 })
                 .await
                 .expect_err("body");

@@ -39,16 +39,14 @@ async fn recv_push_works() {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         };
         let check_pushed_response = async move {
-            let p = pushed.and_then(|headers| {
-                async move {
-                    let (request, response) = headers.into_parts();
-                    assert_eq!(request.into_parts().0.method, Method::GET);
-                    let resp = response.await.unwrap();
-                    assert_eq!(resp.status(), StatusCode::OK);
-                    let b = util::concat(resp.into_body()).await.unwrap();
-                    assert_eq!(b, "promised_data");
-                    Ok(())
-                }
+            let p = pushed.and_then(|headers| async move {
+                let (request, response) = headers.into_parts();
+                assert_eq!(request.into_parts().0.method, Method::GET);
+                let resp = response.await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+                let b = util::concat(resp.into_body()).await.unwrap();
+                assert_eq!(b, "promised_data");
+                Ok(())
             });
             let ps: Vec<_> = p.collect().await;
             assert_eq!(1, ps.len())
