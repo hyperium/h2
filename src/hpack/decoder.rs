@@ -430,7 +430,7 @@ fn take(buf: &mut Cursor<&mut BytesMut>, n: usize) -> Bytes {
     let pos = buf.position() as usize;
     let mut head = buf.get_mut().split_to(pos + n);
     buf.set_position(0);
-    head.split_to(pos);
+    head.advance(pos);
     head.freeze()
 }
 
