@@ -1,18 +1,33 @@
 name: CI
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+env:
+  RUST_BACKTRACE: 1
 
 jobs:
   style:
     name: Check Style
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@master
-    - name: Install Rust
-      run: rustup update beta && rustup default beta
-    - name: Install Rustfmt
-      run: rustup component add rustfmt
-    - name: Check formatting
-      run: cargo fmt --all -- --check
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+
+      - name: cargo fmt --check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
 
   test:
     name: Test
@@ -25,47 +40,46 @@ jobs:
         rust:
           - nightly
           - beta
-          # - stable
+          - stable
     steps:
-      - uses: actions/checkout@master
-      - name: Install Rust
-        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install Rust (${{ matrix.rust }})
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+
       - name: Install libssl-dev
         run: sudo apt-get update && sudo apt-get install libssl-dev
       - name: Build without unstable flag
-        run: cargo build
-      - name: Test examples in README
-        run: rustdoc --test README.md -L target/debug -L target/debug/deps
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+
       - name: Check with unstable flag
-        run: cargo check --features unstable
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --features unstable
+
       - name: Run lib tests and doc tests
-        run: RUST_TEST_THREADS=1 cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
       - name: Run integration tests
-        run: cargo test -p h2-tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p h2-tests
+
       - name: Run h2spec
-        # Run h2spec on nightly for the time being.
-        # TODO: Change it to stable after Rust 1.38 release
         run: ./ci/h2spec.sh
-        if: matrix.rust == 'nightly'
+        if: matrix.rust == 'stable'
+
       - name: Check minimal versions
         run: cargo clean; cargo update -Zminimal-versions; cargo check
         if: matrix.rust == 'nightly'
-
-  publish_docs:
-    name: Publish Documentation
-    needs: [style, test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@master
-      - name: Install Rust
-        run: rustup update beta && rustup default beta
-      - name: Build documentation
-        run: cargo doc --no-deps --all-features
-      - name: Publish documentation
-        run: |
-          cd target/doc
-          git init
-          git add .
-          git -c user.name='ci' -c user.email='ci' commit -m 'Deploy H2 API documentation'
-          git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
-        if: github.event_name == 'push' && github.event.ref == 'refs/heads/master' && github.repository == 'hyperium/h2'
