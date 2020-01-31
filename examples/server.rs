@@ -28,17 +28,22 @@ async fn handle(socket: TcpStream) -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("H2 connection bound");
 
     while let Some(result) = connection.accept().await {
-        let (request, mut respond) = result?;
+        let (mut request, mut respond) = result?;
         println!("GOT request: {:?}", request);
+
+        let body = request.body_mut();
+        while let Some(data) = body.data().await {
+            let data = data?;
+            println!("<<<< recv {:?}", data);
+        }
+
         let response = http::Response::new(());
-
         let mut send = respond.send_response(response, false)?;
-
-        println!(">>>> sending data");
-        send.send_data(Bytes::from_static(b"hello world"), true)?;
+        println!(">>>> send");
+        send.send_data(Bytes::from_static(b"hello "), false)?;
+        send.send_data(Bytes::from_static(b"world\n"), true)?;
     }
 
-    println!("~~~~~~~~~~~~~~~~~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
-
+    println!("~~~~~~~~~~~ H2 connection CLOSE !!!!!! ~~~~~~~~~~~");
     Ok(())
 }
