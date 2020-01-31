@@ -121,7 +121,7 @@ use crate::proto::{self, Config, Prioritized};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
-use http::{HeaderMap, Request, Response};
+use http::{HeaderMap, Method, Request, Response};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -1357,7 +1357,9 @@ impl proto::Peer for Peer {
 
         b = b.version(Version::HTTP_2);
 
+        let is_connect;
         if let Some(method) = pseudo.method {
+            is_connect = method == Method::CONNECT;
             b = b.method(method);
         } else {
             malformed!("malformed headers: missing method");
@@ -1385,8 +1387,11 @@ impl proto::Peer for Peer {
             })?);
         }
 
-        // A :scheme is always required.
+        // A :scheme is required, except CONNECT.
         if let Some(scheme) = pseudo.scheme {
+            if is_connect {
+                malformed!(":scheme in CONNECT");
+            }
             let maybe_scheme = scheme.parse();
             let scheme = maybe_scheme.or_else(|why| {
                 malformed!(
@@ -1402,11 +1407,15 @@ impl proto::Peer for Peer {
             if parts.authority.is_some() {
                 parts.scheme = Some(scheme);
             }
-        } else {
+        } else if !is_connect {
             malformed!("malformed headers: missing scheme");
         }
 
         if let Some(path) = pseudo.path {
+            if is_connect {
+                malformed!(":path in CONNECT");
+            }
+
             // This cannot be empty
             if path.is_empty() {
                 malformed!("malformed headers: missing path");
