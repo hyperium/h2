@@ -182,9 +182,11 @@ pub struct Handshake<T, B: Buf = Bytes> {
 /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T) {
 /// let mut server = server::handshake(my_io).await.unwrap();
 /// while let Some(request) = server.accept().await {
-///     let (request, respond) = request.unwrap();
-///     // Process the request and send the response back to the client
-///     // using `respond`.
+///     tokio::spawn(async move {
+///         let (request, respond) = request.unwrap();
+///         // Process the request and send the response back to the client
+///         // using `respond`.
+///     });
 /// }
 /// # }
 /// #
