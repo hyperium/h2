@@ -54,7 +54,7 @@ struct Pos {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HashValue(usize);
 
-const MAX_SIZE: usize = (1 << 16);
+const MAX_SIZE: usize = 1 << 16;
 const DYN_OFFSET: usize = 62;
 
 macro_rules! probe_loop {
