@@ -316,6 +316,21 @@ impl<B: Buf> SendStream<B> {
             .map_err_(Into::into)
     }
 
+    /// Returns the number of bytes of data currently queued for send on this stream.
+    pub fn buffered_data(&self) -> usize {
+        self.inner.buffered_data()
+    }
+
+    /// Requests to be notified when the amount of data buffered on this stream
+    /// falls below `bytes`.
+    ///
+    /// Returns `None` if the stream is no longer sending.
+    pub fn poll_buffered_data(&mut self, cx: &mut Context, bytes: usize) -> Poll<Option<Result<usize, crate::Error>>> {
+        self.inner
+            .poll_buffered_data(cx, bytes)
+            .map_err_(Into::into)
+    }
+
     /// Sends a single data frame to the remote peer.
     ///
     /// This function may be called repeatedly as long as `end_of_stream` is set

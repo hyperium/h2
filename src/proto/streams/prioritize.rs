@@ -731,6 +731,7 @@ impl Prioritize {
                             debug_assert!(stream.buffered_send_data >= len);
                             stream.buffered_send_data -= len;
                             stream.requested_send_capacity -= len;
+                            stream.notify_buffered_send_data();
 
                             // Assign the capacity back to the connection that
                             // was just consumed from the stream in the previous

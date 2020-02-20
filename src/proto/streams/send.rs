@@ -326,6 +326,27 @@ impl Send {
         }
     }
 
+    pub fn poll_buffered_data(
+        &mut self,
+        cx: &Context,
+        stream: &mut store::Ptr,
+        bytes: usize,
+    ) -> Poll<Option<Result<usize, UserError>>> {
+        if !stream.state.is_send_streaming() {
+            Poll::Ready(None)
+        } else if (stream.buffered_send_data as usize) < bytes {
+            Poll::Ready(Some(Ok(stream.buffered_send_data as usize)))
+        } else {
+            stream.wait_buffered_send_data(cx);
+            Poll::Pending
+        }
+    }
+
+    /// Current buffer size
+    pub fn buffered_data(&self, stream: &mut store::Ptr) -> usize {
+        stream.buffered_send_data as usize
+    }
+
     pub fn poll_reset(
         &self,
         cx: &Context,

@@ -1082,6 +1082,26 @@ impl<B> StreamRef<B> {
         me.actions.send.poll_capacity(cx, &mut stream)
     }
 
+    /// Returns the stream's current send buffer size.
+    pub fn buffered_data(&self) -> usize {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.buffered_data(&mut stream)
+    }
+
+    /// Request to be notified when the stream's buffered data falls below `bytes`
+    pub fn poll_buffered_data(&mut self, cx: &Context, bytes: usize) -> Poll<Option<Result<usize, UserError>>> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.opaque.key);
+
+        me.actions.send.poll_buffered_data(cx, &mut stream, bytes)
+    }
+
     /// Request to be notified for if a `RST_STREAM` is received for this stream.
     pub(crate) fn poll_reset(
         &mut self,

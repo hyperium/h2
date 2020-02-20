@@ -50,6 +50,9 @@ pub(super) struct Stream {
     /// Task tracking additional send capacity (i.e. window updates).
     send_task: Option<Waker>,
 
+    /// Task tracking decreases in `buffered_send_data`
+    buffered_send_data_task: Option<Waker>,
+
     /// Frames pending for this stream being sent to the socket
     pub pending_send: buffer::Deque,
 
@@ -162,6 +165,7 @@ impl Stream {
             requested_send_capacity: 0,
             buffered_send_data: 0,
             send_task: None,
+            buffered_send_data_task: None,
             pending_send: buffer::Deque::new(),
             is_pending_send_capacity: false,
             next_pending_send_capacity: None,
@@ -309,6 +313,16 @@ impl Stream {
 
     pub fn wait_send(&mut self, cx: &Context) {
         self.send_task = Some(cx.waker().clone());
+    }
+
+    pub fn notify_buffered_send_data(&mut self) {
+        if let Some(task) = self.buffered_send_data_task.take() {
+            task.wake();
+        }
+    }
+
+    pub fn wait_buffered_send_data(&mut self, cx: &Context) {
+        self.buffered_send_data_task = Some(cx.waker().clone());
     }
 
     pub fn notify_recv(&mut self) {
