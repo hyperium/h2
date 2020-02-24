@@ -102,8 +102,9 @@ async fn user_ping_pong() {
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
         assert_default_settings!(settings);
-        srv.recv_frame(frames::ping(frame::Ping::USER)).await;
-        srv.send_frame(frames::ping(frame::Ping::USER).pong()).await;
+        srv.recv_frame(frames::ping(frame::Ping::USERS[0])).await;
+        srv.send_frame(frames::ping(frame::Ping::USERS[0]).pong())
+            .await;
         srv.recv_frame(frames::go_away(0)).await;
         srv.recv_eof().await;
     };
@@ -129,6 +130,52 @@ async fn user_ping_pong() {
         conn.drive(futures::future::poll_fn(move |cx| ping_pong.poll_pong(cx)))
             .await
             .unwrap();
+        drop(client);
+        conn.await.expect("client");
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn user_ping_pong_multiple() {
+    let _ = env_logger::try_init();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::ping(frame::Ping::USERS[0])).await;
+        srv.recv_frame(frames::ping(frame::Ping::USERS[1])).await;
+        srv.send_frame(frames::ping(frame::Ping::USERS[0]).pong())
+            .await;
+        srv.send_frame(frames::ping(frame::Ping::USERS[1]).pong())
+            .await;
+        srv.recv_frame(frames::go_away(0)).await;
+        srv.recv_eof().await;
+    };
+
+    let client = async move {
+        let (client, mut conn) = client::handshake(io).await.expect("client handshake");
+        // yield once so we can ack server settings
+        conn.drive(util::yield_once()).await;
+        // `ping_pong()` method conflict with mock future ext trait.
+        let mut ping_pong = client::Connection::ping_pong(&mut conn).expect("taking ping_pong");
+        ping_pong.send_ping(Ping::user_1()).expect("send ping");
+        ping_pong.send_ping(Ping::user_2()).expect("send ping");
+
+        let pong1 = conn
+            .drive(futures::future::poll_fn(|cx| ping_pong.poll_pong(cx)))
+            .await
+            .unwrap();
+        assert_eq!(pong1, Ping::user_1());
+
+        let pong2 = conn
+            .drive(futures::future::poll_fn(|cx| ping_pong.poll_pong(cx)))
+            .await
+            .unwrap();
+        assert_eq!(pong2, Ping::user_2());
+
         drop(client);
         conn.await.expect("client");
     };

@@ -205,8 +205,9 @@ pub struct PingPong {
 /// Sent via [`PingPong`][] to send a PING frame to a peer.
 ///
 /// [`PingPong`]: struct.PingPong.html
+#[derive(Clone)]
 pub struct Ping {
-    _p: (),
+    id: u8,
 }
 
 /// Received via [`PingPong`][] when a peer acknowledges a [`Ping`][].
@@ -214,7 +215,7 @@ pub struct Ping {
 /// [`PingPong`]: struct.PingPong.html
 /// [`Ping`]: struct.Ping.html
 pub struct Pong {
-    _p: (),
+    id: u8,
 }
 
 // ===== impl SendStream =====
@@ -542,12 +543,7 @@ impl PingPong {
 
     #[doc(hidden)]
     pub fn send_ping(&mut self, ping: Ping) -> Result<(), crate::Error> {
-        // Passing a `Ping` here is just to be forwards-compatible with
-        // eventually allowing choosing a ping payload. For now, we can
-        // just drop it.
-        drop(ping);
-
-        self.inner.send_ping().map_err(|err| match err {
+        self.inner.send_ping(ping.id).map_err(|err| match err {
             Some(err) => err.into(),
             None => UserError::SendPingWhilePending.into(),
         })
@@ -555,8 +551,8 @@ impl PingPong {
 
     #[doc(hidden)]
     pub fn poll_pong(&mut self, cx: &mut Context) -> Poll<Result<Pong, crate::Error>> {
-        ready!(self.inner.poll_pong(cx))?;
-        Poll::Ready(Ok(Pong { _p: () }))
+        let id = ready!(self.inner.poll_pong(cx))?;
+        Poll::Ready(Ok(Pong { id }))
     }
 }
 
@@ -575,13 +571,23 @@ impl Ping {
     ///
     /// [`PingPong`]: struct.PingPong.html
     pub fn opaque() -> Ping {
-        Ping { _p: () }
+        Ping { id: 0 }
+    }
+
+    #[doc(hidden)]
+    pub fn user_1() -> Ping {
+        Ping { id: 0 }
+    }
+
+    #[doc(hidden)]
+    pub fn user_2() -> Ping {
+        Ping { id: 1 }
     }
 }
 
 impl fmt::Debug for Ping {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Ping").finish()
+        fmt.debug_tuple("Ping").field(&self.id).finish()
     }
 }
 
@@ -589,6 +595,18 @@ impl fmt::Debug for Ping {
 
 impl fmt::Debug for Pong {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Pong").finish()
+        fmt.debug_tuple("Pong").field(&self.id).finish()
+    }
+}
+
+impl PartialEq<Pong> for Ping {
+    fn eq(&self, other: &Pong) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialEq<Ping> for Pong {
+    fn eq(&self, other: &Ping) -> bool {
+        self.id == other.id
     }
 }

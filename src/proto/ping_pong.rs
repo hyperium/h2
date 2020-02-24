@@ -47,17 +47,6 @@ pub(crate) enum ReceivedPing {
     Shutdown,
 }
 
-/// No user ping pending.
-const USER_STATE_EMPTY: usize = 0;
-/// User has called `send_ping`, but PING hasn't been written yet.
-const USER_STATE_PENDING_PING: usize = 1;
-/// User PING has been written, waiting for PONG.
-const USER_STATE_PENDING_PONG: usize = 2;
-/// We've received user PONG, waiting for user to `poll_pong`.
-const USER_STATE_RECEIVED_PONG: usize = 3;
-/// The connection is closed.
-const USER_STATE_CLOSED: usize = 4;
-
 // ===== impl PingPong =====
 
 impl PingPong {
@@ -116,7 +105,7 @@ impl PingPong {
             }
 
             if let Some(ref users) = self.user_pings {
-                if ping.payload() == &Ping::USER && users.receive_pong() {
+                if users.receive_pong(&ping) {
                     log::trace!("recv PING USER ack");
                     return ReceivedPing::Unknown;
                 }
@@ -178,19 +167,39 @@ impl PingPong {
                 ping.sent = true;
             }
         } else if let Some(ref users) = self.user_pings {
-            if users.0.state.load(Ordering::Acquire) == USER_STATE_PENDING_PING {
-                if !dst.poll_ready(cx)?.is_ready() {
-                    return Poll::Pending;
+            users.0.ping_task.register(cx.waker());
+            let mut curr = users.0.state.load(Ordering::Acquire);
+
+            'state: loop {
+                let mut state = UserState::decode(curr);
+
+                'pings: for id in 0..MAX_USER_PINGS {
+                    match state.pings[id] {
+                        PingState::PingQueued => (), // ok
+                        _ => continue 'pings,
+                    }
+                    if !dst.poll_ready(cx)?.is_ready() {
+                        return Poll::Pending;
+                    }
+                    state.pings[id] = PingState::Inflight;
+
+                    match users.0.state.compare_exchange(
+                        curr,
+                        state.encode(),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => dst
+                            .buffer(Ping::new(Ping::USERS[id]).into())
+                            .expect("invalid ping frame"),
+                        Err(actual) => {
+                            curr = actual;
+                            continue 'state;
+                        }
+                    }
                 }
 
-                dst.buffer(Ping::new(Ping::USER).into())
-                    .expect("invalid ping frame");
-                users
-                    .0
-                    .state
-                    .store(USER_STATE_PENDING_PONG, Ordering::Release);
-            } else {
-                users.0.ping_task.register(cx.waker());
+                break 'state;
             }
         }
 
@@ -210,40 +219,75 @@ impl ReceivedPing {
 // ===== impl UserPings =====
 
 impl UserPings {
-    pub(crate) fn send_ping(&self) -> Result<(), Option<proto::Error>> {
-        let prev = self.0.state.compare_and_swap(
-            USER_STATE_EMPTY,        // current
-            USER_STATE_PENDING_PING, // new
-            Ordering::AcqRel,
+    pub(crate) fn send_ping(&self, id: u8) -> Result<(), Option<proto::Error>> {
+        assert!(
+            MAX_USER_PINGS > id as usize,
+            "internal ping id overflow: {}",
+            id
         );
+        let id = id as usize;
 
-        match prev {
-            USER_STATE_EMPTY => {
-                self.0.ping_task.wake();
-                Ok(())
-            }
-            USER_STATE_CLOSED => Err(Some(broken_pipe().into())),
-            _ => {
+        let mut curr = self.0.state.load(Ordering::Acquire);
+
+        loop {
+            let mut state = UserState::decode(curr);
+
+            if state.closed {
+                return Err(Some(broken_pipe().into()));
+            } else if let PingState::Empty = state.pings[id] {
+                state.pings[id] = PingState::PingQueued;
+            } else {
                 // Was already pending, user error!
-                Err(None)
+                return Err(None);
+            }
+
+            match self.0.state.compare_exchange(
+                curr,
+                state.encode(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.0.ping_task.wake();
+                    return Ok(());
+                }
+                Err(actual) => curr = actual,
             }
         }
     }
 
-    pub(crate) fn poll_pong(&self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
+    pub(crate) fn poll_pong(&self, cx: &mut Context) -> Poll<Result<u8, proto::Error>> {
         // Must register before checking state, in case state were to change
         // before we could register, and then the ping would just be lost.
         self.0.pong_task.register(cx.waker());
-        let prev = self.0.state.compare_and_swap(
-            USER_STATE_RECEIVED_PONG, // current
-            USER_STATE_EMPTY,         // new
-            Ordering::AcqRel,
-        );
 
-        match prev {
-            USER_STATE_RECEIVED_PONG => Poll::Ready(Ok(())),
-            USER_STATE_CLOSED => Poll::Ready(Err(broken_pipe().into())),
-            _ => Poll::Pending,
+        let mut curr = self.0.state.load(Ordering::Acquire);
+
+        loop {
+            let mut state = UserState::decode(curr);
+            let id;
+
+            if state.closed {
+                return Poll::Ready(Err(broken_pipe().into()));
+            } else if let PingState::Pong = state.pings[0] {
+                id = 0;
+                state.pings[0] = PingState::Empty;
+            } else if let PingState::Pong = state.pings[1] {
+                id = 1;
+                state.pings[1] = PingState::Empty;
+            } else {
+                return Poll::Pending;
+            }
+
+            match self.0.state.compare_exchange(
+                curr,
+                state.encode(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Poll::Ready(Ok(id)),
+                Err(actual) => curr = actual,
+            }
         }
     }
 }
@@ -251,18 +295,41 @@ impl UserPings {
 // ===== impl UserPingsRx =====
 
 impl UserPingsRx {
-    fn receive_pong(&self) -> bool {
-        let prev = self.0.state.compare_and_swap(
-            USER_STATE_PENDING_PONG,  // current
-            USER_STATE_RECEIVED_PONG, // new
-            Ordering::AcqRel,
-        );
+    fn receive_pong(&self, pong: &Ping) -> bool {
+        debug_assert!(pong.is_ack());
 
-        if prev == USER_STATE_PENDING_PONG {
-            self.0.pong_task.wake();
-            true
+        let id = if let Some(id) = pong.user_payload_id() {
+            if (id as usize) < MAX_USER_PINGS {
+                id as usize
+            } else {
+                return false;
+            }
         } else {
-            false
+            return false;
+        };
+
+        let mut curr = self.0.state.load(Ordering::Acquire);
+
+        loop {
+            let mut state = UserState::decode(curr);
+            if let PingState::Inflight = state.pings[id] {
+                state.pings[id] = PingState::Pong;
+            } else {
+                return false;
+            }
+
+            match self.0.state.compare_exchange(
+                curr,
+                state.encode(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.0.pong_task.wake();
+                    return true;
+                }
+                Err(actual) => curr = actual,
+            }
         }
     }
 }
@@ -276,4 +343,78 @@ impl Drop for UserPingsRx {
 
 fn broken_pipe() -> io::Error {
     io::ErrorKind::BrokenPipe.into()
+}
+
+// ===== impl UserState =====
+
+/// No user ping pending.
+const USER_STATE_EMPTY: usize = 0;
+/// User has called `send_ping`, but PING hasn't been written yet.
+const USER_STATE_PENDING_PING: usize = 0b01;
+/// User PING has been written, waiting for PONG.
+const USER_STATE_PENDING_PONG: usize = 0b11;
+/// We've received user PONG, waiting for user to `poll_pong`.
+const USER_STATE_RECEIVED_PONG: usize = 0b10;
+
+const USER_STATE_MASK: usize = 0b11;
+
+/// The connection is closed.
+const USER_STATE_CLOSED: usize = usize::max_value() - (usize::max_value() >> 1);
+
+const MAX_USER_PINGS: usize = 2;
+
+struct UserState {
+    pings: [PingState; MAX_USER_PINGS],
+    closed: bool,
+}
+
+enum PingState {
+    Empty,
+    PingQueued,
+    Inflight,
+    Pong,
+}
+
+impl UserState {
+    fn decode(bits: usize) -> Self {
+        let closed = bits & USER_STATE_CLOSED == USER_STATE_CLOSED;
+
+        let pings = [PingState::decode(bits, 0), PingState::decode(bits, 1)];
+
+        UserState { pings, closed }
+    }
+
+    fn encode(&self) -> usize {
+        let mut bits = if self.closed { USER_STATE_CLOSED } else { 0 };
+
+        for i in 0..MAX_USER_PINGS {
+            bits |= self.pings[i].encode(i as u8);
+        }
+
+        bits
+    }
+}
+
+impl PingState {
+    fn decode(bits: usize, id: u8) -> Self {
+        let id = id * 2;
+        let mask = USER_STATE_MASK << id;
+        match (bits & mask) >> id {
+            USER_STATE_EMPTY => PingState::Empty,
+            USER_STATE_PENDING_PING => PingState::PingQueued,
+            USER_STATE_PENDING_PONG => PingState::Inflight,
+            USER_STATE_RECEIVED_PONG => PingState::Pong,
+            _ => unreachable!(),
+        }
+    }
+
+    fn encode(&self, id: u8) -> usize {
+        let id = id * 2;
+        (match *self {
+            PingState::Empty => USER_STATE_EMPTY,
+            PingState::PingQueued => USER_STATE_PENDING_PING,
+            PingState::Inflight => USER_STATE_PENDING_PONG,
+            PingState::Pong => USER_STATE_RECEIVED_PONG,
+        }) << id
+    }
 }
