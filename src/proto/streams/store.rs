@@ -30,8 +30,10 @@ pub(crate) struct Key {
     stream_id: StreamId,
 }
 
+// We can never have more than `StreamId::MAX` streams in the store,
+// so we can save a smaller index (u32 vs usize).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SlabIndex(usize);
+struct SlabIndex(u32);
 
 #[derive(Debug)]
 pub(super) struct Queue<N> {
@@ -102,7 +104,7 @@ impl Store {
     }
 
     pub fn insert(&mut self, id: StreamId, val: Stream) -> Ptr {
-        let index = SlabIndex(self.slab.insert(val));
+        let index = SlabIndex(self.slab.insert(val) as u32);
         assert!(self.ids.insert(id, index).is_none());
 
         Ptr {
@@ -171,7 +173,7 @@ impl ops::Index<Key> for Store {
 
     fn index(&self, key: Key) -> &Self::Output {
         self.slab
-            .get(key.index.0)
+            .get(key.index.0 as usize)
             .filter(|s| s.id == key.stream_id)
             .unwrap_or_else(|| {
                 panic!("dangling store key for stream_id={:?}", key.stream_id);
@@ -182,7 +184,7 @@ impl ops::Index<Key> for Store {
 impl ops::IndexMut<Key> for Store {
     fn index_mut(&mut self, key: Key) -> &mut Self::Output {
         self.slab
-            .get_mut(key.index.0)
+            .get_mut(key.index.0 as usize)
             .filter(|s| s.id == key.stream_id)
             .unwrap_or_else(|| {
                 panic!("dangling store key for stream_id={:?}", key.stream_id);
@@ -330,7 +332,7 @@ impl<'a> Ptr<'a> {
         debug_assert!(!self.store.ids.contains_key(&self.key.stream_id));
 
         // Remove the stream state
-        let stream = self.store.slab.remove(self.key.index.0);
+        let stream = self.store.slab.remove(self.key.index.0 as usize);
         assert_eq!(stream.id, self.key.stream_id);
         stream.id
     }
@@ -390,7 +392,7 @@ impl<'a> VacantEntry<'a> {
     pub fn insert(self, value: Stream) -> Key {
         // Insert the value in the slab
         let stream_id = value.id;
-        let index = SlabIndex(self.slab.insert(value));
+        let index = SlabIndex(self.slab.insert(value) as u32);
 
         // Insert the handle in the ID map
         self.ids.insert(index);
