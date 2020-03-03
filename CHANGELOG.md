@@ -1,3 +1,7 @@
+# 0.2.2 (March 3, 2020)
+
+* Reduce size of `FlowControl` and `RecvStream`.
+
 # 0.2.1 (December 6, 2019)
 
 * Relax `Unpin` bounds on the send `Buf` generic.
