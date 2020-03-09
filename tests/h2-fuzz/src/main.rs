@@ -28,7 +28,7 @@ impl<'a> MockIo<'a> {
 }
 
 impl<'a> AsyncRead for MockIo<'a> {
-    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
         false
     }
 
@@ -123,7 +123,7 @@ async fn run(script: &[u8]) -> Result<(), h2::Error> {
 
 fn main() {
     env_logger::init();
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
     loop {
         honggfuzz::fuzz!(|data: &[u8]| {
             eprintln!("{:?}", rt.block_on(run(data)));
