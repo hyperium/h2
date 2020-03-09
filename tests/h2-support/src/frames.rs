@@ -113,6 +113,25 @@ impl Mock<frame::Headers> {
         Mock(frame)
     }
 
+    pub fn method<M>(self, method: M) -> Self
+    where
+        M: TryInto<http::Method>,
+        M::Error: fmt::Debug,
+    {
+        let method = method.try_into().unwrap();
+        let (id, _, fields) = self.into_parts();
+        let frame = frame::Headers::new(
+            id,
+            frame::Pseudo {
+                scheme: None,
+                method: Some(method),
+                ..Default::default()
+            },
+            fields,
+        );
+        Mock(frame)
+    }
+
     pub fn response<S>(self, status: S) -> Self
     where
         S: TryInto<http::StatusCode>,
