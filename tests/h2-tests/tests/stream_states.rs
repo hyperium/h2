@@ -331,6 +331,40 @@ async fn recv_goaway_finishes_processed_streams() {
 }
 
 #[tokio::test]
+async fn recv_goaway_with_higher_last_processed_id() {
+    let _ = env_logger::try_init();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::go_away(1)).await;
+        // a bigger goaway? kaboom
+        srv.send_frame(frames::go_away(3)).await;
+        // expecting a goaway of 0, since server never initiated a stream
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+        //.close();
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+        let err = conn
+            .drive(client.get("https://example.com"))
+            .await
+            .expect_err("client should error");
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn recv_next_stream_id_updated_by_malformed_headers() {
     let _ = env_logger::try_init();
     let (io, mut client) = mock::new();

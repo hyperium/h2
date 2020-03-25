@@ -657,6 +657,55 @@ async fn graceful_shutdown() {
 }
 
 #[tokio::test]
+async fn goaway_even_if_client_sent_goaway() {
+    let _ = env_logger::try_init();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(5)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // Ping-pong so as to wait until server gets req
+        client.ping_pong([0; 8]).await;
+        client.send_frame(frames::go_away(0)).await;
+        // 2^31 - 1 = 2147483647
+        // Note: not using a constant in the library because library devs
+        // can be unsmart.
+        client.recv_frame(frames::go_away(2147483647)).await;
+        client.recv_frame(frames::ping(frame::Ping::SHUTDOWN)).await;
+        client
+            .recv_frame(frames::headers(5).response(200).eos())
+            .await;
+        client
+            .send_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
+            .await;
+        client.recv_frame(frames::go_away(5)).await;
+        client.recv_eof().await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        srv.graceful_shutdown();
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none(), "unexpected request");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn sends_reset_cancel_when_res_body_is_dropped() {
     let _ = env_logger::try_init();
     let (io, mut client) = mock::new();
