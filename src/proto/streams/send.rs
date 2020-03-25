@@ -18,6 +18,15 @@ pub(super) struct Send {
     /// Stream identifier to use for next initialized stream.
     next_stream_id: Result<StreamId, StreamIdOverflow>,
 
+    /// Any streams with a higher ID are ignored.
+    ///
+    /// This starts as MAX, but is lowered when a GOAWAY is received.
+    ///
+    /// > After sending a GOAWAY frame, the sender can discard frames for
+    /// > streams initiated by the receiver with identifiers higher than
+    /// > the identified last stream.
+    max_stream_id: StreamId,
+
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
@@ -37,6 +46,7 @@ impl Send {
     pub fn new(config: &Config) -> Self {
         Send {
             init_window_sz: config.remote_init_window_sz,
+            max_stream_id: StreamId::MAX,
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
         }
@@ -367,6 +377,26 @@ impl Send {
             return Err(e);
         }
 
+        Ok(())
+    }
+
+    pub(super) fn recv_go_away(&mut self, last_stream_id: StreamId) -> Result<(), RecvError> {
+        if last_stream_id > self.max_stream_id {
+            // The remote endpoint sent a `GOAWAY` frame indicating a stream
+            // that we never sent, or that we have already terminated on account
+            // of previous `GOAWAY` frame. In either case, that is illegal.
+            // (When sending multiple `GOAWAY`s, "Endpoints MUST NOT increase
+            // the value they send in the last stream identifier, since the
+            // peers might already have retried unprocessed requests on another
+            // connection.")
+            proto_err!(conn:
+                "recv_go_away: last_stream_id ({:?}) > max_stream_id ({:?})",
+                last_stream_id, self.max_stream_id,
+            );
+            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+        }
+
+        self.max_stream_id = last_stream_id;
         Ok(())
     }
 
