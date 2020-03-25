@@ -1,3 +1,8 @@
+# 0.2.3 (March 25, 2020)
+
+* Fix server being able to accept `CONNECT` requests without `:scheme` or `:path`.
+* Fix receiving a GOAWAY frame from updating the recv max ID, it should only update max send ID.
+
 # 0.2.2 (March 3, 2020)
 
 * Reduce size of `FlowControl` and `RecvStream`.
