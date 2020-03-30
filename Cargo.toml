@@ -12,7 +12,7 @@ authors = [
   "Sean McArthur <sean@seanmonstar.com>",
 ]
 description = "An HTTP/2.0 client and server"
-documentation = "https://docs.rs/h2/0.2.3/h2/"
+documentation = "https://docs.rs/h2/0.2.4/h2/"
 repository = "https://github.com/hyperium/h2"
 readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
