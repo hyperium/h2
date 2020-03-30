@@ -52,6 +52,8 @@ pub use tokio::io::{AsyncRead, AsyncWrite};
 pub use std::thread;
 pub use std::time::Duration;
 
+pub static MAGIC_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
 // ===== Everything under here shouldn't be used =====
 // TODO: work on deleting this code
 
@@ -62,14 +64,20 @@ use std::pin::Pin;
 
 pub trait MockH2 {
     fn handshake(&mut self) -> &mut Self;
+
+    fn handshake_read_settings(&mut self, settings: &[u8]) -> &mut Self;
 }
 
 impl MockH2 for tokio_test::io::Builder {
     fn handshake(&mut self) -> &mut Self {
-        self.write(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        self.handshake_read_settings(frames::SETTINGS)
+    }
+
+    fn handshake_read_settings(&mut self, settings: &[u8]) -> &mut Self {
+        self.write(MAGIC_PREFACE)
             // Settings frame
             .write(frames::SETTINGS)
-            .read(frames::SETTINGS)
+            .read(settings)
             .read(frames::SETTINGS_ACK)
     }
 }
