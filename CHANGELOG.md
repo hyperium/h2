@@ -1,3 +1,7 @@
+# 0.2.5 (May 6, 2020)
+
+* Fix rare debug assert failure in store shutdown.
+
 # 0.2.4 (March 30, 2020)
 
 * Fix when receiving `SETTINGS_HEADER_TABLE_SIZE` setting.
