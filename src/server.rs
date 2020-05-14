@@ -23,10 +23,10 @@
 //!
 //! The [`Connection`] instance is used to accept inbound HTTP/2.0 streams. It
 //! does this by implementing [`futures::Stream`]. When a new stream is
-//! received, a call to [`Connection::poll`] will return `(request, response)`.
+//! received, a call to [`Connection::accept`] will return `(request, response)`.
 //! The `request` handle (of type [`http::Request<RecvStream>`]) contains the
 //! HTTP request head as well as provides a way to receive the inbound data
-//! stream and the trailers. The `response` handle (of type [`SendStream`])
+//! stream and the trailers. The `response` handle (of type [`SendResponse`])
 //! allows responding to the request, stream the response payload, send
 //! trailers, and send push promises.
 //!
@@ -36,19 +36,19 @@
 //! # Managing the connection
 //!
 //! The [`Connection`] instance is used to manage connection state. The caller
-//! is required to call either [`Connection::poll`] or
+//! is required to call either [`Connection::accept`] or
 //! [`Connection::poll_close`] in order to advance the connection state. Simply
 //! operating on [`SendStream`] or [`RecvStream`] will have no effect unless the
 //! connection state is advanced.
 //!
-//! It is not required to call **both** [`Connection::poll`] and
+//! It is not required to call **both** [`Connection::accept`] and
 //! [`Connection::poll_close`]. If the caller is ready to accept a new stream,
-//! then only [`Connection::poll`] should be called. When the caller **does
+//! then only [`Connection::accept`] should be called. When the caller **does
 //! not** want to accept a new stream, [`Connection::poll_close`] should be
 //! called.
 //!
 //! The [`Connection`] instance should only be dropped once
-//! [`Connection::poll_close`] returns `Ready`. Once [`Connection::poll`]
+//! [`Connection::poll_close`] returns `Ready`. Once [`Connection::accept`]
 //! returns `Ready(None)`, there will no longer be any more inbound streams. At
 //! this point, only [`Connection::poll_close`] should be called.
 //!
