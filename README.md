@@ -28,8 +28,7 @@ specification. It does not handle:
 * TLS
 * Any feature not described by the HTTP/2.0 specification.
 
-The intent is that this crate will eventually be used by
-[hyper](https://github.com/hyperium/hyper), which will provide all of these features.
+This crate is now used by [hyper](https://github.com/hyperium/hyper), which will provide all of these features.
 
 ## Usage
 
