@@ -173,7 +173,7 @@ pub struct RecvStream {
 ///
 /// * A new stream is activated. The receive window is initialized to 1024 (the
 ///   value of the initial window size for this connection).
-/// * A `DATA` frame is received containing a payload of 400 bytes.
+/// * A `DATA` frame is received containing a payload of 600 bytes.
 /// * The receive window size is reduced to 424 bytes.
 /// * [`release_capacity`] is called with 200.
 /// * The receive window size is now 624 bytes. The peer may send no more than
