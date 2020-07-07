@@ -350,7 +350,7 @@ async fn stream_error_release_connection_capacity() {
                     should_recv_bytes -= bytes.len();
                     should_recv_frames -= 1;
                     if should_recv_bytes == 0 {
-                        assert_eq!(should_recv_bytes, 0);
+                        assert_eq!(should_recv_frames, 0);
                     }
                     Ok(())
                 })
