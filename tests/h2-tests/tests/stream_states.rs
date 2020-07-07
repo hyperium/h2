@@ -31,7 +31,7 @@ async fn send_recv_headers_only() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).await.unwrap();
@@ -72,7 +72,7 @@ async fn send_recv_data() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, mut stream) = client.send_request(request, false).unwrap();
 
     // Reserve send capacity
@@ -129,7 +129,7 @@ async fn send_headers_recv_data_single_frame() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let resp = h2.run(response).await.unwrap();

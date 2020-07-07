@@ -84,10 +84,10 @@
 
 macro_rules! proto_err {
     (conn: $($msg:tt)+) => {
-        log::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        tracing::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
     (stream: $($msg:tt)+) => {
-        log::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        tracing::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
 }
 

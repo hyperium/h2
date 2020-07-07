@@ -141,7 +141,7 @@ impl Settings {
 
         // Ensure the payload length is correct, each setting is 6 bytes long.
         if payload.len() % 6 != 0 {
-            log::debug!("invalid settings payload length; len={:?}", payload.len());
+            tracing::debug!("invalid settings payload length; len={:?}", payload.len());
             return Err(Error::InvalidPayloadAckSettings);
         }
 
@@ -199,13 +199,13 @@ impl Settings {
         let head = Head::new(Kind::Settings, self.flags.into(), StreamId::zero());
         let payload_len = self.payload_len();
 
-        log::trace!("encoding SETTINGS; len={}", payload_len);
+        tracing::trace!("encoding SETTINGS; len={}", payload_len);
 
         head.encode(payload_len, dst);
 
         // Encode the settings
         self.for_each(|setting| {
-            log::trace!("encoding setting; val={:?}", setting);
+            tracing::trace!("encoding setting; val={:?}", setting);
             setting.encode(dst)
         });
     }

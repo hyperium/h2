@@ -51,7 +51,7 @@ impl GoAway {
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
-        log::trace!("encoding GO_AWAY; code={:?}", self.error_code);
+        tracing::trace!("encoding GO_AWAY; code={:?}", self.error_code);
         let head = Head::new(Kind::GoAway, 0, StreamId::zero());
         head.encode(8, dst);
         dst.put_u32(self.last_stream_id.into());

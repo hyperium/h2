@@ -402,7 +402,7 @@ where
         }
 
         if let Some(inner) = self.connection.next_incoming() {
-            log::trace!("received incoming");
+            tracing::trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
             let body = RecvStream::new(FlowControl::new(inner.clone_to_opaque()));
 
@@ -1179,7 +1179,7 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        log::trace!("Handshake::poll(); state={:?};", self.state);
+        tracing::trace!("Handshake::poll(); state={:?};", self.state);
         use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {
@@ -1188,11 +1188,11 @@ where
             // for the client preface.
             let codec = match Pin::new(flush).poll(cx)? {
                 Poll::Pending => {
-                    log::trace!("Handshake::poll(); flush.poll()=Pending");
+                    tracing::trace!("Handshake::poll(); flush.poll()=Pending");
                     return Poll::Pending;
                 }
                 Poll::Ready(flushed) => {
-                    log::trace!("Handshake::poll(); flush.poll()=Ready");
+                    tracing::trace!("Handshake::poll(); flush.poll()=Ready");
                     flushed
                 }
             };
@@ -1229,7 +1229,7 @@ where
                 },
             );
 
-            log::trace!("Handshake::poll(); connection established!");
+            tracing::trace!("Handshake::poll(); connection established!");
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
@@ -1289,12 +1289,12 @@ impl Peer {
         if let Err(e) = frame::PushPromise::validate_request(&request) {
             use PushPromiseHeaderError::*;
             match e {
-                NotSafeAndCacheable => log::debug!(
+                NotSafeAndCacheable => tracing::debug!(
                     "convert_push_message: method {} is not safe and cacheable; promised_id={:?}",
                     request.method(),
                     promised_id,
                 ),
-                InvalidContentLength(e) => log::debug!(
+                InvalidContentLength(e) => tracing::debug!(
                     "convert_push_message; promised request has invalid content-length {:?}; promised_id={:?}",
                     e,
                     promised_id,
@@ -1347,7 +1347,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
-                log::debug!($($arg)*);
+                tracing::debug!($($arg)*);
                 return Err(RecvError::Stream {
                     id: stream_id,
                     reason: Reason::PROTOCOL_ERROR,
@@ -1367,7 +1367,7 @@ impl proto::Peer for Peer {
 
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
-            log::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
+            tracing::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
             return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
         }
 

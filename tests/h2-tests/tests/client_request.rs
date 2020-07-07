@@ -16,7 +16,7 @@ async fn handshake() {
 
     let (_client, h2) = client::handshake(mock).await.unwrap();
 
-    log::trace!("hands have been shook");
+    tracing::trace!("hands have been shook");
 
     // At this point, the connection should be closed
     h2.await.unwrap();
@@ -84,7 +84,7 @@ async fn recv_invalid_server_stream_id() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     // The connection errors
