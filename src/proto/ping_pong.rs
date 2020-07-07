@@ -107,7 +107,7 @@ impl PingPong {
                         &Ping::SHUTDOWN,
                         "pending_ping should be for shutdown",
                     );
-                    log::trace!("recv PING SHUTDOWN ack");
+                    tracing::trace!("recv PING SHUTDOWN ack");
                     return ReceivedPing::Shutdown;
                 }
 
@@ -117,7 +117,7 @@ impl PingPong {
 
             if let Some(ref users) = self.user_pings {
                 if ping.payload() == &Ping::USER && users.receive_pong() {
-                    log::trace!("recv PING USER ack");
+                    tracing::trace!("recv PING USER ack");
                     return ReceivedPing::Unknown;
                 }
             }
@@ -125,7 +125,7 @@ impl PingPong {
             // else we were acked a ping we didn't send?
             // The spec doesn't require us to do anything about this,
             // so for resiliency, just ignore it for now.
-            log::warn!("recv PING ack that we never sent: {:?}", ping);
+            tracing::warn!("recv PING ack that we never sent: {:?}", ping);
             ReceivedPing::Unknown
         } else {
             // Save the ping's payload to be sent as an acknowledgement.

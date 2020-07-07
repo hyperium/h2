@@ -50,7 +50,7 @@ impl Settings {
         if frame.is_ack() {
             match &self.local {
                 Local::WaitingAck(local) => {
-                    log::debug!("received settings ACK; applying {:?}", local);
+                    tracing::debug!("received settings ACK; applying {:?}", local);
 
                     if let Some(max) = local.max_frame_size() {
                         codec.set_max_recv_frame_size(max as usize);
@@ -85,7 +85,7 @@ impl Settings {
         match &self.local {
             Local::ToSend(..) | Local::WaitingAck(..) => Err(UserError::SendSettingsWhilePending),
             Local::Synced => {
-                log::trace!("queue to send local settings: {:?}", frame);
+                tracing::trace!("queue to send local settings: {:?}", frame);
                 self.local = Local::ToSend(frame);
                 Ok(())
             }
@@ -115,7 +115,7 @@ impl Settings {
             // Buffer the settings frame
             dst.buffer(frame.into()).expect("invalid settings frame");
 
-            log::trace!("ACK sent; applying settings");
+            tracing::trace!("ACK sent; applying settings");
 
             if let Some(val) = settings.header_table_size() {
                 dst.set_send_header_table_size(val as usize);
@@ -139,7 +139,7 @@ impl Settings {
                 // Buffer the settings frame
                 dst.buffer(settings.clone().into())
                     .expect("invalid settings frame");
-                log::trace!("local settings sent; waiting for ack: {:?}", settings);
+                tracing::trace!("local settings sent; waiting for ack: {:?}", settings);
 
                 self.local = Local::WaitingAck(settings.clone());
             }
