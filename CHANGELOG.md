@@ -1,3 +1,7 @@
+# 0.2.6 (July 13, 2020)
+
+* Integrate `tracing` directly where `log` was used. (For 0.2.x, `log`s are still emitted by default.)
+
 # 0.2.5 (May 6, 2020)
 
 * Fix rare debug assert failure in store shutdown.
