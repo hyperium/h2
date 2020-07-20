@@ -4,7 +4,7 @@ use h2_support::prelude::*;
 
 #[tokio::test]
 async fn recv_push_works() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {
@@ -62,7 +62,7 @@ async fn recv_push_works() {
 #[tokio::test]
 async fn pushed_streams_arent_dropped_too_early() {
     // tests that by default, received push promises work
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {
@@ -128,7 +128,7 @@ async fn pushed_streams_arent_dropped_too_early() {
 
 #[tokio::test]
 async fn recv_push_when_push_disabled_is_conn_error() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {
@@ -186,7 +186,7 @@ async fn recv_push_when_push_disabled_is_conn_error() {
 
 #[tokio::test]
 async fn pending_push_promises_reset_when_dropped() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let srv = async move {
@@ -233,7 +233,7 @@ async fn pending_push_promises_reset_when_dropped() {
 
 #[tokio::test]
 async fn recv_push_promise_over_max_header_list_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -284,7 +284,7 @@ async fn recv_push_promise_over_max_header_list_size() {
 #[tokio::test]
 async fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
     // Unsafe method or content length is stream protocol error
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {
@@ -348,7 +348,7 @@ fn recv_push_promise_with_wrong_authority_is_stream_error() {
 
 #[tokio::test]
 async fn recv_push_promise_skipped_stream_id() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {
@@ -402,7 +402,7 @@ async fn recv_push_promise_skipped_stream_id() {
 
 #[tokio::test]
 async fn recv_push_promise_dup_stream_id() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let mock = async move {

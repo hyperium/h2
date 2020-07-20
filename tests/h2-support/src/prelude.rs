@@ -28,7 +28,7 @@ pub use super::assert::assert_frame_eq;
 
 // Re-export useful crates
 pub use tokio_test::io as mock_io;
-pub use {bytes, env_logger, futures, http, tokio::io as tokio_io};
+pub use {bytes, tracing, tracing_subscriber, futures, http, tokio::io as tokio_io};
 
 // Re-export primary future types
 pub use futures::{Future, Sink, Stream};

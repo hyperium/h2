@@ -7,7 +7,7 @@ use std::task::Context;
 
 #[tokio::test]
 async fn handshake() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -24,7 +24,7 @@ async fn handshake() {
 
 #[tokio::test]
 async fn client_other_thread() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -60,7 +60,7 @@ async fn client_other_thread() {
 
 #[tokio::test]
 async fn recv_invalid_server_stream_id() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -96,7 +96,7 @@ async fn recv_invalid_server_stream_id() {
 
 #[tokio::test]
 async fn request_stream_id_overflows() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -149,7 +149,7 @@ async fn request_stream_id_overflows() {
 
 #[tokio::test]
 async fn client_builder_max_concurrent_streams() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -187,7 +187,7 @@ async fn client_builder_max_concurrent_streams() {
 
 #[tokio::test]
 async fn request_over_max_concurrent_streams_errors() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -286,7 +286,7 @@ async fn request_over_max_concurrent_streams_errors() {
 
 #[tokio::test]
 async fn send_request_poll_ready_when_connection_error() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -379,7 +379,7 @@ async fn send_request_poll_ready_when_connection_error() {
 
 #[tokio::test]
 async fn send_reset_notifies_recv_stream() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -432,7 +432,7 @@ async fn send_reset_notifies_recv_stream() {
 
 #[tokio::test]
 async fn http_11_request_without_scheme_or_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -462,7 +462,7 @@ async fn http_11_request_without_scheme_or_authority() {
 
 #[tokio::test]
 async fn http_2_request_without_scheme_or_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -499,7 +499,7 @@ fn request_with_h1_version() {}
 
 #[tokio::test]
 async fn request_with_connection_headers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // can't assert full handshake, since client never sends a request, and
@@ -542,7 +542,7 @@ async fn request_with_connection_headers() {
 
 #[tokio::test]
 async fn connection_close_notifies_response_future() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -581,7 +581,7 @@ async fn connection_close_notifies_response_future() {
 
 #[tokio::test]
 async fn connection_close_notifies_client_poll_ready() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -626,7 +626,7 @@ async fn connection_close_notifies_client_poll_ready() {
 
 #[tokio::test]
 async fn sending_request_on_closed_connection() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -688,7 +688,7 @@ async fn sending_request_on_closed_connection() {
 
 #[tokio::test]
 async fn recv_too_big_headers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -751,7 +751,7 @@ async fn recv_too_big_headers() {
 
 #[tokio::test]
 async fn pending_send_request_gets_reset_by_peer_properly() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let payload = Bytes::from(vec![0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize]);
@@ -823,7 +823,7 @@ async fn pending_send_request_gets_reset_by_peer_properly() {
 
 #[tokio::test]
 async fn request_without_path() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -854,7 +854,7 @@ async fn request_without_path() {
 
 #[tokio::test]
 async fn request_options_with_star() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // Note the lack of trailing slash.
@@ -899,7 +899,7 @@ async fn notify_on_send_capacity() {
     // stream, the client is notified.
     use tokio::sync::oneshot;
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (done_tx, done_rx) = oneshot::channel();
@@ -979,7 +979,7 @@ async fn notify_on_send_capacity() {
 
 #[tokio::test]
 async fn send_stream_poll_reset() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1017,7 +1017,7 @@ async fn drop_pending_open() {
     // This test checks that a stream queued for pending open behaves correctly when its
     // client drops.
     use tokio::sync::oneshot;
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (init_tx, init_rx) = oneshot::channel();
@@ -1105,7 +1105,7 @@ async fn malformed_response_headers_dont_unlink_stream() {
     // no remaining references correctly resets the stream, without prematurely
     // unlinking it.
     use tokio::sync::oneshot;
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (drop_tx, drop_rx) = oneshot::channel();

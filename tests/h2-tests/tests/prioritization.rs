@@ -6,7 +6,7 @@ use std::task::Context;
 
 #[tokio::test]
 async fn single_stream_send_large_body() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 1024];
 
@@ -66,7 +66,7 @@ async fn single_stream_send_large_body() {
 
 #[tokio::test]
 async fn multiple_streams_with_payload_greater_than_default_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 16384 * 5 - 1];
     let payload_clone = payload.clone();
@@ -129,7 +129,7 @@ async fn multiple_streams_with_payload_greater_than_default_window() {
 
 #[tokio::test]
 async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 32_768];
 
@@ -193,7 +193,7 @@ async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
 #[tokio::test]
 async fn single_stream_send_body_greater_than_default_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 16384 * 5 - 1];
 
@@ -279,7 +279,7 @@ async fn single_stream_send_body_greater_than_default_window() {
 
 #[tokio::test]
 async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 32_768];
 
@@ -341,7 +341,7 @@ async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
 
 #[tokio::test]
 async fn send_data_receive_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (m, mut mock) = mock::new();
 
     let h2 = async move {

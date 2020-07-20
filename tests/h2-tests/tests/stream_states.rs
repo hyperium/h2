@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn send_recv_headers_only() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -42,7 +42,7 @@ async fn send_recv_headers_only() {
 
 #[tokio::test]
 async fn send_recv_data() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -104,7 +104,7 @@ async fn send_recv_data() {
 
 #[tokio::test]
 async fn send_headers_recv_data_single_frame() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -153,7 +153,7 @@ async fn send_headers_recv_data_single_frame() {
 
 #[tokio::test]
 async fn closed_streams_are_released() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -196,7 +196,7 @@ async fn closed_streams_are_released() {
 
 #[tokio::test]
 async fn errors_if_recv_frame_exceeds_max_frame_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -239,7 +239,7 @@ async fn errors_if_recv_frame_exceeds_max_frame_size() {
 
 #[tokio::test]
 async fn configure_max_frame_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -278,7 +278,7 @@ async fn configure_max_frame_size() {
 
 #[tokio::test]
 async fn recv_goaway_finishes_processed_streams() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -332,7 +332,7 @@ async fn recv_goaway_finishes_processed_streams() {
 
 #[tokio::test]
 async fn recv_goaway_with_higher_last_processed_id() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -366,7 +366,7 @@ async fn recv_goaway_with_higher_last_processed_id() {
 
 #[tokio::test]
 async fn recv_next_stream_id_updated_by_malformed_headers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let bad_auth = util::byte_str("not:a/good authority");
@@ -404,7 +404,7 @@ async fn recv_next_stream_id_updated_by_malformed_headers() {
 
 #[tokio::test]
 async fn skipped_stream_ids_are_implicitly_closed() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -445,7 +445,7 @@ async fn skipped_stream_ids_are_implicitly_closed() {
 
 #[tokio::test]
 async fn send_rst_stream_allows_recv_data() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -490,7 +490,7 @@ async fn send_rst_stream_allows_recv_data() {
 
 #[tokio::test]
 async fn send_rst_stream_allows_recv_trailers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -531,7 +531,7 @@ async fn send_rst_stream_allows_recv_trailers() {
 
 #[tokio::test]
 async fn rst_stream_expires() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -582,7 +582,7 @@ async fn rst_stream_expires() {
 
 #[tokio::test]
 async fn rst_stream_max() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -653,7 +653,7 @@ async fn rst_stream_max() {
 
 #[tokio::test]
 async fn reserved_state_recv_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -692,7 +692,7 @@ async fn reserved_state_recv_window_update() {
 /*
 #[test]
 fn send_data_after_headers_eos() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -733,7 +733,7 @@ async fn rst_while_closing() {
     // Test to reproduce panic in issue #246 --- receipt of a RST_STREAM frame
     // on a stream in the Half Closed (remote) state with a queued EOS causes
     // a panic.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // Rendevous when we've queued a trailers frame
@@ -794,7 +794,7 @@ async fn rst_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     // This allows the settings + headers frame through
     let (io, mut srv) = mock::new_with_write_capacity(73);
@@ -846,7 +846,7 @@ async fn err_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     // This allows the settings + headers frame through
     let (io, mut srv) = mock::new_with_write_capacity(73);
@@ -901,7 +901,7 @@ async fn send_err_with_buffered_data() {
     // the data is fully flushed. Given that resetting a stream requires
     // clearing all associated state for that stream, this test ensures that the
     // buffered up frame is correctly handled.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     // This allows the settings + headers frame through
     let (io, mut srv) = mock::new_with_write_capacity(73);
@@ -963,7 +963,7 @@ async fn send_err_with_buffered_data() {
 #[tokio::test]
 async fn srv_window_update_on_lower_stream_id() {
     // See https://github.com/hyperium/h2/issues/208
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {

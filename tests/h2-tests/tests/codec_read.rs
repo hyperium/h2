@@ -130,7 +130,7 @@ fn read_headers_empty_payload() {}
 
 #[tokio::test]
 async fn read_continuation_frames() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let large = build_large_headers();
@@ -191,7 +191,7 @@ async fn read_continuation_frames() {
 async fn update_max_frame_len_at_rest() {
     use futures::StreamExt;
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     // TODO: add test for updating max frame length in flight as well?
     let mut codec = raw_codec! {
         read => [

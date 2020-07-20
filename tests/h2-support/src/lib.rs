@@ -24,3 +24,16 @@ pub type Codec<T> = h2::Codec<T, bytes::Bytes>;
 
 // This is the frame type that is sent
 pub type SendFrame = h2::frame::Frame<bytes::Bytes>;
+
+#[macro_export]
+macro_rules! trace_init {
+    () => {
+        let subscriber = $crate::prelude::tracing_subscriber::fmt()
+            .with_max_level($crate::prelude::tracing::Level::TRACE)
+            .with_span_events($crate::prelude::tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+            .finish();
+        let _guard = $crate::prelude::tracing::subscriber::set_default();
+        let span = $crate::prelude::tracing::info_span!("test", name = %std::thread::current().name().expect("test threads must be named"));
+        let _e = span.enter();
+    }
+}

@@ -5,7 +5,7 @@ use h2_support::prelude::*;
 async fn write_continuation_frames() {
     // An invalid dependency ID results in a stream level error. The hpack
     // payload should still be decoded.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let large = build_large_headers();
@@ -56,7 +56,7 @@ async fn write_continuation_frames() {
 async fn client_settings_header_table_size() {
     // A server sets the SETTINGS_HEADER_TABLE_SIZE to 0, test that the
     // client doesn't send indexed headers.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let io = mock_io::Builder::new()
         // Read SETTINGS_HEADER_TABLE_SIZE = 0
@@ -99,7 +99,7 @@ async fn client_settings_header_table_size() {
 async fn server_settings_header_table_size() {
     // A client sets the SETTINGS_HEADER_TABLE_SIZE to 0, test that the
     // server doesn't send indexed headers.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let io = mock_io::Builder::new()
         .read(MAGIC_PREFACE)
