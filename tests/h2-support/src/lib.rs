@@ -32,8 +32,13 @@ macro_rules! trace_init {
             .with_max_level($crate::prelude::tracing::Level::TRACE)
             .with_span_events($crate::prelude::tracing_subscriber::fmt::format::FmtSpan::CLOSE)
             .finish();
-        let _guard = $crate::prelude::tracing::subscriber::set_default();
-        let span = $crate::prelude::tracing::info_span!("test", name = %std::thread::current().name().expect("test threads must be named"));
+        let _guard = $crate::prelude::tracing::subscriber::set_default(subscriber);
+        let span = $crate::prelude::tracing::info_span!(
+            "test", 
+            "{}", 
+            // get the name of the test thread to generate a unique span for the test
+            std::thread::current().name().expect("test threads must be named")
+        );
         let _e = span.enter();
     }
 }
