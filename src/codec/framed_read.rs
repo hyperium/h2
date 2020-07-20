@@ -61,6 +61,8 @@ impl<T> FramedRead<T> {
 
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
         use self::RecvError::*;
+        let span = tracing::trace_span!("decode_frame", offset = bytes.len());
+        let _e = span.enter();
 
         tracing::trace!("decoding frame from {}B", bytes.len());
 
@@ -74,7 +76,7 @@ impl<T> FramedRead<T> {
 
         let kind = head.kind();
 
-        tracing::trace!("    -> kind={:?}", kind);
+        tracing::trace!(frame.kind = ?kind);
 
         macro_rules! header_block {
             ($frame:ident, $head:ident, $bytes:ident) => ({
@@ -338,6 +340,8 @@ where
     type Item = Result<Frame, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let span = tracing::trace_span!("framed_read");
+        let _e = span.enter();
         loop {
             tracing::trace!("poll");
             let bytes = match ready!(Pin::new(&mut self.inner).poll_next(cx)) {
@@ -346,9 +350,9 @@ where
                 None => return Poll::Ready(None),
             };
 
-            tracing::trace!("poll; bytes={}B", bytes.len());
+            tracing::trace!(read.bytes = bytes.len());
             if let Some(frame) = self.decode_frame(bytes)? {
-                tracing::debug!("received; frame={:?}", frame);
+                tracing::debug!(?frame, "received;");
                 return Poll::Ready(Some(Ok(frame)));
             }
         }
