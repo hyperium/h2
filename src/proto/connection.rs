@@ -7,7 +7,6 @@ use crate::proto::*;
 
 use bytes::{Buf, Bytes};
 use futures_core::Stream;
-use std::any::type_name;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -203,7 +202,7 @@ where
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
-        let span = tracing::trace_span!("connection", peer = %type_name::<P>());
+        let span = tracing::trace_span!("connection", peer = %P::NAME);
         let _e = span.enter();
         use crate::codec::RecvError::*;
 

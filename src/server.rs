@@ -1328,6 +1328,8 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Request<()>;
 
+    const NAME: &'static str = "Server";
+
     fn is_server() -> bool {
         true
     }

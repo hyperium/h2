@@ -1438,6 +1438,8 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Response<()>;
 
+    const NAME: &'static str = "Client";
+
     fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Client
     }
