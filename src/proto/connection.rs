@@ -203,7 +203,7 @@ where
 
     /// Advances the internal state of the connection.
     pub fn poll(&mut self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
-        let span = tracing::trace_span!("Connection::poll", peer = %type_name::<P>());
+        let span = tracing::trace_span!("connection", peer = %type_name::<P>());
         let _e = span.enter();
         use crate::codec::RecvError::*;
 
