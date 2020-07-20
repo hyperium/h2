@@ -183,6 +183,9 @@ impl Decoder {
             self.last_max_update = size;
         }
 
+        let span = tracing::trace_span!("hpack::decode");
+        let _e = span.enter();
+
         tracing::trace!("decode");
 
         while let Some(ty) = peek_u8(src) {
@@ -191,14 +194,14 @@ impl Decoder {
             // determined from the first byte.
             match Representation::load(ty)? {
                 Indexed => {
-                    tracing::trace!("    Indexed; rem={:?}", src.remaining());
+                    tracing::trace!(rem = src.remaining(), "    Indexed;");
                     can_resize = false;
                     let entry = self.decode_indexed(src)?;
                     consume(src);
                     f(entry);
                 }
                 LiteralWithIndexing => {
-                    tracing::trace!("    LiteralWithIndexing; rem={:?}", src.remaining());
+                    tracing::trace!(rem = src.remaining(), "    LiteralWithIndexing;");
                     can_resize = false;
                     let entry = self.decode_literal(src, true)?;
 
@@ -209,14 +212,14 @@ impl Decoder {
                     f(entry);
                 }
                 LiteralWithoutIndexing => {
-                    tracing::trace!("    LiteralWithoutIndexing; rem={:?}", src.remaining());
+                    tracing::trace!(rem = src.remaining(), "    LiteralWithoutIndexing;");
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
                     f(entry);
                 }
                 LiteralNeverIndexed => {
-                    tracing::trace!("    LiteralNeverIndexed; rem={:?}", src.remaining());
+                    tracing::trace!(rem = src.remaining(), "    LiteralNeverIndexed;");
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
@@ -226,7 +229,7 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
-                    tracing::trace!("    SizeUpdate; rem={:?}", src.remaining());
+                    tracing::trace!(rem =  src.remaining(), "    SizeUpdate;");
                     if !can_resize {
                         return Err(DecoderError::InvalidMaxDynamicSize);
                     }
