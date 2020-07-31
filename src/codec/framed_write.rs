@@ -105,8 +105,10 @@ where
     pub fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
+        let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
+        let _e = span.enter();
 
-        tracing::debug!("send; frame={:?}", item);
+        tracing::debug!(frame = ?item, "send;");
 
         match item {
             Frame::Data(mut v) => {
@@ -183,7 +185,8 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        tracing::trace!("flush");
+        let span = tracing::trace_span!("FramedWrite::flush");
+        let _e = span.enter();
 
         loop {
             while !self.is_empty() {

@@ -229,7 +229,7 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
-                    tracing::trace!(rem =  src.remaining(), "    SizeUpdate;");
+                    tracing::trace!(rem = src.remaining(), "    SizeUpdate;");
                     if !can_resize {
                         return Err(DecoderError::InvalidMaxDynamicSize);
                     }

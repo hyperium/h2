@@ -34,11 +34,13 @@ macro_rules! trace_init {
             .finish();
         let _guard = $crate::prelude::tracing::subscriber::set_default(subscriber);
         let span = $crate::prelude::tracing::info_span!(
-            "test", 
-            "{}", 
+            "test",
+            "{}",
             // get the name of the test thread to generate a unique span for the test
-            std::thread::current().name().expect("test threads must be named")
+            std::thread::current()
+                .name()
+                .expect("test threads must be named")
         );
         let _e = span.enter();
-    }
+    };
 }
