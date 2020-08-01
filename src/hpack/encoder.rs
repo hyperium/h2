@@ -86,7 +86,11 @@ impl Encoder {
     where
         I: Iterator<Item = Header<Option<HeaderName>>>,
     {
+        let span = tracing::trace_span!("hpack::encode");
+        let _e = span.enter();
+
         let pos = position(dst);
+        tracing::trace!(pos, "encoding at");
 
         if let Err(e) = self.encode_size_updates(dst) {
             if e == EncoderError::BufferOverflow {
