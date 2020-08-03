@@ -8,6 +8,7 @@ pub mod raw;
 pub mod frames;
 pub mod mock;
 pub mod prelude;
+pub mod trace;
 pub mod util;
 
 mod client_ext;
@@ -28,11 +29,7 @@ pub type SendFrame = h2::frame::Frame<bytes::Bytes>;
 #[macro_export]
 macro_rules! trace_init {
     () => {
-        let subscriber = $crate::prelude::tracing_subscriber::fmt()
-            .with_max_level($crate::prelude::tracing::Level::TRACE)
-            .with_span_events($crate::prelude::tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .finish();
-        let _guard = $crate::prelude::tracing::subscriber::set_default(subscriber);
+        let _guard = $crate::trace::init();
         let span = $crate::prelude::tracing::info_span!(
             "test",
             "{}",
