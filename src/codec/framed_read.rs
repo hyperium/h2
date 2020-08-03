@@ -61,7 +61,7 @@ impl<T> FramedRead<T> {
 
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
         use self::RecvError::*;
-        let span = tracing::trace_span!("decode_frame", offset = bytes.len());
+        let span = tracing::trace_span!("FramedRead::decode_frame", offset = bytes.len());
         let _e = span.enter();
 
         tracing::trace!("decoding frame from {}B", bytes.len());
@@ -340,7 +340,7 @@ where
     type Item = Result<Frame, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let span = tracing::trace_span!("framed_read");
+        let span = tracing::trace_span!("FramedRead::poll_next");
         let _e = span.enter();
         loop {
             tracing::trace!("poll");
