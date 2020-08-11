@@ -149,6 +149,8 @@ pub struct Handshake<T, B: Buf = Bytes> {
     builder: Builder,
     /// The current state of the handshake.
     state: Handshaking<T, B>,
+    /// Span tracking the handshake
+    span: tracing::Span,
 }
 
 /// Accepts inbound HTTP/2.0 streams on a connection.
@@ -300,12 +302,14 @@ enum Handshaking<T, B: Buf> {
 /// Flush a Sink
 struct Flush<T, B> {
     codec: Option<Codec<T, B>>,
+    span: tracing::Span,
 }
 
 /// Read the client connection preface
 struct ReadPreface<T, B> {
     codec: Option<Codec<T, B>>,
     pos: usize,
+    span: tracing::Span,
 }
 
 #[derive(Debug)]
@@ -359,6 +363,9 @@ where
     B: Buf + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
+        let span = tracing::trace_span!("server_handshake", io = %std::any::type_name::<T>());
+        let entered = span.enter();
+
         // Create the codec.
         let mut codec = Codec::new(io);
 
@@ -378,7 +385,9 @@ where
         // Create the handshake future.
         let state = Handshaking::from(codec);
 
-        Handshake { builder, state }
+        drop(entered);
+
+        Handshake { builder, state, span }
     }
 
     /// Accept the next incoming request on this connection.
@@ -1101,7 +1110,10 @@ impl<B: Buf> SendPushedResponse<B> {
 
 impl<T, B: Buf> Flush<T, B> {
     fn new(codec: Codec<T, B>) -> Self {
-        Flush { codec: Some(codec) }
+        Flush { 
+            codec: Some(codec), 
+            span: tracing::trace_span!("flush"),
+        }
     }
 }
 
@@ -1113,6 +1125,7 @@ where
     type Output = Result<Codec<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let _e = self.span.enter();
         // Flush the codec
         ready!(self.codec.as_mut().unwrap().flush(cx)).map_err(crate::Error::from_io)?;
 
@@ -1126,6 +1139,7 @@ impl<T, B: Buf> ReadPreface<T, B> {
         ReadPreface {
             codec: Some(codec),
             pos: 0,
+            span: tracing::trace_span!("read_preface"),
         }
     }
 
@@ -1142,6 +1156,8 @@ where
     type Output = Result<Codec<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let _e = self.span.enter();
+        
         let mut buf = [0; 24];
         let mut rem = PREFACE.len() - self.pos;
 
@@ -1179,7 +1195,8 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("Handshake::poll(); state={:?}", self.state);
+        let _e = self.span.enter();
+        tracing::trace!(state = ?self.state);
         use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {
@@ -1188,11 +1205,11 @@ where
             // for the client preface.
             let codec = match Pin::new(flush).poll(cx)? {
                 Poll::Pending => {
-                    tracing::trace!("Handshake::poll(); flush.poll()=Pending");
+                    tracing::trace!(flush.poll = %"Pending");
                     return Poll::Pending;
                 }
                 Poll::Ready(flushed) => {
-                    tracing::trace!("Handshake::poll(); flush.poll()=Ready");
+                    tracing::trace!(flush.poll = %"Ready");
                     flushed
                 }
             };
@@ -1229,7 +1246,7 @@ where
                 },
             );
 
-            tracing::trace!("Handshake::poll(); connection established!");
+            tracing::trace!("connection established!");
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
@@ -1290,14 +1307,14 @@ impl Peer {
             use PushPromiseHeaderError::*;
             match e {
                 NotSafeAndCacheable => tracing::debug!(
-                    "convert_push_message: method {} is not safe and cacheable; promised_id={:?}",
+                    ?promised_id,
+                    "convert_push_message: method {} is not safe and cacheable",
                     request.method(),
-                    promised_id,
                 ),
                 InvalidContentLength(e) => tracing::debug!(
-                    "convert_push_message; promised request has invalid content-length {:?}; promised_id={:?}",
+                    ?promised_id,
+                    "convert_push_message; promised request has invalid content-length {:?}",
                     e,
-                    promised_id,
                 ),
             }
             return Err(UserError::MalformedHeaders);

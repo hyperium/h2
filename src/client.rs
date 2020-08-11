@@ -149,6 +149,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::usize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tracing_futures::Instrument;
 
 /// Initializes new HTTP/2.0 streams on a connection by sending a request.
 ///
@@ -1115,7 +1116,9 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let builder = Builder::new();
-    builder.handshake(io).await
+    builder.handshake(io)
+        .instrument(tracing::trace_span!("client_handshake", io = %std::any::type_name::<T>()))
+        .await
 }
 
 // ===== impl Connection =====

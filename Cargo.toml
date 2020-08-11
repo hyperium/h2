@@ -48,6 +48,7 @@ tokio = { version = "0.2", features = ["io-util"] }
 bytes = "0.5.2"
 http = "0.2"
 tracing = { version = "0.1.13", default-features = false, features = ["std", "log"] }
+tracing-futures = { version = "0.2", default-features = false, features = ["std-future"]}
 fnv = "1.0.5"
 slab = "0.4.0"
 indexmap = "1.0"
