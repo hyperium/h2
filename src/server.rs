@@ -387,7 +387,11 @@ where
 
         drop(entered);
 
-        Handshake { builder, state, span }
+        Handshake {
+            builder,
+            state,
+            span,
+        }
     }
 
     /// Accept the next incoming request on this connection.
@@ -1110,8 +1114,8 @@ impl<B: Buf> SendPushedResponse<B> {
 
 impl<T, B: Buf> Flush<T, B> {
     fn new(codec: Codec<T, B>) -> Self {
-        Flush { 
-            codec: Some(codec), 
+        Flush {
+            codec: Some(codec),
             span: tracing::trace_span!("flush"),
         }
     }
@@ -1157,7 +1161,7 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let _e = self.span.enter();
-        
+
         let mut buf = [0; 24];
         let mut rem = PREFACE.len() - self.pos;
 

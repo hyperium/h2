@@ -1116,7 +1116,8 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let builder = Builder::new();
-    builder.handshake(io)
+    builder
+        .handshake(io)
         .instrument(tracing::trace_span!("client_handshake", io = %std::any::type_name::<T>()))
         .await
 }
