@@ -128,6 +128,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing_futures::{Instrument, Instrumented};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -292,9 +293,9 @@ impl<B: Buf + fmt::Debug> fmt::Debug for SendPushedResponse<B> {
 /// Stages of an in-progress handshake.
 enum Handshaking<T, B: Buf> {
     /// State 1. Connection is flushing pending SETTINGS frame.
-    Flushing(Flush<T, Prioritized<B>>),
+    Flushing(Instrumented<Flush<T, Prioritized<B>>>),
     /// State 2. Connection is waiting for the client preface.
-    ReadingPreface(ReadPreface<T, Prioritized<B>>),
+    ReadingPreface(Instrumented<ReadPreface<T, Prioritized<B>>>),
     /// Dummy state for `mem::replace`.
     Empty,
 }
@@ -302,14 +303,12 @@ enum Handshaking<T, B: Buf> {
 /// Flush a Sink
 struct Flush<T, B> {
     codec: Option<Codec<T, B>>,
-    span: tracing::Span,
 }
 
 /// Read the client connection preface
 struct ReadPreface<T, B> {
     codec: Option<Codec<T, B>>,
     pos: usize,
-    span: tracing::Span,
 }
 
 #[derive(Debug)]
@@ -1114,10 +1113,7 @@ impl<B: Buf> SendPushedResponse<B> {
 
 impl<T, B: Buf> Flush<T, B> {
     fn new(codec: Codec<T, B>) -> Self {
-        Flush {
-            codec: Some(codec),
-            span: tracing::trace_span!("flush"),
-        }
+        Flush { codec: Some(codec) }
     }
 }
 
@@ -1129,7 +1125,6 @@ where
     type Output = Result<Codec<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let _e = self.span.enter();
         // Flush the codec
         ready!(self.codec.as_mut().unwrap().flush(cx)).map_err(crate::Error::from_io)?;
 
@@ -1143,7 +1138,6 @@ impl<T, B: Buf> ReadPreface<T, B> {
         ReadPreface {
             codec: Some(codec),
             pos: 0,
-            span: tracing::trace_span!("read_preface"),
         }
     }
 
@@ -1160,8 +1154,6 @@ where
     type Output = Result<Codec<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let _e = self.span.enter();
-
         let mut buf = [0; 24];
         let mut rem = PREFACE.len() - self.pos;
 
@@ -1199,7 +1191,8 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let _e = self.span.enter();
+        let span = self.span.clone(); // XXX(eliza): T_T
+        let _e = span.enter();
         tracing::trace!(state = ?self.state);
         use crate::server::Handshaking::*;
 
@@ -1494,7 +1487,7 @@ where
 {
     #[inline]
     fn from(flush: Flush<T, Prioritized<B>>) -> Self {
-        Handshaking::Flushing(flush)
+        Handshaking::Flushing(flush.instrument(tracing::trace_span!("flush")))
     }
 }
 
@@ -1505,7 +1498,7 @@ where
 {
     #[inline]
     fn from(read: ReadPreface<T, Prioritized<B>>) -> Self {
-        Handshaking::ReadingPreface(read)
+        Handshaking::ReadingPreface(read.instrument(tracing::trace_span!("read_preface")))
     }
 }
 
