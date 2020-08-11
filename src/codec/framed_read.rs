@@ -352,7 +352,7 @@ where
 
             tracing::trace!(read.bytes = bytes.len());
             if let Some(frame) = self.decode_frame(bytes)? {
-                tracing::debug!(?frame, "received;");
+                tracing::debug!(?frame, "received");
                 return Poll::Ready(Some(Ok(frame)));
             }
         }

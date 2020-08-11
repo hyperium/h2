@@ -114,7 +114,7 @@ impl Prioritize {
     pub fn schedule_send(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
         // If the stream is waiting to be opened, nothing more to do.
         if stream.is_send_ready() {
-            tracing::trace!(?stream.id, "schedule_send;");
+            tracing::trace!(?stream.id, "schedule_send");
             // Queue the stream
             self.pending_send.push(stream);
 
@@ -419,7 +419,7 @@ impl Prioritize {
             // TODO: Should prioritization factor into this?
             let assign = cmp::min(conn_available, additional);
 
-            tracing::trace!(capacity = assign, "assigning;");
+            tracing::trace!(capacity = assign, "assigning");
 
             // Assign the capacity to the stream
             stream.assign_capacity(assign);
@@ -548,7 +548,7 @@ impl Prioritize {
             tracing::trace!(
                 ?frame,
                 sz = frame.payload().inner.get_ref().remaining(),
-                "reclaimed;"
+                "reclaimed"
             );
 
             let mut eos = false;
@@ -680,7 +680,7 @@ impl Prioritize {
                                 available = %stream.send_flow.available(),
                                 requested = stream.requested_send_capacity,
                                 buffered = stream.buffered_send_data,
-                                "data frame;"
+                                "data frame"
                             );
 
                             // Zero length data frames always have capacity to
@@ -714,7 +714,7 @@ impl Prioritize {
                             // capacity at this point.
                             debug_assert!(len <= self.flow.window_size());
 
-                            tracing::trace!(len, "sending data frame;");
+                            tracing::trace!(len, "sending data frame");
 
                             // Update the flow control
                             tracing::trace_span!("updating stream flow").in_scope(|| {

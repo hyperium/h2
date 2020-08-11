@@ -1179,7 +1179,7 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("Handshake::poll(); state={:?};", self.state);
+        tracing::trace!("Handshake::poll(); state={:?}", self.state);
         use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {

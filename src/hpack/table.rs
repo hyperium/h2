@@ -597,7 +597,7 @@ impl Table {
                         }
 
                         assert!(dist <= their_dist,
-                                "could not find entry; actual={}; desired={};" +
+                                "could not find entry; actual={}; desired={}" +
                                 "probe={}, dist={}; their_dist={}; index={}; msg={}",
                                 actual, desired, probe, dist, their_dist,
                                 index.wrapping_sub(self.inserted), msg);

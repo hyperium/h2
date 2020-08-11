@@ -266,7 +266,7 @@ where
                         // This is handled by resetting the frame then trying to read
                         // another frame.
                         Poll::Ready(Err(Stream { id, reason })) => {
-                            tracing::trace!(?id, ?reason, "stream error;");
+                            tracing::trace!(?id, ?reason, "stream error");
                             self.streams.send_reset(id, reason);
                         }
                         // Attempting to read a frame resulted in an I/O error. All
@@ -333,28 +333,28 @@ where
 
             match ready!(Pin::new(&mut self.codec).poll_next(cx)?) {
                 Some(Headers(frame)) => {
-                    tracing::trace!(?frame, "recv HEADERS;");
+                    tracing::trace!(?frame, "recv HEADERS");
                     self.streams.recv_headers(frame)?;
                 }
                 Some(Data(frame)) => {
-                    tracing::trace!(?frame, "recv DATA;");
+                    tracing::trace!(?frame, "recv DATA");
                     self.streams.recv_data(frame)?;
                 }
                 Some(Reset(frame)) => {
-                    tracing::trace!(?frame, "recv RST_STREAM;");
+                    tracing::trace!(?frame, "recv RST_STREAM");
                     self.streams.recv_reset(frame)?;
                 }
                 Some(PushPromise(frame)) => {
-                    tracing::trace!(?frame, "recv PUSH_PROMISE;");
+                    tracing::trace!(?frame, "recv PUSH_PROMISE");
                     self.streams.recv_push_promise(frame)?;
                 }
                 Some(Settings(frame)) => {
-                    tracing::trace!(?frame, "recv SETTINGS;");
+                    tracing::trace!(?frame, "recv SETTINGS");
                     self.settings
                         .recv_settings(frame, &mut self.codec, &mut self.streams)?;
                 }
                 Some(GoAway(frame)) => {
-                    tracing::trace!(?frame, "recv GOAWAY;");
+                    tracing::trace!(?frame, "recv GOAWAY");
                     // This should prevent starting new streams,
                     // but should allow continuing to process current streams
                     // until they are all EOS. Once they are, State should
@@ -363,7 +363,7 @@ where
                     self.error = Some(frame.reason());
                 }
                 Some(Ping(frame)) => {
-                    tracing::trace!(?frame, "recv PING;");
+                    tracing::trace!(?frame, "recv PING");
                     let status = self.ping_pong.recv_ping(frame);
                     if status.is_shutdown() {
                         assert!(
@@ -376,11 +376,11 @@ where
                     }
                 }
                 Some(WindowUpdate(frame)) => {
-                    tracing::trace!(?frame, "recv WINDOW_UPDATE;");
+                    tracing::trace!(?frame, "recv WINDOW_UPDATE");
                     self.streams.recv_window_update(frame)?;
                 }
                 Some(Priority(frame)) => {
-                    tracing::trace!(?frame, "recv PRIORITY;");
+                    tracing::trace!(?frame, "recv PRIORITY");
                     // TODO: handle
                 }
                 None => {
