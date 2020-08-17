@@ -557,17 +557,16 @@ where
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
-        let key = me.actions.recv.next_incoming(&mut me.store);
-        // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
-        // the lock, so it can't.
-        me.refs += 1;
-        key.map(|key| {
+        me.actions.recv.next_incoming(&mut me.store).map(|key| {
             let stream = &mut me.store.resolve(key);
             tracing::trace!(
                 "next_incoming; id={:?}, state={:?}",
                 stream.id,
                 stream.state
             );
+            // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
+            // the lock, so it can't.
+            me.refs += 1;
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
