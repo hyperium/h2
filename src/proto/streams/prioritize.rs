@@ -718,6 +718,8 @@ impl Prioritize {
 
                             // Update the flow control
                             tracing::trace_span!("updating stream flow").in_scope(|| {
+                                stream.send_flow.send_data(len);
+
                                 // Decrement the stream's buffered data counter
                                 debug_assert!(stream.buffered_send_data >= len);
                                 stream.buffered_send_data -= len;
