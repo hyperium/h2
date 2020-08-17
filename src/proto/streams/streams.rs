@@ -1005,6 +1005,7 @@ impl<B> StreamRef<B> {
             return Err(err.into());
         }
 
+        me.refs += 1;
         let opaque =
             OpaqueStreamRef::new(self.opaque.inner.clone(), &mut me.store.resolve(child_key));
 
