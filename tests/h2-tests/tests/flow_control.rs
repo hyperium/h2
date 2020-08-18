@@ -7,7 +7,7 @@ use h2_support::util::yield_once;
 // explicitly requested.
 #[tokio::test]
 async fn send_data_without_requesting_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 1024];
 
@@ -53,7 +53,7 @@ async fn send_data_without_requesting_capacity() {
 
 #[tokio::test]
 async fn release_capacity_sends_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0u8; 16_384];
     let payload_len = payload.len();
@@ -120,7 +120,7 @@ async fn release_capacity_sends_window_update() {
 
 #[tokio::test]
 async fn release_capacity_of_small_amount_does_not_send_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = [0; 16];
 
@@ -175,7 +175,7 @@ fn expand_window_calls_are_coalesced() {}
 
 #[tokio::test]
 async fn recv_data_overflows_connection_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -238,7 +238,7 @@ async fn recv_data_overflows_connection_window() {
 #[tokio::test]
 async fn recv_data_overflows_stream_window() {
     // this tests for when streams have smaller windows than their connection
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -295,7 +295,7 @@ fn recv_window_update_causes_overflow() {
 
 #[tokio::test]
 async fn stream_error_release_connection_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -371,7 +371,7 @@ async fn stream_error_release_connection_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_data_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -443,7 +443,7 @@ async fn stream_close_by_data_frame_releases_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_trailers_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -516,7 +516,7 @@ async fn stream_close_by_trailers_frame_releases_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_send_reset_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -575,7 +575,7 @@ fn stream_close_by_recv_reset_frame_releases_capacity() {}
 
 #[tokio::test]
 async fn recv_window_update_on_stream_closed_by_data_frame() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -620,7 +620,7 @@ async fn recv_window_update_on_stream_closed_by_data_frame() {
 
 #[tokio::test]
 async fn reserved_capacity_assigned_in_multi_window_updates() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -685,7 +685,7 @@ async fn reserved_capacity_assigned_in_multi_window_updates() {
 async fn connection_notified_on_released_capacity() {
     use tokio::sync::{mpsc, oneshot};
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // We're going to run the connection on a thread in order to isolate task
@@ -794,7 +794,7 @@ async fn connection_notified_on_released_capacity() {
 
 #[tokio::test]
 async fn recv_settings_removes_available_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -841,7 +841,7 @@ async fn recv_settings_removes_available_capacity() {
 
 #[tokio::test]
 async fn recv_settings_keeps_assigned_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let (sent_settings, sent_settings_rx) = futures::channel::oneshot::channel();
@@ -886,7 +886,7 @@ async fn recv_settings_keeps_assigned_capacity() {
 
 #[tokio::test]
 async fn recv_no_init_window_then_receive_some_init_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -942,7 +942,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     use futures::channel::oneshot;
     use futures::future::{select, Either};
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let (tx1, rx1) = oneshot::channel();
     let (tx2, rx2) = oneshot::channel();
@@ -1049,7 +1049,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
 
 #[tokio::test]
 async fn client_increase_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1069,7 +1069,7 @@ async fn client_increase_target_window_size() {
 
 #[tokio::test]
 async fn increase_target_window_size_after_using_some() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1110,7 +1110,7 @@ async fn increase_target_window_size_after_using_some() {
 
 #[tokio::test]
 async fn decrease_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1155,7 +1155,7 @@ async fn decrease_target_window_size() {
 
 #[tokio::test]
 async fn client_update_initial_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE * 2;
@@ -1230,7 +1230,7 @@ async fn client_update_initial_window_size() {
 
 #[tokio::test]
 async fn client_decrease_initial_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1355,7 +1355,7 @@ async fn client_decrease_initial_window_size() {
 
 #[tokio::test]
 async fn server_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -1377,7 +1377,7 @@ async fn server_target_window_size() {
 #[tokio::test]
 async fn recv_settings_increase_window_size_after_using_some() {
     // See https://github.com/hyperium/h2/issues/208
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let new_win_size = 16_384 * 4; // 1 bigger than default
@@ -1419,7 +1419,7 @@ async fn recv_settings_increase_window_size_after_using_some() {
 #[tokio::test]
 async fn reserve_capacity_after_peer_closes() {
     // See https://github.com/hyperium/h2/issues/300
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1456,7 +1456,7 @@ async fn reserve_capacity_after_peer_closes() {
 async fn reset_stream_waiting_for_capacity() {
     // This tests that receiving a reset on a stream that has some available
     // connection-level window reassigns that window to another stream.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -1517,7 +1517,7 @@ async fn reset_stream_waiting_for_capacity() {
 
 #[tokio::test]
 async fn data_padding() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut body = Vec::new();

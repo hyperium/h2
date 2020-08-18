@@ -10,7 +10,7 @@ const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 #[tokio::test]
 async fn read_preface_in_multiple_frames() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .read(b"PRI * HTTP/2.0")
@@ -28,7 +28,7 @@ async fn read_preface_in_multiple_frames() {
 
 #[tokio::test]
 async fn server_builder_set_max_concurrent_streams() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -72,7 +72,7 @@ async fn server_builder_set_max_concurrent_streams() {
 
 #[tokio::test]
 async fn serve_request() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -107,7 +107,7 @@ async fn serve_request() {
 
 #[tokio::test]
 async fn serve_connect() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -138,7 +138,7 @@ async fn serve_connect() {
 
 #[tokio::test]
 async fn push_request() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -222,7 +222,7 @@ async fn push_request() {
 
 #[tokio::test]
 async fn push_request_against_concurrency() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -306,7 +306,7 @@ async fn push_request_against_concurrency() {
 
 #[tokio::test]
 async fn push_request_with_data() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -372,7 +372,7 @@ async fn push_request_with_data() {
 
 #[tokio::test]
 async fn push_request_between_data() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -443,7 +443,7 @@ fn accept_with_pending_connections_after_socket_close() {}
 
 #[tokio::test]
 async fn recv_invalid_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let bad_auth = util::byte_str("not:a/good authority");
@@ -470,7 +470,7 @@ async fn recv_invalid_authority() {
 
 #[tokio::test]
 async fn recv_connection_header() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let req = |id, name, val| {
@@ -507,7 +507,7 @@ async fn recv_connection_header() {
 
 #[tokio::test]
 async fn sends_reset_cancel_when_req_body_is_dropped() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -539,7 +539,7 @@ async fn sends_reset_cancel_when_req_body_is_dropped() {
 
 #[tokio::test]
 async fn abrupt_shutdown() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -583,7 +583,7 @@ async fn abrupt_shutdown() {
 
 #[tokio::test]
 async fn graceful_shutdown() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -658,7 +658,7 @@ async fn graceful_shutdown() {
 
 #[tokio::test]
 async fn goaway_even_if_client_sent_goaway() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -707,7 +707,7 @@ async fn goaway_even_if_client_sent_goaway() {
 
 #[tokio::test]
 async fn sends_reset_cancel_when_res_body_is_dropped() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -761,7 +761,7 @@ async fn sends_reset_cancel_when_res_body_is_dropped() {
 
 #[tokio::test]
 async fn too_big_headers_sends_431() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -797,7 +797,7 @@ async fn too_big_headers_sends_431() {
 
 #[tokio::test]
 async fn too_big_headers_sends_reset_after_431_if_not_eos() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -832,7 +832,7 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
 #[tokio::test]
 async fn poll_reset() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -872,7 +872,7 @@ async fn poll_reset() {
 
 #[tokio::test]
 async fn poll_reset_io_error() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -913,7 +913,7 @@ async fn poll_reset_io_error() {
 
 #[tokio::test]
 async fn poll_reset_after_send_response_is_user_error() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -967,7 +967,7 @@ async fn poll_reset_after_send_response_is_user_error() {
 
 #[tokio::test]
 async fn server_error_on_unclean_shutdown() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let srv = server::Builder::new().handshake::<_, Bytes>(io);
@@ -980,7 +980,7 @@ async fn server_error_on_unclean_shutdown() {
 
 #[tokio::test]
 async fn request_without_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {

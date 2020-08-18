@@ -11,6 +11,7 @@ use std::fmt;
 pub(crate) trait Peer {
     /// Message type polled from the transport
     type Poll: fmt::Debug;
+    const NAME: &'static str;
 
     fn r#dyn() -> Dyn;
 

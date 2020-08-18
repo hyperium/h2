@@ -105,8 +105,10 @@ where
     pub fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
+        let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
+        let _e = span.enter();
 
-        tracing::debug!("send; frame={:?}", item);
+        tracing::debug!(frame = ?item, "send");
 
         match item {
             Frame::Data(mut v) => {
@@ -150,19 +152,19 @@ where
             }
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!("encoded settings; rem={:?}", self.buf.remaining());
+                tracing::trace!(rem = self.buf.remaining(), "encoded settings");
             }
             Frame::GoAway(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!("encoded go_away; rem={:?}", self.buf.remaining());
+                tracing::trace!(rem = self.buf.remaining(), "encoded go_away");
             }
             Frame::Ping(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!("encoded ping; rem={:?}", self.buf.remaining());
+                tracing::trace!(rem = self.buf.remaining(), "encoded ping");
             }
             Frame::WindowUpdate(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!("encoded window_update; rem={:?}", self.buf.remaining());
+                tracing::trace!(rem = self.buf.remaining(), "encoded window_update");
             }
 
             Frame::Priority(_) => {
@@ -174,7 +176,7 @@ where
             }
             Frame::Reset(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!("encoded reset; rem={:?}", self.buf.remaining());
+                tracing::trace!(rem = self.buf.remaining(), "encoded reset");
             }
         }
 
@@ -183,18 +185,19 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        tracing::trace!("flush");
+        let span = tracing::trace_span!("FramedWrite::flush");
+        let _e = span.enter();
 
         loop {
             while !self.is_empty() {
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
-                        tracing::trace!("  -> queued data frame");
+                        tracing::trace!(queued_data_frame = true);
                         let mut buf = (&mut self.buf).chain(frame.payload_mut());
                         ready!(Pin::new(&mut self.inner).poll_write_buf(cx, &mut buf))?;
                     }
                     _ => {
-                        tracing::trace!("  -> not a queued data frame");
+                        tracing::trace!(queued_data_frame = false);
                         ready!(Pin::new(&mut self.inner).poll_write_buf(cx, &mut self.buf))?;
                     }
                 }

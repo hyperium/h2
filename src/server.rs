@@ -128,6 +128,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing_futures::{Instrument, Instrumented};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -149,6 +150,8 @@ pub struct Handshake<T, B: Buf = Bytes> {
     builder: Builder,
     /// The current state of the handshake.
     state: Handshaking<T, B>,
+    /// Span tracking the handshake
+    span: tracing::Span,
 }
 
 /// Accepts inbound HTTP/2.0 streams on a connection.
@@ -290,9 +293,9 @@ impl<B: Buf + fmt::Debug> fmt::Debug for SendPushedResponse<B> {
 /// Stages of an in-progress handshake.
 enum Handshaking<T, B: Buf> {
     /// State 1. Connection is flushing pending SETTINGS frame.
-    Flushing(Flush<T, Prioritized<B>>),
+    Flushing(Instrumented<Flush<T, Prioritized<B>>>),
     /// State 2. Connection is waiting for the client preface.
-    ReadingPreface(ReadPreface<T, Prioritized<B>>),
+    ReadingPreface(Instrumented<ReadPreface<T, Prioritized<B>>>),
     /// Dummy state for `mem::replace`.
     Empty,
 }
@@ -359,6 +362,9 @@ where
     B: Buf + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
+        let span = tracing::trace_span!("server_handshake", io = %std::any::type_name::<T>());
+        let entered = span.enter();
+
         // Create the codec.
         let mut codec = Codec::new(io);
 
@@ -378,7 +384,13 @@ where
         // Create the handshake future.
         let state = Handshaking::from(codec);
 
-        Handshake { builder, state }
+        drop(entered);
+
+        Handshake {
+            builder,
+            state,
+            span,
+        }
     }
 
     /// Accept the next incoming request on this connection.
@@ -1179,7 +1191,9 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("Handshake::poll(); state={:?};", self.state);
+        let span = self.span.clone(); // XXX(eliza): T_T
+        let _e = span.enter();
+        tracing::trace!(state = ?self.state);
         use crate::server::Handshaking::*;
 
         self.state = if let Flushing(ref mut flush) = self.state {
@@ -1188,11 +1202,11 @@ where
             // for the client preface.
             let codec = match Pin::new(flush).poll(cx)? {
                 Poll::Pending => {
-                    tracing::trace!("Handshake::poll(); flush.poll()=Pending");
+                    tracing::trace!(flush.poll = %"Pending");
                     return Poll::Pending;
                 }
                 Poll::Ready(flushed) => {
-                    tracing::trace!("Handshake::poll(); flush.poll()=Ready");
+                    tracing::trace!(flush.poll = %"Ready");
                     flushed
                 }
             };
@@ -1229,7 +1243,7 @@ where
                 },
             );
 
-            tracing::trace!("Handshake::poll(); connection established!");
+            tracing::trace!("connection established!");
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
@@ -1290,14 +1304,14 @@ impl Peer {
             use PushPromiseHeaderError::*;
             match e {
                 NotSafeAndCacheable => tracing::debug!(
-                    "convert_push_message: method {} is not safe and cacheable; promised_id={:?}",
+                    ?promised_id,
+                    "convert_push_message: method {} is not safe and cacheable",
                     request.method(),
-                    promised_id,
                 ),
                 InvalidContentLength(e) => tracing::debug!(
-                    "convert_push_message; promised request has invalid content-length {:?}; promised_id={:?}",
+                    ?promised_id,
+                    "convert_push_message; promised request has invalid content-length {:?}",
                     e,
-                    promised_id,
                 ),
             }
             return Err(UserError::MalformedHeaders);
@@ -1327,6 +1341,8 @@ impl Peer {
 
 impl proto::Peer for Peer {
     type Poll = Request<()>;
+
+    const NAME: &'static str = "Server";
 
     fn is_server() -> bool {
         true
@@ -1471,7 +1487,7 @@ where
 {
     #[inline]
     fn from(flush: Flush<T, Prioritized<B>>) -> Self {
-        Handshaking::Flushing(flush)
+        Handshaking::Flushing(flush.instrument(tracing::trace_span!("flush")))
     }
 }
 
@@ -1482,7 +1498,7 @@ where
 {
     #[inline]
     fn from(read: ReadPreface<T, Prioritized<B>>) -> Self {
-        Handshaking::ReadingPreface(read)
+        Handshaking::ReadingPreface(read.instrument(tracing::trace_span!("read_preface")))
     }
 }
 
