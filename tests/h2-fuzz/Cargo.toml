@@ -9,7 +9,7 @@ edition = "2018"
 h2 = { path = "../.." }
 
 env_logger = { version = "0.5.3", default-features = false }
-futures = { version = "0.3", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["std"] }
 honggfuzz = "0.5"
 http = "0.2"
 tokio = { version = "0.2", features = [] }
