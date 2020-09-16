@@ -253,7 +253,9 @@ async fn push_request_disabled() {
             .uri("https://http2.akamai.com/style.css")
             .body(())
             .unwrap();
-        stream.push_request(req).expect_err("push_request should error");
+        stream
+            .push_request(req)
+            .expect_err("push_request should error");
 
         // send normal response
         let rsp = http::Response::builder().status(200).body(()).unwrap();
