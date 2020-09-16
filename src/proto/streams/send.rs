@@ -32,6 +32,8 @@ pub(super) struct Send {
 
     /// Prioritization layer
     prioritize: Prioritize,
+
+    is_push_enabled: bool,
 }
 
 /// A value to detect which public API has called `poll_reset`.
@@ -49,6 +51,7 @@ impl Send {
             max_stream_id: StreamId::MAX,
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
+            is_push_enabled: true,
         }
     }
 
@@ -95,6 +98,10 @@ impl Send {
         stream: &mut store::Ptr,
         task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
+        if !self.is_push_enabled {
+            return Err(UserError::PeerDisabledServerPush);
+        }
+
         tracing::trace!(
             "send_push_promise; frame={:?}; init_window={:?}",
             frame,
@@ -494,6 +501,10 @@ impl Send {
                         .map_err(RecvError::Connection)
                 })?;
             }
+        }
+
+        if let Some(val) = settings.is_push_enabled() {
+            self.is_push_enabled = val
         }
 
         Ok(())

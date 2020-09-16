@@ -99,8 +99,8 @@ impl Settings {
         self.max_header_list_size = size;
     }
 
-    pub fn is_push_enabled(&self) -> bool {
-        self.enable_push.unwrap_or(1) != 0
+    pub fn is_push_enabled(&self) -> Option<bool> {
+        self.enable_push.map(|val| val != 0)
     }
 
     pub fn set_enable_push(&mut self, enable: bool) {
