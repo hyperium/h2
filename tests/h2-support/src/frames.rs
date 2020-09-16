@@ -339,6 +339,11 @@ impl Mock<frame::Settings> {
         self.0.set_max_header_list_size(Some(val));
         self
     }
+
+    pub fn disable_push(mut self) -> Self {
+        self.0.set_enable_push(false);
+        self
+    }
 }
 
 impl From<Mock<frame::Settings>> for frame::Settings {
