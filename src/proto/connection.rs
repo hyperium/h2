@@ -86,7 +86,7 @@ where
                 .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
             initial_max_send_streams: config.initial_max_send_streams,
             local_next_stream_id: config.next_stream_id,
-            local_push_enabled: config.settings.is_push_enabled(),
+            local_push_enabled: config.settings.is_push_enabled().unwrap_or(true),
             local_reset_duration: config.reset_stream_duration,
             local_reset_max: config.reset_stream_max,
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,

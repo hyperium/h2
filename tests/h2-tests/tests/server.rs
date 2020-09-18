@@ -221,6 +221,53 @@ async fn push_request() {
 }
 
 #[tokio::test]
+async fn push_request_disabled() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().disable_push())
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // attempt to push - expect failure
+        let req = http::Request::builder()
+            .method("GET")
+            .uri("https://http2.akamai.com/style.css")
+            .body(())
+            .unwrap();
+        stream
+            .push_request(req)
+            .expect_err("push_request should error");
+
+        // send normal response
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn push_request_against_concurrency() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();

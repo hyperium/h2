@@ -63,6 +63,9 @@ pub enum UserError {
 
     /// Tries to update local SETTINGS while ACK has not been received.
     SendSettingsWhilePending,
+
+    /// Tries to send push promise to peer who has disabled server push
+    PeerDisabledServerPush,
 }
 
 // ===== impl RecvError =====
@@ -136,6 +139,7 @@ impl fmt::Display for UserError {
             PollResetAfterSendResponse => "poll_reset after send_response is illegal",
             SendPingWhilePending => "send_ping before received previous pong",
             SendSettingsWhilePending => "sending SETTINGS before received previous ACK",
+            PeerDisabledServerPush => "sending PUSH_PROMISE to peer who disabled server push",
         })
     }
 }
