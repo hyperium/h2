@@ -1239,6 +1239,7 @@ where
                     initial_max_send_streams: 0,
                     reset_stream_duration: self.builder.reset_stream_duration,
                     reset_stream_max: self.builder.reset_stream_max,
+                    remote_reserved_stream_max: 0,
                     settings: self.builder.settings.clone(),
                 },
             );

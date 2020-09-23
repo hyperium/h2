@@ -484,9 +484,16 @@ where
             }
         };
 
-        // TODO: Streams in the reserved states do not count towards the concurrency
-        // limit. However, it seems like there should be a cap otherwise this
-        // could grow in memory indefinitely.
+        // "A client that accepts server push SHOULD limit the number of streams it allows to
+        //  be in the "reserved (remote)" state. An excessive number of server push streams can
+        //  be treated as a stream error (Section 5.4.2) of type ENHANCE_YOUR_CALM."
+        // [https://httpwg.org/specs/rfc7540.html#dos]
+        if !me.counts.can_inc_num_reserved_streams() {
+            return Err(RecvError::Stream {
+                id,
+                reason: Reason::ENHANCE_YOUR_CALM,
+            });
+        }
 
         // Ensure that we can reserve streams
         me.actions.recv.ensure_can_reserve()?;
