@@ -134,7 +134,6 @@ where
         ready!(self
             .settings
             .poll_send(cx, &mut self.codec, &mut self.streams))?;
-        ready!(self.streams.send_pending_refusal(cx, &mut self.codec))?;
 
         Poll::Ready(Ok(()))
     }

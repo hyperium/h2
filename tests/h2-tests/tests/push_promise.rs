@@ -471,6 +471,7 @@ async fn promised_stream_is_reset_if_max_streams_is_exceeded() {
             frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
         )
         .await;
+        srv.send_frame(frames::headers(2).response(404)).await;
         srv.send_frame(
             frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/script.js"),
         )
@@ -479,7 +480,7 @@ async fn promised_stream_is_reset_if_max_streams_is_exceeded() {
             frames::push_promise(1, 6).request("GET", "https://http2.akamai.com/image.png"),
         )
         .await;
-        srv.send_frame(frames::headers(2).response(404)).await;
+        srv.ping_pong([1; 8]).await;
         srv.send_frame(frames::headers(4).response(404)).await;
         srv.recv_frame(frames::reset(4).refused()).await;
         srv.send_frame(frames::data(2, "").eos()).await;
