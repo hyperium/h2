@@ -59,14 +59,19 @@ impl Counts {
     ///
     /// # Panics
     ///
-    /// Panics on failure as this should have been validated before hand.
-    pub fn inc_num_recv_streams(&mut self, stream: &mut store::Ptr) {
-        assert!(self.can_inc_num_recv_streams());
+    /// Panics if stream is already included in the count.
+    pub fn inc_num_recv_streams(&mut self, stream: &mut store::Ptr) -> Result<(), ()> {
         assert!(!stream.is_counted);
+
+        if !self.can_inc_num_recv_streams() {
+            return Err(());
+        }
 
         // Increment the number of remote initiated streams
         self.num_recv_streams += 1;
         stream.is_counted = true;
+
+        Ok(())
     }
 
     /// Returns true if the send stream concurrency can be incremented

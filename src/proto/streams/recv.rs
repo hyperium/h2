@@ -170,7 +170,21 @@ impl Recv {
             }
 
             // Increment the number of concurrent streams
-            counts.inc_num_recv_streams(stream);
+            //
+            // "An endpoint that receives a HEADERS frame that causes its advertised concurrent
+            //  stream limit to be exceeded MUST treat this as a stream error (Section 5.4.2)
+            //  of type PROTOCOL_ERROR or REFUSED_STREAM. The choice of error code determines
+            //  whether the endpoint wishes to enable automatic retry (see Section 8.1.4) for
+            //  details)."
+            // [https://httpwg.org/specs/rfc7540.html#n-stream-concurrency]
+            //
+            // TODO: Permit users to configure whether automatic retry is enabled.
+            counts
+                .inc_num_recv_streams(stream)
+                .or(Err(RecvError::Stream {
+                    id: stream.id,
+                    reason: Reason::REFUSED_STREAM,
+                }))?;
         }
 
         if !stream.content_length.is_head() {
