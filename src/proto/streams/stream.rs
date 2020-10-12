@@ -286,7 +286,11 @@ impl Stream {
                 Some(val) => *rem = val,
                 None => return Err(()),
             },
-            ContentLength::Head => return Err(()),
+            ContentLength::Head => {
+                if len != 0 {
+                    return Err(());
+                }
+            }
             _ => {}
         }
 
