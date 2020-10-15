@@ -127,7 +127,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tracing_futures::{Instrument, Instrumented};
 
 /// In progress HTTP/2.0 connection handshake future.
@@ -1158,8 +1158,10 @@ where
         let mut rem = PREFACE.len() - self.pos;
 
         while rem > 0 {
-            let n = ready!(Pin::new(self.inner_mut()).poll_read(cx, &mut buf[..rem]))
+            let mut buf = ReadBuf::new(&mut buf[..rem]);
+            ready!(Pin::new(self.inner_mut()).poll_read(cx, &mut buf))
                 .map_err(crate::Error::from_io)?;
+            let n = buf.filled().len();
             if n == 0 {
                 return Poll::Ready(Err(crate::Error::from_io(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -1167,7 +1169,7 @@ where
                 ))));
             }
 
-            if PREFACE[self.pos..self.pos + n] != buf[..n] {
+            if &PREFACE[self.pos..self.pos + n] != buf.filled() {
                 proto_err!(conn: "read_preface: invalid preface");
                 // TODO: Should this just write the GO_AWAY frame directly?
                 return Poll::Ready(Err(Reason::PROTOCOL_ERROR.into()));

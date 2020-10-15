@@ -3,13 +3,10 @@ use crate::codec::UserError::*;
 use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
-use bytes::{
-    buf::{BufExt, BufMutExt},
-    Buf, BufMut, BytesMut,
-};
+use bytes::{buf::BufMutExt, Buf, BufMut, BytesMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use std::io::{self, Cursor};
 
@@ -193,12 +190,15 @@ where
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
-                        let mut buf = (&mut self.buf).chain(frame.payload_mut());
-                        ready!(Pin::new(&mut self.inner).poll_write_buf(cx, &mut buf))?;
+                        self.buf
+                            .get_mut()
+                            .extend_from_slice(frame.payload_mut().bytes());
+                        let n = ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
+                        self.buf.advance(n);
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        ready!(Pin::new(&mut self.inner).poll_write_buf(cx, &mut self.buf))?;
+                        ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?;
                     }
                 }
             }
@@ -290,24 +290,12 @@ impl<T, B> FramedWrite<T, B> {
 }
 
 impl<T: AsyncRead + Unpin, B> AsyncRead for FramedWrite<T, B> {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
-        self.inner.prepare_uninitialized_buffer(buf)
-    }
-
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-
-    fn poll_read_buf<Buf: BufMut>(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut Buf,
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_read_buf(cx, buf)
     }
 }
 

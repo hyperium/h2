@@ -972,7 +972,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
         //
         // A timeout is used here to avoid blocking forever if there is a
         // failure
-        let result = select(rx2, tokio::time::delay_for(Duration::from_secs(5))).await;
+        let result = select(rx2, tokio::time::sleep(Duration::from_secs(5))).await;
         if let Either::Right((_, _)) = result {
             panic!("Timed out");
         }
@@ -1004,7 +1004,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     });
 
     // Wait for server handshake to complete.
-    let result = select(rx1, tokio::time::delay_for(Duration::from_secs(5))).await;
+    let result = select(rx1, tokio::time::sleep(Duration::from_secs(5))).await;
     if let Either::Right((_, _)) = result {
         panic!("Timed out");
     }
