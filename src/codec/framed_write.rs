@@ -192,16 +192,23 @@ where
                         tracing::trace!(queued_data_frame = true);
 
                         if self.buf.has_remaining() {
-                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
+                            let n =
+                                ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
                             self.buf.advance(n);
-                        } else {
-                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, frame.payload_mut().bytes()))?;
-                            frame.payload_mut().advance(n);
+                        }
+
+                        let buf = frame.payload_mut();
+
+                        if !self.buf.has_remaining() && buf.has_remaining() {
+                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?;
+                            buf.advance(n);
                         }
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        let n = ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?;
+                        let n = ready!(
+                            Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes())
+                        )?;
                         self.buf.advance(n);
                     }
                 }
