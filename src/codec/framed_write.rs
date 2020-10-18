@@ -190,15 +190,19 @@ where
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
-                        self.buf
-                            .get_mut()
-                            .extend_from_slice(frame.payload_mut().bytes());
-                        let n = ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
-                        self.buf.advance(n);
+
+                        if self.buf.has_remaining() {
+                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
+                            self.buf.advance(n);
+                        } else {
+                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, frame.payload_mut().bytes()))?;
+                            frame.payload_mut().advance(n);
+                        }
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?;
+                        let n = ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?;
+                        self.buf.advance(n);
                     }
                 }
             }

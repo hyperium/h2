@@ -364,9 +364,7 @@ impl AsyncRead for Mock {
         }
 
         let n = cmp::min(buf.remaining(), me.rx.len());
-        let initialized_mut = buf.initialize_unfilled();
-        initialized_mut[..n].copy_from_slice(&me.rx[..n]);
-        buf.advance(n);
+        buf.put_slice(&me.rx[..n]);
         me.rx.drain(..n);
 
         Poll::Ready(Ok(()))
@@ -433,7 +431,7 @@ impl AsyncRead for Pipe {
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
         assert!(
-            buf.filled().len() > 0,
+            buf.remaining() > 0,
             "attempted read with zero length buffer... wut?"
         );
 
@@ -448,9 +446,8 @@ impl AsyncRead for Pipe {
             return Poll::Pending;
         }
 
-        let n = cmp::min(buf.filled().len(), me.tx.len());
-        let initialized_mut = buf.initialized_mut();
-        initialized_mut[..n].copy_from_slice(&me.tx[..n]);
+        let n = cmp::min(buf.remaining(), me.tx.len());
+        buf.put_slice(&me.tx[..n]);
         me.tx.drain(..n);
 
         Poll::Ready(Ok(()))
