@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - tokio-0.3x
 env:
   RUST_BACKTRACE: 1
 

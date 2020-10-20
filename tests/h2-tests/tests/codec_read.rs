@@ -187,10 +187,10 @@ async fn read_continuation_frames() {
     join(srv, client).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn update_max_frame_len_at_rest() {
     use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
 
     h2_support::trace_init!();
     // TODO: add test for updating max frame length in flight as well?
@@ -212,6 +212,10 @@ async fn update_max_frame_len_at_rest() {
         codec.next().await.unwrap().unwrap_err().to_string(),
         "frame with invalid size"
     );
+
+    // drain codec buffer
+    let mut buf = Vec::new();
+    codec.get_mut().read_to_end(&mut buf).await.unwrap();
 }
 
 #[tokio::test]
