@@ -187,6 +187,7 @@ async fn read_continuation_frames() {
     join(srv, client).await;
 }
 
+#[ignore]
 #[tokio::test]
 async fn update_max_frame_len_at_rest() {
     use futures::StreamExt;
