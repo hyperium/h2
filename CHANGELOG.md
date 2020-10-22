@@ -1,3 +1,9 @@
+# 0.2.7 (October 22, 2020)
+
+* Fix stream ref count when sending a push promise
+* Fix receiving empty DATA frames in response to a HEAD request
+* Fix handling of client disabling SERVER_PUSH
+
 # 0.2.6 (July 13, 2020)
 
 * Integrate `tracing` directly where `log` was used. (For 0.2.x, `log`s are still emitted by default.)
