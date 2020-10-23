@@ -8,7 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let _ = env_logger::try_init();
 
-    let mut listener = TcpListener::bind("127.0.0.1:5928").await?;
+    let listener = TcpListener::bind("127.0.0.1:5928").await?;
 
     println!("listening on {:?}", listener.local_addr());
 

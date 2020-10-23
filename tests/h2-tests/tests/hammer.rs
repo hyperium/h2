@@ -26,8 +26,8 @@ impl Server {
     {
         let mk_data = Arc::new(mk_data);
 
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        let mut listener = rt
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let listener = rt
             .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
             .unwrap();
         let addr = listener.local_addr().unwrap();
@@ -140,7 +140,7 @@ fn hammer_client_concurrency() {
                     })
             });
 
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(tcp);
         println!("...done");
     }

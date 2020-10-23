@@ -12,5 +12,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.2", default-features = false, features = ["fmt", "chrono", "ansi"] }
 futures = { version = "0.3", default-features = false }
 http = "0.2"
-tokio = { version = "0.2", features = ["time"] }
-tokio-test = "0.2"
+tokio = { version = "0.3", features = ["time"] }
+tokio-test = "0.3"

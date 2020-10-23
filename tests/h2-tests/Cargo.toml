@@ -11,4 +11,4 @@ edition = "2018"
 h2-support = { path = "../h2-support" }
 tracing = "0.1.13"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-tokio = { version = "0.2", features = ["macros", "tcp"] }
+tokio = { version = "0.3", features = ["macros", "net", "rt", "io-util"] }
