@@ -1,6 +1,6 @@
 use crate::hpack::{Decoder, Encoder, Header};
 
-use bytes::{buf::BufMutExt, BytesMut};
+use bytes::{buf::BufMut, BytesMut};
 use hex::FromHex;
 use serde_json::Value;
 

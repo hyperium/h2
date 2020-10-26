@@ -42,10 +42,7 @@ pub use super::client_ext::SendRequestExt;
 // Re-export HTTP types
 pub use http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
-pub use bytes::{
-    buf::{BufExt, BufMutExt},
-    Buf, BufMut, Bytes, BytesMut,
-};
+pub use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub use tokio::io::{AsyncRead, AsyncWrite};
 
