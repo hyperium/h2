@@ -3,7 +3,7 @@ use crate::codec::UserError::*;
 use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
-use bytes::{buf::BufMutExt, Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};

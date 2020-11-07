@@ -45,9 +45,9 @@ members = [
 futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
-tokio-util = { version = "0.4.0", features = ["codec"] }
+tokio-util = { version = "0.5.0", features = ["codec"] }
 tokio = { version = "0.3", features = ["io-util"] }
-bytes = "0.5.2"
+bytes = "0.6"
 http = "0.2"
 tracing = { version = "0.1.13", default-features = false, features = ["std", "log"] }
 tracing-futures = { version = "0.2", default-features = false, features = ["std-future"]}
@@ -74,3 +74,6 @@ rustls = "0.18"
 tokio-rustls = "0.20.0"
 webpki = "0.21"
 webpki-roots = "0.17"
+
+[patch.crates-io]
+http = { git = "https://github.com/olix0r/http", branch = "ver/bytes-0.6" }
