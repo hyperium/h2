@@ -240,9 +240,15 @@ where
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        let n = ready!(
-                            Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes())
-                        )?;
+                        let n = if self.is_write_vectored {
+                            let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
+                            let cnt = self.buf.bytes_vectored(&mut iovs);
+                            ready!(
+                                Pin::new(&mut self.inner).poll_write_vectored(cx, &mut iovs[..cnt])
+                            )?
+                        } else {
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?
+                        };
                         self.buf.advance(n);
                     }
                 }
