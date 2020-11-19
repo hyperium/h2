@@ -10,7 +10,7 @@ use bytes::{Bytes, BytesMut};
 use std::fmt;
 use std::io::Cursor;
 
-type EncodeBuf<'a> = bytes::buf::ext::Limit<&'a mut BytesMut>;
+type EncodeBuf<'a> = bytes::buf::Limit<&'a mut BytesMut>;
 
 // Minimum MAX_FRAME_SIZE is 16kb, so save some arbitrary space for frame
 // head and other header bits.

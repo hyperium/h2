@@ -6,7 +6,7 @@ use crate::frame::{Reason, StreamId};
 use crate::codec::UserError;
 use crate::codec::UserError::*;
 
-use bytes::buf::ext::{BufExt, Take};
+use bytes::buf::{Buf, Take};
 use std::io;
 use std::task::{Context, Poll, Waker};
 use std::{cmp, fmt, mem};

@@ -1,7 +1,7 @@
 use super::table::{Index, Table};
 use super::{huffman, Header};
 
-use bytes::{buf::ext::Limit, BufMut, BytesMut};
+use bytes::{buf::Limit, BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};
 
 type DstBuf<'a> = Limit<&'a mut BytesMut>;
@@ -428,7 +428,7 @@ fn rewind(buf: &mut DstBuf<'_>, pos: usize) {
 mod test {
     use super::*;
     use crate::hpack::Header;
-    use bytes::buf::BufMutExt;
+    use bytes::buf::BufMut;
     use http::*;
 
     #[test]

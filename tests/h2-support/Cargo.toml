@@ -7,10 +7,10 @@ edition = "2018"
 [dependencies]
 h2 = { path = "../..", features = ["stream", "unstable"] }
 
-bytes = "0.5"
+bytes = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.2", default-features = false, features = ["fmt", "chrono", "ansi"] }
 futures = { version = "0.3", default-features = false }
 http = "0.2"
-tokio = { version = "0.3", features = ["time"] }
+tokio = { version = "0.3.2", features = ["time"] }
 tokio-test = "0.3"

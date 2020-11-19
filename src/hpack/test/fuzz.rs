@@ -2,7 +2,7 @@ use crate::hpack::{Decoder, Encode, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use bytes::{buf::BufMutExt, Bytes, BytesMut};
+use bytes::{buf::BufMut, Bytes, BytesMut};
 use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
 use rand::{Rng, SeedableRng, StdRng};
 
