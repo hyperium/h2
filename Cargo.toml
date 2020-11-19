@@ -46,7 +46,7 @@ futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 tokio-util = { version = "0.5", features = ["codec"] }
-tokio = { version = "0.3.2", features = ["io-util"] }
+tokio = { version = "0.3.4", features = ["io-util"] }
 bytes = "0.6"
 http = "0.2"
 tracing = { version = "0.1.13", default-features = false, features = ["std", "log"] }
