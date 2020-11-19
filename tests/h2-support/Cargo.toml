@@ -11,6 +11,6 @@ bytes = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.2", default-features = false, features = ["fmt", "chrono", "ansi"] }
 futures = { version = "0.3", default-features = false }
-http = { git = "https://github.com/paolobarbolini/http.git", branch = "bytes06" }
+http = "0.2"
 tokio = { version = "0.3.2", features = ["time"] }
 tokio-test = "0.3"
