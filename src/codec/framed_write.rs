@@ -191,17 +191,14 @@ where
 
         let span = tracing::trace_span!("FramedWrite::flush");
         let _e = span.enter();
-        let mut iovs = if self.is_write_vectored {
-            [IoSlice::new(&[]); MAX_IOVS]
-        } else {
-            []
-        };
+
         loop {
             while !self.is_empty() {
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
                         if self.is_write_vectored {
+                            let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
                             // If possible, write both our entire remaining
                             // write buffer _and_ the frame in one
                             // `poll_write_vectored` call.
