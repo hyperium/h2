@@ -48,7 +48,7 @@ futures-util = { version = "0.3", default-features = false }
 tokio-util = { version = "0.5", features = ["codec"] }
 tokio = { version = "0.3.2", features = ["io-util"] }
 bytes = "0.6"
-http = { git = "https://github.com/paolobarbolini/http.git", branch = "bytes06" }
+http = "0.2"
 tracing = { version = "0.1.13", default-features = false, features = ["std", "log"] }
 tracing-futures = { version = "0.2", default-features = false, features = ["std-future"]}
 fnv = "1.0.5"
