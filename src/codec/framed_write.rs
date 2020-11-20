@@ -197,46 +197,17 @@ where
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
-                        if self.is_write_vectored {
-                            let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
-                            // If possible, write both our entire remaining
-                            // write buffer _and_ the frame in one
-                            // `poll_write_vectored` call.
-                            let rem = self.buf.remaining();
-                            let mut cnt = if rem > 0 {
-                                self.buf.bytes_vectored(&mut iovs)
-                            } else {
-                                0
-                            };
-
-                            let buf = frame.payload_mut();
-
-                            if buf.has_remaining() {
-                                cnt += buf.bytes_vectored(&mut iovs[cnt..]);
-                            }
-
-                            let n = ready!(
-                                Pin::new(&mut self.inner).poll_write_vectored(cx, &iovs[..cnt])
-                            )?;
-
-                            self.buf.advance(std::cmp::min(rem, n));
-                            buf.advance(n.saturating_sub(rem));
+                        let mut buf = (&mut self.buf).chain(frame.payload_mut());
+                        // TODO(eliza): when tokio-util 0.5.1 is released, this
+                        // could just use `poll_write_buf`...
+                        let n = if self.is_write_vectored {
+                            let mut bufs = [IoSlice::new(&[]); MAX_IOVS];
+                            let cnt = buf.bytes_vectored(&mut bufs);
+                            ready!(Pin::new(&mut self.inner).poll_write_vectored(cx, &bufs[..cnt]))?
                         } else {
-                            if self.buf.has_remaining() {
-                                let n = ready!(
-                                    Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes())
-                                )?;
-                                self.buf.advance(n);
-                            }
-
-                            let buf = frame.payload_mut();
-
-                            if !self.buf.has_remaining() && buf.has_remaining() {
-                                let n =
-                                    ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?;
-                                buf.advance(n);
-                            }
-                        }
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?
+                        };
+                        buf.advance(n);
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
