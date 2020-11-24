@@ -3,12 +3,12 @@ use crate::codec::UserError::*;
 use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
-use bytes::{buf::BufMut, Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, IoSlice};
 
 // A macro to get around a method needing to borrow &mut self
 macro_rules! limited_write_buf {
@@ -39,6 +39,9 @@ pub struct FramedWrite<T, B> {
 
     /// Max frame size, this is specified by the peer
     max_frame_size: FrameSize,
+
+    /// Whether or not the wrapped `AsyncWrite` supports vectored IO.
+    is_write_vectored: bool,
 }
 
 #[derive(Debug)]
@@ -68,6 +71,7 @@ where
     B: Buf,
 {
     pub fn new(inner: T) -> FramedWrite<T, B> {
+        let is_write_vectored = inner.is_write_vectored();
         FramedWrite {
             inner,
             hpack: hpack::Encoder::default(),
@@ -75,6 +79,7 @@ where
             next: None,
             last_data_frame: None,
             max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
+            is_write_vectored,
         }
     }
 
@@ -182,6 +187,8 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        const MAX_IOVS: usize = 64;
+
         let span = tracing::trace_span!("FramedWrite::flush");
         let _e = span.enter();
 
@@ -190,25 +197,29 @@ where
                 match self.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
-
-                        if self.buf.has_remaining() {
-                            let n =
-                                ready!(Pin::new(&mut self.inner).poll_write(cx, self.buf.bytes()))?;
-                            self.buf.advance(n);
-                        }
-
-                        let buf = frame.payload_mut();
-
-                        if !self.buf.has_remaining() && buf.has_remaining() {
-                            let n = ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?;
-                            buf.advance(n);
-                        }
+                        let mut buf = (&mut self.buf).chain(frame.payload_mut());
+                        // TODO(eliza): when tokio-util 0.5.1 is released, this
+                        // could just use `poll_write_buf`...
+                        let n = if self.is_write_vectored {
+                            let mut bufs = [IoSlice::new(&[]); MAX_IOVS];
+                            let cnt = buf.bytes_vectored(&mut bufs);
+                            ready!(Pin::new(&mut self.inner).poll_write_vectored(cx, &bufs[..cnt]))?
+                        } else {
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?
+                        };
+                        buf.advance(n);
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        let n = ready!(
-                            Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes())
-                        )?;
+                        let n = if self.is_write_vectored {
+                            let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
+                            let cnt = self.buf.bytes_vectored(&mut iovs);
+                            ready!(
+                                Pin::new(&mut self.inner).poll_write_vectored(cx, &mut iovs[..cnt])
+                            )?
+                        } else {
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?
+                        };
                         self.buf.advance(n);
                     }
                 }
