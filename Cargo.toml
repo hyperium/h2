@@ -45,9 +45,9 @@ members = [
 futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
-tokio-util = { version = "0.5", features = ["codec"] }
-tokio = { version = "0.3.4", features = ["io-util"] }
-bytes = "0.6"
+tokio-util = { version = "0.6", features = ["codec"] }
+tokio = { version = "1", features = ["io-util"] }
+bytes = "1"
 http = "0.2"
 tracing = { version = "0.1.13", default-features = false, features = ["std"] }
 tracing-futures = { version = "0.2", default-features = false, features = ["std-future"]}
@@ -68,9 +68,9 @@ serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Examples
-tokio = { version = "0.3.4", features = ["rt-multi-thread", "macros", "sync", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net"] }
 env_logger = { version = "0.5.3", default-features = false }
-rustls = "0.18"
-tokio-rustls = "0.20.0"
-webpki = "0.21"
-webpki-roots = "0.17"
+#rustls = "0.18"
+#tokio-rustls = "0.20.0"
+#webpki = "0.21"
+#webpki-roots = "0.17"

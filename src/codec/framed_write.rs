@@ -202,10 +202,10 @@ where
                         // could just use `poll_write_buf`...
                         let n = if self.is_write_vectored {
                             let mut bufs = [IoSlice::new(&[]); MAX_IOVS];
-                            let cnt = buf.bytes_vectored(&mut bufs);
+                            let cnt = buf.chunks_vectored(&mut bufs);
                             ready!(Pin::new(&mut self.inner).poll_write_vectored(cx, &bufs[..cnt]))?
                         } else {
-                            ready!(Pin::new(&mut self.inner).poll_write(cx, buf.bytes()))?
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, buf.chunk()))?
                         };
                         buf.advance(n);
                     }
@@ -213,12 +213,12 @@ where
                         tracing::trace!(queued_data_frame = false);
                         let n = if self.is_write_vectored {
                             let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
-                            let cnt = self.buf.bytes_vectored(&mut iovs);
+                            let cnt = self.buf.chunks_vectored(&mut iovs);
                             ready!(
                                 Pin::new(&mut self.inner).poll_write_vectored(cx, &mut iovs[..cnt])
                             )?
                         } else {
-                            ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.bytes()))?
+                            ready!(Pin::new(&mut self.inner).poll_write(cx, &mut self.buf.chunk()))?
                         };
                         self.buf.advance(n);
                     }
