@@ -125,8 +125,6 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        const MAX_IOVS: usize = 64;
-
         let span = tracing::trace_span!("FramedWrite::flush");
         let _e = span.enter();
 
@@ -136,30 +134,21 @@ where
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
                         let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
-                        // TODO(eliza): when tokio-util 0.5.1 is released, this
-                        // could just use `poll_write_buf`...
-                        let n = if self.encoder.is_write_vectored {
-                            let mut bufs = [IoSlice::new(&[]); MAX_IOVS];
-                            let cnt = buf.chunks_vectored(&mut bufs);
-                            ready!(Pin::new(&mut self.inner).poll_write_vectored(cx, &bufs[..cnt]))?
-                        } else {
-                            ready!(Pin::new(&mut self.inner).poll_write(cx, buf.chunk()))?
-                        };
-                        buf.advance(n);
+                        ready!(write(
+                            &mut self.inner,
+                            self.encoder.is_write_vectored,
+                            &mut buf,
+                            cx,
+                        ))?
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        let n = if self.encoder.is_write_vectored {
-                            let mut iovs = [IoSlice::new(&[]); MAX_IOVS];
-                            let cnt = self.encoder.buf.chunks_vectored(&mut iovs);
-                            ready!(
-                                Pin::new(&mut self.inner).poll_write_vectored(cx, &mut iovs[..cnt])
-                            )?
-                        } else {
-                            ready!(Pin::new(&mut self.inner)
-                                .poll_write(cx, &mut self.encoder.buf.chunk()))?
-                        };
-                        self.encoder.buf.advance(n);
+                        ready!(write(
+                            &mut self.inner,
+                            self.encoder.is_write_vectored,
+                            &mut self.encoder.buf,
+                            cx,
+                        ))?
                     }
                 }
             }
@@ -210,6 +199,30 @@ where
         ready!(self.flush(cx))?;
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
+}
+
+fn write<T, B>(
+    writer: &mut T,
+    is_write_vectored: bool,
+    buf: &mut B,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>>
+where
+    T: AsyncWrite + Unpin,
+    B: Buf,
+{
+    // TODO(eliza): when tokio-util 0.5.1 is released, this
+    // could just use `poll_write_buf`...
+    const MAX_IOVS: usize = 64;
+    let n = if is_write_vectored {
+        let mut bufs = [IoSlice::new(&[]); MAX_IOVS];
+        let cnt = buf.chunks_vectored(&mut bufs);
+        ready!(Pin::new(writer).poll_write_vectored(cx, &bufs[..cnt]))?
+    } else {
+        ready!(Pin::new(writer).poll_write(cx, buf.chunk()))?
+    };
+    buf.advance(n);
+    Ok(()).into()
 }
 
 impl<B> Encoder<B>
