@@ -1124,6 +1124,20 @@ where
 
 // ===== impl Connection =====
 
+async fn bind_connection<T>(io: &mut T) -> Result<(), crate::Error>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    tracing::debug!("binding client connection");
+
+    let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    io.write_all(msg).await.map_err(crate::Error::from_io)?;
+
+    tracing::debug!("client connection bound");
+
+    Ok(())
+}
+
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -1133,12 +1147,7 @@ where
         mut io: T,
         builder: Builder,
     ) -> Result<(SendRequest<B>, Connection<T, B>), crate::Error> {
-        tracing::debug!("binding client connection");
-
-        let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        io.write_all(msg).await.map_err(crate::Error::from_io)?;
-
-        tracing::debug!("client connection bound");
+        bind_connection(&mut io).await?;
 
         // Create the codec
         let mut codec = Codec::new(io);
