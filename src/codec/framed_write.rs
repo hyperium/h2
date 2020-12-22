@@ -18,14 +18,6 @@ macro_rules! limited_write_buf {
     }};
 }
 
-// A macro to get around a method needing to borrow &mut self
-macro_rules! limited_encoder_write_buf {
-    ($self:expr) => {{
-        let limit = $self.max_frame_size() + frame::HEADER_LEN;
-        $self.encoder.buf.get_mut().limit(limit)
-    }};
-}
-
 #[derive(Debug)]
 pub struct FramedWrite<T, B> {
     /// Upstream `AsyncWrite`
@@ -153,37 +145,9 @@ where
                 }
             }
 
-            // Clear internal buffer
-            self.encoder.buf.set_position(0);
-            self.encoder.buf.get_mut().clear();
-
-            // The data frame has been written, so unset it
-            match self.encoder.next.take() {
-                Some(Next::Data(frame)) => {
-                    self.encoder.last_data_frame = Some(frame);
-                    debug_assert!(self.encoder.is_empty());
-                    break;
-                }
-                Some(Next::Continuation(frame)) => {
-                    // Buffer the continuation frame, then try to write again
-                    let mut buf = limited_encoder_write_buf!(self);
-                    if let Some(continuation) = frame.encode(&mut self.encoder.hpack, &mut buf) {
-                        // We previously had a CONTINUATION, and after encoding
-                        // it, we got *another* one? Let's just double check
-                        // that at least some progress is being made...
-                        if self.encoder.buf.get_ref().len() == frame::HEADER_LEN {
-                            // If *only* the CONTINUATION frame header was
-                            // written, and *no* header fields, we're stuck
-                            // in a loop...
-                            panic!("CONTINUATION frame write loop; header value too big to encode");
-                        }
-
-                        self.encoder.next = Some(Next::Continuation(continuation));
-                    }
-                }
-                None => {
-                    break;
-                }
+            match self.encoder.unset_frame() {
+                ControlFlow::Continue => (),
+                ControlFlow::Break => break,
             }
         }
 
@@ -225,10 +189,50 @@ where
     Ok(()).into()
 }
 
+#[must_use]
+enum ControlFlow {
+    Continue,
+    Break,
+}
+
 impl<B> Encoder<B>
 where
     B: Buf,
 {
+    fn unset_frame(&mut self) -> ControlFlow {
+        // Clear internal buffer
+        self.buf.set_position(0);
+        self.buf.get_mut().clear();
+
+        // The data frame has been written, so unset it
+        match self.next.take() {
+            Some(Next::Data(frame)) => {
+                self.last_data_frame = Some(frame);
+                debug_assert!(self.is_empty());
+                ControlFlow::Break
+            }
+            Some(Next::Continuation(frame)) => {
+                // Buffer the continuation frame, then try to write again
+                let mut buf = limited_write_buf!(self);
+                if let Some(continuation) = frame.encode(&mut self.hpack, &mut buf) {
+                    // We previously had a CONTINUATION, and after encoding
+                    // it, we got *another* one? Let's just double check
+                    // that at least some progress is being made...
+                    if self.buf.get_ref().len() == frame::HEADER_LEN {
+                        // If *only* the CONTINUATION frame header was
+                        // written, and *no* header fields, we're stuck
+                        // in a loop...
+                        panic!("CONTINUATION frame write loop; header value too big to encode");
+                    }
+
+                    self.next = Some(Next::Continuation(continuation));
+                }
+                ControlFlow::Continue
+            }
+            None => ControlFlow::Break,
+        }
+    }
+
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
