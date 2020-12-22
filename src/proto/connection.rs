@@ -300,8 +300,6 @@ where
     }
 
     fn poll2(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
-        use crate::frame::Frame::*;
-
         // This happens outside of the loop to prevent needing to do a clock
         // check and then comparison of the queue possibly multiple times a
         // second (and thus, the clock wouldn't have changed enough to matter).
@@ -332,64 +330,19 @@ where
             }
             ready!(self.poll_ready(cx))?;
 
-            match ready!(Pin::new(&mut self.codec).poll_next(cx)?) {
-                Some(Headers(frame)) => {
-                    tracing::trace!(?frame, "recv HEADERS");
-                    self.inner.streams.recv_headers(frame)?;
-                }
-                Some(Data(frame)) => {
-                    tracing::trace!(?frame, "recv DATA");
-                    self.inner.streams.recv_data(frame)?;
-                }
-                Some(Reset(frame)) => {
-                    tracing::trace!(?frame, "recv RST_STREAM");
-                    self.inner.streams.recv_reset(frame)?;
-                }
-                Some(PushPromise(frame)) => {
-                    tracing::trace!(?frame, "recv PUSH_PROMISE");
-                    self.inner.streams.recv_push_promise(frame)?;
-                }
-                Some(Settings(frame)) => {
-                    tracing::trace!(?frame, "recv SETTINGS");
+            match self
+                .inner
+                .recv_frame(ready!(Pin::new(&mut self.codec).poll_next(cx)?))?
+            {
+                ReceivedFrame::Settings(frame) => {
                     self.inner.settings.recv_settings(
                         frame,
                         &mut self.codec,
                         &mut self.inner.streams,
                     )?;
                 }
-                Some(GoAway(frame)) => {
-                    tracing::trace!(?frame, "recv GOAWAY");
-                    // This should prevent starting new streams,
-                    // but should allow continuing to process current streams
-                    // until they are all EOS. Once they are, State should
-                    // transition to GoAway.
-                    self.inner.streams.recv_go_away(&frame)?;
-                    self.inner.error = Some(frame.reason());
-                }
-                Some(Ping(frame)) => {
-                    tracing::trace!(?frame, "recv PING");
-                    let status = self.inner.ping_pong.recv_ping(frame);
-                    if status.is_shutdown() {
-                        assert!(
-                            self.inner.go_away.is_going_away(),
-                            "received unexpected shutdown ping"
-                        );
-
-                        let last_processed_id = self.inner.streams.last_processed_id();
-                        self.inner.go_away(last_processed_id, Reason::NO_ERROR);
-                    }
-                }
-                Some(WindowUpdate(frame)) => {
-                    tracing::trace!(?frame, "recv WINDOW_UPDATE");
-                    self.inner.streams.recv_window_update(frame)?;
-                }
-                Some(Priority(frame)) => {
-                    tracing::trace!(?frame, "recv PRIORITY");
-                    // TODO: handle
-                }
-                None => {
-                    tracing::trace!("codec closed");
-                    self.inner.streams.recv_eof(false).expect("mutex poisoned");
+                ReceivedFrame::Continue => (),
+                ReceivedFrame::Done => {
                     return Poll::Ready(Ok(()));
                 }
             }
@@ -399,6 +352,12 @@ where
     fn clear_expired_reset_streams(&mut self) {
         self.inner.streams.clear_expired_reset_streams();
     }
+}
+
+enum ReceivedFrame {
+    Settings(frame::Settings),
+    Continue,
+    Done,
 }
 
 impl<P, B> ConnectionInner<P, B>
@@ -425,6 +384,68 @@ where
 
         // Notify all streams of reason we're abruptly closing.
         self.streams.recv_err(&proto::Error::Proto(e));
+    }
+
+    fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, RecvError> {
+        use crate::frame::Frame::*;
+        match frame {
+            Some(Headers(frame)) => {
+                tracing::trace!(?frame, "recv HEADERS");
+                self.streams.recv_headers(frame)?;
+            }
+            Some(Data(frame)) => {
+                tracing::trace!(?frame, "recv DATA");
+                self.streams.recv_data(frame)?;
+            }
+            Some(Reset(frame)) => {
+                tracing::trace!(?frame, "recv RST_STREAM");
+                self.streams.recv_reset(frame)?;
+            }
+            Some(PushPromise(frame)) => {
+                tracing::trace!(?frame, "recv PUSH_PROMISE");
+                self.streams.recv_push_promise(frame)?;
+            }
+            Some(Settings(frame)) => {
+                tracing::trace!(?frame, "recv SETTINGS");
+                return Ok(ReceivedFrame::Settings(frame));
+            }
+            Some(GoAway(frame)) => {
+                tracing::trace!(?frame, "recv GOAWAY");
+                // This should prevent starting new streams,
+                // but should allow continuing to process current streams
+                // until they are all EOS. Once they are, State should
+                // transition to GoAway.
+                self.streams.recv_go_away(&frame)?;
+                self.error = Some(frame.reason());
+            }
+            Some(Ping(frame)) => {
+                tracing::trace!(?frame, "recv PING");
+                let status = self.ping_pong.recv_ping(frame);
+                if status.is_shutdown() {
+                    assert!(
+                        self.go_away.is_going_away(),
+                        "received unexpected shutdown ping"
+                    );
+
+                    let last_processed_id = self.streams.last_processed_id();
+                    self.go_away(last_processed_id, Reason::NO_ERROR);
+                }
+            }
+            Some(WindowUpdate(frame)) => {
+                tracing::trace!(?frame, "recv WINDOW_UPDATE");
+                self.streams.recv_window_update(frame)?;
+            }
+            Some(Priority(frame)) => {
+                tracing::trace!(?frame, "recv PRIORITY");
+                // TODO: handle
+            }
+            None => {
+                tracing::trace!("codec closed");
+                self.streams.recv_eof(false).expect("mutex poisoned");
+                return Ok(ReceivedFrame::Done);
+            }
+        }
+        Ok(ReceivedFrame::Continue)
     }
 }
 
