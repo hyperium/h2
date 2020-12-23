@@ -247,6 +247,9 @@ where
                             // If *only* the CONTINUATION frame header was
                             // written, and *no* header fields, we're stuck
                             // in a loop...
+                            tracing::warn!(
+                                "CONTINUATION frame write loop; header value too big to encode"
+                            );
                             return Poll::Ready(Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidInput,
                                 UserError::HeaderTooBig,
