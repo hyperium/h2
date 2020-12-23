@@ -1,3 +1,8 @@
+# 0.3.0 (December 23, 2020)
+
+* Update to Tokio v1 and Bytes v1.
+* Disable `tracing`'s `log` feature. (It can still be enabled by a user in their own `Cargo.toml`.)
+
 # 0.2.7 (October 22, 2020)
 
 * Fix stream ref count when sending a push promise
