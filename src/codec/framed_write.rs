@@ -148,6 +148,12 @@ where
             match self.encoder.unset_frame() {
                 ControlFlow::Continue => (),
                 ControlFlow::Break => break,
+                ControlFlow::EndlessLoopHeaderTooBig => {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        UserError::HeaderTooBig,
+                    )));
+                }
             }
         }
 
@@ -193,6 +199,7 @@ where
 enum ControlFlow {
     Continue,
     Break,
+    EndlessLoopHeaderTooBig,
 }
 
 impl<B> Encoder<B>
@@ -222,7 +229,10 @@ where
                         // If *only* the CONTINUATION frame header was
                         // written, and *no* header fields, we're stuck
                         // in a loop...
-                        panic!("CONTINUATION frame write loop; header value too big to encode");
+                        tracing::warn!(
+                            "CONTINUATION frame write loop; header value too big to encode"
+                        );
+                        return ControlFlow::EndlessLoopHeaderTooBig;
                     }
 
                     self.next = Some(Next::Continuation(continuation));
