@@ -20,8 +20,6 @@ categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
 edition = "2018"
 
-publish = false
-
 [features]
 # Enables `futures::Stream` implementations for various types.
 stream = []
