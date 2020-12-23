@@ -147,7 +147,7 @@ impl Handle {
         poll_fn(move |cx| {
             while buf.has_remaining() {
                 let res = Pin::new(self.codec.get_mut())
-                    .poll_write(cx, &mut buf.bytes())
+                    .poll_write(cx, &mut buf.chunk())
                     .map_err(|e| panic!("write err={:?}", e));
 
                 let n = ready!(res).unwrap();

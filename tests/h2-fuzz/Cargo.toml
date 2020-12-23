@@ -11,5 +11,5 @@ h2 = { path = "../.." }
 env_logger = { version = "0.5.3", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 honggfuzz = "0.5"
-http = { git = "https://github.com/paolobarbolini/http.git", branch = "bytes06" }
-tokio = { version = "0.3.2", features = [] }
+http = "0.2"
+tokio = "1"

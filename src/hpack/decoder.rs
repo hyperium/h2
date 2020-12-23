@@ -311,7 +311,7 @@ impl Decoder {
 
         if huff {
             let ret = {
-                let raw = &buf.bytes()[..len];
+                let raw = &buf.chunk()[..len];
                 huffman::decode(raw, &mut self.buffer).map(BytesMut::freeze)
             };
 
@@ -419,7 +419,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
 
 fn peek_u8<B: Buf>(buf: &mut B) -> Option<u8> {
     if buf.has_remaining() {
-        Some(buf.bytes()[0])
+        Some(buf.chunk()[0])
     } else {
         None
     }

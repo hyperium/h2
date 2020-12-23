@@ -940,7 +940,6 @@ async fn recv_no_init_window_then_receive_some_init_window() {
 #[tokio::test]
 async fn settings_lowered_capacity_returns_capacity_to_connection() {
     use futures::channel::oneshot;
-    use futures::future::{select, Either};
 
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -972,10 +971,9 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
         //
         // A timeout is used here to avoid blocking forever if there is a
         // failure
-        let result = select(rx2, tokio::time::sleep(Duration::from_secs(5))).await;
-        if let Either::Right((_, _)) = result {
-            panic!("Timed out");
-        }
+        let _ = tokio::time::timeout(Duration::from_secs(5), rx2)
+            .await
+            .unwrap();
 
         idle_ms(500).await;
 
@@ -1004,10 +1002,9 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     });
 
     // Wait for server handshake to complete.
-    let result = select(rx1, tokio::time::sleep(Duration::from_secs(5))).await;
-    if let Either::Right((_, _)) = result {
-        panic!("Timed out");
-    }
+    let _ = tokio::time::timeout(Duration::from_secs(5), rx1)
+        .await
+        .unwrap();
 
     let request = Request::post("https://example.com/one").body(()).unwrap();
 

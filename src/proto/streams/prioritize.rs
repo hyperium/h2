@@ -847,8 +847,12 @@ where
         self.inner.remaining()
     }
 
-    fn bytes(&self) -> &[u8] {
-        self.inner.bytes()
+    fn chunk(&self) -> &[u8] {
+        self.inner.chunk()
+    }
+
+    fn chunks_vectored<'a>(&'a self, dst: &mut [std::io::IoSlice<'a>]) -> usize {
+        self.inner.chunks_vectored(dst)
     }
 
     fn advance(&mut self, cnt: usize) {
