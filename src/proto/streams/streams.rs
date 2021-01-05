@@ -37,6 +37,15 @@ where
     _p: ::std::marker::PhantomData<P>,
 }
 
+#[derive(Debug)]
+pub(crate) struct DynStreams<'a, B> {
+    inner: &'a Mutex<Inner>,
+
+    send_buffer: &'a SendBuffer<B>,
+
+    peer: peer::Dyn,
+}
+
 /// Reference to the stream state
 #[derive(Debug)]
 pub(crate) struct StreamRef<B> {
@@ -116,47 +125,13 @@ where
             .set_target_connection_window(size, &mut me.actions.task)
     }
 
-    /// Process inbound headers
-    pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-
-        me.recv_headers(P::r#dyn(), &self.send_buffer, frame)
-    }
-
-    pub fn recv_data(&mut self, frame: frame::Data) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_data(P::r#dyn(), &self.send_buffer, frame)
-    }
-
-    pub fn recv_reset(&mut self, frame: frame::Reset) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-
-        me.recv_reset(&self.send_buffer, frame)
-    }
-
     /// Handle a received error and return the ID of the last processed stream.
     pub fn recv_err(&mut self, err: &proto::Error) -> StreamId {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_err(&self.send_buffer, err)
-    }
-
-    pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_go_away(&self.send_buffer, frame)
+        self.as_dyn().recv_err(err)
     }
 
     pub fn last_processed_id(&self) -> StreamId {
-        self.inner.lock().unwrap().actions.recv.last_processed_id()
-    }
-
-    pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_window_update(&self.send_buffer, frame)
-    }
-
-    pub fn recv_push_promise(&mut self, frame: frame::PushPromise) -> Result<(), RecvError> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_push_promise(&self.send_buffer, frame)
+        self.as_dyn().last_processed_id()
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
@@ -327,6 +302,59 @@ where
     pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
         me.send_reset(&self.send_buffer, id, reason)
+    }
+
+    pub fn send_go_away(&mut self, last_processed_id: StreamId) {
+        self.as_dyn().send_go_away(last_processed_id)
+    }
+}
+
+impl<B> DynStreams<'_, B> {
+    pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+
+        me.recv_headers(self.peer, &self.send_buffer, frame)
+    }
+
+    pub fn recv_data(&mut self, frame: frame::Data) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+        me.recv_data(self.peer, &self.send_buffer, frame)
+    }
+
+    pub fn recv_reset(&mut self, frame: frame::Reset) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+
+        me.recv_reset(&self.send_buffer, frame)
+    }
+
+    /// Handle a received error and return the ID of the last processed stream.
+    pub fn recv_err(&mut self, err: &proto::Error) -> StreamId {
+        let mut me = self.inner.lock().unwrap();
+        me.recv_err(&self.send_buffer, err)
+    }
+
+    pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+        me.recv_go_away(&self.send_buffer, frame)
+    }
+
+    pub fn last_processed_id(&self) -> StreamId {
+        self.inner.lock().unwrap().actions.recv.last_processed_id()
+    }
+
+    pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+        me.recv_window_update(&self.send_buffer, frame)
+    }
+
+    pub fn recv_push_promise(&mut self, frame: frame::PushPromise) -> Result<(), RecvError> {
+        let mut me = self.inner.lock().unwrap();
+        me.recv_push_promise(&self.send_buffer, frame)
+    }
+
+    pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
+        let mut me = self.inner.lock().map_err(|_| ())?;
+        me.recv_eof(&self.send_buffer, clear_pending_accept)
     }
 
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
@@ -902,12 +930,24 @@ impl<B, P> Streams<B, P>
 where
     P: Peer,
 {
+    pub fn as_dyn(&self) -> DynStreams<B> {
+        let Self {
+            inner,
+            send_buffer,
+            _p,
+        } = self;
+        DynStreams {
+            inner,
+            send_buffer,
+            peer: P::r#dyn(),
+        }
+    }
+
     /// This function is safe to call multiple times.
     ///
     /// A `Result` is returned to avoid panicking if the mutex is poisoned.
     pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
-        let mut me = self.inner.lock().map_err(|_| ())?;
-        me.recv_eof(&self.send_buffer, clear_pending_accept)
+        self.as_dyn().recv_eof(clear_pending_accept)
     }
 
     pub(crate) fn max_send_streams(&self) -> usize {

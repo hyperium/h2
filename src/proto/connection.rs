@@ -387,6 +387,39 @@ where
     }
 
     fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, RecvError> {
+        let Self {
+            streams,
+            go_away,
+            ping_pong,
+            error,
+            ..
+        } = self;
+        let streams = streams.as_dyn();
+        RecvFrame {
+            streams,
+            go_away,
+            ping_pong,
+            error,
+        }
+        .recv_frame(frame)
+    }
+}
+
+struct RecvFrame<'a, B> {
+    streams: DynStreams<'a, B>,
+    go_away: &'a mut GoAway,
+    error: &'a mut Option<Reason>,
+    ping_pong: &'a mut PingPong,
+}
+
+impl<B> RecvFrame<'_, B> {
+    fn go_away(&mut self, id: StreamId, e: Reason) {
+        let frame = frame::GoAway::new(id, e);
+        self.streams.send_go_away(id);
+        self.go_away.go_away(frame);
+    }
+
+    fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, RecvError> {
         use crate::frame::Frame::*;
         match frame {
             Some(Headers(frame)) => {
@@ -416,7 +449,7 @@ where
                 // until they are all EOS. Once they are, State should
                 // transition to GoAway.
                 self.streams.recv_go_away(&frame)?;
-                self.error = Some(frame.reason());
+                *self.error = Some(frame.reason());
             }
             Some(Ping(frame)) => {
                 tracing::trace!(?frame, "recv PING");

@@ -12,7 +12,7 @@ mod streams;
 pub(crate) use self::prioritize::Prioritized;
 pub(crate) use self::recv::Open;
 pub(crate) use self::send::PollReset;
-pub(crate) use self::streams::{OpaqueStreamRef, StreamRef, Streams};
+pub(crate) use self::streams::{DynStreams, OpaqueStreamRef, StreamRef, Streams};
 
 use self::buffer::Buffer;
 use self::counts::Counts;

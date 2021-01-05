@@ -10,7 +10,7 @@ pub(crate) use self::connection::{Config, Connection};
 pub(crate) use self::error::Error;
 pub(crate) use self::peer::{Dyn as DynPeer, Peer};
 pub(crate) use self::ping_pong::UserPings;
-pub(crate) use self::streams::{OpaqueStreamRef, StreamRef, Streams};
+pub(crate) use self::streams::{DynStreams, OpaqueStreamRef, StreamRef, Streams};
 pub(crate) use self::streams::{Open, PollReset, Prioritized};
 
 use crate::codec::Codec;
