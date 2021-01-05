@@ -59,6 +59,14 @@ where
     _phantom: PhantomData<P>,
 }
 
+struct DynConnection<'a, B: Buf = Bytes> {
+    state: &'a mut State,
+
+    go_away: &'a mut GoAway,
+
+    streams: DynStreams<'a, B>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Config {
     pub next_stream_id: StreamId,
@@ -215,7 +223,6 @@ where
         let _e = span.enter();
         let span = tracing::trace_span!("poll");
         let _e = span.enter();
-        use crate::codec::RecvError::*;
 
         loop {
             tracing::trace!(connection.state = ?self.inner.state);
@@ -223,9 +230,8 @@ where
             match self.inner.state {
                 // When open, continue to poll a frame
                 State::Open => {
-                    match self.poll2(cx) {
-                        // The connection has shutdown normally
-                        Poll::Ready(Ok(())) => self.inner.state = State::Closing(Reason::NO_ERROR),
+                    let result = match self.poll2(cx) {
+                        Poll::Ready(result) => result,
                         // The connection is not ready to make progress
                         Poll::Pending => {
                             // Ensure all window updates have been sent.
@@ -243,48 +249,21 @@ where
 
                             return Poll::Pending;
                         }
-                        // Attempting to read a frame resulted in a connection level
-                        // error. This is handled by setting a GOAWAY frame followed by
-                        // terminating the connection.
-                        Poll::Ready(Err(Connection(e))) => {
-                            tracing::debug!(error = ?e, "Connection::poll; connection error");
+                    };
 
-                            // We may have already sent a GOAWAY for this error,
-                            // if so, don't send another, just flush and close up.
-                            if let Some(reason) = self.inner.go_away.going_away_reason() {
-                                if reason == e {
-                                    tracing::trace!("    -> already going away");
-                                    self.inner.state = State::Closing(e);
-                                    continue;
-                                }
-                            }
-
-                            // Reset all active streams
-                            self.inner.streams.recv_err(&e.into());
-                            self.inner.go_away_now(e);
-                        }
-                        // Attempting to read a frame resulted in a stream level error.
-                        // This is handled by resetting the frame then trying to read
-                        // another frame.
-                        Poll::Ready(Err(Stream { id, reason })) => {
-                            tracing::trace!(?id, ?reason, "stream error");
-                            self.inner.streams.send_reset(id, reason);
-                        }
-                        // Attempting to read a frame resulted in an I/O error. All
-                        // active streams must be reset.
-                        //
-                        // TODO: Are I/O errors recoverable?
-                        Poll::Ready(Err(Io(e))) => {
-                            tracing::debug!(error = ?e, "Connection::poll; IO error");
-                            let e = e.into();
-
-                            // Reset all active streams
-                            self.inner.streams.recv_err(&e);
-
-                            // Return the error
-                            return Poll::Ready(Err(e));
-                        }
+                    let ConnectionInner {
+                        state,
+                        go_away,
+                        streams,
+                        ..
+                    } = &mut self.inner;
+                    let streams = streams.as_dyn();
+                    DynConnection {
+                        state,
+                        go_away,
+                        streams,
                     }
+                    .handle_poll2_result(result)?
                 }
                 State::Closing(reason) => {
                     tracing::trace!("connection closing after flush");
@@ -351,6 +330,71 @@ where
 
     fn clear_expired_reset_streams(&mut self) {
         self.inner.streams.clear_expired_reset_streams();
+    }
+}
+
+impl<B> DynConnection<'_, B>
+where
+    B: Buf,
+{
+    fn go_away_now(&mut self, e: Reason) {
+        let last_processed_id = self.streams.last_processed_id();
+        let frame = frame::GoAway::new(last_processed_id, e);
+        self.go_away.go_away_now(frame);
+    }
+
+    fn handle_poll2_result(&mut self, result: Result<(), RecvError>) -> Result<(), Error> {
+        use crate::codec::RecvError::*;
+        match result {
+            // The connection has shutdown normally
+            Ok(()) => {
+                *self.state = State::Closing(Reason::NO_ERROR);
+                Ok(())
+            }
+            // Attempting to read a frame resulted in a connection level
+            // error. This is handled by setting a GOAWAY frame followed by
+            // terminating the connection.
+            Err(Connection(e)) => {
+                tracing::debug!(error = ?e, "Connection::poll; connection error");
+
+                // We may have already sent a GOAWAY for this error,
+                // if so, don't send another, just flush and close up.
+                if let Some(reason) = self.go_away.going_away_reason() {
+                    if reason == e {
+                        tracing::trace!("    -> already going away");
+                        *self.state = State::Closing(e);
+                        return Ok(());
+                    }
+                }
+
+                // Reset all active streams
+                self.streams.recv_err(&e.into());
+                self.go_away_now(e);
+                Ok(())
+            }
+            // Attempting to read a frame resulted in a stream level error.
+            // This is handled by resetting the frame then trying to read
+            // another frame.
+            Err(Stream { id, reason }) => {
+                tracing::trace!(?id, ?reason, "stream error");
+                self.streams.send_reset(id, reason);
+                Ok(())
+            }
+            // Attempting to read a frame resulted in an I/O error. All
+            // active streams must be reset.
+            //
+            // TODO: Are I/O errors recoverable?
+            Err(Io(e)) => {
+                tracing::debug!(error = ?e, "Connection::poll; IO error");
+                let e = e.into();
+
+                // Reset all active streams
+                self.streams.recv_err(&e);
+
+                // Return the error
+                Err(e)
+            }
+        }
     }
 }
 

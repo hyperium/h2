@@ -299,11 +299,6 @@ where
         })
     }
 
-    pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
-        let mut me = self.inner.lock().unwrap();
-        me.send_reset(&self.send_buffer, id, reason)
-    }
-
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
         self.as_dyn().send_go_away(last_processed_id)
     }
@@ -355,6 +350,11 @@ impl<B> DynStreams<'_, B> {
     pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
         let mut me = self.inner.lock().map_err(|_| ())?;
         me.recv_eof(&self.send_buffer, clear_pending_accept)
+    }
+
+    pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
+        let mut me = self.inner.lock().unwrap();
+        me.send_reset(&self.send_buffer, id, reason)
     }
 
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
