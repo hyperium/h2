@@ -65,6 +65,10 @@ struct DynConnection<'a, B: Buf = Bytes> {
     go_away: &'a mut GoAway,
 
     streams: DynStreams<'a, B>,
+
+    error: &'a mut Option<Reason>,
+
+    ping_pong: &'a mut PingPong,
 }
 
 #[derive(Debug, Clone)]
@@ -173,7 +177,7 @@ where
     }
 
     pub fn go_away_from_user(&mut self, e: Reason) {
-        self.inner.go_away_from_user(e)
+        self.inner.as_dyn().go_away_from_user(e)
     }
 
     fn take_error(&mut self, ours: Reason) -> Poll<Result<(), proto::Error>> {
@@ -205,7 +209,7 @@ where
         // If we poll() and realize that there are no streams or references
         // then we can close the connection by transitioning to GOAWAY
         if !self.inner.streams.has_streams_or_other_references() {
-            self.inner.go_away_now(Reason::NO_ERROR);
+            self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
         }
     }
 
@@ -243,7 +247,7 @@ where
                                 || self.inner.go_away.should_close_on_idle())
                                 && !self.inner.streams.has_streams()
                             {
-                                self.inner.go_away_now(Reason::NO_ERROR);
+                                self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
                                 continue;
                             }
 
@@ -251,19 +255,7 @@ where
                         }
                     };
 
-                    let ConnectionInner {
-                        state,
-                        go_away,
-                        streams,
-                        ..
-                    } = &mut self.inner;
-                    let streams = streams.as_dyn();
-                    DynConnection {
-                        state,
-                        go_away,
-                        streams,
-                    }
-                    .handle_poll2_result(result)?
+                    self.inner.as_dyn().handle_poll2_result(result)?
                 }
                 State::Closing(reason) => {
                     tracing::trace!("connection closing after flush");
@@ -311,6 +303,7 @@ where
 
             match self
                 .inner
+                .as_dyn()
                 .recv_frame(ready!(Pin::new(&mut self.codec).poll_next(cx)?))?
             {
                 ReceivedFrame::Settings(frame) => {
@@ -333,14 +326,54 @@ where
     }
 }
 
+impl<P, B> ConnectionInner<P, B>
+where
+    P: Peer,
+    B: Buf,
+{
+    fn as_dyn(&mut self) -> DynConnection<'_, B> {
+        let ConnectionInner {
+            state,
+            go_away,
+            streams,
+            error,
+            ping_pong,
+            ..
+        } = self;
+        let streams = streams.as_dyn();
+        DynConnection {
+            state,
+            go_away,
+            streams,
+            error,
+            ping_pong,
+        }
+    }
+}
+
 impl<B> DynConnection<'_, B>
 where
     B: Buf,
 {
+    fn go_away(&mut self, id: StreamId, e: Reason) {
+        let frame = frame::GoAway::new(id, e);
+        self.streams.send_go_away(id);
+        self.go_away.go_away(frame);
+    }
+
     fn go_away_now(&mut self, e: Reason) {
         let last_processed_id = self.streams.last_processed_id();
         let frame = frame::GoAway::new(last_processed_id, e);
         self.go_away.go_away_now(frame);
+    }
+
+    fn go_away_from_user(&mut self, e: Reason) {
+        let last_processed_id = self.streams.last_processed_id();
+        let frame = frame::GoAway::new(last_processed_id, e);
+        self.go_away.go_away_from_user(frame);
+
+        // Notify all streams of reason we're abruptly closing.
+        self.streams.recv_err(&proto::Error::Proto(e));
     }
 
     fn handle_poll2_result(&mut self, result: Result<(), RecvError>) -> Result<(), Error> {
@@ -395,72 +428,6 @@ where
                 Err(e)
             }
         }
-    }
-}
-
-enum ReceivedFrame {
-    Settings(frame::Settings),
-    Continue,
-    Done,
-}
-
-impl<P, B> ConnectionInner<P, B>
-where
-    P: Peer,
-    B: Buf,
-{
-    fn go_away(&mut self, id: StreamId, e: Reason) {
-        let frame = frame::GoAway::new(id, e);
-        self.streams.send_go_away(id);
-        self.go_away.go_away(frame);
-    }
-
-    fn go_away_now(&mut self, e: Reason) {
-        let last_processed_id = self.streams.last_processed_id();
-        let frame = frame::GoAway::new(last_processed_id, e);
-        self.go_away.go_away_now(frame);
-    }
-
-    fn go_away_from_user(&mut self, e: Reason) {
-        let last_processed_id = self.streams.last_processed_id();
-        let frame = frame::GoAway::new(last_processed_id, e);
-        self.go_away.go_away_from_user(frame);
-
-        // Notify all streams of reason we're abruptly closing.
-        self.streams.recv_err(&proto::Error::Proto(e));
-    }
-
-    fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, RecvError> {
-        let Self {
-            streams,
-            go_away,
-            ping_pong,
-            error,
-            ..
-        } = self;
-        let streams = streams.as_dyn();
-        RecvFrame {
-            streams,
-            go_away,
-            ping_pong,
-            error,
-        }
-        .recv_frame(frame)
-    }
-}
-
-struct RecvFrame<'a, B> {
-    streams: DynStreams<'a, B>,
-    go_away: &'a mut GoAway,
-    error: &'a mut Option<Reason>,
-    ping_pong: &'a mut PingPong,
-}
-
-impl<B> RecvFrame<'_, B> {
-    fn go_away(&mut self, id: StreamId, e: Reason) {
-        let frame = frame::GoAway::new(id, e);
-        self.streams.send_go_away(id);
-        self.go_away.go_away(frame);
     }
 
     fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, RecvError> {
@@ -526,6 +493,12 @@ impl<B> RecvFrame<'_, B> {
     }
 }
 
+enum ReceivedFrame {
+    Settings(frame::Settings),
+    Continue,
+    Done,
+}
+
 impl<T, B> Connection<T, client::Peer, B>
 where
     T: AsyncRead + AsyncWrite,
@@ -563,7 +536,7 @@ where
         // > send another GOAWAY frame with an updated last stream identifier.
         // > This ensures that a connection can be cleanly shut down without
         // > losing requests.
-        self.inner.go_away(StreamId::MAX, Reason::NO_ERROR);
+        self.inner.as_dyn().go_away(StreamId::MAX, Reason::NO_ERROR);
 
         // We take the advice of waiting 1 RTT literally, and wait
         // for a pong before proceeding.

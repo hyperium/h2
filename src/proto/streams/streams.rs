@@ -125,15 +125,6 @@ where
             .set_target_connection_window(size, &mut me.actions.task)
     }
 
-    /// Handle a received error and return the ID of the last processed stream.
-    pub fn recv_err(&mut self, err: &proto::Error) -> StreamId {
-        self.as_dyn().recv_err(err)
-    }
-
-    pub fn last_processed_id(&self) -> StreamId {
-        self.as_dyn().last_processed_id()
-    }
-
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
@@ -297,10 +288,6 @@ where
             opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
             send_buffer: self.send_buffer.clone(),
         })
-    }
-
-    pub fn send_go_away(&mut self, last_processed_id: StreamId) {
-        self.as_dyn().send_go_away(last_processed_id)
     }
 }
 
