@@ -99,22 +99,25 @@ where
     B: Buf,
 {
     pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
-        let streams = Streams::new(streams::Config {
-            local_init_window_sz: config
-                .settings
-                .initial_window_size()
-                .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
-            initial_max_send_streams: config.initial_max_send_streams,
-            local_next_stream_id: config.next_stream_id,
-            local_push_enabled: config.settings.is_push_enabled().unwrap_or(true),
-            local_reset_duration: config.reset_stream_duration,
-            local_reset_max: config.reset_stream_max,
-            remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-            remote_max_initiated: config
-                .settings
-                .max_concurrent_streams()
-                .map(|max| max as usize),
-        });
+        fn streams_config(config: &Config) -> streams::Config {
+            streams::Config {
+                local_init_window_sz: config
+                    .settings
+                    .initial_window_size()
+                    .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
+                initial_max_send_streams: config.initial_max_send_streams,
+                local_next_stream_id: config.next_stream_id,
+                local_push_enabled: config.settings.is_push_enabled().unwrap_or(true),
+                local_reset_duration: config.reset_stream_duration,
+                local_reset_max: config.reset_stream_max,
+                remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+                remote_max_initiated: config
+                    .settings
+                    .max_concurrent_streams()
+                    .map(|max| max as usize),
+            }
+        }
+        let streams = Streams::new(streams_config(&config));
         Connection {
             codec,
             inner: ConnectionInner {
