@@ -736,7 +736,7 @@ async fn rst_while_closing() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
-    // Rendevous when we've queued a trailers frame
+    // Rendezvous when we've queued a trailers frame
     let (tx, rx) = oneshot::channel();
 
     let srv = async move {
