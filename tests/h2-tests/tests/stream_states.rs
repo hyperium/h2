@@ -460,7 +460,7 @@ async fn send_rst_stream_allows_recv_data() {
         srv.send_frame(frames::headers(1).response(200)).await;
         srv.recv_frame(frames::reset(1).cancel()).await;
         // sending frames after canceled!
-        //   note: sending 2 to cosume 50% of connection window
+        //   note: sending 2 to consume 50% of connection window
         srv.send_frame(frames::data(1, vec![0; 16_384])).await;
         srv.send_frame(frames::data(1, vec![0; 16_384]).eos()).await;
         // make sure we automatically free the connection window
