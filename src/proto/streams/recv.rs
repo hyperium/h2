@@ -54,7 +54,7 @@ pub(super) struct Recv {
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
-    /// If push promises are allowed to be recevied.
+    /// If push promises are allowed to be received.
     is_push_enabled: bool,
 }
 
