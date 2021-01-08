@@ -63,7 +63,7 @@ impl<T> Data<T> {
         }
     }
 
-    /// Returns whther the `PADDED` flag is set on this frame.
+    /// Returns whether the `PADDED` flag is set on this frame.
     #[cfg(feature = "unstable")]
     pub fn is_padded(&self) -> bool {
         self.flags.is_padded()
