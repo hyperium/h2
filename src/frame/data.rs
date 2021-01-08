@@ -36,7 +36,7 @@ impl<T> Data<T> {
         }
     }
 
-    /// Returns the stream identifer that this frame is associated with.
+    /// Returns the stream identifier that this frame is associated with.
     ///
     /// This cannot be a zero stream identifier.
     pub fn stream_id(&self) -> StreamId {
