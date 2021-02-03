@@ -93,11 +93,10 @@ impl<T> FramedRead<T> {
 /// Decodes a frame.
 ///
 /// This method is intentionally de-generified and outlined because it is very large.
-#[inline(never)]
 fn decode_frame(
     hpack: &mut hpack::Decoder,
     max_header_list_size: usize,
-    p: &mut Option<Partial>,
+    partial_inout: &mut Option<Partial>,
     mut bytes: BytesMut,
 ) -> Result<Option<Frame>, RecvError> {
     use self::RecvError::*;
@@ -109,7 +108,7 @@ fn decode_frame(
     // Parse the head
     let head = frame::Head::parse(&bytes);
 
-    if p.is_some() && head.kind() != Kind::Continuation {
+    if partial_inout.is_some() && head.kind() != Kind::Continuation {
         proto_err!(conn: "expected CONTINUATION, got {:?}", head.kind());
         return Err(Connection(Reason::PROTOCOL_ERROR));
     }
@@ -168,7 +167,7 @@ fn decode_frame(
             } else {
                 tracing::trace!("loaded partial header block");
                 // Defer returning the frame
-                *p = Some(Partial {
+                *partial_inout = Some(Partial {
                     frame: Continuable::$frame(frame),
                     buf: payload,
                 });
@@ -264,7 +263,7 @@ fn decode_frame(
         Kind::Continuation => {
             let is_end_headers = (head.flag() & 0x4) == 0x4;
 
-            let mut partial = match p.take() {
+            let mut partial = match partial_inout.take() {
                 Some(partial) => partial,
                 None => {
                     proto_err!(conn: "received unexpected CONTINUATION frame");
@@ -327,7 +326,7 @@ fn decode_frame(
             if is_end_headers {
                 partial.frame.into()
             } else {
-                *p = Some(partial);
+                *partial_inout = Some(partial);
                 return Ok(None);
             }
         }
