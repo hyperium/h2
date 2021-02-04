@@ -1228,6 +1228,12 @@ where
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.inner.take_user_pings().map(PingPong::new)
     }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by this client.
+    pub fn max_concurrent_send_streams(&self) -> usize {
+        self.inner.max_send_streams()
+    }
 }
 
 impl<T, B> Future for Connection<T, B>

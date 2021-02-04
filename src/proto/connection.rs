@@ -120,6 +120,12 @@ where
         self.settings.send_settings(settings)
     }
 
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by this peer.
+    pub(crate) fn max_send_streams(&self) -> usize {
+        self.streams.max_send_streams()
+    }
+
     /// Returns `Ready` when the connection is ready to receive a frame.
     ///
     /// Returns `RecvError` as this may raise errors that are caused by delayed

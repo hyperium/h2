@@ -529,6 +529,12 @@ where
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.connection.take_user_pings().map(PingPong::new)
     }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the server on this connection.
+    pub fn max_concurrent_send_streams(&self) -> usize {
+        self.connection.max_send_streams()
+    }
 }
 
 #[cfg(feature = "stream")]
