@@ -1371,7 +1371,7 @@ impl proto::Peer for Peer {
                     reason: Reason::PROTOCOL_ERROR,
                 });
             }}
-        };
+        }
 
         b = b.version(Version::HTTP_2);
 
