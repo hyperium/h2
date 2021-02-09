@@ -1,7 +1,3 @@
-fn main() {
-    eprintln!("TODO: Re-enable when tokio-rustls is upgraded.");
-}
-/*
 use h2::client;
 use http::{Method, Request};
 use tokio::net::TcpStream;
@@ -77,4 +73,3 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-*/
