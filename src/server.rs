@@ -128,7 +128,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tracing_futures::{Instrument, Instrumented};
+use tracing::instrument::{Instrument, Instrumented};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
