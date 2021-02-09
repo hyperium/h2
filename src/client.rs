@@ -149,7 +149,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::usize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tracing_futures::Instrument;
+use tracing::Instrument;
 
 /// Initializes new HTTP/2.0 streams on a connection by sending a request.
 ///
