@@ -50,7 +50,7 @@ http = "0.2"
 tracing = { version = "0.1.21", default-features = false, features = ["std"] }
 fnv = "1.0.5"
 slab = "0.4.2"
-indexmap = "1.0"
+indexmap = { version = "1.5.2", features = ["std"] }
 
 [dev-dependencies]
 
