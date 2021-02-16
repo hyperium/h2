@@ -825,7 +825,7 @@ impl HeaderBlock {
                 } else {
                     let __val = $val;
                     headers_size +=
-                        decoded_header_size(stringify!($ident).len() + 1, __val.as_str().len());
+                        decoded_header_size(stringify!($field).len() + 1, __val.as_str().len());
                     if headers_size < max_header_list_size {
                         self.pseudo.$field = Some(__val);
                     } else if !self.is_over_size {
