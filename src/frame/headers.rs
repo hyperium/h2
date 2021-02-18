@@ -254,6 +254,11 @@ impl Headers {
         &mut self.header_block.pseudo
     }
 
+    /// Whether it has status 1xx
+    pub(crate) fn is_informational(&self) -> bool {
+        self.header_block.pseudo.is_informational()
+    }
+
     pub fn fields(&self) -> &HeaderMap {
         &self.header_block.fields
     }
@@ -598,6 +603,12 @@ impl Pseudo {
 
     pub fn set_authority(&mut self, authority: BytesStr) {
         self.authority = Some(authority);
+    }
+
+    /// Whether it has status 1xx
+    pub(crate) fn is_informational(&self) -> bool {
+        self.status
+            .map_or(false, |status| status.is_informational())
     }
 }
 

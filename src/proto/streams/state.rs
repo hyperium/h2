@@ -2,7 +2,7 @@ use std::io;
 
 use crate::codec::UserError::*;
 use crate::codec::{RecvError, UserError};
-use crate::frame::Reason;
+use crate::frame::{self, Reason};
 use crate::proto::{self, PollReset};
 
 use self::Inner::*;
@@ -132,10 +132,13 @@ impl State {
 
     /// Opens the receive-half of the stream when a HEADERS frame is received.
     ///
+    /// is_informational: whether received a 1xx status code
+    ///
     /// Returns true if this transitions the state to Open.
-    pub fn recv_open(&mut self, eos: bool) -> Result<bool, RecvError> {
+    pub fn recv_open(&mut self, frame: &frame::Headers) -> Result<bool, RecvError> {
         let remote = Streaming;
         let mut initial = false;
+        let eos = frame.is_end_stream();
 
         self.inner = match self.inner {
             Idle => {
@@ -172,6 +175,9 @@ impl State {
             HalfClosedLocal(AwaitingHeaders) => {
                 if eos {
                     Closed(Cause::EndStream)
+                } else if frame.is_informational() {
+                    tracing::trace!("skipping 1xx response headers");
+                    HalfClosedLocal(AwaitingHeaders)
                 } else {
                     HalfClosedLocal(remote)
                 }
