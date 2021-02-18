@@ -37,6 +37,8 @@ where
     _p: ::std::marker::PhantomData<P>,
 }
 
+// Like `Streams` but with a `peer::Dyn` field instead of a static `P: Peer` type parameter.
+// Ensures that the methods only get one instantiation, instead of two (client and server)
 #[derive(Debug)]
 pub(crate) struct DynStreams<'a, B> {
     inner: &'a Mutex<Inner>,

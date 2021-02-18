@@ -26,6 +26,8 @@ where
     inner: ConnectionInner<P, B>,
 }
 
+// Extracted part of `Connection` which does not depend on `T`. Reduces the amount of duplicated
+// method instantiations.
 #[derive(Debug)]
 struct ConnectionInner<P, B: Buf = Bytes>
 where
