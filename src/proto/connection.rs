@@ -156,7 +156,7 @@ where
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by the remote peer.
     pub(crate) fn max_recv_streams(&self) -> usize {
-        self.streams.max_recv_streams()
+        self.inner.streams.max_recv_streams()
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.
