@@ -128,7 +128,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{convert, fmt, io, mem};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tracing_futures::{Instrument, Instrumented};
+use tracing::instrument::{Instrument, Instrumented};
 
 /// In progress HTTP/2.0 connection handshake future.
 ///
@@ -528,6 +528,34 @@ where
     /// This may only be called once. Calling multiple times will return `None`.
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.connection.take_user_pings().map(PingPong::new)
+    }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the server on this connection.
+    ///
+    /// This limit is configured by the client peer by sending the
+    /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][1] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value recieved from the
+    /// remote.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    pub fn max_concurrent_send_streams(&self) -> usize {
+        self.connection.max_send_streams()
+    }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the client on this connection.
+    ///
+    /// This returns the value of the [`SETTINGS_MAX_CONCURRENT_STREAMS`
+    /// parameter][1] sent in a `SETTINGS` frame that has been
+    /// acknowledged by the remote peer. The value to be sent is configured by
+    /// the [`Builder::max_concurrent_streams`][2] method before handshaking
+    /// with the remote peer.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [2]: ../struct.Builder.html#method.max_concurrent_streams
+    pub fn max_concurrent_recv_streams(&self) -> usize {
+        self.connection.max_recv_streams()
     }
 }
 
@@ -1031,7 +1059,7 @@ impl<B: Buf> SendResponse<B> {
     ///
     /// # Panics
     ///
-    /// If the lock on the strean store has been poisoned.
+    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         crate::StreamId::from_internal(self.inner.stream_id())
     }
@@ -1103,7 +1131,7 @@ impl<B: Buf> SendPushedResponse<B> {
     ///
     /// # Panics
     ///
-    /// If the lock on the strean store has been poisoned.
+    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }
@@ -1371,7 +1399,7 @@ impl proto::Peer for Peer {
                     reason: Reason::PROTOCOL_ERROR,
                 });
             }}
-        };
+        }
 
         b = b.version(Version::HTTP_2);
 

@@ -708,7 +708,7 @@ async fn recv_too_big_headers() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
         srv.send_frame(frames::headers(3).response(200)).await;
-        // no reset for 1, since it's closed anyways
+        // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
         srv.recv_frame(frames::reset(3).refused()).await;
         idle_ms(10).await;
@@ -1210,6 +1210,48 @@ async fn allow_empty_data_for_head() {
         let (response, _) = client.send_request(request, true).unwrap();
         let (_, mut body) = response.await.unwrap().into_parts();
         assert_eq!(body.data().await.unwrap().unwrap(), "");
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn early_hints() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(103)).await;
+        srv.send_frame(frames::headers(1).response(200).field("content-length", 2))
+            .await;
+        srv.send_frame(frames::data(1, "ok").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let (ha, mut body) = response.await.unwrap().into_parts();
+        eprintln!("{:?}", ha);
+        assert_eq!(body.data().await.unwrap().unwrap(), "ok");
     };
 
     join(srv, h2).await;

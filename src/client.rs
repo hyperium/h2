@@ -149,7 +149,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::usize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tracing_futures::Instrument;
+use tracing::Instrument;
 
 /// Initializes new HTTP/2.0 streams on a connection by sending a request.
 ///
@@ -1124,6 +1124,20 @@ where
 
 // ===== impl Connection =====
 
+async fn bind_connection<T>(io: &mut T) -> Result<(), crate::Error>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    tracing::debug!("binding client connection");
+
+    let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    io.write_all(msg).await.map_err(crate::Error::from_io)?;
+
+    tracing::debug!("client connection bound");
+
+    Ok(())
+}
+
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -1133,12 +1147,7 @@ where
         mut io: T,
         builder: Builder,
     ) -> Result<(SendRequest<B>, Connection<T, B>), crate::Error> {
-        tracing::debug!("binding client connection");
-
-        let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        io.write_all(msg).await.map_err(crate::Error::from_io)?;
-
-        tracing::debug!("client connection bound");
+        bind_connection(&mut io).await?;
 
         // Create the codec
         let mut codec = Codec::new(io);
@@ -1227,6 +1236,34 @@ where
     /// This may only be called once. Calling multiple times will return `None`.
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.inner.take_user_pings().map(PingPong::new)
+    }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by this client.
+    ///
+    /// This limit is configured by the server peer by sending the
+    /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][1] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value recieved from the
+    /// remote.
+    ///
+    /// [settings]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    pub fn max_concurrent_send_streams(&self) -> usize {
+        self.inner.max_send_streams()
+    }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the server on this connection.
+    ///
+    /// This returns the value of the [`SETTINGS_MAX_CONCURRENT_STREAMS`
+    /// parameter][1] sent in a `SETTINGS` frame that has been
+    /// acknowledged by the remote peer. The value to be sent is configured by
+    /// the [`Builder::max_concurrent_streams`][2] method before handshaking
+    /// with the remote peer.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [2]: ../struct.Builder.html#method.max_concurrent_streams
+    pub fn max_concurrent_recv_streams(&self) -> usize {
+        self.inner.max_recv_streams()
     }
 }
 

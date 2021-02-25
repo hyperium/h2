@@ -126,7 +126,7 @@ pub use codec::{Codec, RecvError, SendError, UserError};
 use std::task::Poll;
 
 // TODO: Get rid of this trait once https://github.com/rust-lang/rust/pull/63512
-// is stablized.
+// is stabilized.
 trait PollExt<T, E> {
     /// Changes the success value of this `Poll` with the closure provided.
     fn map_ok_<U, F>(self, f: F) -> Poll<Option<Result<U, E>>>

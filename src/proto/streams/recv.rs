@@ -54,7 +54,7 @@ pub(super) struct Recv {
     /// Refused StreamId, this represents a frame that must be sent out.
     refused: Option<StreamId>,
 
-    /// If push promises are allowed to be recevied.
+    /// If push promises are allowed to be received.
     is_push_enabled: bool,
 }
 
@@ -161,7 +161,7 @@ impl Recv {
         counts: &mut Counts,
     ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
         tracing::trace!("opening stream; init_window={}", self.init_window_sz);
-        let is_initial = stream.state.recv_open(frame.is_end_stream())?;
+        let is_initial = stream.state.recv_open(&frame)?;
 
         if is_initial {
             // TODO: be smarter about this logic
@@ -226,15 +226,17 @@ impl Recv {
 
         let stream_id = frame.stream_id();
         let (pseudo, fields) = frame.into_parts();
-        let message = counts
-            .peer()
-            .convert_poll_message(pseudo, fields, stream_id)?;
+        if !pseudo.is_informational() {
+            let message = counts
+                .peer()
+                .convert_poll_message(pseudo, fields, stream_id)?;
 
-        // Push the frame onto the stream's recv buffer
-        stream
-            .pending_recv
-            .push_back(&mut self.buffer, Event::Headers(message));
-        stream.notify_recv();
+            // Push the frame onto the stream's recv buffer
+            stream
+                .pending_recv
+                .push_back(&mut self.buffer, Event::Headers(message));
+            stream.notify_recv();
+        }
 
         // Only servers can receive a headers frame that initiates the stream.
         // This is verified in `Streams` before calling this function.
