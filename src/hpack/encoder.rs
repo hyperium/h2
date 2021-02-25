@@ -324,7 +324,7 @@ fn encode_str(val: &[u8], dst: &mut DstBuf<'_>) -> Result<(), EncoderError> {
             // Write the string head
             dst.get_mut()[idx] = 0x80 | huff_len as u8;
         } else {
-            // Write the head to a placeholer
+            // Write the head to a placeholder
             const PLACEHOLDER_LEN: usize = 8;
             let mut buf = [0u8; PLACEHOLDER_LEN];
 

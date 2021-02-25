@@ -55,7 +55,7 @@ enum Next<B> {
     Continuation(frame::Continuation),
 }
 
-/// Initialze the connection with this amount of write buffer.
+/// Initialize the connection with this amount of write buffer.
 ///
 /// The minimum MAX_FRAME_SIZE is 16kb, so always be able to send a HEADERS
 /// frame that big.

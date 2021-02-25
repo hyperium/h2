@@ -1059,7 +1059,7 @@ impl<B: Buf> SendResponse<B> {
     ///
     /// # Panics
     ///
-    /// If the lock on the strean store has been poisoned.
+    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         crate::StreamId::from_internal(self.inner.stream_id())
     }
@@ -1131,7 +1131,7 @@ impl<B: Buf> SendPushedResponse<B> {
     ///
     /// # Panics
     ///
-    /// If the lock on the strean store has been poisoned.
+    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }

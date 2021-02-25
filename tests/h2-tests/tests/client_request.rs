@@ -708,7 +708,7 @@ async fn recv_too_big_headers() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
         srv.send_frame(frames::headers(3).response(200)).await;
-        // no reset for 1, since it's closed anyways
+        // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
         srv.recv_frame(frames::reset(3).refused()).await;
         idle_ms(10).await;
