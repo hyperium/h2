@@ -534,13 +534,28 @@ where
     /// by the server on this connection.
     ///
     /// This limit is configured by the client peer by sending the
-    /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][settings] in a `SETTINGS`
-    /// frame. This method returns the currently acknowledged value recieved
-    /// from the remote.
+    /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][1] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value recieved from the
+    /// remote.
     ///
-    /// [settings]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
     pub fn max_concurrent_send_streams(&self) -> usize {
         self.connection.max_send_streams()
+    }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the client on this connection.
+    ///
+    /// This returns the value of the [`SETTINGS_MAX_CONCURRENT_STREAMS`
+    /// parameter][1] sent in a `SETTINGS` frame that has been
+    /// acknowledged by the remote peer. The value to be sent is configured by
+    /// the [`Builder::max_concurrent_streams`][2] method before handshaking
+    /// with the remote peer.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [2]: ../struct.Builder.html#method.max_concurrent_streams
+    pub fn max_concurrent_recv_streams(&self) -> usize {
+        self.connection.max_recv_streams()
     }
 }
 

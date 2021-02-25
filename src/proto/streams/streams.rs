@@ -943,6 +943,10 @@ where
         self.inner.lock().unwrap().counts.max_send_streams()
     }
 
+    pub(crate) fn max_recv_streams(&self) -> usize {
+        self.inner.lock().unwrap().counts.max_recv_streams()
+    }
+
     #[cfg(feature = "unstable")]
     pub fn num_active_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();

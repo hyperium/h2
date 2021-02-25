@@ -153,6 +153,12 @@ where
         self.inner.streams.max_send_streams()
     }
 
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the remote peer.
+    pub(crate) fn max_recv_streams(&self) -> usize {
+        self.inner.streams.max_recv_streams()
+    }
+
     /// Returns `Ready` when the connection is ready to receive a frame.
     ///
     /// Returns `RecvError` as this may raise errors that are caused by delayed
