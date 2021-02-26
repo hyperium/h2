@@ -1,3 +1,11 @@
+# 0.3.1 (February 26, 2021)
+
+* Add `Connection::max_concurrent_recv_streams()` getter.
+* Add `Connection::max_concurrent_send_streams()` getter.
+* Fix client to ignore receipt of 1xx headers frames.
+* Fix incorrect calculation of pseudo header lengths when determining if a received header is too big.
+* Reduce monomorphized code size of internal code.
+
 # 0.3.0 (December 23, 2020)
 
 * Update to Tokio v1 and Bytes v1.
