@@ -1257,6 +1257,50 @@ async fn early_hints() {
     join(srv, h2).await;
 }
 
+#[tokio::test]
+async fn informational_while_local_streaming() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(103)).await;
+        srv.send_frame(frames::headers(1).response(200).field("content-length", 2))
+            .await;
+        srv.recv_frame(frames::data(1, "hello").eos()).await;
+        srv.send_frame(frames::data(1, "ok").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // don't EOS stream yet..
+        let (response, mut body_tx) = client.send_request(request, false).unwrap();
+        // eventual response is 200, not 103
+        let resp = response.await.expect("response");
+        // assert_eq!(resp.status(), 200);
+        // now we can end the stream
+        body_tx.send_data("hello".into(), true).expect("send_data");
+        let mut body = resp.into_body();
+        assert_eq!(body.data().await.unwrap().unwrap(), "ok");
+    };
+
+    join(srv, h2).await;
+}
+
 const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
