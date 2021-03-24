@@ -5,14 +5,14 @@ name = "h2"
 #   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.3.1"
+version = "0.3.2"
 license = "MIT"
 authors = [
   "Carl Lerche <me@carllerche.com>",
   "Sean McArthur <sean@seanmonstar.com>",
 ]
 description = "An HTTP/2.0 client and server"
-documentation = "https://docs.rs/h2/0.3.0/h2/"
+documentation = "https://docs.rs/h2"
 repository = "https://github.com/hyperium/h2"
 readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
