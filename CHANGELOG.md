@@ -1,3 +1,7 @@
+# 0.3.2 (March 24, 2021)
+
+* Fix incorrect handling of received 1xx responses on the client when the request body is still streaming.
+
 # 0.3.1 (February 26, 2021)
 
 * Add `Connection::max_concurrent_recv_streams()` getter.
