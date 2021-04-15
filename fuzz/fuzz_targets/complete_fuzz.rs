@@ -123,7 +123,7 @@ async fn run(script: &[u8]) -> Result<(), h2::Error> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(run(data));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _res = rt.block_on(run(data));
 });
 

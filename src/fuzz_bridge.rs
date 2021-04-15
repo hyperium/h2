@@ -7,7 +7,7 @@ use http::header::{HeaderName, HeaderValue};
 pub mod fuzz_logic {
     use super::*;
 
-    pub fn fuzz_addr_1(data_: &[u8]) {
+    pub fn fuzz_hpack(data_: &[u8]) {
         let mut decoder_ = hpack::Decoder::new(0);
         let mut buf = BytesMut::new();
         buf.extend(data_);
@@ -19,15 +19,7 @@ pub mod fuzz_logic {
                 let mut encoder = hpack::Encoder::new(0, 0);
                 let res_ = encode(&mut encoder, vec![m_]);
             }
-            /*
-            if let Ok(h) = hpack::Header::Method(http::Method::from_bytes(s.as_bytes())) {
-                let mut encoder = hpack::Encoder::new(0, 0);
-                let res_ = encode(&mut encoder, vec![h]);
-            }*/
         }
-
-        //let mut enc_buf = BytesMut::new();
-        //hpack::huffman::encode(data_, &mut enc_buf);
     }
 
     fn encode(e: &mut hpack::Encoder, hdrs: Vec<hpack::Header<Option<HeaderName>>>) -> BytesMut {
