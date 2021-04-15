@@ -6,7 +6,7 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 struct MockIo<'a> {
     input: &'a [u8],
@@ -28,18 +28,17 @@ impl<'a> MockIo<'a> {
 }
 
 impl<'a> AsyncRead for MockIo<'a> {
-    unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
-        false
-    }
 
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
+
+        
         let mut len = self.next_u32() as usize;
         if self.input.is_empty() {
-            Poll::Ready(Ok(0))
+            Poll::Ready(Ok(()))
         } else if len == 0 {
             cx.waker().clone().wake();
             Poll::Pending
@@ -48,12 +47,12 @@ impl<'a> AsyncRead for MockIo<'a> {
                 len = self.input.len();
             }
 
-            if len > buf.len() {
-                len = buf.len();
+            if len > buf.remaining() {
+                len = buf.remaining();
             }
-            buf[0..len].copy_from_slice(&self.input[0..len]);
+            buf.put_slice(&self.input[len..]);
             self.input = &self.input[len..];
-            Poll::Ready(Ok(len))
+            Poll::Ready(Ok(()))
         }
     }
 }

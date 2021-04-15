@@ -12,8 +12,13 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1",  features = ["derive"] }
 libfuzzer-sys = { version = "0.4.0", features = ["arbitrary-derive"] }
+tokio = { version = "1", features = [ "full" ] }
+bytes = "0.5.2"
+h2 = { path = "../", features = [ "unstable" ] }
 h2-support = { path = "../tests/h2-support" }
-tokio = { version = "1", features = [ "full"] }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+http = "0.2"
+env_logger = { version = "0.5.3", default-features = false }
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -22,5 +27,17 @@ members = ["."]
 [[bin]]
 name = "fuzz_client"
 path = "fuzz_targets/fuzz_client.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "hpack_fuzzer"
+path = "fuzz_targets/hpack_fuzzer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "complete_fuzz"
+path = "fuzz_targets/complete_fuzz.rs"
 test = false
 doc = false
