@@ -8,11 +8,10 @@ pub mod fuzz_logic {
     use super::*;
 
     pub fn fuzz_addr_1(data_: &[u8]) {
-		let mut decoder_ = hpack::Decoder::new(0);
+        let mut decoder_ = hpack::Decoder::new(0);
         let mut buf = BytesMut::new();
         buf.extend(data_);
         decoder_.decode(&mut Cursor::new(&mut buf), |h| {});
-
 
         if let Ok(s) = std::str::from_utf8(data_) {
             if let Ok(h) = http::Method::from_bytes(s.as_bytes()) {
@@ -29,7 +28,7 @@ pub mod fuzz_logic {
 
         //let mut enc_buf = BytesMut::new();
         //hpack::huffman::encode(data_, &mut enc_buf);
-	}
+    }
 
     fn encode(e: &mut hpack::Encoder, hdrs: Vec<hpack::Header<Option<HeaderName>>>) -> BytesMut {
         let mut dst = BytesMut::with_capacity(1024);

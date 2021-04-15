@@ -28,14 +28,11 @@ impl<'a> MockIo<'a> {
 }
 
 impl<'a> AsyncRead for MockIo<'a> {
-
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
-
-        
         let mut len = self.next_u32() as usize;
         if self.input.is_empty() {
             Poll::Ready(Ok(()))
