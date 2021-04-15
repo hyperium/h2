@@ -1,11 +1,9 @@
 #[cfg(fuzzing)]
 pub mod fuzz_logic {
-    #[cfg_attr(feature = "unstable", allow(missing_docs))]
     use crate::hpack;
     use bytes::{BufMut, BytesMut};
     use http::header::HeaderName;
     use std::io::Cursor;
-    //use super::*;
 
     pub fn fuzz_hpack(data_: &[u8]) {
         let mut decoder_ = hpack::Decoder::new(0);
