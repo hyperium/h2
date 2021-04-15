@@ -2,9 +2,9 @@
 pub mod fuzz_logic {
     #[cfg_attr(feature = "unstable", allow(missing_docs))]
     use crate::hpack;
-    use std::io::Cursor;
     use bytes::{BufMut, BytesMut};
     use http::header::HeaderName;
+    use std::io::Cursor;
     //use super::*;
 
     pub fn fuzz_hpack(data_: &[u8]) {
