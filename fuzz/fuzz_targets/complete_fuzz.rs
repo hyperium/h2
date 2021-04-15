@@ -31,14 +31,9 @@ impl<'a> MockIo<'a> {
 }
 
 impl<'a> AsyncRead for MockIo<'a> {
-    //unsafe fn prepare_uninitialized_buffer(&self, _buf: &mut [std::mem::MaybeUninit<u8>]) -> bool {
-    //    false
-    //}
-
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        //buf: &mut [u8],
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
 
@@ -57,10 +52,7 @@ impl<'a> AsyncRead for MockIo<'a> {
             if len > buf.remaining() {
                 len = buf.remaining();
             }
-            //buf[0..len].copy_from_slice(&self.input[0..len]);
-            //Poll::Ready(Ok(len))
             buf.put_slice(&self.input[len..]);
-            //self.input.drain(..len);
             self.input = &self.input[len..];
             Poll::Ready(Ok(()))
         }
@@ -131,19 +123,7 @@ async fn run(script: &[u8]) -> Result<(), h2::Error> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    // fuzzed code goes here
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(run(data));
 });
 
-/*
-fn main() {
-    env_logger::init();
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
-    loop {
-        honggfuzz::fuzz!(|data: &[u8]| {
-            eprintln!("{:?}", rt.block_on(run(data)));
-        });
-    }
-}
-*/

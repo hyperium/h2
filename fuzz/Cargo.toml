@@ -2,7 +2,7 @@
 [package]
 name = "h2-oss-fuzz"
 version = "0.0.0"
-authors = ["Automatically generated"]
+authors = [ "David Korczynski <david@adalogics.com>" ]
 publish = false
 edition = "2018"
 
