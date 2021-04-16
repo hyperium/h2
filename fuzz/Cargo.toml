@@ -1,0 +1,43 @@
+
+[package]
+name = "h2-oss-fuzz"
+version = "0.0.0"
+authors = [ "David Korczynski <david@adalogics.com>" ]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1",  features = ["derive"] }
+libfuzzer-sys = { version = "0.4.0", features = ["arbitrary-derive"] }
+tokio = { version = "1", features = [ "full" ] }
+bytes = "0.5.2"
+h2 = { path = "../", features = [ "unstable" ] }
+h2-support = { path = "../tests/h2-support" }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+http = "0.2"
+env_logger = { version = "0.5.3", default-features = false }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_client"
+path = "fuzz_targets/fuzz_client.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_hpack"
+path = "fuzz_targets/fuzz_hpack.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_e2e"
+path = "fuzz_targets/fuzz_e2e.rs"
+test = false
+doc = false

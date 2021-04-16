@@ -1,3 +1,6 @@
+#![no_main]
+use libfuzzer_sys::fuzz_target;
+
 use futures::future;
 use futures::stream::FuturesUnordered;
 use futures::Stream;
@@ -33,6 +36,8 @@ impl<'a> AsyncRead for MockIo<'a> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf,
     ) -> Poll<io::Result<()>> {
+
+
         let mut len = self.next_u32() as usize;
         if self.input.is_empty() {
             Poll::Ready(Ok(()))
@@ -117,12 +122,8 @@ async fn run(script: &[u8]) -> Result<(), h2::Error> {
     Ok(())
 }
 
-fn main() {
-    env_logger::init();
-    let mut rt = tokio::runtime::Runtime::new().unwrap();
-    loop {
-        honggfuzz::fuzz!(|data: &[u8]| {
-            eprintln!("{:?}", rt.block_on(run(data)));
-        });
-    }
-}
+fuzz_target!(|data: &[u8]| {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _res = rt.block_on(run(data));
+});
+
