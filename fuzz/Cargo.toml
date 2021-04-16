@@ -31,13 +31,13 @@ test = false
 doc = false
 
 [[bin]]
-name = "hpack_fuzzer"
-path = "fuzz_targets/hpack_fuzzer.rs"
+name = "fuzz_hpack"
+path = "fuzz_targets/fuzz_hpack.rs"
 test = false
 doc = false
 
 [[bin]]
-name = "complete_fuzz"
-path = "fuzz_targets/complete_fuzz.rs"
+name = "fuzz_e2e"
+path = "fuzz_targets/fuzz_e2e.rs"
 test = false
 doc = false

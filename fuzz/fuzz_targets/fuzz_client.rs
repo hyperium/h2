@@ -17,7 +17,6 @@ async fn fuzz_entry(inp: HttpSpec) {
     {
         let (io, mut _srv) = mock::new();
         let (mut client, _h2) = client::Builder::new()
-            .initial_stream_id(::std::u32::MAX >> 1)
             .handshake::<_, Bytes>(io)
             .await
             .unwrap();
