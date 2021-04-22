@@ -401,7 +401,7 @@ impl RecvStream {
         futures_util::future::poll_fn(move |cx| self.poll_trailers(cx)).await
     }
 
-    #[doc(hidden)]
+    /// Poll for the next data frame.
     pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, crate::Error>>> {
         self.inner.inner.poll_data(cx).map_err_(Into::into)
     }
