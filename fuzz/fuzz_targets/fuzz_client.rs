@@ -21,7 +21,10 @@ async fn fuzz_entry(inp: HttpSpec) {
             .await
             .unwrap();
 
-        let (_, _) = client.send_request(req, true).unwrap();
+        // this could still trigger a user error:
+        // - if the uri isn't absolute
+        // - if the header name isn't allowed in http2 (like connection)
+        let _ = client.send_request(req, true);
     }
 }
 
