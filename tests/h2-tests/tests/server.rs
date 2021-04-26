@@ -114,7 +114,7 @@ async fn serve_connect() {
         let settings = client.assert_server_handshake().await;
         assert_default_settings!(settings);
         client
-            .send_frame(frames::headers(1).method("CONNECT").eos())
+            .send_frame(frames::headers(1).request("CONNECT", "localhost").eos())
             .await;
         client
             .recv_frame(frames::headers(1).response(200).eos())

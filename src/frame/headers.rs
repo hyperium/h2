@@ -552,15 +552,19 @@ impl Pseudo {
             .map(|v| Bytes::copy_from_slice(v.as_str().as_bytes()))
             .unwrap_or_else(Bytes::new);
 
-        if path.is_empty() && method != Method::OPTIONS {
-            path = Bytes::from_static(b"/");
+        match method {
+            Method::OPTIONS | Method::CONNECT => {}
+            _ if path.is_empty() => {
+                path = Bytes::from_static(b"/");
+            }
+            _ => {}
         }
 
         let mut pseudo = Pseudo {
             method: Some(method),
             scheme: None,
             authority: None,
-            path: Some(unsafe { BytesStr::from_utf8_unchecked(path) }),
+            path: Some(unsafe { BytesStr::from_utf8_unchecked(path) }).filter(|p| !p.is_empty()),
             status: None,
         };
 
