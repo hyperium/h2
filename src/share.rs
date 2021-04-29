@@ -125,11 +125,6 @@ pub struct StreamId(u32);
 /// See method level documentation for more details on receiving data. See
 /// [`FlowControl`] for more details on inbound flow control.
 ///
-/// Note that this type implements [`Stream`], yielding the received data frames.
-/// When this implementation is used, the capacity is immediately released when
-/// the data is yielded. It is recommended to only use this API when the data
-/// will not be retained in memory for extended periods of time.
-///
 /// [`client::ResponseFuture`]: client/struct.ResponseFuture.html
 /// [`server::Connection`]: server/struct.Connection.html
 /// [`FlowControl`]: struct.FlowControl.html
