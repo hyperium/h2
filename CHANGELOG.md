@@ -1,3 +1,9 @@
+# 0.3.3 (April 29, 2021)
+
+* Fix client being able to make `CONNECT` requests without a `:path`.
+* Expose `RecvStream::poll_data`.
+* Fix some docs.
+
 # 0.3.2 (March 24, 2021)
 
 * Fix incorrect handling of received 1xx responses on the client when the request body is still streaming.
