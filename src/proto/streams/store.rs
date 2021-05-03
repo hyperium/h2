@@ -304,6 +304,10 @@ where
         None
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_none()
+    }
+
     pub fn pop_if<'a, R, F>(&mut self, store: &'a mut R, f: F) -> Option<store::Ptr<'a>>
     where
         R: Resolve,

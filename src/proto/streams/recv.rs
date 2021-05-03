@@ -866,13 +866,15 @@ impl Recv {
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
-        let now = Instant::now();
-        let reset_duration = self.reset_duration;
-        while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
-            let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
-            now - reset_at > reset_duration
-        }) {
-            counts.transition_after(stream, true);
+        if !self.pending_reset_expired.is_empty() {
+            let now = Instant::now();
+            let reset_duration = self.reset_duration;
+            while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
+                let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
+                now - reset_at > reset_duration
+            }) {
+                counts.transition_after(stream, true);
+            }
         }
     }
 
