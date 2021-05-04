@@ -990,7 +990,14 @@ where
     P: Peer,
 {
     fn drop(&mut self) {
-        let _ = self.inner.lock().map(|mut inner| inner.refs -= 1);
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.refs -= 1;
+            if inner.refs == 1 {
+                if let Some(task) = inner.actions.task.take() {
+                    task.wake();
+                }
+            }
+        }
     }
 }
 
