@@ -71,3 +71,6 @@ rustls = "0.19"
 tokio-rustls = "0.22"
 webpki = "0.21"
 webpki-roots = "0.21"
+
+[package.metadata.docs.rs]
+features = ["stream"]
