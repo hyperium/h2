@@ -122,6 +122,7 @@ mod share;
 pub mod fuzz_bridge;
 
 pub use crate::error::{Error, Reason};
+pub use crate::proto::DEFAULT_RESET_STREAM_MAX;
 pub use crate::share::{FlowControl, Ping, PingPong, Pong, RecvStream, SendStream, StreamId};
 
 #[cfg(feature = "unstable")]

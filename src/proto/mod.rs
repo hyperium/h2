@@ -31,5 +31,6 @@ pub type WindowSize = u32;
 
 // Constants
 pub const MAX_WINDOW_SIZE: WindowSize = (1 << 31) - 1;
+/// Default value for the maximum number of concurrent locally reset streams.
 pub const DEFAULT_RESET_STREAM_MAX: usize = 10;
 pub const DEFAULT_RESET_STREAM_SECS: u64 = 30;
