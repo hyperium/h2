@@ -384,10 +384,6 @@ fn encode_int<B: BufMut>(
 
     value -= low;
 
-    if value > 0x0fff_ffff {
-        panic!("value out of range");
-    }
-
     dst.put_u8(first_byte | low as u8);
     rem -= 1;
 
@@ -849,6 +845,20 @@ mod test {
         assert_eq!("zomg", huff_decode(&dst[3..6]));
         assert_eq!(&[15, 47, 0x80 | 3], &dst[6..9]);
         assert_eq!("sup", huff_decode(&dst[9..]));
+    }
+
+    #[test]
+    fn test_large_size_update() {
+        let mut encoder = Encoder::default();
+
+        encoder.update_max_size(1912930560);
+        assert_eq!(Some(SizeUpdate::One(1912930560)), encoder.size_update);
+
+        let mut dst = BytesMut::with_capacity(6);
+        encoder
+            .encode_size_updates(&mut (&mut dst).limit(6))
+            .unwrap();
+        assert_eq!([63, 225, 129, 148, 144, 7], &dst[..]);
     }
 
     #[test]
