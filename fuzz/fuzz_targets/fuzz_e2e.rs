@@ -52,7 +52,7 @@ impl<'a> AsyncRead for MockIo<'a> {
             if len > buf.remaining() {
                 len = buf.remaining();
             }
-            buf.put_slice(&self.input[len..]);
+            buf.put_slice(&self.input[..len]);
             self.input = &self.input[len..];
             Poll::Ready(Ok(()))
         }
