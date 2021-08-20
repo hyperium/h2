@@ -121,6 +121,7 @@ pub fn build_large_headers() -> Vec<(&'static str, String)> {
         ("eight", build_large_string('8', 4 * 1024)),
         ("nine", "nine".to_string()),
         ("ten", build_large_string('0', 4 * 1024)),
+        ("eleven", build_large_string('1', 32 * 1024)),
     ]
 }
 

@@ -5,17 +5,12 @@ use crate::hpack::{self, BytesStr};
 use http::header::{self, HeaderName, HeaderValue};
 use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
-use bytes::BytesMut;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use std::fmt;
 use std::io::Cursor;
 
 type EncodeBuf<'a> = bytes::buf::Limit<&'a mut BytesMut>;
-
-// Minimum MAX_FRAME_SIZE is 16kb, so save some arbitrary space for frame
-// head and other header bits.
-const MAX_HEADER_LENGTH: usize = 1024 * 16 - 100;
-
 /// Header frame
 ///
 /// This could be either a request or a response.
@@ -100,11 +95,7 @@ struct HeaderBlock {
 
 #[derive(Debug)]
 struct EncodingHeaderBlock {
-    /// Argument to pass to the HPACK encoder to resume encoding
-    hpack: Option<hpack::EncodeState>,
-
-    /// remaining headers to encode
-    headers: Iter,
+    hpack: Bytes,
 }
 
 const END_STREAM: u8 = 0x1;
@@ -241,10 +232,6 @@ impl Headers {
         self.header_block.is_over_size
     }
 
-    pub(crate) fn has_too_big_field(&self) -> bool {
-        self.header_block.has_too_big_field()
-    }
-
     pub fn into_parts(self) -> (Pseudo, HeaderMap) {
         (self.header_block.pseudo, self.header_block.fields)
     }
@@ -279,8 +266,8 @@ impl Headers {
         let head = self.head();
 
         self.header_block
-            .into_encoding()
-            .encode(&head, encoder, dst, |_| {})
+            .into_encoding(encoder)
+            .encode(&head, dst, |_| {})
     }
 
     fn head(&self) -> Head {
@@ -480,8 +467,6 @@ impl PushPromise {
         encoder: &mut hpack::Encoder,
         dst: &mut EncodeBuf<'_>,
     ) -> Option<Continuation> {
-        use bytes::BufMut;
-
         // At this point, the `is_end_headers` flag should always be set
         debug_assert!(self.flags.is_end_headers());
 
@@ -489,8 +474,8 @@ impl PushPromise {
         let promised_id = self.promised_id;
 
         self.header_block
-            .into_encoding()
-            .encode(&head, encoder, dst, |dst| {
+            .into_encoding(encoder)
+            .encode(&head, dst, |dst| {
                 dst.put_u32(promised_id.into());
             })
     }
@@ -529,15 +514,11 @@ impl Continuation {
         Head::new(Kind::Continuation, END_HEADERS, self.stream_id)
     }
 
-    pub fn encode(
-        self,
-        encoder: &mut hpack::Encoder,
-        dst: &mut EncodeBuf<'_>,
-    ) -> Option<Continuation> {
+    pub fn encode(self, dst: &mut EncodeBuf<'_>) -> Option<Continuation> {
         // Get the CONTINUATION frame head
         let head = self.head();
 
-        self.header_block.encode(&head, encoder, dst, |_| {})
+        self.header_block.encode(&head, dst, |_| {})
     }
 }
 
@@ -617,13 +598,7 @@ impl Pseudo {
 // ===== impl EncodingHeaderBlock =====
 
 impl EncodingHeaderBlock {
-    fn encode<F>(
-        mut self,
-        head: &Head,
-        encoder: &mut hpack::Encoder,
-        dst: &mut EncodeBuf<'_>,
-        f: F,
-    ) -> Option<Continuation>
+    fn encode<F>(mut self, head: &Head, dst: &mut EncodeBuf<'_>, f: F) -> Option<Continuation>
     where
         F: FnOnce(&mut EncodeBuf<'_>),
     {
@@ -639,15 +614,17 @@ impl EncodingHeaderBlock {
         f(dst);
 
         // Now, encode the header payload
-        let continuation = match encoder.encode(self.hpack, &mut self.headers, dst) {
-            hpack::Encode::Full => None,
-            hpack::Encode::Partial(state) => Some(Continuation {
+        let continuation = if self.hpack.len() > dst.remaining_mut() {
+            dst.put_slice(&self.hpack.split_to(dst.remaining_mut()));
+
+            Some(Continuation {
                 stream_id: head.stream_id(),
-                header_block: EncodingHeaderBlock {
-                    hpack: Some(state),
-                    headers: self.headers,
-                },
-            }),
+                header_block: self,
+            })
+        } else {
+            dst.put_slice(&self.hpack);
+
+            None
         };
 
         // Compute the header block length
@@ -910,13 +887,17 @@ impl HeaderBlock {
         Ok(())
     }
 
-    fn into_encoding(self) -> EncodingHeaderBlock {
+    fn into_encoding(self, encoder: &mut hpack::Encoder) -> EncodingHeaderBlock {
+        let mut hpack = BytesMut::new();
+        let headers = Iter {
+            pseudo: Some(self.pseudo),
+            fields: self.fields.into_iter(),
+        };
+
+        encoder.encode(headers, &mut hpack);
+
         EncodingHeaderBlock {
-            hpack: None,
-            headers: Iter {
-                pseudo: Some(self.pseudo),
-                fields: self.fields.into_iter(),
-            },
+            hpack: hpack.freeze(),
         }
     }
 
@@ -949,48 +930,79 @@ impl HeaderBlock {
                 .map(|(name, value)| decoded_header_size(name.as_str().len(), value.len()))
                 .sum::<usize>()
     }
-
-    /// Iterate over all pseudos and headers to see if any individual pair
-    /// would be too large to encode.
-    pub(crate) fn has_too_big_field(&self) -> bool {
-        macro_rules! pseudo_size {
-            ($name:ident) => {{
-                self.pseudo
-                    .$name
-                    .as_ref()
-                    .map(|m| decoded_header_size(stringify!($name).len() + 1, m.as_str().len()))
-                    .unwrap_or(0)
-            }};
-        }
-
-        if pseudo_size!(method) > MAX_HEADER_LENGTH {
-            return true;
-        }
-
-        if pseudo_size!(scheme) > MAX_HEADER_LENGTH {
-            return true;
-        }
-
-        if pseudo_size!(authority) > MAX_HEADER_LENGTH {
-            return true;
-        }
-
-        if pseudo_size!(path) > MAX_HEADER_LENGTH {
-            return true;
-        }
-
-        // skip :status, its never going to be too big
-
-        for (name, value) in &self.fields {
-            if decoded_header_size(name.as_str().len(), value.len()) > MAX_HEADER_LENGTH {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 fn decoded_header_size(name: usize, value: usize) -> usize {
     name + value + 32
+}
+
+#[cfg(test)]
+mod test {
+    use std::iter::FromIterator;
+
+    use http::HeaderValue;
+
+    use super::*;
+    use crate::frame;
+    use crate::hpack::{huffman, Encoder};
+
+    #[test]
+    fn test_nameless_header_at_resume() {
+        let mut encoder = Encoder::default();
+        let mut dst = BytesMut::new();
+
+        let headers = Headers::new(
+            StreamId::ZERO,
+            Default::default(),
+            HeaderMap::from_iter(vec![
+                (
+                    HeaderName::from_static("hello"),
+                    HeaderValue::from_static("world"),
+                ),
+                (
+                    HeaderName::from_static("hello"),
+                    HeaderValue::from_static("zomg"),
+                ),
+                (
+                    HeaderName::from_static("hello"),
+                    HeaderValue::from_static("sup"),
+                ),
+            ]),
+        );
+
+        let continuation = headers
+            .encode(&mut encoder, &mut (&mut dst).limit(frame::HEADER_LEN + 8))
+            .unwrap();
+
+        assert_eq!(17, dst.len());
+        assert_eq!([0, 0, 8, 1, 0, 0, 0, 0, 0], &dst[0..9]);
+        assert_eq!(&[0x40, 0x80 | 4], &dst[9..11]);
+        assert_eq!("hello", huff_decode(&dst[11..15]));
+        assert_eq!(0x80 | 4, dst[15]);
+
+        let mut world = dst[16..17].to_owned();
+
+        dst.clear();
+
+        assert!(continuation
+            .encode(&mut (&mut dst).limit(frame::HEADER_LEN + 16))
+            .is_none());
+
+        world.extend_from_slice(&dst[9..12]);
+        assert_eq!("world", huff_decode(&world));
+
+        assert_eq!(24, dst.len());
+        assert_eq!([0, 0, 15, 9, 4, 0, 0, 0, 0], &dst[0..9]);
+
+        // // Next is not indexed
+        assert_eq!(&[15, 47, 0x80 | 3], &dst[12..15]);
+        assert_eq!("zomg", huff_decode(&dst[15..18]));
+        assert_eq!(&[15, 47, 0x80 | 3], &dst[18..21]);
+        assert_eq!("sup", huff_decode(&dst[21..]));
+    }
+
+    fn huff_decode(src: &[u8]) -> BytesMut {
+        let mut buf = BytesMut::new();
+        huffman::decode(src, &mut buf).unwrap()
+    }
 }
