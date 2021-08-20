@@ -1,3 +1,10 @@
+# 0.3.4 (August 20, 2021)
+
+* Fix panic when encoding header size update over a certain size.
+* Fix `SendRequest` to wake up connection when dropped.
+* Fix potential hang if `RecvStream` is placed in the request or response `extensions`.
+* Stop calling `Instant::now` if zero reset streams are configured.
+
 # 0.3.3 (April 29, 2021)
 
 * Fix client being able to make `CONNECT` requests without a `:path`.
