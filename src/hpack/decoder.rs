@@ -847,7 +847,7 @@ mod test {
 
     fn huff_encode(src: &[u8]) -> BytesMut {
         let mut buf = BytesMut::new();
-        huffman::encode(src, &mut buf).unwrap();
+        huffman::encode(src, &mut buf);
         buf
     }
 }

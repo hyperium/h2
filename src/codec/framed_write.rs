@@ -148,12 +148,6 @@ where
             match self.encoder.unset_frame() {
                 ControlFlow::Continue => (),
                 ControlFlow::Break => break,
-                ControlFlow::EndlessLoopHeaderTooBig => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        UserError::HeaderTooBig,
-                    )));
-                }
             }
         }
 
@@ -199,7 +193,6 @@ where
 enum ControlFlow {
     Continue,
     Break,
-    EndlessLoopHeaderTooBig,
 }
 
 impl<B> Encoder<B>
@@ -221,20 +214,7 @@ where
             Some(Next::Continuation(frame)) => {
                 // Buffer the continuation frame, then try to write again
                 let mut buf = limited_write_buf!(self);
-                if let Some(continuation) = frame.encode(&mut self.hpack, &mut buf) {
-                    // We previously had a CONTINUATION, and after encoding
-                    // it, we got *another* one? Let's just double check
-                    // that at least some progress is being made...
-                    if self.buf.get_ref().len() == frame::HEADER_LEN {
-                        // If *only* the CONTINUATION frame header was
-                        // written, and *no* header fields, we're stuck
-                        // in a loop...
-                        tracing::warn!(
-                            "CONTINUATION frame write loop; header value too big to encode"
-                        );
-                        return ControlFlow::EndlessLoopHeaderTooBig;
-                    }
-
+                if let Some(continuation) = frame.encode(&mut buf) {
                     self.next = Some(Next::Continuation(continuation));
                 }
                 ControlFlow::Continue

@@ -35,9 +35,6 @@ pub enum UserError {
     /// The payload size is too big
     PayloadTooBig,
 
-    /// A header size is too big
-    HeaderTooBig,
-
     /// The application attempted to initiate too many streams to remote.
     Rejected,
 
@@ -130,7 +127,6 @@ impl fmt::Display for UserError {
             InactiveStreamId => "inactive stream",
             UnexpectedFrameType => "unexpected frame type",
             PayloadTooBig => "payload too big",
-            HeaderTooBig => "header too big",
             Rejected => "rejected",
             ReleaseCapacityTooBig => "release capacity too big",
             OverflowedStreamId => "stream ID overflowed",

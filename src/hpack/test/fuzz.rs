@@ -1,8 +1,8 @@
-use crate::hpack::{Decoder, Encode, Encoder, Header};
+use crate::hpack::{Decoder, Encoder, Header};
 
 use http::header::{HeaderName, HeaderValue};
 
-use bytes::{buf::BufMut, BytesMut};
+use bytes::BytesMut;
 use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
 use rand::{Rng, SeedableRng, StdRng};
 
@@ -144,7 +144,6 @@ impl FuzzHpack {
     }
 
     fn run(self) {
-        let mut chunks = self.chunks;
         let frames = self.frames;
         let mut expect = vec![];
 
@@ -173,11 +172,7 @@ impl FuzzHpack {
                 }
             }
 
-            let mut input = frame.headers.into_iter();
-            let mut index = None;
-
-            let mut max_chunk = chunks.pop().unwrap_or(MAX_CHUNK);
-            let mut buf = BytesMut::with_capacity(max_chunk);
+            let mut buf = BytesMut::new();
 
             if let Some(max) = frame.resizes.iter().max() {
                 decoder.queue_size_update(*max);
@@ -188,25 +183,7 @@ impl FuzzHpack {
                 encoder.update_max_size(*resize);
             }
 
-            loop {
-                match encoder.encode(index.take(), &mut input, &mut (&mut buf).limit(max_chunk)) {
-                    Encode::Full => break,
-                    Encode::Partial(i) => {
-                        index = Some(i);
-
-                        // Decode the chunk!
-                        decoder
-                            .decode(&mut Cursor::new(&mut buf), |h| {
-                                let e = expect.remove(0);
-                                assert_eq!(h, e);
-                            })
-                            .expect("partial decode");
-
-                        max_chunk = chunks.pop().unwrap_or(MAX_CHUNK);
-                        buf = BytesMut::with_capacity(max_chunk);
-                    }
-                }
-            }
+            encoder.encode(frame.headers, &mut buf);
 
             // Decode the chunk!
             decoder
