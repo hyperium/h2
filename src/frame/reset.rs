@@ -2,7 +2,7 @@ use crate::frame::{self, Error, Head, Kind, Reason, StreamId};
 
 use bytes::BufMut;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Reset {
     stream_id: StreamId,
     error_code: Reason,

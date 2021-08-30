@@ -115,9 +115,9 @@
 //! [`SendStream`]: ../struct.SendStream.html
 //! [`TcpListener`]: https://docs.rs/tokio-core/0.1/tokio_core/net/struct.TcpListener.html
 
-use crate::codec::{Codec, RecvError, UserError};
+use crate::codec::{Codec, UserError};
 use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, StreamId};
-use crate::proto::{self, Config, Prioritized};
+use crate::proto::{self, Config, Error, Prioritized};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
@@ -1202,7 +1202,7 @@ where
             if &PREFACE[self.pos..self.pos + n] != buf.filled() {
                 proto_err!(conn: "read_preface: invalid preface");
                 // TODO: Should this just write the GO_AWAY frame directly?
-                return Poll::Ready(Err(Reason::PROTOCOL_ERROR.into()));
+                return Poll::Ready(Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into()));
             }
 
             self.pos += n;
@@ -1388,7 +1388,7 @@ impl proto::Peer for Peer {
         pseudo: Pseudo,
         fields: HeaderMap,
         stream_id: StreamId,
-    ) -> Result<Self::Poll, RecvError> {
+    ) -> Result<Self::Poll, Error> {
         use http::{uri, Version};
 
         let mut b = Request::builder();
@@ -1396,10 +1396,7 @@ impl proto::Peer for Peer {
         macro_rules! malformed {
             ($($arg:tt)*) => {{
                 tracing::debug!($($arg)*);
-                return Err(RecvError::Stream {
-                    id: stream_id,
-                    reason: Reason::PROTOCOL_ERROR,
-                });
+                return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }}
         }
 
@@ -1416,7 +1413,7 @@ impl proto::Peer for Peer {
         // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
             tracing::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
-            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+            return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
         }
 
         // Convert the URI
@@ -1483,10 +1480,7 @@ impl proto::Peer for Peer {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
                 proto_err!(stream: "error building request: {}; stream={:?}", e, stream_id);
-                return Err(RecvError::Stream {
-                    id: stream_id,
-                    reason: Reason::PROTOCOL_ERROR,
-                });
+                return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }
         };
 

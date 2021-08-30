@@ -1,7 +1,8 @@
 use crate::SendFrame;
 
 use h2::frame::{self, Frame};
-use h2::{self, RecvError, SendError};
+use h2::proto::Error;
+use h2::{self, SendError};
 
 use futures::future::poll_fn;
 use futures::{ready, Stream, StreamExt};
@@ -284,7 +285,7 @@ impl Handle {
 }
 
 impl Stream for Handle {
-    type Item = Result<Frame, RecvError>;
+    type Item = Result<Frame, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.codec).poll_next(cx)

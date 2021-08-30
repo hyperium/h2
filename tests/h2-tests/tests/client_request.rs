@@ -410,7 +410,11 @@ async fn send_reset_notifies_recv_stream() {
         };
         let rx = async {
             let mut body = res.into_body();
-            body.next().await.unwrap().expect_err("RecvBody");
+            let err = body.next().await.unwrap().expect_err("RecvBody");
+            assert_eq!(
+                err.to_string(),
+                "stream error sent by user: refused stream before processing any application logic"
+            );
         };
 
         // a FuturesUnordered is used on purpose!
@@ -672,7 +676,7 @@ async fn sending_request_on_closed_connection() {
         };
 
         let poll_err = poll_fn(|cx| client.poll_ready(cx)).await.unwrap_err();
-        let msg = "protocol error: unspecific protocol error detected";
+        let msg = "connection error detected: unspecific protocol error detected";
         assert_eq!(poll_err.to_string(), msg);
 
         let request = Request::builder()

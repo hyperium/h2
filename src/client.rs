@@ -135,9 +135,9 @@
 //! [`Builder`]: struct.Builder.html
 //! [`Error`]: ../struct.Error.html
 
-use crate::codec::{Codec, RecvError, SendError, UserError};
+use crate::codec::{Codec, SendError, UserError};
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
-use crate::proto;
+use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
@@ -1493,7 +1493,7 @@ impl proto::Peer for Peer {
         pseudo: Pseudo,
         fields: HeaderMap,
         stream_id: StreamId,
-    ) -> Result<Self::Poll, RecvError> {
+    ) -> Result<Self::Poll, Error> {
         let mut b = Response::builder();
 
         b = b.version(Version::HTTP_2);
@@ -1507,10 +1507,7 @@ impl proto::Peer for Peer {
             Err(_) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
-                return Err(RecvError::Stream {
-                    id: stream_id,
-                    reason: Reason::PROTOCOL_ERROR,
-                });
+                return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }
         };
 
