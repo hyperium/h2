@@ -8,7 +8,6 @@ use rand::{Rng, SeedableRng, StdRng};
 
 use std::io::Cursor;
 
-const MIN_CHUNK: usize = 16;
 const MAX_CHUNK: usize = 2 * 1024;
 
 #[test]
@@ -36,17 +35,8 @@ fn hpack_fuzz_seeded() {
 
 #[derive(Debug, Clone)]
 struct FuzzHpack {
-    // The magic seed that makes the test case reproducible
-    seed: [usize; 4],
-
     // The set of headers to encode / decode
     frames: Vec<HeaderFrame>,
-
-    // The list of chunk sizes to do it in
-    chunks: Vec<usize>,
-
-    // Number of times reduced
-    reduced: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -128,19 +118,7 @@ impl FuzzHpack {
             frames.push(frame);
         }
 
-        // Now, generate the buffer sizes used to encode
-        let mut chunks = vec![];
-
-        for _ in 0..rng.gen_range(0, 100) {
-            chunks.push(rng.gen_range(MIN_CHUNK, MAX_CHUNK));
-        }
-
-        FuzzHpack {
-            seed: seed,
-            frames: frames,
-            chunks: chunks,
-            reduced: 0,
-        }
+        FuzzHpack { frames }
     }
 
     fn run(self) {

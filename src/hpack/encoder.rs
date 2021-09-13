@@ -10,12 +10,6 @@ pub struct Encoder {
     size_update: Option<SizeUpdate>,
 }
 
-#[derive(Debug)]
-pub struct EncodeState {
-    index: Index,
-    value: Option<HeaderValue>,
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum SizeUpdate {
     One(usize),
