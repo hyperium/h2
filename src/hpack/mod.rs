@@ -8,5 +8,5 @@ mod table;
 mod test;
 
 pub use self::decoder::{Decoder, DecoderError, NeedMore};
-pub use self::encoder::{EncodeState, Encoder};
+pub use self::encoder::Encoder;
 pub use self::header::{BytesStr, Header};

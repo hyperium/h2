@@ -77,12 +77,6 @@ pub(crate) enum Open {
     Headers,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Indices {
-    head: store::Key,
-    tail: store::Key,
-}
-
 impl Recv {
     pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         let next_stream_id = if peer.is_server() { 1 } else { 2 };
