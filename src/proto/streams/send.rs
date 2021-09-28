@@ -2,8 +2,9 @@ use super::{
     store, Buffer, Codec, Config, Counts, Frame, Prioritize, Prioritized, Store, Stream, StreamId,
     StreamIdOverflow, WindowSize,
 };
-use crate::codec::{RecvError, UserError};
+use crate::codec::UserError;
 use crate::frame::{self, Reason};
+use crate::proto::{Error, Initiator};
 
 use bytes::Buf;
 use http;
@@ -161,6 +162,7 @@ impl Send {
     pub fn send_reset<B>(
         &mut self,
         reason: Reason,
+        initiator: Initiator,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
@@ -169,14 +171,16 @@ impl Send {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
+        let stream_id = stream.id;
 
         tracing::trace!(
-            "send_reset(..., reason={:?}, stream={:?}, ..., \
+            "send_reset(..., reason={:?}, initiator={:?}, stream={:?}, ..., \
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
              state={:?} \
              ",
             reason,
-            stream.id,
+            initiator,
+            stream_id,
             is_reset,
             is_closed,
             is_empty,
@@ -187,13 +191,13 @@ impl Send {
             // Don't double reset
             tracing::trace!(
                 " -> not sending RST_STREAM ({:?} is already reset)",
-                stream.id
+                stream_id
             );
             return;
         }
 
         // Transition the state to reset no matter what.
-        stream.state.set_reset(reason);
+        stream.state.set_reset(stream_id, reason, initiator);
 
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
@@ -201,7 +205,7 @@ impl Send {
             tracing::trace!(
                 " -> not sending explicit RST_STREAM ({:?} was closed \
                  and send queue was flushed)",
-                stream.id
+                stream_id
             );
             return;
         }
@@ -371,7 +375,14 @@ impl Send {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
             tracing::debug!("recv_stream_window_update !!; err={:?}", e);
 
-            self.send_reset(Reason::FLOW_CONTROL_ERROR, buffer, stream, counts, task);
+            self.send_reset(
+                Reason::FLOW_CONTROL_ERROR,
+                Initiator::Library,
+                buffer,
+                stream,
+                counts,
+                task,
+            );
 
             return Err(e);
         }
@@ -379,7 +390,7 @@ impl Send {
         Ok(())
     }
 
-    pub(super) fn recv_go_away(&mut self, last_stream_id: StreamId) -> Result<(), RecvError> {
+    pub(super) fn recv_go_away(&mut self, last_stream_id: StreamId) -> Result<(), Error> {
         if last_stream_id > self.max_stream_id {
             // The remote endpoint sent a `GOAWAY` frame indicating a stream
             // that we never sent, or that we have already terminated on account
@@ -392,14 +403,14 @@ impl Send {
                 "recv_go_away: last_stream_id ({:?}) > max_stream_id ({:?})",
                 last_stream_id, self.max_stream_id,
             );
-            return Err(RecvError::Connection(Reason::PROTOCOL_ERROR));
+            return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
         }
 
         self.max_stream_id = last_stream_id;
         Ok(())
     }
 
-    pub fn recv_err<B>(
+    pub fn handle_error<B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
@@ -417,7 +428,7 @@ impl Send {
         store: &mut Store,
         counts: &mut Counts,
         task: &mut Option<Waker>,
-    ) -> Result<(), RecvError> {
+    ) -> Result<(), Error> {
         // Applies an update to the remote endpoint's initial window size.
         //
         // Per RFC 7540 §6.9.2:
@@ -480,7 +491,7 @@ impl Send {
                     // of a stream is reduced? Maybe it should if the capacity
                     // is reduced to zero, allowing the producer to stop work.
 
-                    Ok::<_, RecvError>(())
+                    Ok::<_, Error>(())
                 })?;
 
                 self.prioritize
@@ -490,7 +501,7 @@ impl Send {
 
                 store.for_each(|mut stream| {
                     self.recv_stream_window_update(inc, buffer, &mut stream, counts, task)
-                        .map_err(RecvError::Connection)
+                        .map_err(Error::library_go_away)
                 })?;
             }
         }

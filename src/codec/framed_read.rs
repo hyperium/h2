@@ -1,8 +1,8 @@
-use crate::codec::RecvError;
 use crate::frame::{self, Frame, Kind, Reason};
 use crate::frame::{
     DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE, MAX_MAX_FRAME_SIZE,
 };
+use crate::proto::Error;
 
 use crate::hpack;
 
@@ -98,8 +98,7 @@ fn decode_frame(
     max_header_list_size: usize,
     partial_inout: &mut Option<Partial>,
     mut bytes: BytesMut,
-) -> Result<Option<Frame>, RecvError> {
-    use self::RecvError::*;
+) -> Result<Option<Frame>, Error> {
     let span = tracing::trace_span!("FramedRead::decode_frame", offset = bytes.len());
     let _e = span.enter();
 
@@ -110,7 +109,7 @@ fn decode_frame(
 
     if partial_inout.is_some() && head.kind() != Kind::Continuation {
         proto_err!(conn: "expected CONTINUATION, got {:?}", head.kind());
-        return Err(Connection(Reason::PROTOCOL_ERROR));
+        return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
     }
 
     let kind = head.kind();
@@ -131,14 +130,11 @@ fn decode_frame(
                     // A stream cannot depend on itself. An endpoint MUST
                     // treat this as a stream error (Section 5.4.2) of type
                     // `PROTOCOL_ERROR`.
-                    return Err(Stream {
-                        id: $head.stream_id(),
-                        reason: Reason::PROTOCOL_ERROR,
-                    });
+                    return Err(Error::library_reset($head.stream_id(), Reason::PROTOCOL_ERROR));
                 },
                 Err(e) => {
                     proto_err!(conn: "failed to load frame; err={:?}", e);
-                    return Err(Connection(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             };
 
@@ -151,14 +147,11 @@ fn decode_frame(
                 Err(frame::Error::MalformedMessage) => {
                     let id = $head.stream_id();
                     proto_err!(stream: "malformed header block; stream={:?}", id);
-                    return Err(Stream {
-                        id,
-                        reason: Reason::PROTOCOL_ERROR,
-                    });
+                    return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 },
                 Err(e) => {
                     proto_err!(conn: "failed HPACK decoding; err={:?}", e);
-                    return Err(Connection(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
 
@@ -183,7 +176,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -192,7 +185,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load PING frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -201,7 +194,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -212,7 +205,7 @@ fn decode_frame(
             // TODO: Should this always be connection level? Probably not...
             res.map_err(|e| {
                 proto_err!(conn: "failed to load DATA frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -221,7 +214,7 @@ fn decode_frame(
             let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load RESET frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -229,7 +222,7 @@ fn decode_frame(
             let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
-                Connection(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
@@ -238,7 +231,7 @@ fn decode_frame(
             if head.stream_id() == 0 {
                 // Invalid stream identifier
                 proto_err!(conn: "invalid stream ID 0");
-                return Err(Connection(Reason::PROTOCOL_ERROR));
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
             }
 
             match frame::Priority::load(head, &bytes[frame::HEADER_LEN..]) {
@@ -249,14 +242,11 @@ fn decode_frame(
                     // `PROTOCOL_ERROR`.
                     let id = head.stream_id();
                     proto_err!(stream: "PRIORITY invalid dependency ID; stream={:?}", id);
-                    return Err(Stream {
-                        id,
-                        reason: Reason::PROTOCOL_ERROR,
-                    });
+                    return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 }
                 Err(e) => {
                     proto_err!(conn: "failed to load PRIORITY frame; err={:?};", e);
-                    return Err(Connection(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
         }
@@ -267,14 +257,14 @@ fn decode_frame(
                 Some(partial) => partial,
                 None => {
                     proto_err!(conn: "received unexpected CONTINUATION frame");
-                    return Err(Connection(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
                 }
             };
 
             // The stream identifiers must match
             if partial.frame.stream_id() != head.stream_id() {
                 proto_err!(conn: "CONTINUATION frame stream ID does not match previous frame stream ID");
-                return Err(Connection(Reason::PROTOCOL_ERROR));
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
             }
 
             // Extend the buf
@@ -297,7 +287,7 @@ fn decode_frame(
                     // the attacker to go away.
                     if partial.buf.len() + bytes.len() > max_header_list_size {
                         proto_err!(conn: "CONTINUATION frame header block size over ignorable limit");
-                        return Err(Connection(Reason::COMPRESSION_ERROR));
+                        return Err(Error::library_go_away(Reason::COMPRESSION_ERROR).into());
                     }
                 }
                 partial.buf.extend_from_slice(&bytes[frame::HEADER_LEN..]);
@@ -312,14 +302,11 @@ fn decode_frame(
                 Err(frame::Error::MalformedMessage) => {
                     let id = head.stream_id();
                     proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
-                    return Err(Stream {
-                        id,
-                        reason: Reason::PROTOCOL_ERROR,
-                    });
+                    return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 }
                 Err(e) => {
                     proto_err!(conn: "failed HPACK decoding; err={:?}", e);
-                    return Err(Connection(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
 
@@ -343,7 +330,7 @@ impl<T> Stream for FramedRead<T>
 where
     T: AsyncRead + Unpin,
 {
-    type Item = Result<Frame, RecvError>;
+    type Item = Result<Frame, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let span = tracing::trace_span!("FramedRead::poll_next");
@@ -371,11 +358,11 @@ where
     }
 }
 
-fn map_err(err: io::Error) -> RecvError {
+fn map_err(err: io::Error) -> Error {
     if let io::ErrorKind::InvalidData = err.kind() {
         if let Some(custom) = err.get_ref() {
             if custom.is::<LengthDelimitedCodecError>() {
-                return RecvError::Connection(Reason::FRAME_SIZE_ERROR);
+                return Error::library_go_away(Reason::FRAME_SIZE_ERROR);
             }
         }
     }

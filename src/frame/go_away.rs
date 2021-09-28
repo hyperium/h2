@@ -29,8 +29,7 @@ impl GoAway {
         self.error_code
     }
 
-    #[cfg(feature = "unstable")]
-    pub fn debug_data(&self) -> &[u8] {
+    pub fn debug_data(&self) -> &Bytes {
         &self.debug_data
     }
 

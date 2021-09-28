@@ -236,7 +236,7 @@ async fn read_goaway_with_debug_data() {
     let data = poll_frame!(GoAway, codec);
     assert_eq!(data.reason(), Reason::ENHANCE_YOUR_CALM);
     assert_eq!(data.last_stream_id(), 1);
-    assert_eq!(data.debug_data(), b"too_many_pings");
+    assert_eq!(&**data.debug_data(), b"too_many_pings");
 
     assert_closed!(codec);
 }

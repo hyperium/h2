@@ -104,7 +104,13 @@ macro_rules! ready {
 mod codec;
 mod error;
 mod hpack;
+
+#[cfg(not(feature = "unstable"))]
 mod proto;
+
+#[cfg(feature = "unstable")]
+#[allow(missing_docs)]
+pub mod proto;
 
 #[cfg(not(feature = "unstable"))]
 mod frame;
@@ -125,7 +131,7 @@ pub use crate::error::{Error, Reason};
 pub use crate::share::{FlowControl, Ping, PingPong, Pong, RecvStream, SendStream, StreamId};
 
 #[cfg(feature = "unstable")]
-pub use codec::{Codec, RecvError, SendError, UserError};
+pub use codec::{Codec, SendError, UserError};
 
 use std::task::Poll;
 

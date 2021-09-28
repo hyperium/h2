@@ -164,7 +164,7 @@ async fn recv_push_when_push_disabled_is_conn_error() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: unspecific protocol error detected"
+                "connection error detected: unspecific protocol error detected"
             );
         };
 
@@ -174,7 +174,7 @@ async fn recv_push_when_push_disabled_is_conn_error() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: unspecific protocol error detected"
+                "connection error detected: unspecific protocol error detected"
             );
         };
 
@@ -380,8 +380,16 @@ async fn recv_push_promise_skipped_stream_id() {
             .unwrap();
 
         let req = async move {
-            let res = client.send_request(request, true).unwrap().0.await;
-            assert!(res.is_err());
+            let err = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: unspecific protocol error detected"
+            );
         };
 
         // client should see a protocol error
@@ -390,7 +398,7 @@ async fn recv_push_promise_skipped_stream_id() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: unspecific protocol error detected"
+                "connection error detected: unspecific protocol error detected"
             );
         };
 
@@ -435,7 +443,11 @@ async fn recv_push_promise_dup_stream_id() {
 
         let req = async move {
             let res = client.send_request(request, true).unwrap().0.await;
-            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: unspecific protocol error detected"
+            );
         };
 
         // client should see a protocol error
@@ -444,7 +456,7 @@ async fn recv_push_promise_dup_stream_id() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: unspecific protocol error detected"
+                "connection error detected: unspecific protocol error detected"
             );
         };
 
