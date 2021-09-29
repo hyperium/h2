@@ -1,3 +1,9 @@
+# 0.3.5 (September 29, 2021)
+
+* Fix sending of very large headers. Previously when a single header was too big to fit in a single `HEADERS` frame, an error was returned. Now it is broken up and sent correctly.
+* Fix buffered data field to be a bigger integer size.
+* Refactor error format to include what initiated the error (remote, local, or user), if it was a stream or connection-level error, and any received debug data.
+
 # 0.3.4 (August 20, 2021)
 
 * Fix panic when encoding header size update over a certain size.
