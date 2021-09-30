@@ -1093,3 +1093,35 @@ async fn serve_when_request_in_response_extensions() {
 
     join(client, srv).await;
 }
+
+#[tokio::test]
+async fn send_reset_explicitly() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::reset(1).reason(Reason::ENHANCE_YOUR_CALM))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        stream.send_reset(Reason::ENHANCE_YOUR_CALM);
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
