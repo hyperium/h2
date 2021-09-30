@@ -50,7 +50,9 @@ impl Error {
     /// action taken by the peer (i.e. a protocol error).
     pub fn reason(&self) -> Option<Reason> {
         match self.kind {
-            Kind::Reset(_, reason, _) | Kind::GoAway(_, reason, _) => Some(reason),
+            Kind::Reset(_, reason, _) | Kind::GoAway(_, reason, _) | Kind::Reason(reason) => {
+                Some(reason)
+            }
             _ => None,
         }
     }
@@ -167,3 +169,15 @@ impl fmt::Display for Error {
 }
 
 impl error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+    use crate::Reason;
+
+    #[test]
+    fn error_from_reason() {
+        let err = Error::from(Reason::HTTP_1_1_REQUIRED);
+        assert_eq!(err.reason(), Some(Reason::HTTP_1_1_REQUIRED));
+    }
+}
