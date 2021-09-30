@@ -1,3 +1,7 @@
+# 0.3.6 (September 30, 2021)
+
+* Fix regression of `h2::Error` that were created via `From<h2::Reason>` not returning their reason code in `Error::reason()`.
+
 # 0.3.5 (September 29, 2021)
 
 * Fix sending of very large headers. Previously when a single header was too big to fit in a single `HEADERS` frame, an error was returned. Now it is broken up and sent correctly.
