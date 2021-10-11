@@ -68,12 +68,6 @@ impl fmt::Display for Error {
     }
 }
 
-impl From<io::ErrorKind> for Error {
-    fn from(src: io::ErrorKind) -> Self {
-        Error::Io(src.into(), None)
-    }
-}
-
 impl From<io::Error> for Error {
     fn from(src: io::Error) -> Self {
         Error::Io(src.kind(), src.get_ref().map(|inner| inner.to_string()))
