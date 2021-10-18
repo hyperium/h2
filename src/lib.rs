@@ -120,6 +120,7 @@ mod frame;
 pub mod frame;
 
 pub mod client;
+pub mod ext;
 pub mod server;
 mod share;
 

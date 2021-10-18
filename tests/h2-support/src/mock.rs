@@ -221,22 +221,15 @@ impl Handle {
         let settings = settings.into();
         self.send(settings.into()).await.unwrap();
 
-        let frame = self.next().await;
-        let settings = match frame {
-            Some(frame) => match frame.unwrap() {
-                Frame::Settings(settings) => {
-                    // Send the ACK
-                    let ack = frame::Settings::ack();
+        let frame = self.next().await.expect("unexpected EOF").unwrap();
+        let settings = assert_settings!(frame);
 
-                    // TODO: Don't unwrap?
-                    self.send(ack.into()).await.unwrap();
+        // Send the ACK
+        let ack = frame::Settings::ack();
 
-                    settings
-                }
-                frame => panic!("unexpected frame; frame={:?}", frame),
-            },
-            None => panic!("unexpected EOF"),
-        };
+        // TODO: Don't unwrap?
+        self.send(ack.into()).await.unwrap();
+
         let frame = self.next().await;
         let f = assert_settings!(frame.unwrap().unwrap());
 

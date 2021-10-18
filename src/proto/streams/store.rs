@@ -4,6 +4,7 @@ use slab;
 
 use indexmap::{self, IndexMap};
 
+use std::convert::Infallible;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
@@ -128,7 +129,20 @@ impl Store {
         }
     }
 
-    pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Ptr),
+    {
+        match self.try_for_each(|ptr| {
+            f(ptr);
+            Ok::<_, Infallible>(())
+        }) {
+            Ok(()) => (),
+            Err(infallible) => match infallible {},
+        }
+    }
+
+    pub fn try_for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
     where
         F: FnMut(Ptr) -> Result<(), E>,
     {

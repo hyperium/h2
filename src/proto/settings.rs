@@ -117,6 +117,8 @@ impl Settings {
 
             tracing::trace!("ACK sent; applying settings");
 
+            streams.apply_remote_settings(settings)?;
+
             if let Some(val) = settings.header_table_size() {
                 dst.set_send_header_table_size(val as usize);
             }
@@ -124,8 +126,6 @@ impl Settings {
             if let Some(val) = settings.max_frame_size() {
                 dst.set_max_send_frame_size(val as usize);
             }
-
-            streams.apply_remote_settings(settings)?;
         }
 
         self.remote = None;

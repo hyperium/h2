@@ -751,6 +751,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
             "/index.html" => Some((5, true)),
             _ => Some((4, false)),
         },
+        Header::Protocol(..) => None,
         Header::Status(ref v) => match u16::from(*v) {
             200 => Some((8, true)),
             204 => Some((9, true)),

@@ -1,4 +1,5 @@
 use super::{util, StreamDependency, StreamId};
+use crate::ext::Protocol;
 use crate::frame::{Error, Frame, Head, Kind};
 use crate::hpack::{self, BytesStr};
 
@@ -66,6 +67,7 @@ pub struct Pseudo {
     pub scheme: Option<BytesStr>,
     pub authority: Option<BytesStr>,
     pub path: Option<BytesStr>,
+    pub protocol: Option<Protocol>,
 
     // Response
     pub status: Option<StatusCode>,
@@ -287,6 +289,10 @@ impl fmt::Debug for Headers {
         builder
             .field("stream_id", &self.stream_id)
             .field("flags", &self.flags);
+
+        if let Some(ref protocol) = self.header_block.pseudo.protocol {
+            builder.field("protocol", protocol);
+        }
 
         if let Some(ref dep) = self.stream_dep {
             builder.field("stream_dep", dep);
@@ -525,7 +531,7 @@ impl Continuation {
 // ===== impl Pseudo =====
 
 impl Pseudo {
-    pub fn request(method: Method, uri: Uri) -> Self {
+    pub fn request(method: Method, uri: Uri, protocol: Option<Protocol>) -> Self {
         let parts = uri::Parts::from(uri);
 
         let mut path = parts
@@ -546,6 +552,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path: Some(path).filter(|p| !p.is_empty()),
+            protocol,
             status: None,
         };
 
@@ -571,6 +578,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path: None,
+            protocol: None,
             status: Some(status),
         }
     }
@@ -587,6 +595,11 @@ impl Pseudo {
             s => BytesStr::from(s),
         };
         self.scheme = Some(bytes_str);
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn set_protocol(&mut self, protocol: Protocol) {
+        self.protocol = Some(protocol);
     }
 
     pub fn set_authority(&mut self, authority: BytesStr) {
@@ -675,6 +688,10 @@ impl Iterator for Iter {
 
             if let Some(path) = pseudo.path.take() {
                 return Some(Path(path));
+            }
+
+            if let Some(protocol) = pseudo.protocol.take() {
+                return Some(Protocol(protocol));
             }
 
             if let Some(status) = pseudo.status.take() {
@@ -875,6 +892,7 @@ impl HeaderBlock {
                 Method(v) => set_pseudo!(method, v),
                 Scheme(v) => set_pseudo!(scheme, v),
                 Path(v) => set_pseudo!(path, v),
+                Protocol(v) => set_pseudo!(protocol, v),
                 Status(v) => set_pseudo!(status, v),
             }
         });
