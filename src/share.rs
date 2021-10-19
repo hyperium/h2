@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 /// # Overview
 ///
 /// A `SendStream` is provided by [`SendRequest`] and [`SendResponse`] once the
-/// HTTP/2.0 message header has been sent sent. It is used to stream the message
+/// HTTP/2 message header has been sent sent. It is used to stream the message
 /// body and send the message trailers. See method level documentation for more
 /// details.
 ///
@@ -35,7 +35,7 @@ use std::task::{Context, Poll};
 ///
 /// # Flow control
 ///
-/// In HTTP/2.0, data cannot be sent to the remote peer unless there is
+/// In HTTP/2, data cannot be sent to the remote peer unless there is
 /// available window capacity on both the stream and the connection. When a data
 /// frame is sent, both the stream window and the connection window are
 /// decremented. When the stream level window reaches zero, no further data can
@@ -44,7 +44,7 @@ use std::task::{Context, Poll};
 ///
 /// When the remote peer is ready to receive more data, it sends `WINDOW_UPDATE`
 /// frames. These frames increment the windows. See the [specification] for more
-/// details on the principles of HTTP/2.0 flow control.
+/// details on the principles of HTTP/2 flow control.
 ///
 /// The implications for sending data are that the caller **should** ensure that
 /// both the stream and the connection has available window capacity before
@@ -115,7 +115,7 @@ pub struct StreamId(u32);
 /// Receives the body stream and trailers from the remote peer.
 ///
 /// A `RecvStream` is provided by [`client::ResponseFuture`] and
-/// [`server::Connection`] with the received HTTP/2.0 message head (the response
+/// [`server::Connection`] with the received HTTP/2 message head (the response
 /// and request head respectively).
 ///
 /// A `RecvStream` instance is used to receive the streaming message body and
@@ -168,7 +168,7 @@ pub struct RecvStream {
 ///
 /// # Scenarios
 ///
-/// Following is a basic scenario with an HTTP/2.0 connection containing a
+/// Following is a basic scenario with an HTTP/2 connection containing a
 /// single active stream.
 ///
 /// * A new stream is activated. The receive window is initialized to 1024 (the

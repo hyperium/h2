@@ -21,7 +21,7 @@ where
     P: Peer,
 {
     /// Holds most of the connection and stream related state for processing
-    /// HTTP/2.0 frames associated with streams.
+    /// HTTP/2 frames associated with streams.
     inner: Arc<Mutex<Inner>>,
 
     /// This is the queue of frames to be written to the wire. This is split out
