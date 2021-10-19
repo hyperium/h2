@@ -7,7 +7,7 @@ use std::{error, fmt, io};
 
 pub use crate::frame::Reason;
 
-/// Represents HTTP/2.0 operation errors.
+/// Represents HTTP/2 operation errors.
 ///
 /// `Error` covers error cases raised by protocol errors caused by the
 /// peer, I/O (transport) errors, and errors caused by the user of the library.

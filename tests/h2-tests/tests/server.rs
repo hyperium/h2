@@ -536,7 +536,7 @@ async fn recv_connection_header() {
         client
             .send_frame(req(7, "transfer-encoding", "chunked"))
             .await;
-        client.send_frame(req(9, "upgrade", "HTTP/2.0")).await;
+        client.send_frame(req(9, "upgrade", "HTTP/2")).await;
         client.recv_frame(frames::reset(1).protocol_error()).await;
         client.recv_frame(frames::reset(3).protocol_error()).await;
         client.recv_frame(frames::reset(5).protocol_error()).await;

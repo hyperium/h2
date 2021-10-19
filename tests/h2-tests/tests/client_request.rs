@@ -521,7 +521,7 @@ async fn request_with_connection_headers() {
         ("keep-alive", "5"),
         ("proxy-connection", "bar"),
         ("transfer-encoding", "chunked"),
-        ("upgrade", "HTTP/2.0"),
+        ("upgrade", "HTTP/2"),
         ("te", "boom"),
     ];
 
