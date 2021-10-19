@@ -1410,10 +1410,8 @@ impl proto::Peer for Peer {
             malformed!("malformed headers: missing method");
         }
 
-        // Specifying :status for a request is a protocol error
         if pseudo.status.is_some() {
-            tracing::trace!("malformed headers: :status field on request; PROTOCOL_ERROR");
-            return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+            malformed!("malformed headers: :status field on request");
         }
 
         // Convert the URI

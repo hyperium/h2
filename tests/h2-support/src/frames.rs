@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use bytes::Bytes;
-use http::{self, HeaderMap};
+use http::{self, HeaderMap, StatusCode};
 
 use h2::frame::{self, Frame, StreamId};
 
@@ -160,6 +160,14 @@ impl Mock<frame::Headers> {
         fields.insert(key.try_into().unwrap(), value.try_into().unwrap());
         let frame = frame::Headers::new(id, pseudo, fields);
         Mock(frame)
+    }
+
+    pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
     }
 
     pub fn scheme(self, value: &str) -> Self {

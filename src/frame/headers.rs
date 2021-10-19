@@ -575,6 +575,11 @@ impl Pseudo {
         }
     }
 
+    #[cfg(feature = "unstable")]
+    pub fn set_status(&mut self, value: StatusCode) {
+        self.status = Some(value);
+    }
+
     pub fn set_scheme(&mut self, scheme: uri::Scheme) {
         let bytes_str = match scheme.as_str() {
             "http" => BytesStr::from_static("http"),

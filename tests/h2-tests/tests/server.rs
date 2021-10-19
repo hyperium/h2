@@ -1026,6 +1026,30 @@ async fn server_error_on_unclean_shutdown() {
 }
 
 #[tokio::test]
+async fn server_error_on_status_in_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(frames::headers(1).status(StatusCode::OK))
+            .await;
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn request_without_authority() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
