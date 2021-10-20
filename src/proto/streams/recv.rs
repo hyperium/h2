@@ -481,15 +481,15 @@ impl Recv {
             let dec = old_sz - target;
             tracing::trace!("decrementing all windows; dec={}", dec);
 
-            store.for_each(|mut stream| {
+            store.for_each::<_, proto::Error>(|mut stream| {
                 stream.recv_flow.dec_recv_window(dec);
                 Ok(())
-            })
+            })?;
         } else if target > old_sz {
             // We must increase the (local) window on every open stream.
             let inc = target - old_sz;
             tracing::trace!("incrementing all windows; inc={}", inc);
-            store.for_each(|mut stream| {
+            store.for_each::<_, proto::Error>(|mut stream| {
                 // XXX: Shouldn't the peer have already noticed our
                 // overflow and sent us a GOAWAY?
                 stream
@@ -498,11 +498,14 @@ impl Recv {
                     .map_err(proto::Error::library_go_away)?;
                 stream.recv_flow.assign_capacity(inc);
                 Ok(())
-            })
-        } else {
-            // size is the same... so do nothing
-            Ok(())
+            })?;
         }
+
+        if let Some(val) = settings.is_push_enabled() {
+            self.is_push_enabled = val;
+        }
+
+        Ok(())
     }
 
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
