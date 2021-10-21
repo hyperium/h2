@@ -865,6 +865,24 @@ impl Inner {
         let key = match self.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
+                // Resetting a stream we don't know about? That could be OK...
+                //
+                // 1. As a server, we just received a request, but that request
+                //    was bad, so we're resetting before even accepting it.
+                //    This is totally fine.
+                //
+                // 2. The remote may have sent us a frame on new stream that
+                //    it's *not* supposed to have done, and thus, we don't know
+                //    the stream. In that case, sending a reset will "open" the
+                //    stream in our store. Maybe that should be a connection
+                //    error instead? At least for now, we need to update what
+                //    our vision of the next stream is.
+                if self.counts.peer().is_local_init(id) {
+                    // We normally would open this stream, so update our
+                    // next-send-id record.
+                    self.actions.send.maybe_reset_next_stream_id(id);
+                }
+
                 let stream = Stream::new(id, 0, 0);
 
                 e.insert(stream)
