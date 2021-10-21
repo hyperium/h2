@@ -1022,3 +1022,60 @@ async fn srv_window_update_on_lower_stream_id() {
     };
     join(srv, client).await;
 }
+
+// See https://github.com/hyperium/h2/issues/570
+#[tokio::test]
+async fn reset_new_stream_before_send() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        // Send unexpected headers, that depends on itself, causing a framing error.
+        srv.send_bytes(&[
+            0, 0, 0x6,  // len
+            0x1,  // type (headers)
+            0x25, // flags (eos, eoh, pri)
+            0, 0, 0, 0x3, // stream id
+            0, 0, 0, 0x3,  // dependency
+            2,    // weight
+            0x88, // HPACK :status=200
+        ])
+        .await;
+        srv.recv_frame(frames::reset(3).protocol_error()).await;
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+        let resp = conn
+            .drive(client.get("https://example.com/"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // req number 2
+        let resp = conn
+            .drive(client.get("https://example.com/"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        conn.await.expect("client");
+    };
+
+    join(srv, client).await;
+}
