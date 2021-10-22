@@ -1,3 +1,8 @@
+# 0.3.7 (October 22, 2021)
+
+* Fix panic if server sends a malformed frame on a stream client was about to open.
+* Fix server to treat `:status` in a request as a stream error instead of connection error.
+
 # 0.3.6 (September 30, 2021)
 
 * Fix regression of `h2::Error` that were created via `From<h2::Reason>` not returning their reason code in `Error::reason()`.
