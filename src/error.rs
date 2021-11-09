@@ -27,7 +27,7 @@ enum Kind {
     /// A RST_STREAM frame was received or sent.
     Reset(StreamId, Reason, Initiator),
 
-    /// A GO_AWAY frame was received or sent.
+    /// A GOAWAY frame was received or sent.
     GoAway(Bytes, Reason, Initiator),
 
     /// The user created an error from a bare Reason.
@@ -84,6 +84,22 @@ impl Error {
     pub(crate) fn from_io(err: io::Error) -> Self {
         Error {
             kind: Kind::Io(err),
+        }
+    }
+
+    /// Returns the true if the error is from a GOAWAY frame
+    pub fn is_go_away(&self) -> bool {
+        match self.kind {
+            Kind::GoAway(..) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the true if the error is from a RST_STREAM frame
+    pub fn is_reset(&self) -> bool {
+        match self.kind {
+            Kind::Reset(..) => true,
+            _ => false,
         }
     }
 }
