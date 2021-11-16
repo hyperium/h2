@@ -210,7 +210,7 @@ async fn update_max_frame_len_at_rest() {
     assert_eq!(codec.max_recv_frame_size(), 16_384);
     assert_eq!(
         codec.next().await.unwrap().unwrap_err().to_string(),
-        "frame with invalid size"
+        "frame size incorrect"
     );
 
     // drain codec buffer
