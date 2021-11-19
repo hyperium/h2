@@ -127,6 +127,15 @@ where
             .set_target_connection_window(size, &mut me.actions.task)
     }
 
+    pub fn set_max_send_buffer_size(&mut self, max: usize) {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        me.actions
+            .send
+            .set_max_send_buffer_size(max, &mut me.store, &mut me.counts);
+    }
+
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;

@@ -118,6 +118,10 @@ impl Send {
         Ok(())
     }
 
+    pub fn set_max_send_buffer_size(&mut self, max: usize, store: &mut Store, counts: &mut Counts) {
+        self.prioritize.set_max_send_buffer_size(max, store, counts);
+    }
+
     pub fn send_headers<B>(
         &mut self,
         frame: frame::Headers,

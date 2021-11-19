@@ -245,6 +245,9 @@ pub struct Builder {
 
     /// Initial target window size for new connections.
     initial_target_connection_window_size: Option<u32>,
+
+    /// Max send buffer size.
+    max_send_buffer_size: Option<usize>,
 }
 
 /// Send a response back to the client
@@ -451,6 +454,11 @@ where
         self.connection.set_target_window_size(size);
     }
 
+    /// Sets the max send buffer size for the whole connection.
+    pub fn set_max_send_buffer_size(&mut self, max: usize) {
+        self.connection.set_max_send_buffer_size(max);
+    }
+
     /// Set a new `INITIAL_WINDOW_SIZE` setting (in octets) for stream-level
     /// flow control for received data.
     ///
@@ -620,6 +628,7 @@ impl Builder {
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Settings::default(),
             initial_target_connection_window_size: None,
+            max_send_buffer_size: None,
         }
     }
 
@@ -760,6 +769,35 @@ impl Builder {
     /// ```
     pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_header_list_size(Some(max));
+        self
+    }
+
+    /// Sets the max size of the send buffer.
+    ///
+    /// This setting is also used to limit the maximum amount of data
+    /// buffered to be sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .max_send_buffer_size(16 * 1024)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        self.max_send_buffer_size = Some(max);
         self
     }
 
@@ -1279,6 +1317,9 @@ where
             let mut c = Connection { connection };
             if let Some(sz) = self.builder.initial_target_connection_window_size {
                 c.set_target_window_size(sz);
+            }
+            if let Some(sz) = self.builder.max_send_buffer_size {
+                c.set_max_send_buffer_size(sz);
             }
             Ok(c)
         })

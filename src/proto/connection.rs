@@ -140,6 +140,10 @@ where
         self.inner.streams.set_target_connection_window_size(size);
     }
 
+    pub(crate) fn set_max_send_buffer_size(&mut self, max: usize) {
+        self.inner.streams.set_max_send_buffer_size(max);
+    }
+
     /// Send a new SETTINGS frame with an updated initial window size.
     pub(crate) fn set_initial_window_size(&mut self, size: WindowSize) -> Result<(), UserError> {
         let mut settings = frame::Settings::default();
