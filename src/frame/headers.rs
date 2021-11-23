@@ -146,6 +146,10 @@ impl Headers {
 
         tracing::trace!("loading headers; flags={:?}", flags);
 
+        if head.stream_id().is_zero() {
+            return Err(Error::InvalidStreamId);
+        }
+
         // Read the padding length
         if flags.is_padded() {
             if src.is_empty() {
