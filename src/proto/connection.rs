@@ -110,6 +110,10 @@ where
                 initial_max_send_streams: config.initial_max_send_streams,
                 local_next_stream_id: config.next_stream_id,
                 local_push_enabled: config.settings.is_push_enabled().unwrap_or(true),
+                extended_connect_protocol_enabled: config
+                    .settings
+                    .is_extended_connect_protocol_enabled()
+                    .unwrap_or(false),
                 local_reset_duration: config.reset_stream_duration,
                 local_reset_max: config.reset_stream_max,
                 remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
@@ -144,6 +148,13 @@ where
     pub(crate) fn set_initial_window_size(&mut self, size: WindowSize) -> Result<(), UserError> {
         let mut settings = frame::Settings::default();
         settings.set_initial_window_size(Some(size));
+        self.inner.settings.send_settings(settings)
+    }
+
+    /// Send a new SETTINGS frame with extended CONNECT protocol enabled.
+    pub(crate) fn set_enable_connect_protocol(&mut self) -> Result<(), UserError> {
+        let mut settings = frame::Settings::default();
+        settings.set_enable_connect_protocol(Some(1));
         self.inner.settings.send_settings(settings)
     }
 

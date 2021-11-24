@@ -35,6 +35,9 @@ pub(super) struct Send {
     prioritize: Prioritize,
 
     is_push_enabled: bool,
+
+    /// If extended connect protocol is enabled.
+    is_extended_connect_protocol_enabled: bool,
 }
 
 /// A value to detect which public API has called `poll_reset`.
@@ -53,6 +56,7 @@ impl Send {
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
             is_push_enabled: true,
+            is_extended_connect_protocol_enabled: false,
         }
     }
 
@@ -429,6 +433,10 @@ impl Send {
         counts: &mut Counts,
         task: &mut Option<Waker>,
     ) -> Result<(), Error> {
+        if let Some(val) = settings.is_extended_connect_protocol_enabled() {
+            self.is_extended_connect_protocol_enabled = val;
+        }
+
         // Applies an update to the remote endpoint's initial window size.
         //
         // Per RFC 7540 §6.9.2:
@@ -490,16 +498,14 @@ impl Send {
                     // TODO: Should this notify the producer when the capacity
                     // of a stream is reduced? Maybe it should if the capacity
                     // is reduced to zero, allowing the producer to stop work.
-
-                    Ok::<_, Error>(())
-                })?;
+                });
 
                 self.prioritize
                     .assign_connection_capacity(total_reclaimed, store, counts);
             } else if val > old_val {
                 let inc = val - old_val;
 
-                store.for_each(|mut stream| {
+                store.try_for_each(|mut stream| {
                     self.recv_stream_window_update(inc, buffer, &mut stream, counts, task)
                         .map_err(Error::library_go_away)
                 })?;
@@ -553,5 +559,9 @@ impl Send {
                 self.next_stream_id = id.next_id();
             }
         }
+    }
+
+    pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.is_extended_connect_protocol_enabled
     }
 }

@@ -47,6 +47,9 @@ pub struct Config {
     /// If the local peer is willing to receive push promises
     pub local_push_enabled: bool,
 
+    /// If extended connect protocol is enabled.
+    pub extended_connect_protocol_enabled: bool,
+
     /// How long a locally reset stream should ignore frames
     pub local_reset_duration: Duration,
 

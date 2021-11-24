@@ -136,6 +136,7 @@
 //! [`Error`]: ../struct.Error.html
 
 use crate::codec::{Codec, SendError, UserError};
+use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
@@ -516,6 +517,19 @@ where
 
                 (response, stream)
             })
+    }
+
+    /// Returns whether the [extended CONNECT protocol][1] is enabled or not.
+    ///
+    /// This setting is configured by the server peer by sending the
+    /// [`SETTINGS_ENABLE_CONNECT_PROTOCOL` parameter][2] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value recieved from the
+    /// remote.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    /// [2]: https://datatracker.ietf.org/doc/html/rfc8441#section-3
+    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.inner.is_extended_connect_protocol_enabled()
     }
 }
 
@@ -1246,11 +1260,10 @@ where
     /// This method returns the currently acknowledged value recieved from the
     /// remote.
     ///
-    /// [settings]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
     pub fn max_concurrent_send_streams(&self) -> usize {
         self.inner.max_send_streams()
     }
-
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by the server on this connection.
     ///
@@ -1416,6 +1429,7 @@ impl Peer {
     pub fn convert_send_message(
         id: StreamId,
         request: Request<()>,
+        protocol: Option<Protocol>,
         end_of_stream: bool,
     ) -> Result<Headers, SendError> {
         use http::request::Parts;
@@ -1435,7 +1449,7 @@ impl Peer {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let mut pseudo = Pseudo::request(method, uri);
+        let mut pseudo = Pseudo::request(method, uri, protocol);
 
         if pseudo.scheme.is_none() {
             // If the scheme is not set, then there are a two options.

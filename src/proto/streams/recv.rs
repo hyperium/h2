@@ -56,6 +56,9 @@ pub(super) struct Recv {
 
     /// If push promises are allowed to be received.
     is_push_enabled: bool,
+
+    /// If extended connect protocol is enabled.
+    is_extended_connect_protocol_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -103,6 +106,7 @@ impl Recv {
             buffer: Buffer::new(),
             refused: None,
             is_push_enabled: config.local_push_enabled,
+            is_extended_connect_protocol_enabled: config.extended_connect_protocol_enabled,
         }
     }
 
@@ -216,6 +220,14 @@ impl Recv {
 
         let stream_id = frame.stream_id();
         let (pseudo, fields) = frame.into_parts();
+
+        if pseudo.protocol.is_some() {
+            if counts.peer().is_server() && !self.is_extended_connect_protocol_enabled {
+                proto_err!(stream: "cannot use :protocol if extended connect protocol is disabled; stream={:?}", stream.id);
+                return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+            }
+        }
+
         if !pseudo.is_informational() {
             let message = counts
                 .peer()
@@ -449,60 +461,58 @@ impl Recv {
         settings: &frame::Settings,
         store: &mut Store,
     ) -> Result<(), proto::Error> {
-        let target = if let Some(val) = settings.initial_window_size() {
-            val
-        } else {
-            return Ok(());
-        };
-
-        let old_sz = self.init_window_sz;
-        self.init_window_sz = target;
-
-        tracing::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
-
-        // Per RFC 7540 §6.9.2:
-        //
-        // In addition to changing the flow-control window for streams that are
-        // not yet active, a SETTINGS frame can alter the initial flow-control
-        // window size for streams with active flow-control windows (that is,
-        // streams in the "open" or "half-closed (remote)" state). When the
-        // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
-        // the size of all stream flow-control windows that it maintains by the
-        // difference between the new value and the old value.
-        //
-        // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
-        // space in a flow-control window to become negative. A sender MUST
-        // track the negative flow-control window and MUST NOT send new
-        // flow-controlled frames until it receives WINDOW_UPDATE frames that
-        // cause the flow-control window to become positive.
-
-        if target < old_sz {
-            // We must decrease the (local) window on every open stream.
-            let dec = old_sz - target;
-            tracing::trace!("decrementing all windows; dec={}", dec);
-
-            store.for_each(|mut stream| {
-                stream.recv_flow.dec_recv_window(dec);
-                Ok(())
-            })
-        } else if target > old_sz {
-            // We must increase the (local) window on every open stream.
-            let inc = target - old_sz;
-            tracing::trace!("incrementing all windows; inc={}", inc);
-            store.for_each(|mut stream| {
-                // XXX: Shouldn't the peer have already noticed our
-                // overflow and sent us a GOAWAY?
-                stream
-                    .recv_flow
-                    .inc_window(inc)
-                    .map_err(proto::Error::library_go_away)?;
-                stream.recv_flow.assign_capacity(inc);
-                Ok(())
-            })
-        } else {
-            // size is the same... so do nothing
-            Ok(())
+        if let Some(val) = settings.is_extended_connect_protocol_enabled() {
+            self.is_extended_connect_protocol_enabled = val;
         }
+
+        if let Some(target) = settings.initial_window_size() {
+            let old_sz = self.init_window_sz;
+            self.init_window_sz = target;
+
+            tracing::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
+
+            // Per RFC 7540 §6.9.2:
+            //
+            // In addition to changing the flow-control window for streams that are
+            // not yet active, a SETTINGS frame can alter the initial flow-control
+            // window size for streams with active flow-control windows (that is,
+            // streams in the "open" or "half-closed (remote)" state). When the
+            // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
+            // the size of all stream flow-control windows that it maintains by the
+            // difference between the new value and the old value.
+            //
+            // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
+            // space in a flow-control window to become negative. A sender MUST
+            // track the negative flow-control window and MUST NOT send new
+            // flow-controlled frames until it receives WINDOW_UPDATE frames that
+            // cause the flow-control window to become positive.
+
+            if target < old_sz {
+                // We must decrease the (local) window on every open stream.
+                let dec = old_sz - target;
+                tracing::trace!("decrementing all windows; dec={}", dec);
+
+                store.for_each(|mut stream| {
+                    stream.recv_flow.dec_recv_window(dec);
+                })
+            } else if target > old_sz {
+                // We must increase the (local) window on every open stream.
+                let inc = target - old_sz;
+                tracing::trace!("incrementing all windows; inc={}", inc);
+                store.try_for_each(|mut stream| {
+                    // XXX: Shouldn't the peer have already noticed our
+                    // overflow and sent us a GOAWAY?
+                    stream
+                        .recv_flow
+                        .inc_window(inc)
+                        .map_err(proto::Error::library_go_away)?;
+                    stream.recv_flow.assign_capacity(inc);
+                    Ok::<_, proto::Error>(())
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {

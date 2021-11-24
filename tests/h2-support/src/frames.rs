@@ -4,7 +4,10 @@ use std::fmt;
 use bytes::Bytes;
 use http::{self, HeaderMap, StatusCode};
 
-use h2::frame::{self, Frame, StreamId};
+use h2::{
+    ext::Protocol,
+    frame::{self, Frame, StreamId},
+};
 
 pub const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 pub const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
@@ -109,7 +112,9 @@ impl Mock<frame::Headers> {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
         let (id, _, fields) = self.into_parts();
-        let frame = frame::Headers::new(id, frame::Pseudo::request(method, uri), fields);
+        let extensions = Default::default();
+        let pseudo = frame::Pseudo::request(method, uri, extensions);
+        let frame = frame::Headers::new(id, pseudo, fields);
         Mock(frame)
     }
 
@@ -179,6 +184,15 @@ impl Mock<frame::Headers> {
         Mock(frame::Headers::new(id, pseudo, fields))
     }
 
+    pub fn protocol(self, value: &str) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+        let value = Protocol::from(value);
+
+        pseudo.set_protocol(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+
     pub fn eos(mut self) -> Self {
         self.0.set_end_stream();
         self
@@ -230,8 +244,9 @@ impl Mock<frame::PushPromise> {
         let method = method.try_into().unwrap();
         let uri = uri.try_into().unwrap();
         let (id, promised, _, fields) = self.into_parts();
-        let frame =
-            frame::PushPromise::new(id, promised, frame::Pseudo::request(method, uri), fields);
+        let extensions = Default::default();
+        let pseudo = frame::Pseudo::request(method, uri, extensions);
+        let frame = frame::PushPromise::new(id, promised, pseudo, fields);
         Mock(frame)
     }
 
@@ -350,6 +365,11 @@ impl Mock<frame::Settings> {
 
     pub fn disable_push(mut self) -> Self {
         self.0.set_enable_push(false);
+        self
+    }
+
+    pub fn enable_connect_protocol(mut self, val: u32) -> Self {
+        self.0.set_enable_connect_protocol(Some(val));
         self
     }
 }

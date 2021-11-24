@@ -470,6 +470,19 @@ where
         Ok(())
     }
 
+    /// Enables the [extended CONNECT protocol].
+    ///
+    /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a previous call is still pending acknowledgement
+    /// from the remote endpoint.
+    pub fn enable_connect_protocol(&mut self) -> Result<(), crate::Error> {
+        self.connection.set_enable_connect_protocol()?;
+        Ok(())
+    }
+
     /// Returns `Ready` when the underlying connection has closed.
     ///
     /// If any new inbound streams are received during a call to `poll_closed`,
@@ -901,6 +914,14 @@ impl Builder {
     /// ```
     pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
         self.reset_stream_duration = dur;
+        self
+    }
+
+    /// Enables the [extended CONNECT protocol].
+    ///
+    /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    pub fn enable_connect_protocol(&mut self) -> &mut Self {
+        self.settings.set_enable_connect_protocol(Some(1));
         self
     }
 
@@ -1360,7 +1381,7 @@ impl Peer {
             _,
         ) = request.into_parts();
 
-        let pseudo = Pseudo::request(method, uri);
+        let pseudo = Pseudo::request(method, uri, None);
 
         Ok(frame::PushPromise::new(
             stream_id,
@@ -1410,6 +1431,11 @@ impl proto::Peer for Peer {
             malformed!("malformed headers: missing method");
         }
 
+        let has_protocol = pseudo.protocol.is_some();
+        if !is_connect && has_protocol {
+            malformed!("malformed headers: :protocol on non-CONNECT request");
+        }
+
         if pseudo.status.is_some() {
             malformed!("malformed headers: :status field on request");
         }
@@ -1432,7 +1458,7 @@ impl proto::Peer for Peer {
 
         // A :scheme is required, except CONNECT.
         if let Some(scheme) = pseudo.scheme {
-            if is_connect {
+            if is_connect && !has_protocol {
                 malformed!(":scheme in CONNECT");
             }
             let maybe_scheme = scheme.parse();
@@ -1450,12 +1476,12 @@ impl proto::Peer for Peer {
             if parts.authority.is_some() {
                 parts.scheme = Some(scheme);
             }
-        } else if !is_connect {
+        } else if !is_connect || has_protocol {
             malformed!("malformed headers: missing scheme");
         }
 
         if let Some(path) = pseudo.path {
-            if is_connect {
+            if is_connect && !has_protocol {
                 malformed!(":path in CONNECT");
             }
 
@@ -1468,6 +1494,8 @@ impl proto::Peer for Peer {
             parts.path_and_query = Some(maybe_path.or_else(|why| {
                 malformed!("malformed headers: malformed path ({:?}): {}", path, why,)
             })?);
+        } else if is_connect && has_protocol {
+            malformed!("malformed headers: missing path in extended CONNECT");
         }
 
         b = b.uri(parts);

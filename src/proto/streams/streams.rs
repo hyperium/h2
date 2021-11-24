@@ -2,6 +2,7 @@ use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use crate::codec::{Codec, SendError, UserError};
+use crate::ext::Protocol;
 use crate::frame::{self, Frame, Reason};
 use crate::proto::{peer, Error, Initiator, Open, Peer, WindowSize};
 use crate::{client, proto, server};
@@ -214,6 +215,8 @@ where
         use super::stream::ContentLength;
         use http::Method;
 
+        let protocol = request.extensions_mut().remove::<Protocol>();
+
         // Clear before taking lock, incase extensions contain a StreamRef.
         request.extensions_mut().clear();
 
@@ -261,7 +264,8 @@ where
         }
 
         // Convert the message
-        let headers = client::Peer::convert_send_message(stream_id, request, end_of_stream)?;
+        let headers =
+            client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
 
         let mut stream = me.store.insert(stream.id, stream);
 
@@ -293,6 +297,15 @@ where
             opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
             send_buffer: self.send_buffer.clone(),
         })
+    }
+
+    pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .actions
+            .send
+            .is_extended_connect_protocol_enabled()
     }
 }
 
@@ -643,15 +656,12 @@ impl Inner {
 
         let last_processed_id = actions.recv.last_processed_id();
 
-        self.store
-            .for_each(|stream| {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.handle_error(&err, &mut *stream);
-                    actions.send.handle_error(send_buffer, stream, counts);
-                    Ok::<_, ()>(())
-                })
+        self.store.for_each(|stream| {
+            counts.transition(stream, |counts, stream| {
+                actions.recv.handle_error(&err, &mut *stream);
+                actions.send.handle_error(send_buffer, stream, counts);
             })
-            .unwrap();
+        });
 
         actions.conn_error = Some(err);
 
@@ -674,19 +684,14 @@ impl Inner {
 
         let err = Error::remote_go_away(frame.debug_data().clone(), frame.reason());
 
-        self.store
-            .for_each(|stream| {
-                if stream.id > last_stream_id {
-                    counts.transition(stream, |counts, stream| {
-                        actions.recv.handle_error(&err, &mut *stream);
-                        actions.send.handle_error(send_buffer, stream, counts);
-                        Ok::<_, ()>(())
-                    })
-                } else {
-                    Ok::<_, ()>(())
-                }
-            })
-            .unwrap();
+        self.store.for_each(|stream| {
+            if stream.id > last_stream_id {
+                counts.transition(stream, |counts, stream| {
+                    actions.recv.handle_error(&err, &mut *stream);
+                    actions.send.handle_error(send_buffer, stream, counts);
+                })
+            }
+        });
 
         actions.conn_error = Some(err);
 
@@ -807,18 +812,15 @@ impl Inner {
 
         tracing::trace!("Streams::recv_eof");
 
-        self.store
-            .for_each(|stream| {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.recv_eof(stream);
+        self.store.for_each(|stream| {
+            counts.transition(stream, |counts, stream| {
+                actions.recv.recv_eof(stream);
 
-                    // This handles resetting send state associated with the
-                    // stream
-                    actions.send.handle_error(send_buffer, stream, counts);
-                    Ok::<_, ()>(())
-                })
+                // This handles resetting send state associated with the
+                // stream
+                actions.send.handle_error(send_buffer, stream, counts);
             })
-            .expect("recv_eof");
+        });
 
         actions.clear_queues(clear_pending_accept, &mut self.store, counts);
         Ok(())
