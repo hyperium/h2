@@ -1581,11 +1581,24 @@ async fn notify_on_send_buffer_available() {
                 .eos()
         )
         .await;
+        client.send_frame(
+            frames::headers(3)
+                .request("GET", "https://www.example.com/")
+                .eos()
+        )
+        .await;
         client.recv_frame(frames::headers(1).response(200)).await;
-        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
-        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
-        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
-        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        client.recv_frame(frames::headers(3).response(200)).await;
+        dbg!(11);
+        client.recv_frame(frames::data(1, &b"abcde"[..]).eos()).await;
+        dbg!(31);
+        client.recv_frame(frames::data(3, &b"abcde"[..])).await;
+        dbg!(32);
+        client.recv_frame(frames::data(3, &b"abcde"[..])).await;
+        dbg!(33);
+        client.recv_frame(frames::data(3, &b"abcde"[..])).await;
+        dbg!(34);
+        client.recv_frame(frames::data(3, &b""[..]).eos()).await;
     };
 
     let srv = async move {
@@ -1595,22 +1608,38 @@ async fn notify_on_send_buffer_available() {
             .await
             .expect("handshake");
 
-        let (_req, mut reply) = srv.next().await.unwrap().unwrap();
-        tokio::spawn(async move {
-            let rsp = http::Response::new(());
-            let mut stream = reply.send_response(rsp, false).unwrap();
+        let (_req, mut reply1) = srv.next().await.unwrap().unwrap();
+        let (_req, mut reply2) = srv.next().await.unwrap().unwrap();
 
-            for _ in 0..3 {
-                stream.reserve_capacity(5);
-                stream = util::wait_for_capacity(stream, 5).await;
-                stream.send_data("abcde".into(), false).unwrap();
+        let mut stream1 = reply1.send_response(http::Response::new(()), false).unwrap();
+        let mut stream2 = reply2.send_response(http::Response::new(()), false).unwrap();
+        drop((reply1, reply2));
+
+        let t0 = tokio::spawn(async move {
+            assert!(srv.next().await.is_none(), "unexpected request");
+        });
+        let t1 = tokio::spawn(async move {
+            eprintln!("[t1] RESERVE 1 cap");
+            stream1.reserve_capacity(1);
+            stream1 = util::wait_for_capacity(stream1, 1).await;
+            eprintln!("[t1] got 1 cap");
+            stream1.send_data("abcde".into(), true).unwrap();
+        });
+        let t2 = tokio::spawn(async move {
+            for n in 0..3 {
+                eprintln!("[t2] RESERVE 1 cap, loop {}", n);
+                stream2.reserve_capacity(1);
+                stream2 = util::wait_for_capacity(stream2, 1).await;
+                eprintln!("[t2] got 1 cap, loop {}", n);
+                stream2.send_data("abcde".into(), false).unwrap();
             }
 
-            stream.send_data("".into(), true).unwrap();
-        }).await.expect("srv body spawn");
+            stream2.send_data("".into(), true).unwrap();
+        });
 
-        // keep connection open till client is done
-        let _ = srv.next().await;
+        t2.await.expect("srv body spawn");
+        t1.await.expect("srv body spawn");
+        t0.await.expect("srv end");
     };
 
     join(srv, client).await;
