@@ -1419,7 +1419,7 @@ impl proto::Peer for Peer {
 
         // A request translated from HTTP/1 must not include the :authority
         // header
-        if let Some(authority) = pseudo.authority {
+        if let Some(authority) = pseudo.authority.filter(|_| false) {
             let maybe_authority = uri::Authority::from_maybe_shared(authority.clone().into_inner());
             parts.authority = Some(maybe_authority.or_else(|why| {
                 malformed!(
