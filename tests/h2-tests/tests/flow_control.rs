@@ -1561,3 +1561,57 @@ async fn data_padding() {
 
     join(srv, h2).await;
 }
+
+
+#[tokio::test]
+async fn notify_on_send_buffer_available() {
+    // This test ensures that the stream gets notified when there is additional
+    // send buffer space.
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client.send_frame(
+            frames::headers(1)
+                .request("GET", "https://www.example.com/")
+                .eos()
+        )
+        .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        client.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let (_req, mut reply) = srv.next().await.unwrap().unwrap();
+        tokio::spawn(async move {
+            let rsp = http::Response::new(());
+            let mut stream = reply.send_response(rsp, false).unwrap();
+
+            for _ in 0..3 {
+                stream.reserve_capacity(5);
+                stream = util::wait_for_capacity(stream, 5).await;
+                stream.send_data("abcde".into(), false).unwrap();
+            }
+
+            stream.send_data("".into(), true).unwrap();
+        }).await.expect("srv body spawn");
+
+        // keep connection open till client is done
+        let _ = srv.next().await;
+    };
+
+    join(srv, client).await;
+}
