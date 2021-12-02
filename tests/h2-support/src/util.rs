@@ -54,14 +54,14 @@ impl Future for WaitForCapacity {
     type Output = h2::SendStream<Bytes>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let _ = ready!(self.stream().poll_capacity(cx)).unwrap();
+        loop {
+            let _ = ready!(self.stream().poll_capacity(cx)).unwrap();
 
-        let act = self.stream().capacity();
+            let act = self.stream().capacity();
 
-        if act >= self.target {
-            return Poll::Ready(self.stream.take().unwrap().into());
+            if act >= self.target {
+                return Poll::Ready(self.stream.take().unwrap().into());
+            }
         }
-
-        Poll::Pending
     }
 }
