@@ -28,6 +28,9 @@ pub(super) struct Send {
     /// > the identified last stream.
     max_stream_id: StreamId,
 
+    /// The maximum amount of bytes a stream should buffer.
+    max_buffer_size: usize,
+
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
@@ -52,6 +55,7 @@ impl Send {
     pub fn new(config: &Config) -> Self {
         Send {
             init_window_sz: config.remote_init_window_sz,
+            max_buffer_size: config.local_max_buffer_size,
             max_stream_id: StreamId::MAX,
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
@@ -339,7 +343,7 @@ impl Send {
         if available as usize <= buffered {
             0
         } else {
-            available - buffered as WindowSize
+            available.min(self.max_buffer_size as WindowSize) - buffered as WindowSize
         }
     }
 
