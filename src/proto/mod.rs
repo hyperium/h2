@@ -33,3 +33,4 @@ pub type WindowSize = u32;
 pub const MAX_WINDOW_SIZE: WindowSize = (1 << 31) - 1;
 pub const DEFAULT_RESET_STREAM_MAX: usize = 10;
 pub const DEFAULT_RESET_STREAM_SECS: u64 = 30;
+pub const DEFAULT_MAX_SEND_BUFFER_SIZE: usize = 1024 * 400;

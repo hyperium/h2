@@ -636,7 +636,7 @@ impl Builder {
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Settings::default(),
             initial_target_connection_window_size: None,
-            max_send_buffer_size: 1024 * 1024,
+            max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
         }
     }
 
@@ -880,7 +880,14 @@ impl Builder {
     /// flow control will not "poll" additional capacity. Once bytes for the
     /// stream have been written to the connection, the send buffer capacity
     /// will be freed up again.
+    ///
+    /// The default is currently ~400MB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is larger than `u32::MAX`.
     pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        assert!(max <= std::u32::MAX as usize);
         self.max_send_buffer_size = max;
         self
     }
