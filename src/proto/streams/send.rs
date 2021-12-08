@@ -340,10 +340,18 @@ impl Send {
         let available = stream.send_flow.available().as_size();
         let buffered = stream.buffered_send_data;
 
+        tracing::info!(
+            ?available,
+            ?buffered,
+            max_buffer_size = self.max_buffer_size
+        );
+
         if available as usize <= buffered {
             0
         } else {
-            available.min(self.max_buffer_size as WindowSize) - buffered as WindowSize
+            available
+                .min(self.max_buffer_size as WindowSize)
+                .saturating_sub(buffered as WindowSize)
         }
     }
 
