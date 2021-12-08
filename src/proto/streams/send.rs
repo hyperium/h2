@@ -337,7 +337,7 @@ impl Send {
 
     /// Current available stream send capacity
     pub fn capacity(&self, stream: &mut store::Ptr) -> WindowSize {
-        let available = stream.send_flow.available().as_size();
+        let available = stream.send_flow.available().as_size() as usize;
         let buffered = stream.buffered_send_data;
 
         tracing::info!(
@@ -346,13 +346,7 @@ impl Send {
             max_buffer_size = self.max_buffer_size
         );
 
-        if available as usize <= buffered {
-            0
-        } else {
-            available
-                .min(self.max_buffer_size as WindowSize)
-                .saturating_sub(buffered as WindowSize)
-        }
+        available.min(self.max_buffer_size).saturating_sub(buffered) as WindowSize
     }
 
     pub fn poll_reset(
