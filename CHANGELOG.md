@@ -1,3 +1,9 @@
+# 0.3.8 (December 8, 2021)
+
+* Add "extended CONNECT support". Adds `h2::ext::Protocol`, which is used for request and response extensions to connect new protocols over an HTTP/2 stream.
+* Add `max_send_buffer_size` options to client and server builders, and a default of ~400MB. This acts like a high-water mark for the `poll_capacity()` method.
+* Fix panic if receiving malformed HEADERS with stream ID of 0.
+
 # 0.3.7 (October 22, 2021)
 
 * Fix panic if server sends a malformed frame on a stream client was about to open.
