@@ -41,6 +41,9 @@ pub struct Config {
     /// MAX_CONCURRENT_STREAMS specified in the frame.
     pub initial_max_send_streams: usize,
 
+    /// Max amount of DATA bytes to buffer per stream.
+    pub local_max_buffer_size: usize,
+
     /// The stream ID to start the next local stream with
     pub local_next_stream_id: StreamId,
 

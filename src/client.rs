@@ -320,6 +320,9 @@ pub struct Builder {
     /// Initial target window size for new connections.
     initial_target_connection_window_size: Option<u32>,
 
+    /// Maximum amount of bytes to "buffer" for writing per stream.
+    max_send_buffer_size: usize,
+
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
 
@@ -628,6 +631,7 @@ impl Builder {
     /// ```
     pub fn new() -> Builder {
         Builder {
+            max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             initial_target_connection_window_size: None,
@@ -962,6 +966,24 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum send buffer size per stream.
+    ///
+    /// Once a stream has buffered up to (or over) the maximum, the stream's
+    /// flow control will not "poll" additional capacity. Once bytes for the
+    /// stream have been written to the connection, the send buffer capacity
+    /// will be freed up again.
+    ///
+    /// The default is currently ~400MB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is larger than `u32::MAX`.
+    pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        assert!(max <= std::u32::MAX as usize);
+        self.max_send_buffer_size = max;
+        self
+    }
+
     /// Enables or disables server push promises.
     ///
     /// This value is included in the initial SETTINGS handshake. When set, the
@@ -1184,6 +1206,7 @@ where
             proto::Config {
                 next_stream_id: builder.stream_id,
                 initial_max_send_streams: builder.initial_max_send_streams,
+                max_send_buffer_size: builder.max_send_buffer_size,
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
                 settings: builder.settings.clone(),

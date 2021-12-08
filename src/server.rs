@@ -245,6 +245,9 @@ pub struct Builder {
 
     /// Initial target window size for new connections.
     initial_target_connection_window_size: Option<u32>,
+
+    /// Maximum amount of bytes to "buffer" for writing per stream.
+    max_send_buffer_size: usize,
 }
 
 /// Send a response back to the client
@@ -633,6 +636,7 @@ impl Builder {
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             settings: Settings::default(),
             initial_target_connection_window_size: None,
+            max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
         }
     }
 
@@ -867,6 +871,24 @@ impl Builder {
     /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.reset_stream_max = max;
+        self
+    }
+
+    /// Sets the maximum send buffer size per stream.
+    ///
+    /// Once a stream has buffered up to (or over) the maximum, the stream's
+    /// flow control will not "poll" additional capacity. Once bytes for the
+    /// stream have been written to the connection, the send buffer capacity
+    /// will be freed up again.
+    ///
+    /// The default is currently ~400MB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is larger than `u32::MAX`.
+    pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        assert!(max <= std::u32::MAX as usize);
+        self.max_send_buffer_size = max;
         self
     }
 
@@ -1290,6 +1312,7 @@ where
                     next_stream_id: 2.into(),
                     // Server does not need to locally initiate any streams
                     initial_max_send_streams: 0,
+                    max_send_buffer_size: self.builder.max_send_buffer_size,
                     reset_stream_duration: self.builder.reset_stream_duration,
                     reset_stream_max: self.builder.reset_stream_max,
                     settings: self.builder.settings.clone(),

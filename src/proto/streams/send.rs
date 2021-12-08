@@ -28,6 +28,9 @@ pub(super) struct Send {
     /// > the identified last stream.
     max_stream_id: StreamId,
 
+    /// The maximum amount of bytes a stream should buffer.
+    max_buffer_size: usize,
+
     /// Initial window size of locally initiated streams
     init_window_sz: WindowSize,
 
@@ -52,6 +55,7 @@ impl Send {
     pub fn new(config: &Config) -> Self {
         Send {
             init_window_sz: config.remote_init_window_sz,
+            max_buffer_size: config.local_max_buffer_size,
             max_stream_id: StreamId::MAX,
             next_stream_id: Ok(config.local_next_stream_id),
             prioritize: Prioritize::new(config),
@@ -333,14 +337,10 @@ impl Send {
 
     /// Current available stream send capacity
     pub fn capacity(&self, stream: &mut store::Ptr) -> WindowSize {
-        let available = stream.send_flow.available().as_size();
+        let available = stream.send_flow.available().as_size() as usize;
         let buffered = stream.buffered_send_data;
 
-        if available as usize <= buffered {
-            0
-        } else {
-            available - buffered as WindowSize
-        }
+        available.min(self.max_buffer_size).saturating_sub(buffered) as WindowSize
     }
 
     pub fn poll_reset(

@@ -1611,3 +1611,60 @@ async fn poll_capacity_after_send_data_and_reserve() {
 
     join(srv, h2).await;
 }
+
+#[tokio::test]
+async fn max_send_buffer_size_overflow() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::data(1, &[0; 10][..])).await;
+        srv.recv_frame(frames::data(1, &[][..]).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = conn.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert_eq!(stream.capacity(), 0);
+        stream.reserve_capacity(10);
+        assert_eq!(
+            stream.capacity(),
+            5,
+            "polled capacity not over max buffer size"
+        );
+
+        stream.send_data([0; 10][..].into(), false).unwrap();
+
+        stream.reserve_capacity(15);
+        assert_eq!(
+            stream.capacity(),
+            0,
+            "now with buffered over the max, don't overflow"
+        );
+        stream.send_data([0; 0][..].into(), true).unwrap();
+
+        // Wait for the connection to close
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
