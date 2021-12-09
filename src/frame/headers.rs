@@ -400,6 +400,10 @@ impl PushPromise {
         let flags = PushPromiseFlag(head.flag());
         let mut pad = 0;
 
+        if head.stream_id().is_zero() {
+            return Err(Error::InvalidStreamId);
+        }
+
         // Read the padding length
         if flags.is_padded() {
             if src.is_empty() {
