@@ -78,7 +78,7 @@
 //! [`server::handshake`]: server/fn.handshake.html
 //! [`client::handshake`]: client/fn.handshake.html
 
-#![doc(html_root_url = "https://docs.rs/h2/0.3.8")]
+#![doc(html_root_url = "https://docs.rs/h2/0.3.9")]
 #![deny(missing_debug_implementations, missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 

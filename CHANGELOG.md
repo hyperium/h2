@@ -1,3 +1,7 @@
+# 0.3.9 (December 9, 2021)
+
+* Fix hang related to new `max_send_buffer_size`.
+
 # 0.3.8 (December 8, 2021)
 
 * Add "extended CONNECT support". Adds `h2::ext::Protocol`, which is used for request and response extensions to connect new protocols over an HTTP/2 stream.
