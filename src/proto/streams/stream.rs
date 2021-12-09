@@ -279,6 +279,17 @@ impl Stream {
         }
     }
 
+    /// If the capacity was limited because of the max_send_buffer_size,
+    /// then consider waking the send task again...
+    pub fn notify_if_can_buffer_more(&mut self) {
+        // Only notify if the capacity exceeds the amount of buffered data
+        if self.send_flow.available() > self.buffered_send_data {
+            self.send_capacity_inc = true;
+            tracing::trace!("  notifying task");
+            self.notify_send();
+        }
+    }
+
     /// Returns `Err` when the decrement cannot be completed due to overflow.
     pub fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
         match self.content_length {

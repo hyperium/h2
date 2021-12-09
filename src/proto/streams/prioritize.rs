@@ -741,6 +741,11 @@ impl Prioritize {
                                 stream.buffered_send_data -= len as usize;
                                 stream.requested_send_capacity -= len;
 
+                                // If the capacity was limited because of the
+                                // max_send_buffer_size, then consider waking
+                                // the send task again...
+                                stream.notify_if_can_buffer_more();
+
                                 // Assign the capacity back to the connection that
                                 // was just consumed from the stream in the previous
                                 // line.
