@@ -1,3 +1,8 @@
+# 0.3.10 (January 6, 2022)
+
+* Add `Error::is_go_away()` and `Error::is_remote()` methods.
+* Fix panic if receiving malformed PUSH_PROMISE with stream ID of 0.
+
 # 0.3.9 (December 9, 2021)
 
 * Fix hang related to new `max_send_buffer_size`.
