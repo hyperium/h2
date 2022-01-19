@@ -1600,7 +1600,62 @@ async fn poll_capacity_after_send_data_and_reserve() {
         // Initial window size was 5 so current capacity is 0 even if we just reserved.
         assert_eq!(stream.capacity(), 0);
 
-        // The first call to `poll_capacity` in `wait_for_capacity` will return 0.
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+
+        stream.send_data("".into(), true).unwrap();
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn poll_capacity_after_send_data_and_reserve_with_max_send_buffer_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(10))
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.send_frame(frames::window_update(1, 10)).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(5);
+
+        // Initial window size was 10 but with a max send buffer size of 10 in the client,
+        // so current capacity is 0 even if we just reserved.
+        assert_eq!(stream.capacity(), 0);
+
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
         let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
 
         stream.send_data("".into(), true).unwrap();

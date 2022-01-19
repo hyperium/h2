@@ -260,30 +260,29 @@ impl Stream {
         self.ref_count == 0 && !self.state.is_closed()
     }
 
-    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+    pub fn assign_capacity(&mut self, capacity: WindowSize, max_buffer_size: usize) {
         debug_assert!(capacity > 0);
-        self.send_capacity_inc = true;
         self.send_flow.assign_capacity(capacity);
 
         tracing::trace!(
-            "  assigned capacity to stream; available={}; buffered={}; id={:?}",
+            "  assigned capacity to stream; available={}; buffered={}; id={:?}; max_buffer_size={}",
             self.send_flow.available(),
             self.buffered_send_data,
-            self.id
+            self.id,
+            max_buffer_size
         );
 
-        // Only notify if the capacity exceeds the amount of buffered data
-        if self.send_flow.available() > self.buffered_send_data {
-            tracing::trace!("  notifying task");
-            self.notify_send();
-        }
+        self.notify_if_can_buffer_more(max_buffer_size);
     }
 
     /// If the capacity was limited because of the max_send_buffer_size,
     /// then consider waking the send task again...
-    pub fn notify_if_can_buffer_more(&mut self) {
+    pub fn notify_if_can_buffer_more(&mut self, max_buffer_size: usize) {
+        let available = self.send_flow.available().as_size() as usize;
+        let buffered = self.buffered_send_data;
+
         // Only notify if the capacity exceeds the amount of buffered data
-        if self.send_flow.available() > self.buffered_send_data {
+        if available.min(max_buffer_size) > buffered {
             self.send_capacity_inc = true;
             tracing::trace!("  notifying task");
             self.notify_send();
