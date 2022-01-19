@@ -51,6 +51,9 @@ pub(super) struct Prioritize {
 
     /// What `DATA` frame is currently being sent in the codec.
     in_flight_data_frame: InFlightData,
+
+    /// The maximum amount of bytes a stream should buffer.
+    max_buffer_size: usize,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -93,7 +96,12 @@ impl Prioritize {
             flow,
             last_opened_id: StreamId::ZERO,
             in_flight_data_frame: InFlightData::Nothing,
+            max_buffer_size: config.local_max_buffer_size,
         }
+    }
+
+    pub(crate) fn max_buffer_size(&self) -> usize {
+        self.max_buffer_size
     }
 
     /// Queue a frame to be sent to the remote
@@ -424,7 +432,7 @@ impl Prioritize {
             tracing::trace!(capacity = assign, "assigning");
 
             // Assign the capacity to the stream
-            stream.assign_capacity(assign);
+            stream.assign_capacity(assign, self.max_buffer_size);
 
             // Claim the capacity from the connection
             self.flow.claim_capacity(assign);
@@ -744,7 +752,7 @@ impl Prioritize {
                                 // If the capacity was limited because of the
                                 // max_send_buffer_size, then consider waking
                                 // the send task again...
-                                stream.notify_if_can_buffer_more();
+                                stream.notify_if_can_buffer_more(self.max_buffer_size);
 
                                 // Assign the capacity back to the connection that
                                 // was just consumed from the stream in the previous
