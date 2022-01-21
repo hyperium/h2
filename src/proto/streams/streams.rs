@@ -883,6 +883,10 @@ impl Inner {
                     // We normally would open this stream, so update our
                     // next-send-id record.
                     self.actions.send.maybe_reset_next_stream_id(id);
+                } else {
+                    // We normally would recv this stream, so update our
+                    // next-recv-id record.
+                    self.actions.recv.maybe_reset_next_stream_id(id);
                 }
 
                 let stream = Stream::new(id, 0, 0);
