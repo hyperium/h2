@@ -786,6 +786,16 @@ impl Recv {
         }
     }
 
+    pub(super) fn maybe_reset_next_stream_id(&mut self, id: StreamId) {
+        if let Ok(next_id) = self.next_stream_id {
+            // !Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated());
+            if id >= next_id {
+                self.next_stream_id = id.next_id();
+            }
+        }
+    }
+
     /// Returns true if the remote peer can reserve a stream with the given ID.
     pub fn ensure_can_reserve(&self) -> Result<(), Error> {
         if !self.is_push_enabled {
