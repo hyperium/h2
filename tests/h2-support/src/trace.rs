@@ -1,41 +1,17 @@
-use std::{io, str};
 pub use tracing;
 pub use tracing_subscriber;
 
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
 pub fn init() -> tracing::dispatcher::DefaultGuard {
-    tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .with_writer(PrintlnWriter { _p: () })
-            .finish(),
-    )
-}
+    let use_colors = atty::is(atty::Stream::Stdout);
+    let layer = tracing_tree::HierarchicalLayer::default()
+        .with_writer(tracing_subscriber::fmt::writer::TestWriter::default())
+        .with_indent_lines(true)
+        .with_ansi(use_colors)
+        .with_targets(true)
+        .with_indent_amount(2);
 
-struct PrintlnWriter {
-    _p: (),
-}
-
-impl tracing_subscriber::fmt::MakeWriter for PrintlnWriter {
-    type Writer = PrintlnWriter;
-    fn make_writer(&self) -> Self::Writer {
-        PrintlnWriter { _p: () }
-    }
-}
-
-impl io::Write for PrintlnWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let s = str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        println!("{}", s);
-        Ok(s.len())
-    }
-
-    fn write_fmt(&mut self, fmt: std::fmt::Arguments<'_>) -> io::Result<()> {
-        println!("{}", fmt);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    tracing_subscriber::registry().with(layer).set_default()
 }

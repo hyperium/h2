@@ -7,9 +7,11 @@ edition = "2018"
 [dependencies]
 h2 = { path = "../..", features = ["stream", "unstable"] }
 
+atty = "0.2"
 bytes = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.2", default-features = false, features = ["fmt", "chrono", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+tracing-tree = "0.2"
 futures = { version = "0.3", default-features = false }
 http = "0.2"
 tokio = { version = "1", features = ["time"] }
