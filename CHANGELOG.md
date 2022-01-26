@@ -1,3 +1,8 @@
+# 0.3.11 (January 26, 2022)
+
+* Make `SendStream::poll_capacity` never return `Ok(Some(0))` (#596)
+* Fix panic when receiving already reset push promise (#597)
+
 # 0.3.10 (January 6, 2022)
 
 * Add `Error::is_go_away()` and `Error::is_remote()` methods.
