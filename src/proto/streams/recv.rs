@@ -860,7 +860,10 @@ impl Recv {
             let reset_duration = self.reset_duration;
             while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
                 let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
-                now - reset_at > reset_duration
+                // rust-lang/rust#86470 tracks a bug in the standard library where `Instant`
+                // subtraction can panic (because, on some platforms, `Instant` isn't actually
+                // monotonic). We use a saturating operation to avoid this panic here.
+                now.saturating_duration_since(reset_at) > reset_duration
             }) {
                 counts.transition_after(stream, true);
             }
