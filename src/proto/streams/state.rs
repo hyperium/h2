@@ -420,6 +420,7 @@ impl State {
     pub fn ensure_recv_open(&self) -> Result<bool, proto::Error> {
         // TODO: Is this correct?
         match self.inner {
+            Closed(Cause::Error(Error::Reset(_, Reason::CANCEL, _))) => Ok(false),
             Closed(Cause::Error(ref e)) => Err(e.clone()),
             Closed(Cause::ScheduledLibraryReset(reason)) => {
                 Err(proto::Error::library_go_away(reason))
