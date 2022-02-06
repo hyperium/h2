@@ -11,7 +11,7 @@ authors = [
   "Carl Lerche <me@carllerche.com>",
   "Sean McArthur <sean@seanmonstar.com>",
 ]
-description = "An HTTP/2.0 client and server"
+description = "An HTTP/2 client and server"
 documentation = "https://docs.rs/h2"
 repository = "https://github.com/hyperium/h2"
 readme = "README.md"
