@@ -1049,18 +1049,19 @@ impl<B: Buf> SendResponse<B> {
             .map_err(Into::into)
     }
 
-    /// Send a 100-continue response to a client request.
+    /// Send a non-final 1xx response to a client request.
     ///
     /// The [`SendResponse`] instance is already associated with a received
-    /// request.  This function may only be called once per instance and only if
-    /// [`send_reset`] or [`send_response`] has not been previously called.
+    /// request.  This function may only be called if [`send_reset`] or
+    /// [`send_response`] has not been previously called.
     ///
     /// [`SendResponse`]: #
     /// [`send_reset`]: #method.send_reset
     /// [`send_response`]: #method.send_response
-    pub fn send_continue(&mut self) -> Result<(), crate::Error> {
+    pub fn send_info(&mut self, response: Response<()>) -> Result<(), crate::Error> {
+        assert!(response.status().is_informational());
         self.inner
-            .send_response(Response::builder().status(100).body(()).unwrap(), false)
+            .send_response(response, false)
             .map_err(Into::into)
     }
 
