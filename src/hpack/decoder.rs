@@ -142,6 +142,12 @@ struct Table {
     max_size: usize,
 }
 
+struct StringMarker {
+    offset: usize,
+    len: usize,
+    string: Option<Bytes>,
+}
+
 // ===== impl Decoder =====
 
 impl Decoder {
@@ -284,8 +290,8 @@ impl Decoder {
             let value_marker = self.try_decode_string(buf)?;
             buf.set_position(old_pos);
             // Read the name as a literal
-            let name = take_string_marker(buf, name_marker);
-            let value = take_string_marker(buf, value_marker);
+            let name = name_marker.consume(buf);
+            let value = value_marker.consume(buf);
             Header::new(name, value)
         } else {
             let e = self.table.get(table_idx)?;
@@ -298,7 +304,7 @@ impl Decoder {
     fn try_decode_string(
         &mut self,
         buf: &mut Cursor<&mut BytesMut>,
-    ) -> Result<((usize, usize), Option<Bytes>), DecoderError> {
+    ) -> Result<StringMarker, DecoderError> {
         let old_pos = buf.position();
         const HUFF_FLAG: u8 = 0b1000_0000;
 
@@ -320,15 +326,22 @@ impl Decoder {
         if huff {
             let ret = {
                 let raw = &buf.chunk()[..len];
-                huffman::decode(raw, &mut self.buffer)
-                    .map(|buf| ((offset, len), Some(BytesMut::freeze(buf))))
+                huffman::decode(raw, &mut self.buffer).map(|buf| StringMarker {
+                    offset,
+                    len,
+                    string: Some(BytesMut::freeze(buf)),
+                })
             };
 
             buf.advance(len);
             ret
         } else {
             buf.advance(len);
-            Ok(((offset, len), None))
+            Ok(StringMarker {
+                offset,
+                len,
+                string: None,
+            })
         }
     }
 
@@ -336,7 +349,7 @@ impl Decoder {
         let old_pos = buf.position();
         let marker = self.try_decode_string(buf)?;
         buf.set_position(old_pos);
-        Ok(take_string_marker(buf, marker))
+        Ok(marker.consume(buf))
     }
 }
 
@@ -450,18 +463,16 @@ fn take(buf: &mut Cursor<&mut BytesMut>, n: usize) -> Bytes {
     head.freeze()
 }
 
-fn take_string_marker(
-    buf: &mut Cursor<&mut BytesMut>,
-    marker: ((usize, usize), Option<Bytes>),
-) -> Bytes {
-    let ((offset, len), string) = marker;
-    buf.advance(offset);
-    match string {
-        Some(string) => {
-            buf.advance(len);
-            string
+impl StringMarker {
+    fn consume(self, buf: &mut Cursor<&mut BytesMut>) -> Bytes {
+        buf.advance(self.offset);
+        match self.string {
+            Some(string) => {
+                buf.advance(self.len);
+                string
+            }
+            None => take(buf, self.len),
         }
-        None => take(buf, len),
     }
 }
 
@@ -884,12 +895,14 @@ mod test {
     }
 
     #[test]
-    fn test_decode_continuation_header() {
+    fn test_decode_continuation_header_with_non_huff_encoded_name() {
         let mut de = Decoder::new(0);
         let value = huff_encode(b"bar");
         let mut buf = BytesMut::new();
+        // header name is non_huff encoded
         buf.extend(&[0b01000000, 0x00 | 3]);
         buf.extend(b"foo");
+        // header value is partial
         buf.extend(&[0x80 | 3]);
         buf.extend(&value[0..1]);
 
@@ -899,9 +912,11 @@ mod test {
                 res.push(h);
             })
             .unwrap_err();
+        // decode error because the header value is partial
         assert_eq!(e, DecoderError::NeedMore(NeedMore::StringUnderflow));
-        buf.extend(&value[1..]);
 
+        // extend buf with the remaining header value
+        buf.extend(&value[1..]);
         let _ = de
             .decode(&mut Cursor::new(&mut buf), |h| {
                 res.push(h);
