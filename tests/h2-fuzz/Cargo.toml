@@ -8,7 +8,7 @@ edition = "2018"
 [dependencies]
 h2 = { path = "../.." }
 
-env_logger = { version = "0.5.3", default-features = false }
+env_logger = { version = "0.9", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 honggfuzz = "0.5"
 http = "0.2"

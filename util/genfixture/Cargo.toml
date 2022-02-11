@@ -6,4 +6,4 @@ publish = false
 edition = "2018"
 
 [dependencies]
-walkdir = "1.0.0"
+walkdir = "2.3.2"
