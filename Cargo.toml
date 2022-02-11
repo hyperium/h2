@@ -43,7 +43,7 @@ members = [
 futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
-tokio-util = { version = "0.6", features = ["codec"] }
+tokio-util = { version = "0.7.1", features = ["codec"] }
 tokio = { version = "1", features = ["io-util"] }
 bytes = "1"
 http = "0.2"
