@@ -55,22 +55,20 @@ indexmap = { version = "1.5.2", features = ["std"] }
 [dev-dependencies]
 
 # Fuzzing
-quickcheck = { version = "0.4.1", default-features = false }
-rand = "0.3.15"
+quickcheck = { version = "1.0.3", default-features = false }
+rand = "0.8.4"
 
 # HPACK fixtures
-hex = "0.2.0"
-walkdir = "1.0.0"
+hex = "0.4.3"
+walkdir = "2.3.2"
 serde = "1.0.0"
 serde_json = "1.0.0"
 
 # Examples
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net"] }
-env_logger = { version = "0.5.3", default-features = false }
-rustls = "0.19"
-tokio-rustls = "0.22"
-webpki = "0.21"
-webpki-roots = "0.21"
+env_logger = { version = "0.9", default-features = false }
+tokio-rustls = "0.23.2"
+webpki-roots = "0.22.2"
 
 [package.metadata.docs.rs]
 features = ["stream"]
