@@ -108,6 +108,12 @@ jobs:
           toolchain: ${{ matrix.rust }}
           override: true
 
+      - name: Minimal Versions
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+          args: -Z minimal-versions
+
       - name: Check
         uses: actions-rs/cargo@v1
         with:
