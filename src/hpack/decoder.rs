@@ -142,6 +142,12 @@ struct Table {
     max_size: usize,
 }
 
+struct StringMarker {
+    offset: usize,
+    len: usize,
+    string: Option<Bytes>,
+}
+
 // ===== impl Decoder =====
 
 impl Decoder {
@@ -279,10 +285,13 @@ impl Decoder {
 
         // First, read the header name
         if table_idx == 0 {
+            let old_pos = buf.position();
+            let name_marker = self.try_decode_string(buf)?;
+            let value_marker = self.try_decode_string(buf)?;
+            buf.set_position(old_pos);
             // Read the name as a literal
-            let name = self.decode_string(buf)?;
-            let value = self.decode_string(buf)?;
-
+            let name = name_marker.consume(buf);
+            let value = value_marker.consume(buf);
             Header::new(name, value)
         } else {
             let e = self.table.get(table_idx)?;
@@ -292,7 +301,11 @@ impl Decoder {
         }
     }
 
-    fn decode_string(&mut self, buf: &mut Cursor<&mut BytesMut>) -> Result<Bytes, DecoderError> {
+    fn try_decode_string(
+        &mut self,
+        buf: &mut Cursor<&mut BytesMut>,
+    ) -> Result<StringMarker, DecoderError> {
+        let old_pos = buf.position();
         const HUFF_FLAG: u8 = 0b1000_0000;
 
         // The first bit in the first byte contains the huffman encoded flag.
@@ -309,17 +322,34 @@ impl Decoder {
             return Err(DecoderError::NeedMore(NeedMore::StringUnderflow));
         }
 
+        let offset = (buf.position() - old_pos) as usize;
         if huff {
             let ret = {
                 let raw = &buf.chunk()[..len];
-                huffman::decode(raw, &mut self.buffer).map(BytesMut::freeze)
+                huffman::decode(raw, &mut self.buffer).map(|buf| StringMarker {
+                    offset,
+                    len,
+                    string: Some(BytesMut::freeze(buf)),
+                })
             };
 
             buf.advance(len);
-            return ret;
+            ret
+        } else {
+            buf.advance(len);
+            Ok(StringMarker {
+                offset,
+                len,
+                string: None,
+            })
         }
+    }
 
-        Ok(take(buf, len))
+    fn decode_string(&mut self, buf: &mut Cursor<&mut BytesMut>) -> Result<Bytes, DecoderError> {
+        let old_pos = buf.position();
+        let marker = self.try_decode_string(buf)?;
+        buf.set_position(old_pos);
+        Ok(marker.consume(buf))
     }
 }
 
@@ -431,6 +461,19 @@ fn take(buf: &mut Cursor<&mut BytesMut>, n: usize) -> Bytes {
     buf.set_position(0);
     head.advance(pos);
     head.freeze()
+}
+
+impl StringMarker {
+    fn consume(self, buf: &mut Cursor<&mut BytesMut>) -> Bytes {
+        buf.advance(self.offset);
+        match self.string {
+            Some(string) => {
+                buf.advance(self.len);
+                string
+            }
+            None => take(buf, self.len),
+        }
+    }
 }
 
 fn consume(buf: &mut Cursor<&mut BytesMut>) {
@@ -849,5 +892,49 @@ mod test {
         let mut buf = BytesMut::new();
         huffman::encode(src, &mut buf);
         buf
+    }
+
+    #[test]
+    fn test_decode_continuation_header_with_non_huff_encoded_name() {
+        let mut de = Decoder::new(0);
+        let value = huff_encode(b"bar");
+        let mut buf = BytesMut::new();
+        // header name is non_huff encoded
+        buf.extend(&[0b01000000, 0x00 | 3]);
+        buf.extend(b"foo");
+        // header value is partial
+        buf.extend(&[0x80 | 3]);
+        buf.extend(&value[0..1]);
+
+        let mut res = vec![];
+        let e = de
+            .decode(&mut Cursor::new(&mut buf), |h| {
+                res.push(h);
+            })
+            .unwrap_err();
+        // decode error because the header value is partial
+        assert_eq!(e, DecoderError::NeedMore(NeedMore::StringUnderflow));
+
+        // extend buf with the remaining header value
+        buf.extend(&value[1..]);
+        let _ = de
+            .decode(&mut Cursor::new(&mut buf), |h| {
+                res.push(h);
+            })
+            .unwrap();
+
+        assert_eq!(res.len(), 1);
+        assert_eq!(de.table.size(), 0);
+
+        match res[0] {
+            Header::Field {
+                ref name,
+                ref value,
+            } => {
+                assert_eq!(name, "foo");
+                assert_eq!(value, "bar");
+            }
+            _ => panic!(),
+        }
     }
 }
