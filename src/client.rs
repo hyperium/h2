@@ -1154,7 +1154,7 @@ where
     let builder = Builder::new();
     builder
         .handshake(io)
-        .instrument(tracing::trace_span!("client_handshake", io = %std::any::type_name::<T>()))
+        .instrument(tracing::trace_span!("client_handshake"))
         .await
 }
 

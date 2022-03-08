@@ -367,7 +367,7 @@ where
     B: Buf + 'static,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
-        let span = tracing::trace_span!("server_handshake", io = %std::any::type_name::<T>());
+        let span = tracing::trace_span!("server_handshake");
         let entered = span.enter();
 
         // Create the codec.
