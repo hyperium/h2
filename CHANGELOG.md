@@ -1,3 +1,11 @@
+# 0.3.12 (March 9, 2022)
+
+* Avoid time operations that can panic (#599)
+* Bump MSRV to Rust 1.49 (#606)
+* Fix header decoding error when a header name is contained at a continuation
+  header boundary (#589)
+* Remove I/O type names from handshake `tracing` spans (#608)
+
 # 0.3.11 (January 26, 2022)
 
 * Make `SendStream::poll_capacity` never return `Ok(Some(0))` (#596)
