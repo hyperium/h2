@@ -1,3 +1,7 @@
+# 0.3.13 (March 31, 2022)
+
+* Update private internal `tokio-util` dependency.
+
 # 0.3.12 (March 9, 2022)
 
 * Avoid time operations that can panic (#599)
