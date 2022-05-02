@@ -736,7 +736,7 @@ impl Prioritize {
 
                             // There *must* be be enough connection level
                             // capacity at this point.
-                            debug_assert!(len <= self.flow.window_size());
+                            assert!(len <= self.flow.window_size());
 
                             tracing::trace!(len, "sending data frame");
 
