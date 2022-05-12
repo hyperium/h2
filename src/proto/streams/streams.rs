@@ -806,7 +806,13 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         if actions.conn_error.is_none() {
-            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
+            actions.conn_error = Some(
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "connection closed because of a broken pipe",
+                )
+                .into(),
+            );
         }
 
         tracing::trace!("Streams::recv_eof");
