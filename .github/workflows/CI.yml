@@ -90,7 +90,7 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.49 # never go past Hyper's own MSRV
+          - 1.56 # never go past Hyper's own MSRV
 
         os:
           - ubuntu-latest
