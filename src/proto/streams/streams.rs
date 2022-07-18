@@ -12,7 +12,6 @@ use http::{HeaderMap, Request, Response};
 use std::task::{Context, Poll, Waker};
 use tokio::io::AsyncWrite;
 
-use crate::PollExt;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
@@ -1282,7 +1281,7 @@ impl OpaqueStreamRef {
         me.actions
             .recv
             .poll_pushed(cx, &mut stream)
-            .map_ok_(|(h, key)| {
+            .map_ok(|(h, key)| {
                 me.refs += 1;
                 let opaque_ref =
                     OpaqueStreamRef::new(self.inner.clone(), &mut me.store.resolve(key));
