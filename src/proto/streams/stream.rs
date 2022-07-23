@@ -60,9 +60,6 @@ pub(super) struct Stream {
     /// True if the stream is waiting for outbound connection capacity
     pub is_pending_send_capacity: bool,
 
-    /// Set to true when the send capacity has been incremented
-    pub send_capacity_inc: bool,
-
     /// Next node in the open linked list
     pub next_open: Option<store::Key>,
 
@@ -165,7 +162,6 @@ impl Stream {
             pending_send: buffer::Deque::new(),
             is_pending_send_capacity: false,
             next_pending_send_capacity: None,
-            send_capacity_inc: false,
             is_pending_open: false,
             next_open: None,
             is_pending_push: false,
@@ -283,7 +279,6 @@ impl Stream {
 
         // Only notify if the capacity exceeds the amount of buffered data
         if available.min(max_buffer_size) > buffered {
-            self.send_capacity_inc = true;
             tracing::trace!("  notifying task");
             self.notify_send();
         }
