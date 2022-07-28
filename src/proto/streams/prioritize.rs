@@ -317,9 +317,11 @@ impl Prioritize {
     /// connection
     pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
-        // Re-assign all capacity to the connection
-        self.assign_connection_capacity(available, stream, counts);
+        if available > 0 {
+            stream.send_flow.claim_capacity(available);
+            // Re-assign all capacity to the connection
+            self.assign_connection_capacity(available, stream, counts);
+        }
     }
 
     /// Reclaim just reserved capacity, not buffered capacity, and re-assign
@@ -749,11 +751,12 @@ impl Prioritize {
                                 stream.buffered_send_data -= len as usize;
                                 stream.requested_send_capacity -= len;
 
-                                // If the capacity was limited because of the
-                                // max_send_buffer_size, then consider waking
-                                // the send task again...
-                                stream.notify_if_can_buffer_more(self.max_buffer_size);
-
+                                if stream_capacity > self.max_buffer_size {
+                                    // If the capacity was limited because of the
+                                    // max_send_buffer_size, then consider waking
+                                    // the send task again...
+                                    stream.notify_if_can_buffer_more(self.max_buffer_size);
+                                }
                                 // Assign the capacity back to the connection that
                                 // was just consumed from the stream in the previous
                                 // line.
