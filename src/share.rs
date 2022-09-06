@@ -94,7 +94,7 @@ use std::task::{Context, Poll};
 /// [`send_trailers`]: #method.send_trailers
 /// [`send_reset`]: #method.send_reset
 #[derive(Debug)]
-pub struct SendStream<B: Buf> {
+pub struct SendStream<B> {
     inner: proto::StreamRef<B>,
 }
 
