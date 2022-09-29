@@ -111,6 +111,12 @@ pub struct SendStream<B> {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct StreamId(u32);
 
+impl From<StreamId> for u32 {
+    fn from(src: StreamId) -> Self {
+        src.0
+    }
+}
+
 /// Receives the body stream and trailers from the remote peer.
 ///
 /// A `RecvStream` is provided by [`client::ResponseFuture`] and
