@@ -922,6 +922,10 @@ where
 
         me.actions.ensure_no_conn_error()?;
         me.actions.send.ensure_next_stream_id()?;
+        if !me.counts.remote_settings_applied() {
+            me.counts.wait_remote_settings_applied(cx);
+            return Poll::Pending;
+        }
 
         if let Some(pending) = pending {
             let mut stream = me.store.resolve(pending.key);
