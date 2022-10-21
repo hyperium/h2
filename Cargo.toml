@@ -5,7 +5,7 @@ name = "h2"
 #   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.3.14"
+version = "0.3.15"
 license = "MIT"
 authors = [
   "Carl Lerche <me@carllerche.com>",
