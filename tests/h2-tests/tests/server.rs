@@ -566,7 +566,9 @@ async fn sends_reset_cancel_when_req_body_is_dropped() {
         client
             .recv_frame(frames::headers(1).response(200).eos())
             .await;
-        client.recv_frame(frames::reset(1).cancel()).await;
+        client
+            .recv_frame(frames::reset(1).reason(Reason::NO_ERROR))
+            .await;
     };
 
     let srv = async move {
