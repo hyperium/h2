@@ -986,8 +986,8 @@ impl Builder {
 
     /// Enables or disables server push promises.
     ///
-    /// This value is included in the initial SETTINGS handshake. When set, the
-    /// server MUST NOT send a push promise. Setting this value to value to
+    /// This value is included in the initial SETTINGS handshake.
+    /// Setting this value to value to
     /// false in the initial SETTINGS handshake guarantees that the remote server
     /// will never send a push promise.
     ///
