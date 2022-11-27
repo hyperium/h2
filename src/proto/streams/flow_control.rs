@@ -19,6 +19,7 @@ const UNCLAIMED_NUMERATOR: i32 = 1;
 const UNCLAIMED_DENOMINATOR: i32 = 2;
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn sanity_unclaimed_ratio() {
     assert!(UNCLAIMED_NUMERATOR < UNCLAIMED_DENOMINATOR);
     assert!(UNCLAIMED_NUMERATOR >= 0);
@@ -188,7 +189,7 @@ impl FlowControl {
 ///
 /// This type tries to centralize the knowledge of addition and subtraction
 /// to this capacity, instead of having integer casts throughout the source.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
 pub struct Window(i32);
 
 impl Window {

@@ -215,7 +215,7 @@ where
             });
 
         match (ours, theirs) {
-            (Reason::NO_ERROR, Reason::NO_ERROR) => return Ok(()),
+            (Reason::NO_ERROR, Reason::NO_ERROR) => Ok(()),
             (ours, Reason::NO_ERROR) => Err(Error::GoAway(Bytes::new(), ours, initiator)),
             // If both sides reported an error, give their
             // error back to th user. We assume our error

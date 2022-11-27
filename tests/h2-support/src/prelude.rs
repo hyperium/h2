@@ -103,7 +103,7 @@ where
                     // Connection is done...
                     b.await
                 }
-                Right((v, _)) => return v,
+                Right((v, _)) => v,
                 Left((Err(e), _)) => panic!("err: {:?}", e),
             }
         })

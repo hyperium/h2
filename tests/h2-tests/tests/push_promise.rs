@@ -223,7 +223,7 @@ async fn pending_push_promises_reset_when_dropped() {
             assert_eq!(resp.status(), StatusCode::OK);
         };
 
-        let _ = conn.drive(req).await;
+        conn.drive(req).await;
         conn.await.expect("client");
         drop(client);
     };

@@ -786,7 +786,7 @@ async fn rst_while_closing() {
         // Enqueue trailers frame.
         let _ = stream.send_trailers(HeaderMap::new());
         // Signal the server mock to send RST_FRAME
-        let _ = tx.send(()).unwrap();
+        let _: () = tx.send(()).unwrap();
         drop(stream);
         yield_once().await;
         // yield once to allow the server mock to be polled

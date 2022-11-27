@@ -318,7 +318,7 @@ pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
     let mut ret = 0;
 
     for &d in src {
-        if d < b'0' || d > b'9' {
+        if !(b'0'..=b'9').contains(&d) {
             return Err(());
         }
 
@@ -381,7 +381,7 @@ impl PushPromise {
     fn safe_and_cacheable(method: &Method) -> bool {
         // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
         // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
-        return method == Method::GET || method == Method::HEAD;
+        method == Method::GET || method == Method::HEAD
     }
 
     pub fn fields(&self) -> &HeaderMap {

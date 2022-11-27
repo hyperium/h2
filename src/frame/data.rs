@@ -16,7 +16,7 @@ pub struct Data<T = Bytes> {
     pad_len: Option<u8>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 struct DataFlags(u8);
 
 const END_STREAM: u8 = 0x1;
@@ -208,12 +208,6 @@ impl DataFlags {
     #[cfg(feature = "unstable")]
     fn set_padded(&mut self) {
         self.0 |= PADDED
-    }
-}
-
-impl Default for DataFlags {
-    fn default() -> Self {
-        DataFlags(0)
     }
 }
 

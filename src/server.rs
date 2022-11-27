@@ -413,7 +413,7 @@ where
     ) -> Poll<Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>>> {
         // Always try to advance the internal state. Getting Pending also is
         // needed to allow this function to return Pending.
-        if let Poll::Ready(_) = self.poll_closed(cx)? {
+        if self.poll_closed(cx)?.is_ready() {
             // If the socket is closed, don't return anything
             // TODO: drop any pending streams
             return Poll::Ready(None);

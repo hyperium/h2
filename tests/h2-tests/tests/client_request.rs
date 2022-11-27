@@ -371,7 +371,7 @@ async fn send_request_poll_ready_when_connection_error() {
             resp2.await.expect_err("req2");
         }));
 
-        while let Some(_) = unordered.next().await {}
+        while unordered.next().await.is_some() {}
     };
 
     join(srv, h2).await;
@@ -489,9 +489,8 @@ async fn http_2_request_without_scheme_or_authority() {
         client
             .send_request(request, true)
             .expect_err("should be UserError");
-        let ret = h2.await.expect("h2");
+        let _: () = h2.await.expect("h2");
         drop(client);
-        ret
     };
 
     join(srv, h2).await;
@@ -1452,8 +1451,8 @@ async fn extended_connect_request() {
     join(srv, h2).await;
 }
 
-const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
-const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
+const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
+const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 trait MockH2 {
     fn handshake(&mut self) -> &mut Self;

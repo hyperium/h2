@@ -404,7 +404,7 @@ impl Table {
 
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
-            debug_assert!(!self.indices[probe].is_none());
+            debug_assert!(self.indices[probe].is_some());
 
             let mut pos = self.indices[probe].unwrap();
 
