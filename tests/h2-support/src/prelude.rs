@@ -90,7 +90,7 @@ pub trait ClientExt {
 impl<T, B> ClientExt for client::Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin + 'static,
-    B: Buf + Unpin + 'static,
+    B: Buf,
 {
     fn run<'a, F: Future + Unpin + 'a>(
         &'a mut self,

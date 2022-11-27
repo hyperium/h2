@@ -364,7 +364,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         let span = tracing::trace_span!("server_handshake");
@@ -582,7 +582,7 @@ where
 impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
@@ -1007,7 +1007,7 @@ impl Builder {
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + 'static,
+        B: Buf,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1262,7 +1262,7 @@ where
 impl<T, B: Buf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<Connection<T, B>, crate::Error>;
 

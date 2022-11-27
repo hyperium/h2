@@ -1229,10 +1229,7 @@ impl<B> StreamRef<B> {
             .map_err(From::from)
     }
 
-    pub fn clone_to_opaque(&self) -> OpaqueStreamRef
-    where
-        B: 'static,
-    {
+    pub fn clone_to_opaque(&self) -> OpaqueStreamRef {
         self.opaque.clone()
     }
 
