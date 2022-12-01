@@ -1345,12 +1345,13 @@ impl OpaqueStreamRef {
             .release_capacity(capacity, &mut stream, &mut me.actions.task)
     }
 
+    /// Clear the receive queue and set the status to no longer receive data frames.
     pub(crate) fn clear_recv_buffer(&mut self) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.key);
-
+        stream.is_recv = false;
         me.actions.recv.clear_recv_buffer(&mut stream);
     }
 

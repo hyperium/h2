@@ -600,6 +600,16 @@ impl Recv {
             }
         }
 
+        // Received a frame, but no one cared about it. fix issue#648
+        if !stream.is_recv {
+            tracing::trace!(
+                "recv_data; frame ignored on stream release {:?} for some time",
+                stream.id,
+            );
+            self.release_connection_capacity(sz, &mut None);
+            return Ok(());
+        }
+
         // Update stream level flow control
         stream.recv_flow.send_data(sz);
 
