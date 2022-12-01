@@ -321,7 +321,7 @@ pub fn parse_u64(src: &[u8]) -> Result<u64, ParseU64Error> {
     let mut ret = 0;
 
     for &d in src {
-        if !(b'0'..=b'9').contains(&d) {
+        if d < b'0' || d > b'9' {
             return Err(ParseU64Error);
         }
 

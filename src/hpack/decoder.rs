@@ -396,7 +396,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     const VARINT_MASK: u8 = 0b0111_1111;
     const VARINT_FLAG: u8 = 0b1000_0000;
 
-    if !(1..=8).contains(&prefix_size) {
+    if prefix_size < 1 || prefix_size > 8 {
         return Err(DecoderError::InvalidIntegerPrefix);
     }
 

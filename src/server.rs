@@ -407,7 +407,6 @@ where
     }
 
     #[doc(hidden)]
-    #[allow(clippy::type_complexity)]
     pub fn poll_accept(
         &mut self,
         cx: &mut Context<'_>,

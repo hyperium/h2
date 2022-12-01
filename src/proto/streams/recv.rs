@@ -263,7 +263,6 @@ impl Recv {
     }
 
     /// Called by the client to get pushed response
-    #[allow(clippy::type_complexity)]
     pub fn poll_pushed(
         &mut self,
         cx: &Context,
