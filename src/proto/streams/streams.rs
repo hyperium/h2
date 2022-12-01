@@ -311,7 +311,16 @@ where
 impl<B> DynStreams<'_, B> {
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
-
+        if me.store.num_wired_streams() > me.counts.max_streams() {
+            tracing::error!(
+                "HEADERS: number of streams exceeds the upper limit ({})",
+                me.counts.max_streams()
+            );
+            return Err(Error::remote_go_away(
+                Bytes::from("out of stream limit"),
+                Reason::PROTOCOL_ERROR,
+            ));
+        }
         me.recv_headers(self.peer, &self.send_buffer, frame)
     }
 
@@ -348,6 +357,17 @@ impl<B> DynStreams<'_, B> {
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
+
+        if me.store.num_wired_streams() > me.counts.max_streams() {
+            tracing::error!(
+                "PUSH_PROMISE: number of streams exceeds the upper limit ({})",
+                me.counts.max_streams()
+            );
+            return Err(Error::remote_go_away(
+                Bytes::from("out of stream limit"),
+                Reason::PROTOCOL_ERROR,
+            ));
+        }
         me.recv_push_promise(&self.send_buffer, frame)
     }
 

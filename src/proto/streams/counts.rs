@@ -50,6 +50,11 @@ impl Counts {
         self.num_send_streams != 0 || self.num_recv_streams != 0
     }
 
+    /// Returns the maximum number of streams.
+    pub(crate) fn max_streams(&self) -> usize {
+        self.max_recv_streams + self.max_reset_streams
+    }
+
     /// Returns true if the receive stream concurrency can be incremented
     pub fn can_inc_num_recv_streams(&self) -> bool {
         self.max_recv_streams > self.num_recv_streams

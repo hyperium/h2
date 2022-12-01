@@ -212,7 +212,7 @@ impl Store {
         self.ids.len()
     }
 
-    #[cfg(feature = "unstable")]
+    /// Returns the number of streams that are held in slab.
     pub fn num_wired_streams(&self) -> usize {
         self.slab.len()
     }
