@@ -99,6 +99,9 @@ pub(super) struct Stream {
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque,
 
+    /// When the RecvStream drop occurs, no data should be received.
+    pub is_recv: bool,
+
     /// Task tracking receiving frames
     pub recv_task: Option<Waker>,
 
@@ -180,6 +183,7 @@ impl Stream {
             reset_at: None,
             next_reset_expire: None,
             pending_recv: buffer::Deque::new(),
+            is_recv: true,
             recv_task: None,
             pending_push_promises: store::Queue::new(),
             content_length: ContentLength::Omitted,
