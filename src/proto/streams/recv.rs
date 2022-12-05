@@ -178,7 +178,7 @@ impl Recv {
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(()) => {
+                    Err(_) => {
                         proto_err!(stream: "could not parse content-length; stream={:?}", stream.id);
                         return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
                     }
@@ -263,6 +263,7 @@ impl Recv {
     }
 
     /// Called by the client to get pushed response
+    #[allow(clippy::type_complexity)]
     pub fn poll_pushed(
         &mut self,
         cx: &Context,

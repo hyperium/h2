@@ -309,17 +309,20 @@ impl fmt::Debug for Headers {
 
 // ===== util =====
 
-pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseU64Error;
+
+pub fn parse_u64(src: &[u8]) -> Result<u64, ParseU64Error> {
     if src.len() > 19 {
         // At danger for overflow...
-        return Err(());
+        return Err(ParseU64Error);
     }
 
     let mut ret = 0;
 
     for &d in src {
         if !(b'0'..=b'9').contains(&d) {
-            return Err(());
+            return Err(ParseU64Error);
         }
 
         ret *= 10;
@@ -333,7 +336,7 @@ pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
 
 #[derive(Debug)]
 pub enum PushPromiseHeaderError {
-    InvalidContentLength(Result<u64, ()>),
+    InvalidContentLength(Result<u64, ParseU64Error>),
     NotSafeAndCacheable,
 }
 

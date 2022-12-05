@@ -1270,6 +1270,7 @@ impl OpaqueStreamRef {
         me.actions.recv.poll_response(cx, &mut stream)
     }
     /// Called by a client to check for a pushed request.
+    #[allow(clippy::type_complexity)]
     pub fn poll_pushed(
         &mut self,
         cx: &Context,
