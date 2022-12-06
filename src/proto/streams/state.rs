@@ -303,7 +303,10 @@ impl State {
             Closed(..) => {}
             ref state => {
                 tracing::trace!("recv_eof; state={:?}", state);
-                self.inner = Closed(Cause::Error(io::ErrorKind::BrokenPipe.into()));
+                self.inner = Closed(Cause::Error(Error::Io(
+                    io::ErrorKind::BrokenPipe,
+                    Some("remote abruptly closed connection".to_owned()),
+                )));
             }
         }
     }
