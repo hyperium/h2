@@ -282,7 +282,12 @@ where
                 State::Closing(reason, initiator) => {
                     tracing::trace!("connection closing after flush");
                     // Flush/shutdown the codec
-                    ready!(self.codec.shutdown(cx))?;
+                    if let Err(err) = ready!(self.codec.shutdown(cx)) {
+                        // ignore ENOTCONN error on shutdown, already in desired state
+                        if reason != Reason::NO_ERROR || err.kind() != io::ErrorKind::NotConnected {
+                            return Poll::Ready(Err(err.into()));
+                        }
+                    }
 
                     // Transition the state to error
                     self.inner.state = State::Closed(reason, initiator);
