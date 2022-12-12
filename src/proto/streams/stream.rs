@@ -252,7 +252,7 @@ impl Stream {
             // The stream is not in any queue
             !self.is_pending_send && !self.is_pending_send_capacity &&
             !self.is_pending_accept && !self.is_pending_window_update &&
-            !self.is_pending_open && !self.reset_at.is_some()
+            !self.is_pending_open && self.reset_at.is_none()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles
@@ -379,7 +379,7 @@ impl store::Next for NextSend {
         if val {
             // ensure that stream is not queued for being opened
             // if it's being put into queue for sending data
-            debug_assert_eq!(stream.is_pending_open, false);
+            debug_assert!(!stream.is_pending_open);
         }
         stream.is_pending_send = val;
     }
@@ -450,7 +450,7 @@ impl store::Next for NextOpen {
         if val {
             // ensure that stream is not queued for being sent
             // if it's being put into queue for opening the stream
-            debug_assert_eq!(stream.is_pending_send, false);
+            debug_assert!(!stream.is_pending_send);
         }
         stream.is_pending_open = val;
     }
@@ -486,9 +486,6 @@ impl store::Next for NextResetExpire {
 
 impl ContentLength {
     pub fn is_head(&self) -> bool {
-        match *self {
-            ContentLength::Head => true,
-            _ => false,
-        }
+        matches!(*self, Self::Head)
     }
 }

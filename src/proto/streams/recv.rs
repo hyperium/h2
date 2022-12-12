@@ -2,12 +2,12 @@ use super::*;
 use crate::codec::UserError;
 use crate::frame::{self, PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 use crate::proto::{self, Error};
-use std::task::Context;
 
 use http::{HeaderMap, Request, Response};
 
+use std::cmp::Ordering;
 use std::io;
-use std::task::{Poll, Waker};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -178,7 +178,7 @@ impl Recv {
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(()) => {
+                    Err(_) => {
                         proto_err!(stream: "could not parse content-length; stream={:?}", stream.id);
                         return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
                     }
@@ -221,11 +221,12 @@ impl Recv {
         let stream_id = frame.stream_id();
         let (pseudo, fields) = frame.into_parts();
 
-        if pseudo.protocol.is_some() {
-            if counts.peer().is_server() && !self.is_extended_connect_protocol_enabled {
-                proto_err!(stream: "cannot use :protocol if extended connect protocol is disabled; stream={:?}", stream.id);
-                return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
-            }
+        if pseudo.protocol.is_some()
+            && counts.peer().is_server()
+            && !self.is_extended_connect_protocol_enabled
+        {
+            proto_err!(stream: "cannot use :protocol if extended connect protocol is disabled; stream={:?}", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
         }
 
         if !pseudo.is_informational() {
@@ -487,28 +488,32 @@ impl Recv {
             // flow-controlled frames until it receives WINDOW_UPDATE frames that
             // cause the flow-control window to become positive.
 
-            if target < old_sz {
-                // We must decrease the (local) window on every open stream.
-                let dec = old_sz - target;
-                tracing::trace!("decrementing all windows; dec={}", dec);
+            match target.cmp(&old_sz) {
+                Ordering::Less => {
+                    // We must decrease the (local) window on every open stream.
+                    let dec = old_sz - target;
+                    tracing::trace!("decrementing all windows; dec={}", dec);
 
-                store.for_each(|mut stream| {
-                    stream.recv_flow.dec_recv_window(dec);
-                })
-            } else if target > old_sz {
-                // We must increase the (local) window on every open stream.
-                let inc = target - old_sz;
-                tracing::trace!("incrementing all windows; inc={}", inc);
-                store.try_for_each(|mut stream| {
-                    // XXX: Shouldn't the peer have already noticed our
-                    // overflow and sent us a GOAWAY?
-                    stream
-                        .recv_flow
-                        .inc_window(inc)
-                        .map_err(proto::Error::library_go_away)?;
-                    stream.recv_flow.assign_capacity(inc);
-                    Ok::<_, proto::Error>(())
-                })?;
+                    store.for_each(|mut stream| {
+                        stream.recv_flow.dec_recv_window(dec);
+                    })
+                }
+                Ordering::Greater => {
+                    // We must increase the (local) window on every open stream.
+                    let inc = target - old_sz;
+                    tracing::trace!("incrementing all windows; inc={}", inc);
+                    store.try_for_each(|mut stream| {
+                        // XXX: Shouldn't the peer have already noticed our
+                        // overflow and sent us a GOAWAY?
+                        stream
+                            .recv_flow
+                            .inc_window(inc)
+                            .map_err(proto::Error::library_go_away)?;
+                        stream.recv_flow.assign_capacity(inc);
+                        Ok::<_, proto::Error>(())
+                    })?;
+                }
+                Ordering::Equal => (),
             }
         }
 
@@ -556,7 +561,7 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return Ok(self.ignore_data(sz)?);
+            return self.ignore_data(sz);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -596,7 +601,7 @@ impl Recv {
 
             if stream.state.recv_close().is_err() {
                 proto_err!(conn: "recv_data: failed to transition to closed state; stream={:?}", stream.id);
-                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
             }
         }
 
@@ -766,7 +771,7 @@ impl Recv {
     }
 
     pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
-        while let Some(_) = stream.pending_recv.pop_front(&mut self.buffer) {
+        while stream.pending_recv.pop_front(&mut self.buffer).is_some() {
             // drop it
         }
     }
@@ -1089,12 +1094,7 @@ impl Recv {
 
 impl Open {
     pub fn is_push_promise(&self) -> bool {
-        use self::Open::*;
-
-        match *self {
-            PushPromise => true,
-            _ => false,
-        }
+        matches!(*self, Self::PushPromise)
     }
 }
 

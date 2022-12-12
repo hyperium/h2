@@ -7,6 +7,7 @@ mod send;
 mod state;
 mod store;
 mod stream;
+#[allow(clippy::module_inception)]
 mod streams;
 
 pub(crate) use self::prioritize::Prioritized;

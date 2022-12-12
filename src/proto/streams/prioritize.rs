@@ -7,9 +7,11 @@ use crate::codec::UserError;
 use crate::codec::UserError::*;
 
 use bytes::buf::{Buf, Take};
-use std::io;
-use std::task::{Context, Poll, Waker};
-use std::{cmp, fmt, mem};
+use std::{
+    cmp::{self, Ordering},
+    fmt, io, mem,
+    task::{Context, Poll, Waker},
+};
 
 /// # Warning
 ///
@@ -235,39 +237,43 @@ impl Prioritize {
         // If it were less, then we could never send out the buffered data.
         let capacity = (capacity as usize) + stream.buffered_send_data;
 
-        if capacity == stream.requested_send_capacity as usize {
-            // Nothing to do
-        } else if capacity < stream.requested_send_capacity as usize {
-            // Update the target requested capacity
-            stream.requested_send_capacity = capacity as WindowSize;
-
-            // Currently available capacity assigned to the stream
-            let available = stream.send_flow.available().as_size();
-
-            // If the stream has more assigned capacity than requested, reclaim
-            // some for the connection
-            if available as usize > capacity {
-                let diff = available - capacity as WindowSize;
-
-                stream.send_flow.claim_capacity(diff);
-
-                self.assign_connection_capacity(diff, stream, counts);
+        match capacity.cmp(&(stream.requested_send_capacity as usize)) {
+            Ordering::Equal => {
+                // Nothing to do
             }
-        } else {
-            // If trying to *add* capacity, but the stream send side is closed,
-            // there's nothing to be done.
-            if stream.state.is_send_closed() {
-                return;
+            Ordering::Less => {
+                // Update the target requested capacity
+                stream.requested_send_capacity = capacity as WindowSize;
+
+                // Currently available capacity assigned to the stream
+                let available = stream.send_flow.available().as_size();
+
+                // If the stream has more assigned capacity than requested, reclaim
+                // some for the connection
+                if available as usize > capacity {
+                    let diff = available - capacity as WindowSize;
+
+                    stream.send_flow.claim_capacity(diff);
+
+                    self.assign_connection_capacity(diff, stream, counts);
+                }
             }
+            Ordering::Greater => {
+                // If trying to *add* capacity, but the stream send side is closed,
+                // there's nothing to be done.
+                if stream.state.is_send_closed() {
+                    return;
+                }
 
-            // Update the target requested capacity
-            stream.requested_send_capacity =
-                cmp::min(capacity, WindowSize::MAX as usize) as WindowSize;
+                // Update the target requested capacity
+                stream.requested_send_capacity =
+                    cmp::min(capacity, WindowSize::MAX as usize) as WindowSize;
 
-            // Try to assign additional capacity to the stream. If none is
-            // currently available, the stream will be queued to receive some
-            // when more becomes available.
-            self.try_assign_capacity(stream);
+                // Try to assign additional capacity to the stream. If none is
+                // currently available, the stream will be queued to receive some
+                // when more becomes available.
+                self.try_assign_capacity(stream);
+            }
         }
     }
 
@@ -372,11 +378,11 @@ impl Prioritize {
                 continue;
             }
 
-            counts.transition(stream, |_, mut stream| {
+            counts.transition(stream, |_, stream| {
                 // Try to assign capacity to the stream. This will also re-queue the
                 // stream if there isn't enough connection level capacity to fulfill
                 // the capacity request.
-                self.try_assign_capacity(&mut stream);
+                self.try_assign_capacity(stream);
             })
         }
     }
