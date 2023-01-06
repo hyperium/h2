@@ -173,12 +173,15 @@ impl FlowControl {
             self.available
         );
 
-        // Ensure that the argument is correct
-        assert!(self.window_size >= sz as usize);
+        // If send size is zero it's meaningless to update flow control window
+        if sz > 0 {
+            // Ensure that the argument is correct
+            assert!(self.window_size >= sz as usize);
 
-        // Update values
-        self.window_size -= sz;
-        self.available -= sz;
+            // Update values
+            self.window_size -= sz;
+            self.available -= sz;
+        }
     }
 }
 

@@ -744,6 +744,14 @@ impl Prioritize {
                             // capacity at this point.
                             debug_assert!(len <= self.flow.window_size());
 
+                            // Check if the stream level window the peer knows is available. In some
+                            // scenarios, maybe the window we know is available but the window which
+                            // peer knows is not.
+                            if len > 0 && len > stream.send_flow.window_size() {
+                                stream.pending_send.push_front(buffer, frame.into());
+                                continue;
+                            }
+
                             tracing::trace!(len, "sending data frame");
 
                             // Update the flow control
