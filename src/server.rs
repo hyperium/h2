@@ -1478,7 +1478,7 @@ impl proto::Peer for Peer {
         // A :scheme is required, except CONNECT.
         if let Some(scheme) = pseudo.scheme {
             if is_connect && !has_protocol {
-                malformed!(":scheme in CONNECT");
+                malformed!("malformed headers: :scheme in CONNECT");
             }
             let maybe_scheme = scheme.parse();
             let scheme = maybe_scheme.or_else(|why| {
@@ -1501,7 +1501,7 @@ impl proto::Peer for Peer {
 
         if let Some(path) = pseudo.path {
             if is_connect && !has_protocol {
-                malformed!(":path in CONNECT");
+                malformed!("malformed headers: :path in CONNECT");
             }
 
             // This cannot be empty
