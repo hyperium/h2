@@ -1214,7 +1214,12 @@ async fn extended_connect_protocol_enabled_during_handshake() {
 
         let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
 
-        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(
+            req.extensions().get::<crate::ext::Protocol>(),
+            Some(&crate::ext::Protocol::from_static("the-bread-protocol"))
+        );
 
         let rsp = Response::new(());
         stream.send_response(rsp, false).unwrap();

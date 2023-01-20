@@ -1451,8 +1451,13 @@ impl proto::Peer for Peer {
         }
 
         let has_protocol = pseudo.protocol.is_some();
-        if !is_connect && has_protocol {
-            malformed!("malformed headers: :protocol on non-CONNECT request");
+        if has_protocol {
+            if is_connect {
+                // Assert that we have the right type.
+                b = b.extension::<crate::ext::Protocol>(pseudo.protocol.unwrap());
+            } else {
+                malformed!("malformed headers: :protocol on non-CONNECT request");
+            }
         }
 
         if pseudo.status.is_some() {
