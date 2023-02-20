@@ -333,12 +333,7 @@ impl Send {
 
     /// Current available stream send capacity
     pub fn capacity(&self, stream: &mut store::Ptr) -> WindowSize {
-        let available = stream.send_flow.available().as_size() as usize;
-        let buffered = stream.buffered_send_data;
-
-        available
-            .min(self.prioritize.max_buffer_size())
-            .saturating_sub(buffered) as WindowSize
+        stream.capacity(self.prioritize.max_buffer_size())
     }
 
     pub fn poll_reset(
