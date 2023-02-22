@@ -574,7 +574,7 @@ async fn connection_close_notifies_response_future() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
         join(async move { conn.await.expect("conn") }, req).await;
     };
@@ -613,7 +613,7 @@ async fn connection_close_notifies_client_poll_ready() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
 
         conn.drive(req).await;
@@ -621,7 +621,10 @@ async fn connection_close_notifies_client_poll_ready() {
         let err = poll_fn(move |cx| client.poll_ready(cx))
             .await
             .expect_err("poll_ready");
-        assert_eq!(err.to_string(), "broken pipe");
+        assert_eq!(
+            err.to_string(),
+            "connection closed because of a broken pipe"
+        );
     };
 
     join(srv, client).await;

@@ -303,7 +303,13 @@ impl State {
             Closed(..) => {}
             ref state => {
                 tracing::trace!("recv_eof; state={:?}", state);
-                self.inner = Closed(Cause::Error(io::ErrorKind::BrokenPipe.into()));
+                self.inner = Closed(Cause::Error(
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "stream closed because of a broken pipe",
+                    )
+                    .into(),
+                ));
             }
         }
     }
