@@ -584,7 +584,9 @@ where
 
         // We take the advice of waiting 1 RTT literally, and wait
         // for a pong before proceeding.
-        self.inner.ping_pong.ping_shutdown();
+
+        // PATCH(arnauorriols): disable second GOAWAY, let all streams be processed
+        // self.inner.ping_pong.ping_shutdown();
     }
 }
 
