@@ -534,6 +534,11 @@ where
     pub fn is_extended_connect_protocol_enabled(&self) -> bool {
         self.inner.is_extended_connect_protocol_enabled()
     }
+
+    /// Returns negotiated max send streams
+    pub fn max_send_streams(&self) -> usize {
+        self.inner.max_send_streams()
+    }
 }
 
 impl<B> fmt::Debug for SendRequest<B>
