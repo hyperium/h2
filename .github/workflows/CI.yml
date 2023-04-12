@@ -66,25 +66,24 @@ jobs:
         if: matrix.rust == 'nightly'
 
   msrv:
-    name: Check MSRV (${{ matrix.rust }})
+    name: Check MSRV
     needs: [style]
-    strategy:
-      matrix:
-        rust:
-          - 1.56 # never go past Hyper's own MSRV
 
-        os:
-          - ubuntu-latest
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Rust (${{ matrix.rust }})
+      - name: Get MSRV from package metadata
+        id: metadata
+        run: |
+          cargo metadata --no-deps --format-version 1 |
+              jq -r '"msrv=" + (.packages[] | select(.name == "h2")).rust_version' >> $GITHUB_OUTPUT
+
+      - name: Install Rust (${{ steps.metadata.outputs.msrv }})
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: ${{ steps.metadata.outputs.msrv }}
 
       - run: cargo check
