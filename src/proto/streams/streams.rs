@@ -575,6 +575,7 @@ impl Inner {
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
         if id > self.actions.recv.max_stream_id() {
+            println!("ID too big");
             tracing::trace!(
                 "id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM",
                 id,
@@ -590,6 +591,8 @@ impl Inner {
                 self.actions
                     .ensure_not_idle(self.counts.peer(), id)
                     .map_err(Error::library_go_away)?;
+
+                println!(" - Go away for some reason");
 
                 return Ok(());
             }

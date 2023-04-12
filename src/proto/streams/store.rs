@@ -415,6 +415,10 @@ impl<'a> VacantEntry<'a> {
         // Insert the value in the slab
         let stream_id = value.id;
         let index = SlabIndex(self.slab.insert(value) as u32);
+        println!("SLAB INSERT! {}", self.slab.len());
+        if self.slab.len() > 9000 {
+            panic!()
+        }
 
         // Insert the handle in the ID map
         self.ids.insert(index);

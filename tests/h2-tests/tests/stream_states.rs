@@ -196,10 +196,10 @@ async fn closed_streams_are_released() {
 
 #[tokio::test]
 async fn reset_streams_dont_grow_memory_continuously() {
-    h2_support::trace_init!();
+    // h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
-    const N: u32 = 5;
+    const N: u32 = 10000;
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
@@ -231,7 +231,13 @@ async fn reset_streams_dont_grow_memory_continuously() {
 
         for n in 0..N {
             println!("accepting {}", n);
-            let _ = srv.next().await.unwrap().unwrap();
+            // let _ = srv.next().await.unwrap().unwrap();
+            match srv.next().await {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => println!("SRV ACCEPT ERR ({}) = {:?}", n, e),
+                None => println!("None - {}", n),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         poll_fn(|cx| srv.poll_closed(cx)).await.expect("server");
 
