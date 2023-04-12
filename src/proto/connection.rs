@@ -14,6 +14,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+const DEFAULT_MAX_REMOTE_RESET_STREAMS: usize = 20;
+
 /// An H2 connection
 #[derive(Debug)]
 pub(crate) struct Connection<T, P, B: Buf = Bytes>
@@ -118,6 +120,7 @@ where
                     .unwrap_or(false),
                 local_reset_duration: config.reset_stream_duration,
                 local_reset_max: config.reset_stream_max,
+                remote_reset_max: DEFAULT_MAX_REMOTE_RESET_STREAMS,
                 remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
                 remote_max_initiated: config
                     .settings
@@ -170,6 +173,11 @@ where
     /// by the remote peer.
     pub(crate) fn max_recv_streams(&self) -> usize {
         self.inner.streams.max_recv_streams()
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn num_wired_streams(&self) -> usize {
+        self.inner.streams.num_wired_streams()
     }
 
     /// Returns `Ready` when the connection is ready to receive a frame.

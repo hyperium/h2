@@ -297,6 +297,10 @@ impl Mock<frame::GoAway> {
         self.reason(frame::Reason::FRAME_SIZE_ERROR)
     }
 
+    pub fn calm(self) -> Self {
+        self.reason(frame::Reason::ENHANCE_YOUR_CALM)
+    }
+
     pub fn no_error(self) -> Self {
         self.reason(frame::Reason::NO_ERROR)
     }

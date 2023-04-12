@@ -60,6 +60,10 @@ pub struct Config {
     /// Maximum number of locally reset streams to keep at a time
     pub local_reset_max: usize,
 
+    /// Maximum number of remotely reset "pending accept" streams to keep at a
+    /// time. Going over this number results in a connection error.
+    pub remote_reset_max: usize,
+
     /// Initial window size of remote initiated streams
     pub remote_init_window_sz: WindowSize,
 

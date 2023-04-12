@@ -741,12 +741,39 @@ impl Recv {
     }
 
     /// Handle remote sending an explicit RST_STREAM.
-    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
+    pub fn recv_reset(
+        &mut self,
+        frame: frame::Reset,
+        stream: &mut Stream,
+        counts: &mut Counts,
+    ) -> Result<(), Error> {
+        // Reseting a stream that the user hasn't accepted is possible,
+        // but should be done with care. These streams will continue
+        // to take up memory in the accept queue, but will no longer be
+        // counted as "concurrent" streams.
+        //
+        // So, we have a separate limit for these.
+        //
+        // See https://github.com/hyperium/hyper/issues/2877
+        if stream.is_pending_accept {
+            if counts.can_inc_num_remote_reset_streams() {
+                counts.inc_num_remote_reset_streams();
+            } else {
+                tracing::warn!(
+                    "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
+                    counts.max_remote_reset_streams(),
+                );
+                return Err(Error::library_go_away(Reason::ENHANCE_YOUR_CALM));
+            }
+        }
+
         // Notify the stream
         stream.state.recv_reset(frame, stream.is_pending_send);
 
         stream.notify_send();
         stream.notify_recv();
+
+        Ok(())
     }
 
     /// Handle a connection-level error
@@ -1033,7 +1060,6 @@ impl Recv {
         cx: &Context,
         stream: &mut Stream,
     ) -> Poll<Option<Result<Bytes, proto::Error>>> {
-        // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
             Some(event) => {

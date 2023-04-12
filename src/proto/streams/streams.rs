@@ -140,6 +140,12 @@ where
             // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
             // the lock, so it can't.
             me.refs += 1;
+
+            // Pending-accepted remotely-reset streams are counted.
+            if stream.state.is_remote_reset() {
+                me.counts.dec_num_remote_reset_streams();
+            }
+
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
@@ -601,7 +607,7 @@ impl Inner {
         let actions = &mut self.actions;
 
         self.counts.transition(stream, |counts, stream| {
-            actions.recv.recv_reset(frame, stream);
+            actions.recv.recv_reset(frame, stream, counts)?;
             actions.send.handle_error(send_buffer, stream, counts);
             assert!(stream.state.is_closed());
             Ok(())

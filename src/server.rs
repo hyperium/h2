@@ -576,6 +576,13 @@ where
     pub fn max_concurrent_recv_streams(&self) -> usize {
         self.connection.max_recv_streams()
     }
+
+    // Could disappear at anytime.
+    #[doc(hidden)]
+    #[cfg(feature = "unstable")]
+    pub fn num_wired_streams(&self) -> usize {
+        self.connection.num_wired_streams()
+    }
 }
 
 #[cfg(feature = "stream")]

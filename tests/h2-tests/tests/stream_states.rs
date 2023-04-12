@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use futures::future::{join, join3, lazy, try_join};
+use futures::future::{join, join3, lazy, poll_fn, try_join};
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
@@ -192,6 +192,45 @@ async fn closed_streams_are_released() {
         srv.send_frame(frames::headers(1).response(204).eos()).await;
     };
     join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn reset_streams_dont_grow_memory_continuously() {
+    //h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    const N: u32 = 50;
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        for n in (1..(N * 2)).step_by(2) {
+            client
+                .send_frame(frames::headers(n).request("GET", "https://a.b/").eos())
+                .await;
+            client.send_frame(frames::reset(n).protocol_error()).await;
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            client.recv_frame(frames::go_away(41).calm()),
+        )
+        .await
+        .expect("client goaway");
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        poll_fn(|cx| srv.poll_closed(cx))
+            .await
+            .expect_err("server should error");
+        // specifically, not 50;
+        assert_eq!(21, srv.num_wired_streams());
+    };
+    join(srv, client).await;
 }
 
 #[tokio::test]
