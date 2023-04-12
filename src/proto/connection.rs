@@ -172,6 +172,11 @@ where
         self.inner.streams.max_recv_streams()
     }
 
+    #[cfg(feature = "unstable")]
+    pub fn num_wired_streams(&self) -> usize {
+        self.inner.streams.num_wired_streams()
+    }
+
     /// Returns `Ready` when the connection is ready to receive a frame.
     ///
     /// Returns `Error` as this may raise errors that are caused by delayed
