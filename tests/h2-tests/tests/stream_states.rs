@@ -200,6 +200,7 @@ async fn reset_streams_dont_grow_memory_continuously() {
     let (io, mut client) = mock::new();
 
     const N: u32 = 50;
+    const MAX: usize = 20;
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
@@ -212,7 +213,7 @@ async fn reset_streams_dont_grow_memory_continuously() {
         }
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            client.recv_frame(frames::go_away(41).calm()),
+            client.recv_frame(frames::go_away((MAX * 2 + 1) as u32).calm()),
         )
         .await
         .expect("client goaway");
@@ -220,6 +221,7 @@ async fn reset_streams_dont_grow_memory_continuously() {
 
     let srv = async move {
         let mut srv = server::Builder::new()
+            .max_pending_accept_reset_streams(MAX)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");

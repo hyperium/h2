@@ -240,6 +240,10 @@ pub struct Builder {
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
 
+    /// Maximum number of remotely reset streams to allow in the pending
+    /// accept queue.
+    pending_accept_reset_stream_max: usize,
+
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
 
@@ -642,6 +646,7 @@ impl Builder {
         Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
@@ -879,6 +884,49 @@ impl Builder {
     /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.reset_stream_max = max;
+        self
+    }
+
+    /// Sets the maximum number of pending-accept remotely-reset streams.
+    ///
+    /// Streams that have been received by the peer, but not accepted by the
+    /// user, can also receive a RST_STREAM. This is a legitimate pattern: one
+    /// could send a request and then shortly after, realize it is not needed,
+    /// sending a CANCEL.
+    ///
+    /// However, since those streams are now "closed", they don't count towards
+    /// the max concurrent streams. So, they will sit in the accept queue,
+    /// using memory.
+    ///
+    /// When the number of remotely-reset streams sitting in the pending-accept
+    /// queue reaches this maximum value, a connection error with the code of
+    /// `ENHANCE_YOUR_CALM` will be sent to the peer, and returned by the
+    /// `Future`.
+    ///
+    /// The default value is currently 20, but could change.
+    ///
+    /// # Examples
+    ///
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // `server_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let server_fut = Builder::new()
+    ///     .max_pending_accept_reset_streams(100)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn max_pending_accept_reset_streams(&mut self, max: usize) -> &mut Self {
+        self.pending_accept_reset_stream_max = max;
         self
     }
 
@@ -1312,6 +1360,7 @@ where
                             max_send_buffer_size: self.builder.max_send_buffer_size,
                             reset_stream_duration: self.builder.reset_stream_duration,
                             reset_stream_max: self.builder.reset_stream_max,
+                            remote_reset_stream_max: self.builder.pending_accept_reset_stream_max,
                             settings: self.builder.settings.clone(),
                         },
                     );
