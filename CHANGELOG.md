@@ -1,3 +1,12 @@
+# 0.3.17 (April 13, 2023)
+
+* Add `Error::is_library()` method to check if the originated inside `h2`.
+* Add `max_pending_accept_reset_streams(usize)` option to client and server
+  builders.
+* Fix theoretical memory growth when receiving too many HEADERS and then
+  RST_STREAM frames faster than an application can accept them off the queue.
+  (CVE-2023-26964)
+
 # 0.3.16 (February 27, 2023)
 
 * Set `Protocol` extension on requests when received Extended CONNECT requests.
