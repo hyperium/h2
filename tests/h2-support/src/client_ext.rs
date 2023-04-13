@@ -11,7 +11,7 @@ pub trait SendRequestExt {
 
 impl<B> SendRequestExt for SendRequest<B>
 where
-    B: Buf + Unpin + 'static,
+    B: Buf,
 {
     fn get(&mut self, uri: &str) -> ResponseFuture {
         let req = Request::builder()

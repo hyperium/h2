@@ -1,3 +1,11 @@
+# 0.3.16 (February 27, 2023)
+
+* Set `Protocol` extension on requests when received Extended CONNECT requests.
+* Remove `B: Unpin + 'static` bound requiremented of bufs
+* Fix releasing of frames when stream is finished, reducing memory usage.
+* Fix panic when trying to send data and connection window is available, but stream window is not.
+* Fix spurious wakeups when stream capacity is not available.
+
 # 0.3.15 (October 21, 2022)
 
 * Remove `B: Buf` bound on `SendStream`'s parameter

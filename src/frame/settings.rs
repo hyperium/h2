@@ -182,10 +182,10 @@ impl Settings {
                     }
                 }
                 Some(MaxFrameSize(val)) => {
-                    if val < DEFAULT_MAX_FRAME_SIZE || val > MAX_MAX_FRAME_SIZE {
-                        return Err(Error::InvalidSettingValue);
-                    } else {
+                    if DEFAULT_MAX_FRAME_SIZE <= val && val <= MAX_MAX_FRAME_SIZE {
                         settings.max_frame_size = Some(val);
+                    } else {
+                        return Err(Error::InvalidSettingValue);
                     }
                 }
                 Some(MaxHeaderListSize(val)) => {

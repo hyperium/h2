@@ -364,7 +364,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
         let span = tracing::trace_span!("server_handshake");
@@ -413,7 +413,7 @@ where
     ) -> Poll<Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>>> {
         // Always try to advance the internal state. Getting Pending also is
         // needed to allow this function to return Pending.
-        if let Poll::Ready(_) = self.poll_closed(cx)? {
+        if self.poll_closed(cx)?.is_ready() {
             // If the socket is closed, don't return anything
             // TODO: drop any pending streams
             return Poll::Ready(None);
@@ -582,7 +582,7 @@ where
 impl<T, B> futures_core::Stream for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Item = Result<(Request<RecvStream>, SendResponse<B>), crate::Error>;
 
@@ -1007,7 +1007,7 @@ impl Builder {
     pub fn handshake<T, B>(&self, io: T) -> Handshake<T, B>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + 'static,
+        B: Buf,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1262,7 +1262,7 @@ where
 impl<T, B: Buf> Future for Handshake<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<Connection<T, B>, crate::Error>;
 
@@ -1451,8 +1451,13 @@ impl proto::Peer for Peer {
         }
 
         let has_protocol = pseudo.protocol.is_some();
-        if !is_connect && has_protocol {
-            malformed!("malformed headers: :protocol on non-CONNECT request");
+        if has_protocol {
+            if is_connect {
+                // Assert that we have the right type.
+                b = b.extension::<crate::ext::Protocol>(pseudo.protocol.unwrap());
+            } else {
+                malformed!("malformed headers: :protocol on non-CONNECT request");
+            }
         }
 
         if pseudo.status.is_some() {
@@ -1478,7 +1483,7 @@ impl proto::Peer for Peer {
         // A :scheme is required, except CONNECT.
         if let Some(scheme) = pseudo.scheme {
             if is_connect && !has_protocol {
-                malformed!(":scheme in CONNECT");
+                malformed!("malformed headers: :scheme in CONNECT");
             }
             let maybe_scheme = scheme.parse();
             let scheme = maybe_scheme.or_else(|why| {
@@ -1501,7 +1506,7 @@ impl proto::Peer for Peer {
 
         if let Some(path) = pseudo.path {
             if is_connect && !has_protocol {
-                malformed!(":path in CONNECT");
+                malformed!("malformed headers: :path in CONNECT");
             }
 
             // This cannot be empty
