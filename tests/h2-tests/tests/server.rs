@@ -706,6 +706,41 @@ async fn graceful_shutdown() {
 }
 
 #[tokio::test]
+async fn go_away_sends_debug_data() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        client
+            .recv_frame(frames::go_away(1).no_error().data("something went wrong"))
+            .await;
+    };
+
+    let src = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (_req, _tx) = srv.next().await.unwrap().expect("server receives request");
+
+        srv.debug_data_shutdown();
+
+        let srv_fut = async move {
+            poll_fn(move |cx| srv.poll_closed(cx))
+                .await
+                .expect("server");
+        };
+
+        srv_fut.await
+    };
+
+    join(client, src).await;
+}
+
+#[tokio::test]
 async fn goaway_even_if_client_sent_goaway() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();

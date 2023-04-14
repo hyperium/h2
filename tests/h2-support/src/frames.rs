@@ -305,6 +305,13 @@ impl Mock<frame::GoAway> {
         self.reason(frame::Reason::NO_ERROR)
     }
 
+    pub fn data<I>(self, debug_data: I) -> Self
+    where
+        I: Into<Bytes>,
+    {
+        Mock(self.0.with_debug_data(debug_data.into()))
+    }
+
     pub fn reason(self, reason: frame::Reason) -> Self {
         Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
     }
