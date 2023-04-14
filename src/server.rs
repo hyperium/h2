@@ -544,6 +544,12 @@ where
         self.connection.go_away_gracefully();
     }
 
+    #[doc(hidden)]
+    #[cfg(feature = "unstable")]
+    pub fn debug_data_shutdown(&mut self) {
+        self.connection.go_away_debug_data();
+    }
+
     /// Takes a `PingPong` instance from the connection.
     ///
     /// # Note
