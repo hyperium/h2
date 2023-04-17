@@ -880,6 +880,40 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 }
 
 #[tokio::test]
+async fn pending_accept_recv_illegal_content_length_data() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("POST", "https://a.b")
+                    .field("content-length", "1"),
+            )
+            .await;
+        client
+            .send_frame(frames::data(1, &b"hello"[..]).eos())
+            .await;
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+        idle_ms(10).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let _req = srv.next().await.expect("req").expect("is_ok");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn poll_reset() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();

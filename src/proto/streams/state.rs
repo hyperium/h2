@@ -362,7 +362,7 @@ impl State {
 
     pub fn is_remote_reset(&self) -> bool {
         match self.inner {
-            Closed(Cause::Error(ref e)) => e.is_local(),
+            Closed(Cause::Error(ref e)) => !e.is_local(),
             _ => false,
         }
     }
