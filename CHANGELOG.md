@@ -1,3 +1,7 @@
+# 0.3.18 (April 17, 2023)
+
+* Fix panic because of opposite check in `is_remote_local()`.
+
 # 0.3.17 (April 13, 2023)
 
 * Add `Error::is_library()` method to check if the originated inside `h2`.
