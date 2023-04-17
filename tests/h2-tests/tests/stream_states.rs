@@ -236,6 +236,47 @@ async fn reset_streams_dont_grow_memory_continuously() {
 }
 
 #[tokio::test]
+async fn pending_accept_reset_streams_decrement_too() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    // If it didn't decrement internally, this would eventually get
+    // the count over MAX.
+    const M: usize = 2;
+    const N: usize = 5;
+    const MAX: usize = 6;
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        let mut id = 1;
+        for _ in 0..M {
+            for _ in 0..N {
+                client
+                    .send_frame(frames::headers(id).request("GET", "https://a.b/").eos())
+                    .await;
+                client.send_frame(frames::reset(id).protocol_error()).await;
+                id += 2;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_pending_accept_reset_streams(MAX)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        while let Some(Ok(_)) = srv.accept().await {}
+
+        poll_fn(|cx| srv.poll_closed(cx)).await.expect("server");
+    };
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn errors_if_recv_frame_exceeds_max_frame_size() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
