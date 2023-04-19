@@ -303,7 +303,13 @@ impl State {
             Closed(..) => {}
             ref state => {
                 tracing::trace!("recv_eof; state={:?}", state);
-                self.inner = Closed(Cause::Error(io::ErrorKind::BrokenPipe.into()));
+                self.inner = Closed(Cause::Error(
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "stream closed because of a broken pipe",
+                    )
+                    .into(),
+                ));
             }
         }
     }
@@ -343,16 +349,20 @@ impl State {
     }
 
     pub fn is_scheduled_reset(&self) -> bool {
-        match self.inner {
-            Closed(Cause::ScheduledLibraryReset(..)) => true,
-            _ => false,
-        }
+        matches!(self.inner, Closed(Cause::ScheduledLibraryReset(..)))
     }
 
     pub fn is_local_reset(&self) -> bool {
         match self.inner {
             Closed(Cause::Error(ref e)) => e.is_local(),
             Closed(Cause::ScheduledLibraryReset(..)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_remote_reset(&self) -> bool {
+        match self.inner {
+            Closed(Cause::Error(ref e)) => !e.is_local(),
             _ => false,
         }
     }
@@ -367,65 +377,57 @@ impl State {
     }
 
     pub fn is_send_streaming(&self) -> bool {
-        match self.inner {
+        matches!(
+            self.inner,
             Open {
-                local: Streaming, ..
-            } => true,
-            HalfClosedRemote(Streaming) => true,
-            _ => false,
-        }
+                local: Streaming,
+                ..
+            } | HalfClosedRemote(Streaming)
+        )
     }
 
     /// Returns true when the stream is in a state to receive headers
     pub fn is_recv_headers(&self) -> bool {
-        match self.inner {
-            Idle => true,
-            Open {
+        matches!(
+            self.inner,
+            Idle | Open {
                 remote: AwaitingHeaders,
                 ..
-            } => true,
-            HalfClosedLocal(AwaitingHeaders) => true,
-            ReservedRemote => true,
-            _ => false,
-        }
+            } | HalfClosedLocal(AwaitingHeaders)
+                | ReservedRemote
+        )
     }
 
     pub fn is_recv_streaming(&self) -> bool {
-        match self.inner {
+        matches!(
+            self.inner,
             Open {
-                remote: Streaming, ..
-            } => true,
-            HalfClosedLocal(Streaming) => true,
-            _ => false,
-        }
+                remote: Streaming,
+                ..
+            } | HalfClosedLocal(Streaming)
+        )
     }
 
     pub fn is_closed(&self) -> bool {
-        match self.inner {
-            Closed(_) => true,
-            _ => false,
-        }
+        matches!(self.inner, Closed(_))
     }
 
     pub fn is_recv_closed(&self) -> bool {
-        match self.inner {
-            Closed(..) | HalfClosedRemote(..) | ReservedLocal => true,
-            _ => false,
-        }
+        matches!(
+            self.inner,
+            Closed(..) | HalfClosedRemote(..) | ReservedLocal
+        )
     }
 
     pub fn is_send_closed(&self) -> bool {
-        match self.inner {
-            Closed(..) | HalfClosedLocal(..) | ReservedRemote => true,
-            _ => false,
-        }
+        matches!(
+            self.inner,
+            Closed(..) | HalfClosedLocal(..) | ReservedRemote
+        )
     }
 
     pub fn is_idle(&self) -> bool {
-        match self.inner {
-            Idle => true,
-            _ => false,
-        }
+        matches!(self.inner, Idle)
     }
 
     pub fn ensure_recv_open(&self) -> Result<bool, proto::Error> {

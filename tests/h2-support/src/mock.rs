@@ -56,7 +56,7 @@ struct Inner {
     closed: bool,
 }
 
-const PREFACE: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Create a new mock and handle
 pub fn new() -> (Mock, Handle) {
@@ -148,7 +148,7 @@ impl Handle {
         poll_fn(move |cx| {
             while buf.has_remaining() {
                 let res = Pin::new(self.codec.get_mut())
-                    .poll_write(cx, &mut buf.chunk())
+                    .poll_write(cx, buf.chunk())
                     .map_err(|e| panic!("write err={:?}", e));
 
                 let n = ready!(res).unwrap();
@@ -221,22 +221,15 @@ impl Handle {
         let settings = settings.into();
         self.send(settings.into()).await.unwrap();
 
-        let frame = self.next().await;
-        let settings = match frame {
-            Some(frame) => match frame.unwrap() {
-                Frame::Settings(settings) => {
-                    // Send the ACK
-                    let ack = frame::Settings::ack();
+        let frame = self.next().await.expect("unexpected EOF").unwrap();
+        let settings = assert_settings!(frame);
 
-                    // TODO: Don't unwrap?
-                    self.send(ack.into()).await.unwrap();
+        // Send the ACK
+        let ack = frame::Settings::ack();
 
-                    settings
-                }
-                frame => panic!("unexpected frame; frame={:?}", frame),
-            },
-            None => panic!("unexpected EOF"),
-        };
+        // TODO: Don't unwrap?
+        self.send(ack.into()).await.unwrap();
+
         let frame = self.next().await;
         let f = assert_settings!(frame.unwrap().unwrap());
 

@@ -13,7 +13,7 @@ pub enum Error {
     Io(io::ErrorKind, Option<String>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Initiator {
     User,
     Library,
@@ -70,7 +70,7 @@ impl fmt::Display for Error {
 
 impl From<io::ErrorKind> for Error {
     fn from(src: io::ErrorKind) -> Self {
-        Error::Io(src.into(), None)
+        Error::Io(src, None)
     }
 }
 

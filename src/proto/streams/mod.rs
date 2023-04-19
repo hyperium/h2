@@ -7,6 +7,7 @@ mod send;
 mod state;
 mod store;
 mod stream;
+#[allow(clippy::module_inception)]
 mod streams;
 
 pub(crate) use self::prioritize::Prioritized;
@@ -41,17 +42,27 @@ pub struct Config {
     /// MAX_CONCURRENT_STREAMS specified in the frame.
     pub initial_max_send_streams: usize,
 
+    /// Max amount of DATA bytes to buffer per stream.
+    pub local_max_buffer_size: usize,
+
     /// The stream ID to start the next local stream with
     pub local_next_stream_id: StreamId,
 
     /// If the local peer is willing to receive push promises
     pub local_push_enabled: bool,
 
+    /// If extended connect protocol is enabled.
+    pub extended_connect_protocol_enabled: bool,
+
     /// How long a locally reset stream should ignore frames
     pub local_reset_duration: Duration,
 
     /// Maximum number of locally reset streams to keep at a time
     pub local_reset_max: usize,
+
+    /// Maximum number of remotely reset "pending accept" streams to keep at a
+    /// time. Going over this number results in a connection error.
+    pub remote_reset_max: usize,
 
     /// Initial window size of remote initiated streams
     pub remote_init_window_sz: WindowSize,

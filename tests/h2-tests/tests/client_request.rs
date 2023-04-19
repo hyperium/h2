@@ -371,7 +371,7 @@ async fn send_request_poll_ready_when_connection_error() {
             resp2.await.expect_err("req2");
         }));
 
-        while let Some(_) = unordered.next().await {}
+        while unordered.next().await.is_some() {}
     };
 
     join(srv, h2).await;
@@ -489,9 +489,8 @@ async fn http_2_request_without_scheme_or_authority() {
         client
             .send_request(request, true)
             .expect_err("should be UserError");
-        let ret = h2.await.expect("h2");
+        let _: () = h2.await.expect("h2");
         drop(client);
-        ret
     };
 
     join(srv, h2).await;
@@ -575,7 +574,7 @@ async fn connection_close_notifies_response_future() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
         join(async move { conn.await.expect("conn") }, req).await;
     };
@@ -614,7 +613,7 @@ async fn connection_close_notifies_client_poll_ready() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
 
         conn.drive(req).await;
@@ -622,7 +621,10 @@ async fn connection_close_notifies_client_poll_ready() {
         let err = poll_fn(move |cx| client.poll_ready(cx))
             .await
             .expect_err("poll_ready");
-        assert_eq!(err.to_string(), "broken pipe");
+        assert_eq!(
+            err.to_string(),
+            "connection closed because of a broken pipe"
+        );
     };
 
     join(srv, client).await;
@@ -1305,8 +1307,155 @@ async fn informational_while_local_streaming() {
     join(srv, h2).await;
 }
 
-const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
-const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
+#[tokio::test]
+async fn extended_connect_protocol_disabled_by_default() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        assert!(!client.is_extended_connect_protocol_enabled());
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn extended_connect_protocol_enabled_during_handshake() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().enable_connect_protocol(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        assert!(client.is_extended_connect_protocol_enabled());
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn invalid_connect_protocol_enabled_setting() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send a settings frame
+        srv.send(frames::settings().enable_connect_protocol(2).into())
+            .await
+            .unwrap();
+        srv.read_preface().await.unwrap();
+
+        let settings = assert_settings!(srv.next().await.expect("unexpected EOF").unwrap());
+        assert_default_settings!(settings);
+
+        // Send the ACK
+        let ack = frame::Settings::ack();
+
+        // TODO: Don't unwrap?
+        srv.send(ack.into()).await.unwrap();
+
+        let frame = srv.next().await.unwrap().unwrap();
+        let go_away = assert_go_away!(frame);
+        assert_eq!(go_away.reason(), Reason::PROTOCOL_ERROR);
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+
+        let error = h2.drive(response).await.unwrap_err();
+        assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn extended_connect_request() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().enable_connect_protocol(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("CONNECT", "http://bread/baguette")
+                .protocol("the-bread-protocol")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::connect("http://bread/baguette")
+            .extension(Protocol::from("the-bread-protocol"))
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
+const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 trait MockH2 {
     fn handshake(&mut self) -> &mut Self;

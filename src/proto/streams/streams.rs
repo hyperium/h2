@@ -2,6 +2,7 @@ use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use crate::codec::{Codec, SendError, UserError};
+use crate::ext::Protocol;
 use crate::frame::{self, Frame, Reason};
 use crate::proto::{peer, Error, Initiator, Open, Peer, WindowSize};
 use crate::{client, proto, server};
@@ -11,7 +12,6 @@ use http::{HeaderMap, Request, Response};
 use std::task::{Context, Poll, Waker};
 use tokio::io::AsyncWrite;
 
-use crate::PollExt;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
@@ -140,6 +140,12 @@ where
             // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
             // the lock, so it can't.
             me.refs += 1;
+
+            // Pending-accepted remotely-reset streams are counted.
+            if stream.state.is_remote_reset() {
+                me.counts.dec_num_remote_reset_streams();
+            }
+
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
@@ -214,6 +220,8 @@ where
         use super::stream::ContentLength;
         use http::Method;
 
+        let protocol = request.extensions_mut().remove::<Protocol>();
+
         // Clear before taking lock, incase extensions contain a StreamRef.
         request.extensions_mut().clear();
 
@@ -261,7 +269,8 @@ where
         }
 
         // Convert the message
-        let headers = client::Peer::convert_send_message(stream_id, request, end_of_stream)?;
+        let headers =
+            client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
 
         let mut stream = me.store.insert(stream.id, stream);
 
@@ -294,35 +303,44 @@ where
             send_buffer: self.send_buffer.clone(),
         })
     }
+
+    pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .actions
+            .send
+            .is_extended_connect_protocol_enabled()
+    }
 }
 
 impl<B> DynStreams<'_, B> {
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 
-        me.recv_headers(self.peer, &self.send_buffer, frame)
+        me.recv_headers(self.peer, self.send_buffer, frame)
     }
 
     pub fn recv_data(&mut self, frame: frame::Data) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
-        me.recv_data(self.peer, &self.send_buffer, frame)
+        me.recv_data(self.peer, self.send_buffer, frame)
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 
-        me.recv_reset(&self.send_buffer, frame)
+        me.recv_reset(self.send_buffer, frame)
     }
 
     /// Notify all streams that a connection-level error happened.
     pub fn handle_error(&mut self, err: proto::Error) -> StreamId {
         let mut me = self.inner.lock().unwrap();
-        me.handle_error(&self.send_buffer, err)
+        me.handle_error(self.send_buffer, err)
     }
 
     pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
-        me.recv_go_away(&self.send_buffer, frame)
+        me.recv_go_away(self.send_buffer, frame)
     }
 
     pub fn last_processed_id(&self) -> StreamId {
@@ -331,22 +349,22 @@ impl<B> DynStreams<'_, B> {
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
-        me.recv_window_update(&self.send_buffer, frame)
+        me.recv_window_update(self.send_buffer, frame)
     }
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
-        me.recv_push_promise(&self.send_buffer, frame)
+        me.recv_push_promise(self.send_buffer, frame)
     }
 
     pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
         let mut me = self.inner.lock().map_err(|_| ())?;
-        me.recv_eof(&self.send_buffer, clear_pending_accept)
+        me.recv_eof(self.send_buffer, clear_pending_accept)
     }
 
     pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
         let mut me = self.inner.lock().unwrap();
-        me.send_reset(&self.send_buffer, id, reason)
+        me.send_reset(self.send_buffer, id, reason)
     }
 
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
@@ -589,7 +607,7 @@ impl Inner {
         let actions = &mut self.actions;
 
         self.counts.transition(stream, |counts, stream| {
-            actions.recv.recv_reset(frame, stream);
+            actions.recv.recv_reset(frame, stream, counts)?;
             actions.send.handle_error(send_buffer, stream, counts);
             assert!(stream.state.is_closed());
             Ok(())
@@ -643,15 +661,12 @@ impl Inner {
 
         let last_processed_id = actions.recv.last_processed_id();
 
-        self.store
-            .for_each(|stream| {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.handle_error(&err, &mut *stream);
-                    actions.send.handle_error(send_buffer, stream, counts);
-                    Ok::<_, ()>(())
-                })
+        self.store.for_each(|stream| {
+            counts.transition(stream, |counts, stream| {
+                actions.recv.handle_error(&err, &mut *stream);
+                actions.send.handle_error(send_buffer, stream, counts);
             })
-            .unwrap();
+        });
 
         actions.conn_error = Some(err);
 
@@ -674,19 +689,14 @@ impl Inner {
 
         let err = Error::remote_go_away(frame.debug_data().clone(), frame.reason());
 
-        self.store
-            .for_each(|stream| {
-                if stream.id > last_stream_id {
-                    counts.transition(stream, |counts, stream| {
-                        actions.recv.handle_error(&err, &mut *stream);
-                        actions.send.handle_error(send_buffer, stream, counts);
-                        Ok::<_, ()>(())
-                    })
-                } else {
-                    Ok::<_, ()>(())
-                }
-            })
-            .unwrap();
+        self.store.for_each(|stream| {
+            if stream.id > last_stream_id {
+                counts.transition(stream, |counts, stream| {
+                    actions.recv.handle_error(&err, &mut *stream);
+                    actions.send.handle_error(send_buffer, stream, counts);
+                })
+            }
+        });
 
         actions.conn_error = Some(err);
 
@@ -721,7 +731,7 @@ impl Inner {
             }
             None => {
                 proto_err!(conn: "recv_push_promise: initiating stream is in an invalid state");
-                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
             }
         };
 
@@ -802,23 +812,26 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         if actions.conn_error.is_none() {
-            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
+            actions.conn_error = Some(
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "connection closed because of a broken pipe",
+                )
+                .into(),
+            );
         }
 
         tracing::trace!("Streams::recv_eof");
 
-        self.store
-            .for_each(|stream| {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.recv_eof(stream);
+        self.store.for_each(|stream| {
+            counts.transition(stream, |counts, stream| {
+                actions.recv.recv_eof(stream);
 
-                    // This handles resetting send state associated with the
-                    // stream
-                    actions.send.handle_error(send_buffer, stream, counts);
-                    Ok::<_, ()>(())
-                })
+                // This handles resetting send state associated with the
+                // stream
+                actions.send.handle_error(send_buffer, stream, counts);
             })
-            .expect("recv_eof");
+        });
 
         actions.clear_queues(clear_pending_accept, &mut self.store, counts);
         Ok(())
@@ -881,6 +894,10 @@ impl Inner {
                     // We normally would open this stream, so update our
                     // next-send-id record.
                     self.actions.send.maybe_reset_next_stream_id(id);
+                } else {
+                    // We normally would recv this stream, so update our
+                    // next-recv-id record.
+                    self.actions.recv.maybe_reset_next_stream_id(id);
                 }
 
                 let stream = Stream::new(id, 0, 0);
@@ -1141,7 +1158,7 @@ impl<B> StreamRef<B> {
             let mut child_stream = me.store.resolve(child_key);
             child_stream.unlink();
             child_stream.remove();
-            return Err(err.into());
+            return Err(err);
         }
 
         me.refs += 1;
@@ -1224,10 +1241,7 @@ impl<B> StreamRef<B> {
             .map_err(From::from)
     }
 
-    pub fn clone_to_opaque(&self) -> OpaqueStreamRef
-    where
-        B: 'static,
-    {
+    pub fn clone_to_opaque(&self) -> OpaqueStreamRef {
         self.opaque.clone()
     }
 
@@ -1276,7 +1290,7 @@ impl OpaqueStreamRef {
         me.actions
             .recv
             .poll_pushed(cx, &mut stream)
-            .map_ok_(|(h, key)| {
+            .map_ok(|(h, key)| {
                 me.refs += 1;
                 let opaque_ref =
                     OpaqueStreamRef::new(self.inner.clone(), &mut me.store.resolve(key));
@@ -1340,12 +1354,13 @@ impl OpaqueStreamRef {
             .release_capacity(capacity, &mut stream, &mut me.actions.task)
     }
 
+    /// Clear the receive queue and set the status to no longer receive data frames.
     pub(crate) fn clear_recv_buffer(&mut self) {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut stream = me.store.resolve(self.key);
-
+        stream.is_recv = false;
         me.actions.recv.clear_recv_buffer(&mut stream);
     }
 
@@ -1387,7 +1402,7 @@ impl Clone for OpaqueStreamRef {
 
         OpaqueStreamRef {
             inner: self.inner.clone(),
-            key: self.key.clone(),
+            key: self.key,
         }
     }
 }
@@ -1456,9 +1471,21 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
 
 fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Counts) {
     if stream.is_canceled_interest() {
+        // Server is allowed to early respond without fully consuming the client input stream
+        // But per the RFC, must send a RST_STREAM(NO_ERROR) in such cases. https://www.rfc-editor.org/rfc/rfc7540#section-8.1
+        // Some other http2 implementation may interpret other error code as fatal if not respected (i.e: nginx https://trac.nginx.org/nginx/ticket/2376)
+        let reason = if counts.peer().is_server()
+            && stream.state.is_send_closed()
+            && stream.state.is_recv_streaming()
+        {
+            Reason::NO_ERROR
+        } else {
+            Reason::CANCEL
+        };
+
         actions
             .send
-            .schedule_implicit_reset(stream, Reason::CANCEL, counts, &mut actions.task);
+            .schedule_implicit_reset(stream, reason, counts, &mut actions.task);
         actions.recv.enqueue_reset_expiration(stream, counts);
     }
 }

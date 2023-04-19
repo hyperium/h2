@@ -1,3 +1,67 @@
+# 0.3.18 (April 17, 2023)
+
+* Fix panic because of opposite check in `is_remote_local()`.
+
+# 0.3.17 (April 13, 2023)
+
+* Add `Error::is_library()` method to check if the originated inside `h2`.
+* Add `max_pending_accept_reset_streams(usize)` option to client and server
+  builders.
+* Fix theoretical memory growth when receiving too many HEADERS and then
+  RST_STREAM frames faster than an application can accept them off the queue.
+  (CVE-2023-26964)
+
+# 0.3.16 (February 27, 2023)
+
+* Set `Protocol` extension on requests when received Extended CONNECT requests.
+* Remove `B: Unpin + 'static` bound requiremented of bufs
+* Fix releasing of frames when stream is finished, reducing memory usage.
+* Fix panic when trying to send data and connection window is available, but stream window is not.
+* Fix spurious wakeups when stream capacity is not available.
+
+# 0.3.15 (October 21, 2022)
+
+* Remove `B: Buf` bound on `SendStream`'s parameter
+* add accessor for `StreamId` u32
+
+# 0.3.14 (August 16, 2022)
+
+* Add `Error::is_reset` function.
+* Bump MSRV to Rust 1.56.
+* Return `RST_STREAM(NO_ERROR)` when the server early responds.
+
+# 0.3.13 (March 31, 2022)
+
+* Update private internal `tokio-util` dependency.
+
+# 0.3.12 (March 9, 2022)
+
+* Avoid time operations that can panic (#599)
+* Bump MSRV to Rust 1.49 (#606)
+* Fix header decoding error when a header name is contained at a continuation
+  header boundary (#589)
+* Remove I/O type names from handshake `tracing` spans (#608)
+
+# 0.3.11 (January 26, 2022)
+
+* Make `SendStream::poll_capacity` never return `Ok(Some(0))` (#596)
+* Fix panic when receiving already reset push promise (#597)
+
+# 0.3.10 (January 6, 2022)
+
+* Add `Error::is_go_away()` and `Error::is_remote()` methods.
+* Fix panic if receiving malformed PUSH_PROMISE with stream ID of 0.
+
+# 0.3.9 (December 9, 2021)
+
+* Fix hang related to new `max_send_buffer_size`.
+
+# 0.3.8 (December 8, 2021)
+
+* Add "extended CONNECT support". Adds `h2::ext::Protocol`, which is used for request and response extensions to connect new protocols over an HTTP/2 stream.
+* Add `max_send_buffer_size` options to client and server builders, and a default of ~400MB. This acts like a high-water mark for the `poll_capacity()` method.
+* Fix panic if receiving malformed HEADERS with stream ID of 0.
+
 # 0.3.7 (October 22, 2021)
 
 * Fix panic if server sends a malformed frame on a stream client was about to open.

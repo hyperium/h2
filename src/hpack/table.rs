@@ -404,7 +404,7 @@ impl Table {
 
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
-            debug_assert!(!self.indices[probe].is_none());
+            debug_assert!(self.indices[probe].is_some());
 
             let mut pos = self.indices[probe].unwrap();
 
@@ -751,6 +751,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
             "/index.html" => Some((5, true)),
             _ => Some((4, false)),
         },
+        Header::Protocol(..) => None,
         Header::Status(ref v) => match u16::from(*v) {
             200 => Some((8, true)),
             204 => Some((9, true)),
