@@ -48,6 +48,16 @@ macro_rules! assert_settings {
 }
 
 #[macro_export]
+macro_rules! assert_go_away {
+    ($frame:expr) => {{
+        match $frame {
+            h2::frame::Frame::GoAway(v) => v,
+            f => panic!("expected GO_AWAY; actual={:?}", f),
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! poll_err {
     ($transport:expr) => {{
         use futures::StreamExt;
@@ -80,6 +90,7 @@ macro_rules! assert_default_settings {
 
 use h2::frame::Frame;
 
+#[track_caller]
 pub fn assert_frame_eq<T: Into<Frame>, U: Into<Frame>>(t: T, u: U) {
     let actual: Frame = t.into();
     let expected: Frame = u.into();

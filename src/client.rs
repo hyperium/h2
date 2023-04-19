@@ -136,6 +136,7 @@
 //! [`Error`]: ../struct.Error.html
 
 use crate::codec::{Codec, SendError, UserError};
+use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
@@ -319,8 +320,15 @@ pub struct Builder {
     /// Initial target window size for new connections.
     initial_target_connection_window_size: Option<u32>,
 
+    /// Maximum amount of bytes to "buffer" for writing per stream.
+    max_send_buffer_size: usize,
+
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
+
+    /// Maximum number of remotely reset streams to allow in the pending
+    /// accept queue.
+    pending_accept_reset_stream_max: usize,
 
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
@@ -337,7 +345,7 @@ pub(crate) struct Peer;
 
 impl<B> SendRequest<B>
 where
-    B: Buf + 'static,
+    B: Buf,
 {
     /// Returns `Ready` when the connection can initialize a new HTTP/2
     /// stream.
@@ -517,6 +525,19 @@ where
                 (response, stream)
             })
     }
+
+    /// Returns whether the [extended CONNECT protocol][1] is enabled or not.
+    ///
+    /// This setting is configured by the server peer by sending the
+    /// [`SETTINGS_ENABLE_CONNECT_PROTOCOL` parameter][2] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    /// [2]: https://datatracker.ietf.org/doc/html/rfc8441#section-3
+    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.inner.is_extended_connect_protocol_enabled()
+    }
 }
 
 impl<B> fmt::Debug for SendRequest<B>
@@ -567,7 +588,7 @@ where
 
 impl<B> Future for ReadySendRequest<B>
 where
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<SendRequest<B>, crate::Error>;
 
@@ -614,8 +635,10 @@ impl Builder {
     /// ```
     pub fn new() -> Builder {
         Builder {
+            max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
@@ -948,10 +971,71 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum number of pending-accept remotely-reset streams.
+    ///
+    /// Streams that have been received by the peer, but not accepted by the
+    /// user, can also receive a RST_STREAM. This is a legitimate pattern: one
+    /// could send a request and then shortly after, realize it is not needed,
+    /// sending a CANCEL.
+    ///
+    /// However, since those streams are now "closed", they don't count towards
+    /// the max concurrent streams. So, they will sit in the accept queue,
+    /// using memory.
+    ///
+    /// When the number of remotely-reset streams sitting in the pending-accept
+    /// queue reaches this maximum value, a connection error with the code of
+    /// `ENHANCE_YOUR_CALM` will be sent to the peer, and returned by the
+    /// `Future`.
+    ///
+    /// The default value is currently 20, but could change.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .max_pending_accept_reset_streams(100)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn max_pending_accept_reset_streams(&mut self, max: usize) -> &mut Self {
+        self.pending_accept_reset_stream_max = max;
+        self
+    }
+
+    /// Sets the maximum send buffer size per stream.
+    ///
+    /// Once a stream has buffered up to (or over) the maximum, the stream's
+    /// flow control will not "poll" additional capacity. Once bytes for the
+    /// stream have been written to the connection, the send buffer capacity
+    /// will be freed up again.
+    ///
+    /// The default is currently ~400MB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is larger than `u32::MAX`.
+    pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        assert!(max <= std::u32::MAX as usize);
+        self.max_send_buffer_size = max;
+        self
+    }
+
     /// Enables or disables server push promises.
     ///
-    /// This value is included in the initial SETTINGS handshake. When set, the
-    /// server MUST NOT send a push promise. Setting this value to value to
+    /// This value is included in the initial SETTINGS handshake.
+    /// Setting this value to value to
     /// false in the initial SETTINGS handshake guarantees that the remote server
     /// will never send a push promise.
     ///
@@ -1064,7 +1148,7 @@ impl Builder {
     ) -> impl Future<Output = Result<(SendRequest<B>, Connection<T, B>), crate::Error>>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + 'static,
+        B: Buf,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1118,7 +1202,7 @@ where
     let builder = Builder::new();
     builder
         .handshake(io)
-        .instrument(tracing::trace_span!("client_handshake", io = %std::any::type_name::<T>()))
+        .instrument(tracing::trace_span!("client_handshake"))
         .await
 }
 
@@ -1141,7 +1225,7 @@ where
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     async fn handshake2(
         mut io: T,
@@ -1170,8 +1254,10 @@ where
             proto::Config {
                 next_stream_id: builder.stream_id,
                 initial_max_send_streams: builder.initial_max_send_streams,
+                max_send_buffer_size: builder.max_send_buffer_size,
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
+                remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 settings: builder.settings.clone(),
             },
         );
@@ -1243,14 +1329,13 @@ where
     ///
     /// This limit is configured by the server peer by sending the
     /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][1] in a `SETTINGS` frame.
-    /// This method returns the currently acknowledged value recieved from the
+    /// This method returns the currently acknowledged value received from the
     /// remote.
     ///
-    /// [settings]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
     pub fn max_concurrent_send_streams(&self) -> usize {
         self.inner.max_send_streams()
     }
-
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by the server on this connection.
     ///
@@ -1270,7 +1355,7 @@ where
 impl<T, B> Future for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<(), crate::Error>;
 
@@ -1416,6 +1501,7 @@ impl Peer {
     pub fn convert_send_message(
         id: StreamId,
         request: Request<()>,
+        protocol: Option<Protocol>,
         end_of_stream: bool,
     ) -> Result<Headers, SendError> {
         use http::request::Parts;
@@ -1435,7 +1521,7 @@ impl Peer {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let mut pseudo = Pseudo::request(method, uri);
+        let mut pseudo = Pseudo::request(method, uri, protocol);
 
         if pseudo.scheme.is_none() {
             // If the scheme is not set, then there are a two options.

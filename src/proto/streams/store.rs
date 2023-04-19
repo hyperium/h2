@@ -1,9 +1,8 @@
 use super::*;
 
-use slab;
-
 use indexmap::{self, IndexMap};
 
+use std::convert::Infallible;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
@@ -128,7 +127,20 @@ impl Store {
         }
     }
 
-    pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Ptr),
+    {
+        match self.try_for_each(|ptr| {
+            f(ptr);
+            Ok::<_, Infallible>(())
+        }) {
+            Ok(()) => (),
+            Err(infallible) => match infallible {},
+        }
+    }
+
+    pub fn try_for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
     where
         F: FnMut(Ptr) -> Result<(), E>,
     {
@@ -288,15 +300,15 @@ where
             let mut stream = store.resolve(idxs.head);
 
             if idxs.head == idxs.tail {
-                assert!(N::next(&*stream).is_none());
+                assert!(N::next(&stream).is_none());
                 self.indices = None;
             } else {
-                idxs.head = N::take_next(&mut *stream).unwrap();
+                idxs.head = N::take_next(&mut stream).unwrap();
                 self.indices = Some(idxs);
             }
 
-            debug_assert!(N::is_queued(&*stream));
-            N::set_queued(&mut *stream, false);
+            debug_assert!(N::is_queued(&stream));
+            N::set_queued(&mut stream, false);
 
             return Some(stream);
         }
@@ -333,7 +345,7 @@ impl<'a> Ptr<'a> {
     }
 
     pub fn store_mut(&mut self) -> &mut Store {
-        &mut self.store
+        self.store
     }
 
     /// Remove the stream from the store

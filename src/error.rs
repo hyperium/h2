@@ -57,12 +57,9 @@ impl Error {
         }
     }
 
-    /// Returns the true if the error is an io::Error
+    /// Returns true if the error is an io::Error
     pub fn is_io(&self) -> bool {
-        match self.kind {
-            Kind::Io(_) => true,
-            _ => false,
-        }
+        matches!(self.kind, Kind::Io(..))
     }
 
     /// Returns the error if the error is an io::Error
@@ -85,6 +82,36 @@ impl Error {
         Error {
             kind: Kind::Io(err),
         }
+    }
+
+    /// Returns true if the error is from a `GOAWAY`.
+    pub fn is_go_away(&self) -> bool {
+        matches!(self.kind, Kind::GoAway(..))
+    }
+
+    /// Returns true if the error is from a `RST_STREAM`.
+    pub fn is_reset(&self) -> bool {
+        matches!(self.kind, Kind::Reset(..))
+    }
+
+    /// Returns true if the error was received in a frame from the remote.
+    ///
+    /// Such as from a received `RST_STREAM` or `GOAWAY` frame.
+    pub fn is_remote(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::GoAway(_, _, Initiator::Remote) | Kind::Reset(_, _, Initiator::Remote)
+        )
+    }
+
+    /// Returns true if the error was created by `h2.
+    ///
+    /// Such as noticing some protocol error and sending a GOAWAY or RST_STREAM.
+    pub fn is_library(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::GoAway(_, _, Initiator::Library) | Kind::Reset(_, _, Initiator::Library)
+        )
     }
 }
 

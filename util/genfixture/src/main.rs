@@ -10,7 +10,7 @@ fn main() {
     let path = args.get(1).expect("usage: genfixture [PATH]");
     let path = Path::new(path);
 
-    let mut tests = HashMap::new();
+    let mut tests: HashMap<String, Vec<String>> = HashMap::new();
 
     for entry in WalkDir::new(path) {
         let entry = entry.unwrap();
@@ -28,21 +28,21 @@ fn main() {
         let fixture_path = path.split("fixtures/hpack/").last().unwrap();
 
         // Now, split that into the group and the name
-        let module = fixture_path.split("/").next().unwrap();
+        let module = fixture_path.split('/').next().unwrap();
 
         tests
             .entry(module.to_string())
-            .or_insert(vec![])
+            .or_default()
             .push(fixture_path.to_string());
     }
 
     let mut one = false;
 
     for (module, tests) in tests {
-        let module = module.replace("-", "_");
+        let module = module.replace('-', "_");
 
         if one {
-            println!("");
+            println!();
         }
 
         one = true;
@@ -51,7 +51,7 @@ fn main() {
         println!("    {} => {{", module);
 
         for test in tests {
-            let ident = test.split("/").nth(1).unwrap().split(".").next().unwrap();
+            let ident = test.split('/').nth(1).unwrap().split('.').next().unwrap();
 
             println!("        ({}, {:?});", ident, test);
         }

@@ -2,12 +2,12 @@ use super::*;
 use crate::codec::UserError;
 use crate::frame::{self, PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 use crate::proto::{self, Error};
-use std::task::Context;
 
 use http::{HeaderMap, Request, Response};
 
+use std::cmp::Ordering;
 use std::io;
-use std::task::{Poll, Waker};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -56,6 +56,9 @@ pub(super) struct Recv {
 
     /// If push promises are allowed to be received.
     is_push_enabled: bool,
+
+    /// If extended connect protocol is enabled.
+    is_extended_connect_protocol_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -103,6 +106,7 @@ impl Recv {
             buffer: Buffer::new(),
             refused: None,
             is_push_enabled: config.local_push_enabled,
+            is_extended_connect_protocol_enabled: config.extended_connect_protocol_enabled,
         }
     }
 
@@ -174,7 +178,7 @@ impl Recv {
             if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
                 let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
-                    Err(()) => {
+                    Err(_) => {
                         proto_err!(stream: "could not parse content-length; stream={:?}", stream.id);
                         return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
                     }
@@ -216,6 +220,15 @@ impl Recv {
 
         let stream_id = frame.stream_id();
         let (pseudo, fields) = frame.into_parts();
+
+        if pseudo.protocol.is_some()
+            && counts.peer().is_server()
+            && !self.is_extended_connect_protocol_enabled
+        {
+            proto_err!(stream: "cannot use :protocol if extended connect protocol is disabled; stream={:?}", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+        }
+
         if !pseudo.is_informational() {
             let message = counts
                 .peer()
@@ -449,60 +462,62 @@ impl Recv {
         settings: &frame::Settings,
         store: &mut Store,
     ) -> Result<(), proto::Error> {
-        let target = if let Some(val) = settings.initial_window_size() {
-            val
-        } else {
-            return Ok(());
-        };
-
-        let old_sz = self.init_window_sz;
-        self.init_window_sz = target;
-
-        tracing::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
-
-        // Per RFC 7540 §6.9.2:
-        //
-        // In addition to changing the flow-control window for streams that are
-        // not yet active, a SETTINGS frame can alter the initial flow-control
-        // window size for streams with active flow-control windows (that is,
-        // streams in the "open" or "half-closed (remote)" state). When the
-        // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
-        // the size of all stream flow-control windows that it maintains by the
-        // difference between the new value and the old value.
-        //
-        // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
-        // space in a flow-control window to become negative. A sender MUST
-        // track the negative flow-control window and MUST NOT send new
-        // flow-controlled frames until it receives WINDOW_UPDATE frames that
-        // cause the flow-control window to become positive.
-
-        if target < old_sz {
-            // We must decrease the (local) window on every open stream.
-            let dec = old_sz - target;
-            tracing::trace!("decrementing all windows; dec={}", dec);
-
-            store.for_each(|mut stream| {
-                stream.recv_flow.dec_recv_window(dec);
-                Ok(())
-            })
-        } else if target > old_sz {
-            // We must increase the (local) window on every open stream.
-            let inc = target - old_sz;
-            tracing::trace!("incrementing all windows; inc={}", inc);
-            store.for_each(|mut stream| {
-                // XXX: Shouldn't the peer have already noticed our
-                // overflow and sent us a GOAWAY?
-                stream
-                    .recv_flow
-                    .inc_window(inc)
-                    .map_err(proto::Error::library_go_away)?;
-                stream.recv_flow.assign_capacity(inc);
-                Ok(())
-            })
-        } else {
-            // size is the same... so do nothing
-            Ok(())
+        if let Some(val) = settings.is_extended_connect_protocol_enabled() {
+            self.is_extended_connect_protocol_enabled = val;
         }
+
+        if let Some(target) = settings.initial_window_size() {
+            let old_sz = self.init_window_sz;
+            self.init_window_sz = target;
+
+            tracing::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
+
+            // Per RFC 7540 §6.9.2:
+            //
+            // In addition to changing the flow-control window for streams that are
+            // not yet active, a SETTINGS frame can alter the initial flow-control
+            // window size for streams with active flow-control windows (that is,
+            // streams in the "open" or "half-closed (remote)" state). When the
+            // value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust
+            // the size of all stream flow-control windows that it maintains by the
+            // difference between the new value and the old value.
+            //
+            // A change to `SETTINGS_INITIAL_WINDOW_SIZE` can cause the available
+            // space in a flow-control window to become negative. A sender MUST
+            // track the negative flow-control window and MUST NOT send new
+            // flow-controlled frames until it receives WINDOW_UPDATE frames that
+            // cause the flow-control window to become positive.
+
+            match target.cmp(&old_sz) {
+                Ordering::Less => {
+                    // We must decrease the (local) window on every open stream.
+                    let dec = old_sz - target;
+                    tracing::trace!("decrementing all windows; dec={}", dec);
+
+                    store.for_each(|mut stream| {
+                        stream.recv_flow.dec_recv_window(dec);
+                    })
+                }
+                Ordering::Greater => {
+                    // We must increase the (local) window on every open stream.
+                    let inc = target - old_sz;
+                    tracing::trace!("incrementing all windows; inc={}", inc);
+                    store.try_for_each(|mut stream| {
+                        // XXX: Shouldn't the peer have already noticed our
+                        // overflow and sent us a GOAWAY?
+                        stream
+                            .recv_flow
+                            .inc_window(inc)
+                            .map_err(proto::Error::library_go_away)?;
+                        stream.recv_flow.assign_capacity(inc);
+                        Ok::<_, proto::Error>(())
+                    })?;
+                }
+                Ordering::Equal => (),
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
@@ -546,7 +561,7 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return Ok(self.ignore_data(sz)?);
+            return self.ignore_data(sz);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -586,8 +601,18 @@ impl Recv {
 
             if stream.state.recv_close().is_err() {
                 proto_err!(conn: "recv_data: failed to transition to closed state; stream={:?}", stream.id);
-                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR).into());
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
             }
+        }
+
+        // Received a frame, but no one cared about it. fix issue#648
+        if !stream.is_recv {
+            tracing::trace!(
+                "recv_data; frame ignored on stream release {:?} for some time",
+                stream.id,
+            );
+            self.release_connection_capacity(sz, &mut None);
+            return Ok(());
         }
 
         // Update stream level flow control
@@ -716,12 +741,39 @@ impl Recv {
     }
 
     /// Handle remote sending an explicit RST_STREAM.
-    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
+    pub fn recv_reset(
+        &mut self,
+        frame: frame::Reset,
+        stream: &mut Stream,
+        counts: &mut Counts,
+    ) -> Result<(), Error> {
+        // Reseting a stream that the user hasn't accepted is possible,
+        // but should be done with care. These streams will continue
+        // to take up memory in the accept queue, but will no longer be
+        // counted as "concurrent" streams.
+        //
+        // So, we have a separate limit for these.
+        //
+        // See https://github.com/hyperium/hyper/issues/2877
+        if stream.is_pending_accept {
+            if counts.can_inc_num_remote_reset_streams() {
+                counts.inc_num_remote_reset_streams();
+            } else {
+                tracing::warn!(
+                    "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
+                    counts.max_remote_reset_streams(),
+                );
+                return Err(Error::library_go_away(Reason::ENHANCE_YOUR_CALM));
+            }
+        }
+
         // Notify the stream
         stream.state.recv_reset(frame, stream.is_pending_send);
 
         stream.notify_send();
         stream.notify_recv();
+
+        Ok(())
     }
 
     /// Handle a connection-level error
@@ -746,7 +798,7 @@ impl Recv {
     }
 
     pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
-        while let Some(_) = stream.pending_recv.pop_front(&mut self.buffer) {
+        while stream.pending_recv.pop_front(&mut self.buffer).is_some() {
             // drop it
         }
     }
@@ -773,6 +825,16 @@ impl Recv {
             id < next_id
         } else {
             true
+        }
+    }
+
+    pub(super) fn maybe_reset_next_stream_id(&mut self, id: StreamId) {
+        if let Ok(next_id) = self.next_stream_id {
+            // !Peer::is_local_init should have been called beforehand
+            debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated());
+            if id >= next_id {
+                self.next_stream_id = id.next_id();
+            }
         }
     }
 
@@ -840,7 +902,10 @@ impl Recv {
             let reset_duration = self.reset_duration;
             while let Some(stream) = self.pending_reset_expired.pop_if(store, |stream| {
                 let reset_at = stream.reset_at.expect("reset_at must be set if in queue");
-                now - reset_at > reset_duration
+                // rust-lang/rust#86470 tracks a bug in the standard library where `Instant`
+                // subtraction can panic (because, on some platforms, `Instant` isn't actually
+                // monotonic). We use a saturating operation to avoid this panic here.
+                now.saturating_duration_since(reset_at) > reset_duration
             }) {
                 counts.transition_after(stream, true);
             }
@@ -995,7 +1060,6 @@ impl Recv {
         cx: &Context,
         stream: &mut Stream,
     ) -> Poll<Option<Result<Bytes, proto::Error>>> {
-        // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
             Some(event) => {
@@ -1056,12 +1120,7 @@ impl Recv {
 
 impl Open {
     pub fn is_push_promise(&self) -> bool {
-        use self::Open::*;
-
-        match *self {
-            PushPromise => true,
-            _ => false,
-        }
+        matches!(*self, Self::PushPromise)
     }
 }
 

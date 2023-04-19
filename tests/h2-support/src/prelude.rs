@@ -2,6 +2,7 @@
 pub use h2;
 
 pub use h2::client;
+pub use h2::ext::Protocol;
 pub use h2::frame::StreamId;
 pub use h2::server;
 pub use h2::*;
@@ -20,8 +21,8 @@ pub use super::{Codec, SendFrame};
 
 // Re-export macros
 pub use super::{
-    assert_closed, assert_data, assert_default_settings, assert_headers, assert_ping, poll_err,
-    poll_frame, raw_codec,
+    assert_closed, assert_data, assert_default_settings, assert_go_away, assert_headers,
+    assert_ping, assert_settings, poll_err, poll_frame, raw_codec,
 };
 
 pub use super::assert::assert_frame_eq;
@@ -89,7 +90,7 @@ pub trait ClientExt {
 impl<T, B> ClientExt for client::Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin + 'static,
-    B: Buf + Unpin + 'static,
+    B: Buf,
 {
     fn run<'a, F: Future + Unpin + 'a>(
         &'a mut self,
@@ -102,7 +103,7 @@ where
                     // Connection is done...
                     b.await
                 }
-                Right((v, _)) => return v,
+                Right((v, _)) => v,
                 Left((Err(e), _)) => panic!("err: {:?}", e),
             }
         })

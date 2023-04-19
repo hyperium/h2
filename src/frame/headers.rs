@@ -1,4 +1,5 @@
 use super::{util, StreamDependency, StreamId};
+use crate::ext::Protocol;
 use crate::frame::{Error, Frame, Head, Kind};
 use crate::hpack::{self, BytesStr};
 
@@ -66,6 +67,7 @@ pub struct Pseudo {
     pub scheme: Option<BytesStr>,
     pub authority: Option<BytesStr>,
     pub path: Option<BytesStr>,
+    pub protocol: Option<Protocol>,
 
     // Response
     pub status: Option<StatusCode>,
@@ -145,6 +147,10 @@ impl Headers {
         let mut pad = 0;
 
         tracing::trace!("loading headers; flags={:?}", flags);
+
+        if head.stream_id().is_zero() {
+            return Err(Error::InvalidStreamId);
+        }
 
         // Read the padding length
         if flags.is_padded() {
@@ -288,6 +294,10 @@ impl fmt::Debug for Headers {
             .field("stream_id", &self.stream_id)
             .field("flags", &self.flags);
 
+        if let Some(ref protocol) = self.header_block.pseudo.protocol {
+            builder.field("protocol", protocol);
+        }
+
         if let Some(ref dep) = self.stream_dep {
             builder.field("stream_dep", dep);
         }
@@ -299,17 +309,20 @@ impl fmt::Debug for Headers {
 
 // ===== util =====
 
-pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseU64Error;
+
+pub fn parse_u64(src: &[u8]) -> Result<u64, ParseU64Error> {
     if src.len() > 19 {
         // At danger for overflow...
-        return Err(());
+        return Err(ParseU64Error);
     }
 
     let mut ret = 0;
 
     for &d in src {
         if d < b'0' || d > b'9' {
-            return Err(());
+            return Err(ParseU64Error);
         }
 
         ret *= 10;
@@ -323,7 +336,7 @@ pub fn parse_u64(src: &[u8]) -> Result<u64, ()> {
 
 #[derive(Debug)]
 pub enum PushPromiseHeaderError {
-    InvalidContentLength(Result<u64, ()>),
+    InvalidContentLength(Result<u64, ParseU64Error>),
     NotSafeAndCacheable,
 }
 
@@ -371,7 +384,7 @@ impl PushPromise {
     fn safe_and_cacheable(method: &Method) -> bool {
         // Cacheable: https://httpwg.org/specs/rfc7231.html#cacheable.methods
         // Safe: https://httpwg.org/specs/rfc7231.html#safe.methods
-        return method == Method::GET || method == Method::HEAD;
+        method == Method::GET || method == Method::HEAD
     }
 
     pub fn fields(&self) -> &HeaderMap {
@@ -389,6 +402,10 @@ impl PushPromise {
     pub fn load(head: Head, mut src: BytesMut) -> Result<(Self, BytesMut), Error> {
         let flags = PushPromiseFlag(head.flag());
         let mut pad = 0;
+
+        if head.stream_id().is_zero() {
+            return Err(Error::InvalidStreamId);
+        }
 
         // Read the padding length
         if flags.is_padded() {
@@ -525,7 +542,7 @@ impl Continuation {
 // ===== impl Pseudo =====
 
 impl Pseudo {
-    pub fn request(method: Method, uri: Uri) -> Self {
+    pub fn request(method: Method, uri: Uri, protocol: Option<Protocol>) -> Self {
         let parts = uri::Parts::from(uri);
 
         let mut path = parts
@@ -546,6 +563,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path: Some(path).filter(|p| !p.is_empty()),
+            protocol,
             status: None,
         };
 
@@ -571,6 +589,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path: None,
+            protocol: None,
             status: Some(status),
         }
     }
@@ -587,6 +606,11 @@ impl Pseudo {
             s => BytesStr::from(s),
         };
         self.scheme = Some(bytes_str);
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn set_protocol(&mut self, protocol: Protocol) {
+        self.protocol = Some(protocol);
     }
 
     pub fn set_authority(&mut self, authority: BytesStr) {
@@ -675,6 +699,10 @@ impl Iterator for Iter {
 
             if let Some(path) = pseudo.path.take() {
                 return Some(Path(path));
+            }
+
+            if let Some(protocol) = pseudo.protocol.take() {
+                return Some(Protocol(protocol));
             }
 
             if let Some(status) = pseudo.status.take() {
@@ -875,6 +903,7 @@ impl HeaderBlock {
                 Method(v) => set_pseudo!(method, v),
                 Scheme(v) => set_pseudo!(scheme, v),
                 Path(v) => set_pseudo!(path, v),
+                Protocol(v) => set_pseudo!(protocol, v),
                 Status(v) => set_pseudo!(status, v),
             }
         });

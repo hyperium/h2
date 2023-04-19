@@ -99,6 +99,9 @@ pub(super) struct Stream {
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque,
 
+    /// When the RecvStream drop occurs, no data should be received.
+    pub is_recv: bool,
+
     /// Task tracking receiving frames
     pub recv_task: Option<Waker>,
 
@@ -180,6 +183,7 @@ impl Stream {
             reset_at: None,
             next_reset_expire: None,
             pending_recv: buffer::Deque::new(),
+            is_recv: true,
             recv_task: None,
             pending_push_promises: store::Queue::new(),
             content_length: ContentLength::Omitted,
@@ -248,7 +252,7 @@ impl Stream {
             // The stream is not in any queue
             !self.is_pending_send && !self.is_pending_send_capacity &&
             !self.is_pending_accept && !self.is_pending_window_update &&
-            !self.is_pending_open && !self.reset_at.is_some()
+            !self.is_pending_open && self.reset_at.is_none()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles
@@ -260,23 +264,63 @@ impl Stream {
         self.ref_count == 0 && !self.state.is_closed()
     }
 
-    pub fn assign_capacity(&mut self, capacity: WindowSize) {
+    /// Current available stream send capacity
+    pub fn capacity(&self, max_buffer_size: usize) -> WindowSize {
+        let available = self.send_flow.available().as_size() as usize;
+        let buffered = self.buffered_send_data;
+
+        available.min(max_buffer_size).saturating_sub(buffered) as WindowSize
+    }
+
+    pub fn assign_capacity(&mut self, capacity: WindowSize, max_buffer_size: usize) {
+        let prev_capacity = self.capacity(max_buffer_size);
         debug_assert!(capacity > 0);
-        self.send_capacity_inc = true;
         self.send_flow.assign_capacity(capacity);
 
         tracing::trace!(
-            "  assigned capacity to stream; available={}; buffered={}; id={:?}",
+            "  assigned capacity to stream; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
             self.send_flow.available(),
             self.buffered_send_data,
-            self.id
+            self.id,
+            max_buffer_size,
+            prev_capacity,
         );
 
-        // Only notify if the capacity exceeds the amount of buffered data
-        if self.send_flow.available() > self.buffered_send_data {
-            tracing::trace!("  notifying task");
-            self.notify_send();
+        if prev_capacity < self.capacity(max_buffer_size) {
+            self.notify_capacity();
         }
+    }
+
+    pub fn send_data(&mut self, len: WindowSize, max_buffer_size: usize) {
+        let prev_capacity = self.capacity(max_buffer_size);
+
+        self.send_flow.send_data(len);
+
+        // Decrement the stream's buffered data counter
+        debug_assert!(self.buffered_send_data >= len as usize);
+        self.buffered_send_data -= len as usize;
+        self.requested_send_capacity -= len;
+
+        tracing::trace!(
+            "  sent stream data; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
+            self.send_flow.available(),
+            self.buffered_send_data,
+            self.id,
+            max_buffer_size,
+            prev_capacity,
+        );
+
+        if prev_capacity < self.capacity(max_buffer_size) {
+            self.notify_capacity();
+        }
+    }
+
+    /// If the capacity was limited because of the max_send_buffer_size,
+    /// then consider waking the send task again...
+    pub fn notify_capacity(&mut self) {
+        self.send_capacity_inc = true;
+        tracing::trace!("  notifying task");
+        self.notify_send();
     }
 
     /// Returns `Err` when the decrement cannot be completed due to overflow.
@@ -365,7 +409,7 @@ impl store::Next for NextSend {
         if val {
             // ensure that stream is not queued for being opened
             // if it's being put into queue for sending data
-            debug_assert_eq!(stream.is_pending_open, false);
+            debug_assert!(!stream.is_pending_open);
         }
         stream.is_pending_send = val;
     }
@@ -436,7 +480,7 @@ impl store::Next for NextOpen {
         if val {
             // ensure that stream is not queued for being sent
             // if it's being put into queue for opening the stream
-            debug_assert_eq!(stream.is_pending_send, false);
+            debug_assert!(!stream.is_pending_send);
         }
         stream.is_pending_open = val;
     }
@@ -472,9 +516,6 @@ impl store::Next for NextResetExpire {
 
 impl ContentLength {
     pub fn is_head(&self) -> bool {
-        match *self {
-            ContentLength::Head => true,
-            _ => false,
-        }
+        matches!(*self, Self::Head)
     }
 }

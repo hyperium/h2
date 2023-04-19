@@ -7,9 +7,11 @@ use crate::codec::UserError;
 use crate::codec::UserError::*;
 
 use bytes::buf::{Buf, Take};
-use std::io;
-use std::task::{Context, Poll, Waker};
-use std::{cmp, fmt, mem};
+use std::{
+    cmp::{self, Ordering},
+    fmt, io, mem,
+    task::{Context, Poll, Waker},
+};
 
 /// # Warning
 ///
@@ -51,6 +53,9 @@ pub(super) struct Prioritize {
 
     /// What `DATA` frame is currently being sent in the codec.
     in_flight_data_frame: InFlightData,
+
+    /// The maximum amount of bytes a stream should buffer.
+    max_buffer_size: usize,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -93,7 +98,12 @@ impl Prioritize {
             flow,
             last_opened_id: StreamId::ZERO,
             in_flight_data_frame: InFlightData::Nothing,
+            max_buffer_size: config.local_max_buffer_size,
         }
+    }
+
+    pub(crate) fn max_buffer_size(&self) -> usize {
+        self.max_buffer_size
     }
 
     /// Queue a frame to be sent to the remote
@@ -227,39 +237,43 @@ impl Prioritize {
         // If it were less, then we could never send out the buffered data.
         let capacity = (capacity as usize) + stream.buffered_send_data;
 
-        if capacity == stream.requested_send_capacity as usize {
-            // Nothing to do
-        } else if capacity < stream.requested_send_capacity as usize {
-            // Update the target requested capacity
-            stream.requested_send_capacity = capacity as WindowSize;
-
-            // Currently available capacity assigned to the stream
-            let available = stream.send_flow.available().as_size();
-
-            // If the stream has more assigned capacity than requested, reclaim
-            // some for the connection
-            if available as usize > capacity {
-                let diff = available - capacity as WindowSize;
-
-                stream.send_flow.claim_capacity(diff);
-
-                self.assign_connection_capacity(diff, stream, counts);
+        match capacity.cmp(&(stream.requested_send_capacity as usize)) {
+            Ordering::Equal => {
+                // Nothing to do
             }
-        } else {
-            // If trying to *add* capacity, but the stream send side is closed,
-            // there's nothing to be done.
-            if stream.state.is_send_closed() {
-                return;
+            Ordering::Less => {
+                // Update the target requested capacity
+                stream.requested_send_capacity = capacity as WindowSize;
+
+                // Currently available capacity assigned to the stream
+                let available = stream.send_flow.available().as_size();
+
+                // If the stream has more assigned capacity than requested, reclaim
+                // some for the connection
+                if available as usize > capacity {
+                    let diff = available - capacity as WindowSize;
+
+                    stream.send_flow.claim_capacity(diff);
+
+                    self.assign_connection_capacity(diff, stream, counts);
+                }
             }
+            Ordering::Greater => {
+                // If trying to *add* capacity, but the stream send side is closed,
+                // there's nothing to be done.
+                if stream.state.is_send_closed() {
+                    return;
+                }
 
-            // Update the target requested capacity
-            stream.requested_send_capacity =
-                cmp::min(capacity, WindowSize::MAX as usize) as WindowSize;
+                // Update the target requested capacity
+                stream.requested_send_capacity =
+                    cmp::min(capacity, WindowSize::MAX as usize) as WindowSize;
 
-            // Try to assign additional capacity to the stream. If none is
-            // currently available, the stream will be queued to receive some
-            // when more becomes available.
-            self.try_assign_capacity(stream);
+                // Try to assign additional capacity to the stream. If none is
+                // currently available, the stream will be queued to receive some
+                // when more becomes available.
+                self.try_assign_capacity(stream);
+            }
         }
     }
 
@@ -309,9 +323,11 @@ impl Prioritize {
     /// connection
     pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         let available = stream.send_flow.available().as_size();
-        stream.send_flow.claim_capacity(available);
-        // Re-assign all capacity to the connection
-        self.assign_connection_capacity(available, stream, counts);
+        if available > 0 {
+            stream.send_flow.claim_capacity(available);
+            // Re-assign all capacity to the connection
+            self.assign_connection_capacity(available, stream, counts);
+        }
     }
 
     /// Reclaim just reserved capacity, not buffered capacity, and re-assign
@@ -364,11 +380,11 @@ impl Prioritize {
                 continue;
             }
 
-            counts.transition(stream, |_, mut stream| {
+            counts.transition(stream, |_, stream| {
                 // Try to assign capacity to the stream. This will also re-queue the
                 // stream if there isn't enough connection level capacity to fulfill
                 // the capacity request.
-                self.try_assign_capacity(&mut stream);
+                self.try_assign_capacity(stream);
             })
         }
     }
@@ -424,7 +440,7 @@ impl Prioritize {
             tracing::trace!(capacity = assign, "assigning");
 
             // Assign the capacity to the stream
-            stream.assign_capacity(assign);
+            stream.assign_capacity(assign, self.max_buffer_size);
 
             // Claim the capacity from the connection
             self.flow.claim_capacity(assign);
@@ -730,16 +746,19 @@ impl Prioritize {
                             // capacity at this point.
                             debug_assert!(len <= self.flow.window_size());
 
+                            // Check if the stream level window the peer knows is available. In some
+                            // scenarios, maybe the window we know is available but the window which
+                            // peer knows is not.
+                            if len > 0 && len > stream.send_flow.window_size() {
+                                stream.pending_send.push_front(buffer, frame.into());
+                                continue;
+                            }
+
                             tracing::trace!(len, "sending data frame");
 
                             // Update the flow control
                             tracing::trace_span!("updating stream flow").in_scope(|| {
-                                stream.send_flow.send_data(len);
-
-                                // Decrement the stream's buffered data counter
-                                debug_assert!(stream.buffered_send_data >= len as usize);
-                                stream.buffered_send_data -= len as usize;
-                                stream.requested_send_capacity -= len;
+                                stream.send_data(len, self.max_buffer_size);
 
                                 // Assign the capacity back to the connection that
                                 // was just consumed from the stream in the previous
