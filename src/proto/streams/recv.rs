@@ -765,7 +765,7 @@ impl Recv {
                 );
                 return Err(Error::library_go_away_data(
                     Reason::ENHANCE_YOUR_CALM,
-                    "too_many_resets".into(),
+                    "too_many_resets",
                 ));
             }
         }
