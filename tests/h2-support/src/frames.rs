@@ -309,11 +309,19 @@ impl Mock<frame::GoAway> {
     where
         I: Into<Bytes>,
     {
-        Mock(self.0.with_debug_data(debug_data.into()))
+        Mock(frame::GoAway::with_debug_data(
+            self.0.last_stream_id(),
+            self.0.reason(),
+            debug_data.into(),
+        ))
     }
 
     pub fn reason(self, reason: frame::Reason) -> Self {
-        Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
+        Mock(frame::GoAway::with_debug_data(
+            self.0.last_stream_id(),
+            reason,
+            self.0.debug_data().clone(),
+        ))
     }
 }
 
