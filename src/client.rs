@@ -138,6 +138,7 @@
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
+use crate::hpack::BytesStr;
 use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
@@ -1510,7 +1511,7 @@ impl Peer {
             Parts {
                 method,
                 uri,
-                headers,
+                mut headers,
                 version,
                 ..
             },
@@ -1549,6 +1550,12 @@ impl Peer {
             } else if !is_connect {
                 // TODO: Error
             }
+        }
+        if let Some(host) = headers.remove(http::header::HOST) {
+            let h = host
+                .to_str()
+                .map_err(|_| SendError::User(UserError::MalformedHeaders))?;
+            pseudo.set_authority(BytesStr::from(h));
         }
 
         // Create the HEADERS frame
