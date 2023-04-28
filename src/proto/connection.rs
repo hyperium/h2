@@ -398,16 +398,10 @@ where
         self.go_away.go_away_now(frame);
     }
 
-    #[doc(hidden)]
-    #[cfg(feature = "unstable")]
-    fn go_away_now_debug_data(&mut self) {
+    fn go_away_now_data(&mut self, e: Reason, data: Bytes) {
         let last_processed_id = self.streams.last_processed_id();
-
-        let frame = frame::GoAway::new(last_processed_id, Reason::NO_ERROR)
-            .with_debug_data("something went wrong");
-
-        self.streams.send_go_away(last_processed_id);
-        self.go_away.go_away(frame);
+        let frame = frame::GoAway::with_debug_data(last_processed_id, e, data);
+        self.go_away.go_away_now(frame);
     }
 
     fn go_away_from_user(&mut self, e: Reason) {
@@ -430,7 +424,7 @@ where
             // error. This is handled by setting a GOAWAY frame followed by
             // terminating the connection.
             Err(Error::GoAway(debug_data, reason, initiator)) => {
-                let e = Error::GoAway(debug_data, reason, initiator);
+                let e = Error::GoAway(debug_data.clone(), reason, initiator);
                 tracing::debug!(error = ?e, "Connection::poll; connection error");
 
                 // We may have already sent a GOAWAY for this error,
@@ -447,7 +441,7 @@ where
 
                 // Reset all active streams
                 self.streams.handle_error(e);
-                self.go_away_now(reason);
+                self.go_away_now_data(reason, debug_data);
                 Ok(())
             }
             // Attempting to read a frame resulted in a stream level error.
@@ -586,17 +580,6 @@ where
 
         // We take the advice of waiting 1 RTT literally, and wait
         // for a pong before proceeding.
-        self.inner.ping_pong.ping_shutdown();
-    }
-
-    #[doc(hidden)]
-    #[cfg(feature = "unstable")]
-    pub fn go_away_debug_data(&mut self) {
-        if self.inner.go_away.is_going_away() {
-            return;
-        }
-
-        self.inner.as_dyn().go_away_now_debug_data();
         self.inner.ping_pong.ping_shutdown();
     }
 }

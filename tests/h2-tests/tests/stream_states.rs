@@ -211,9 +211,14 @@ async fn reset_streams_dont_grow_memory_continuously() {
                 .await;
             client.send_frame(frames::reset(n).protocol_error()).await;
         }
+
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            client.recv_frame(frames::go_away((MAX * 2 + 1) as u32).calm()),
+            client.recv_frame(
+                frames::go_away((MAX * 2 + 1) as u32)
+                    .data("too_many_resets")
+                    .calm(),
+            ),
         )
         .await
         .expect("client goaway");

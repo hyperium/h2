@@ -763,7 +763,10 @@ impl Recv {
                     "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
                     counts.max_remote_reset_streams(),
                 );
-                return Err(Error::library_go_away(Reason::ENHANCE_YOUR_CALM));
+                return Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_resets",
+                ));
             }
         }
 

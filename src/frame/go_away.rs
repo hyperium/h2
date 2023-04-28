@@ -20,12 +20,11 @@ impl GoAway {
         }
     }
 
-    #[doc(hidden)]
-    #[cfg(feature = "unstable")]
-    pub fn with_debug_data(self, debug_data: impl Into<Bytes>) -> Self {
+    pub fn with_debug_data(last_stream_id: StreamId, reason: Reason, debug_data: Bytes) -> Self {
         Self {
-            debug_data: debug_data.into(),
-            ..self
+            last_stream_id,
+            error_code: reason,
+            debug_data,
         }
     }
 
