@@ -352,7 +352,7 @@ impl State {
         matches!(self.inner, Closed(Cause::ScheduledLibraryReset(..)))
     }
 
-    pub fn is_local_reset(&self) -> bool {
+    pub fn is_local_error(&self) -> bool {
         match self.inner {
             Closed(Cause::Error(ref e)) => e.is_local(),
             Closed(Cause::ScheduledLibraryReset(..)) => true,

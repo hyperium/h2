@@ -537,7 +537,7 @@ impl Recv {
 
         let sz = sz as WindowSize;
 
-        let is_ignoring_frame = stream.state.is_local_reset();
+        let is_ignoring_frame = stream.state.is_local_error();
 
         if !is_ignoring_frame && !stream.state.is_recv_streaming() {
             // TODO: There are cases where this can be a stream error of
@@ -853,7 +853,7 @@ impl Recv {
 
     /// Add a locally reset stream to queue to be eventually reaped.
     pub fn enqueue_reset_expiration(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
-        if !stream.state.is_local_reset() || stream.is_pending_reset_expiration() {
+        if !stream.state.is_local_error() || stream.is_pending_reset_expiration() {
             return;
         }
 
