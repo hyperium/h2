@@ -241,6 +241,53 @@ async fn reset_streams_dont_grow_memory_continuously() {
 }
 
 #[tokio::test]
+async fn go_away_with_pending_accepting() {
+    // h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let (sent_go_away_tx, sent_go_away_rx) = oneshot::channel();
+    let (recv_go_away_tx, recv_go_away_rx) = oneshot::channel();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        client
+            .send_frame(frames::headers(1).request("GET", "https://baguette/").eos())
+            .await;
+
+        client
+            .send_frame(frames::headers(3).request("GET", "https://campagne/").eos())
+            .await;
+        client.send_frame(frames::go_away(1).protocol_error()).await;
+
+        sent_go_away_tx.send(()).unwrap();
+
+        recv_go_away_rx.await.unwrap();
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_pending_accept_reset_streams(1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let (_req_1, _send_response_1) = srv.accept().await.unwrap().unwrap();
+
+        poll_fn(|cx| srv.poll_closed(cx))
+            .drive(sent_go_away_rx)
+            .await
+            .unwrap();
+
+        let (_req_2, _send_response_2) = srv.accept().await.unwrap().unwrap();
+
+        recv_go_away_tx.send(()).unwrap();
+    };
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn pending_accept_reset_streams_decrement_too() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
