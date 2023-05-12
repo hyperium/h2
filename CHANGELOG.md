@@ -1,3 +1,8 @@
+# 0.3.19 (May 12, 2023)
+
+* Fix counting reset streams when triggered by a GOAWAY.
+* Send `too_many_resets` in opaque debug data of GOAWAY when too many resets received.
+
 # 0.3.18 (April 17, 2023)
 
 * Fix panic because of opposite check in `is_remote_local()`.
