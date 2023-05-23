@@ -1378,3 +1378,35 @@ async fn reject_non_authority_target_on_connect_request() {
 
     join(client, srv).await;
 }
+
+#[tokio::test]
+async fn reject_response_headers_in_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let _ = client.assert_server_handshake().await;
+
+        client.send_frame(frames::headers(1).response(128)).await;
+
+        // TODO: is CANCEL the right error code to expect here?
+        client.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        let res = srv.next().await;
+        tracing::warn!("{:?}", res);
+        assert!(res.is_some());
+        assert!(res.unwrap().is_err());
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}

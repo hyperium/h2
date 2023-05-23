@@ -1178,7 +1178,7 @@ impl<B> StreamRef<B> {
     /// # Panics
     ///
     /// This function panics if the request isn't present.
-    pub fn take_request(&self) -> Request<()> {
+    pub fn take_request(&self) -> Result<Request<()>, proto::Error> {
         let mut me = self.opaque.inner.lock().unwrap();
         let me = &mut *me;
 
