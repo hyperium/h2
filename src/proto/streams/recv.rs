@@ -859,15 +859,6 @@ impl Recv {
 
         tracing::trace!("enqueue_reset_expiration; {:?}", stream.id);
 
-        if !counts.can_inc_num_reset_streams() {
-            // try to evict 1 stream if possible
-            // if max allow is 0, this won't be able to evict,
-            // and then we'll just bail after
-            if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
-                counts.transition_after(evicted, true);
-            }
-        }
-
         if counts.can_inc_num_reset_streams() {
             counts.inc_num_reset_streams();
             self.pending_reset_expired.push(stream);

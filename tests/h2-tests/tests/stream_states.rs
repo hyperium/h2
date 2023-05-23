@@ -750,14 +750,14 @@ async fn rst_stream_max() {
         srv.recv_frame(frames::reset(1).cancel()).await;
         srv.recv_frame(frames::reset(3).cancel()).await;
         // sending frame after canceled!
-        // newer streams trump older streams
-        // 3 is still being ignored
-        srv.send_frame(frames::data(3, vec![0; 16]).eos()).await;
+        // olders streams trump newer streams
+        // 1 is still being ignored
+        srv.send_frame(frames::data(1, vec![0; 16]).eos()).await;
         // ping pong to be sure of no goaway
         srv.ping_pong([1; 8]).await;
-        // 1 has been evicted, will get a reset
-        srv.send_frame(frames::data(1, vec![0; 16]).eos()).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        // 3 has been evicted, will get a reset
+        srv.send_frame(frames::data(3, vec![0; 16]).eos()).await;
+        srv.recv_frame(frames::reset(3).stream_closed()).await;
     };
 
     let client = async move {
