@@ -251,14 +251,15 @@ impl Recv {
     }
 
     /// Called by the server to get the request
-    ///
-    /// TODO: Should this fn return `Result`?
-    pub fn take_request(&mut self, stream: &mut store::Ptr) -> Request<()> {
+    pub fn take_request(&mut self, stream: &mut store::Ptr) -> Result<Request<()>, proto::Error> {
         use super::peer::PollMessage::*;
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Server(request))) => request,
-            _ => panic!(),
+            Some(Event::Headers(Server(request))) => Ok(request),
+            _ => {
+                proto_err!(stream: "received invalid request; stream={:?}", stream.id);
+                Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR))
+            }
         }
     }
 
