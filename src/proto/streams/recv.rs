@@ -537,7 +537,7 @@ impl Recv {
 
         let sz = sz as WindowSize;
 
-        let is_ignoring_frame = stream.state.is_local_reset();
+        let is_ignoring_frame = stream.state.is_local_error();
 
         if !is_ignoring_frame && !stream.state.is_recv_streaming() {
             // TODO: There are cases where this can be a stream error of
@@ -741,12 +741,42 @@ impl Recv {
     }
 
     /// Handle remote sending an explicit RST_STREAM.
-    pub fn recv_reset(&mut self, frame: frame::Reset, stream: &mut Stream) {
+    pub fn recv_reset(
+        &mut self,
+        frame: frame::Reset,
+        stream: &mut Stream,
+        counts: &mut Counts,
+    ) -> Result<(), Error> {
+        // Reseting a stream that the user hasn't accepted is possible,
+        // but should be done with care. These streams will continue
+        // to take up memory in the accept queue, but will no longer be
+        // counted as "concurrent" streams.
+        //
+        // So, we have a separate limit for these.
+        //
+        // See https://github.com/hyperium/hyper/issues/2877
+        if stream.is_pending_accept {
+            if counts.can_inc_num_remote_reset_streams() {
+                counts.inc_num_remote_reset_streams();
+            } else {
+                tracing::warn!(
+                    "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
+                    counts.max_remote_reset_streams(),
+                );
+                return Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_resets",
+                ));
+            }
+        }
+
         // Notify the stream
         stream.state.recv_reset(frame, stream.is_pending_send);
 
         stream.notify_send();
         stream.notify_recv();
+
+        Ok(())
     }
 
     /// Handle a connection-level error
@@ -823,20 +853,11 @@ impl Recv {
 
     /// Add a locally reset stream to queue to be eventually reaped.
     pub fn enqueue_reset_expiration(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
-        if !stream.state.is_local_reset() || stream.is_pending_reset_expiration() {
+        if !stream.state.is_local_error() || stream.is_pending_reset_expiration() {
             return;
         }
 
         tracing::trace!("enqueue_reset_expiration; {:?}", stream.id);
-
-        if !counts.can_inc_num_reset_streams() {
-            // try to evict 1 stream if possible
-            // if max allow is 0, this won't be able to evict,
-            // and then we'll just bail after
-            if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
-                counts.transition_after(evicted, true);
-            }
-        }
 
         if counts.can_inc_num_reset_streams() {
             counts.inc_num_reset_streams();
@@ -1033,7 +1054,6 @@ impl Recv {
         cx: &Context,
         stream: &mut Stream,
     ) -> Poll<Option<Result<Bytes, proto::Error>>> {
-        // TODO: Return error when the stream is reset
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
             Some(event) => {

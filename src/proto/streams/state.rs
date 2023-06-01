@@ -303,7 +303,13 @@ impl State {
             Closed(..) => {}
             ref state => {
                 tracing::trace!("recv_eof; state={:?}", state);
-                self.inner = Closed(Cause::Error(io::ErrorKind::BrokenPipe.into()));
+                self.inner = Closed(Cause::Error(
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "stream closed because of a broken pipe",
+                    )
+                    .into(),
+                ));
             }
         }
     }
@@ -346,10 +352,17 @@ impl State {
         matches!(self.inner, Closed(Cause::ScheduledLibraryReset(..)))
     }
 
-    pub fn is_local_reset(&self) -> bool {
+    pub fn is_local_error(&self) -> bool {
         match self.inner {
             Closed(Cause::Error(ref e)) => e.is_local(),
             Closed(Cause::ScheduledLibraryReset(..)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_remote_reset(&self) -> bool {
+        match self.inner {
+            Closed(Cause::Error(Error::Reset(_, _, Initiator::Remote))) => true,
             _ => false,
         }
     }

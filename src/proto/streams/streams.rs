@@ -140,6 +140,12 @@ where
             // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
             // the lock, so it can't.
             me.refs += 1;
+
+            // Pending-accepted remotely-reset streams are counted.
+            if stream.state.is_remote_reset() {
+                me.counts.dec_num_remote_reset_streams();
+            }
+
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
@@ -442,7 +448,7 @@ impl Inner {
 
         let stream = self.store.resolve(key);
 
-        if stream.state.is_local_reset() {
+        if stream.state.is_local_error() {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
@@ -601,7 +607,7 @@ impl Inner {
         let actions = &mut self.actions;
 
         self.counts.transition(stream, |counts, stream| {
-            actions.recv.recv_reset(frame, stream);
+            actions.recv.recv_reset(frame, stream, counts)?;
             actions.send.handle_error(send_buffer, stream, counts);
             assert!(stream.state.is_closed());
             Ok(())
@@ -806,7 +812,13 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         if actions.conn_error.is_none() {
-            actions.conn_error = Some(io::Error::from(io::ErrorKind::BrokenPipe).into());
+            actions.conn_error = Some(
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "connection closed because of a broken pipe",
+                )
+                .into(),
+            );
         }
 
         tracing::trace!("Streams::recv_eof");

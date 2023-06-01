@@ -1,3 +1,29 @@
+# 0.3.19 (May 12, 2023)
+
+* Fix counting reset streams when triggered by a GOAWAY.
+* Send `too_many_resets` in opaque debug data of GOAWAY when too many resets received.
+
+# 0.3.18 (April 17, 2023)
+
+* Fix panic because of opposite check in `is_remote_local()`.
+
+# 0.3.17 (April 13, 2023)
+
+* Add `Error::is_library()` method to check if the originated inside `h2`.
+* Add `max_pending_accept_reset_streams(usize)` option to client and server
+  builders.
+* Fix theoretical memory growth when receiving too many HEADERS and then
+  RST_STREAM frames faster than an application can accept them off the queue.
+  (CVE-2023-26964)
+
+# 0.3.16 (February 27, 2023)
+
+* Set `Protocol` extension on requests when received Extended CONNECT requests.
+* Remove `B: Unpin + 'static` bound requiremented of bufs
+* Fix releasing of frames when stream is finished, reducing memory usage.
+* Fix panic when trying to send data and connection window is available, but stream window is not.
+* Fix spurious wakeups when stream capacity is not available.
+
 # 0.3.15 (October 21, 2022)
 
 * Remove `B: Buf` bound on `SendStream`'s parameter
