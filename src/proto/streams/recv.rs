@@ -308,7 +308,9 @@ impl Recv {
             Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response)),
             Some(_) => panic!("poll_response called after response returned"),
             None => {
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    return Poll::Ready(Ok(Response::new(())))
+                }
 
                 stream.recv_task = Some(cx.waker().clone());
                 Poll::Pending
