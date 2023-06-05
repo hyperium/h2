@@ -726,7 +726,10 @@ impl Inner {
                 }
 
                 // The stream must be receive open
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    return Ok(())
+                }
+
                 stream.key()
             }
             None => {
