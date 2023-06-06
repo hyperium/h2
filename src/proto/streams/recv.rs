@@ -309,7 +309,7 @@ impl Recv {
             Some(_) => panic!("poll_response called after response returned"),
             None => {
                 if !stream.state.ensure_recv_open()? {
-                    return Poll::Ready(Ok(Response::new(())))
+                    return Poll::Ready(Ok(Response::new(())));
                 }
 
                 stream.recv_task = Some(cx.waker().clone());
