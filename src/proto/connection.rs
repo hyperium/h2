@@ -137,7 +137,7 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
-                span: tracing::debug_span!("Connection", peer = %P::NAME),
+                span: tracing::debug_span!(parent: None, "Connection", peer = %P::NAME),
                 _phantom: PhantomData,
             },
         }
