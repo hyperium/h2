@@ -1858,3 +1858,139 @@ async fn poll_capacity_wakeup_after_window_update() {
 
     join(srv, h2).await;
 }
+
+#[tokio::test]
+async fn window_size_decremented_past_zero() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        // let _ = client.assert_server_handshake().await;
+
+        // preface
+        client.write_preface().await;
+
+        // the following http 2 bytes are fuzzer-generated
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 23, 1, 1, 0, 249, 255, 191, 131, 1, 1, 1, 70, 1, 1, 1, 1, 65, 1, 1, 65, 1, 1,
+                65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 9, 247, 0, 121, 255, 255, 184, 1, 65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[0, 0, 3, 0, 1, 0, 249, 255, 191, 1, 1, 190])
+            .await;
+        client
+            .send_bytes(&[0, 0, 2, 50, 107, 0, 0, 0, 1, 0, 0])
+            .await;
+        client
+            .send_bytes(&[0, 0, 5, 2, 0, 0, 0, 0, 1, 128, 0, 55, 0, 0])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 3, 4, 76, 255, 71, 131])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 74, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 30, 4, 0, 0, 0, 0, 0, 0, 4, 56, 184, 171, 125, 65, 0, 35, 65, 65, 65, 61,
+                232, 87, 115, 89, 116, 0, 4, 0, 58, 33, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 177, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 61, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 115, 102, 1, 3, 48, 43,
+                101, 64, 31, 37, 99, 99, 97, 97, 97, 97, 49, 97, 54, 97, 97, 97, 97, 49, 97, 54,
+                97, 99, 54, 53, 53, 51, 53, 99, 99, 97, 97, 99, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 87, 115, 89, 116])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 129, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 18, 67, 67, 61,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 48, 54, 53, 55, 114, 1, 4, 97, 49, 51, 116,
+                64, 2, 117, 115, 4, 103, 101, 110, 116, 64, 8, 57, 111, 110, 116, 101, 110, 115,
+                102, 7, 43, 43, 49, 48, 48, 43, 101, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+
+        // TODO: is CANCEL the right error code to expect here?
+        // client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        // just keep it open
+        let res = poll_fn(move |cx| srv.poll_closed(cx)).await;
+        tracing::debug!("{:?}", res);
+    };
+
+    join(client, srv).await;
+}

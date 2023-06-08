@@ -118,7 +118,7 @@ where
         }
     }
 
-    pub fn set_target_connection_window_size(&mut self, size: WindowSize) {
+    pub fn set_target_connection_window_size(&mut self, size: WindowSize) -> Result<(), Reason> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
