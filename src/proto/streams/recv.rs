@@ -229,6 +229,11 @@ impl Recv {
             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
         }
 
+        if pseudo.status.is_some() && counts.peer().is_server() {
+            proto_err!(stream: "cannot use :status header for requests; stream={:?}", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+        }
+
         if !pseudo.is_informational() {
             let message = counts
                 .peer()
@@ -239,12 +244,12 @@ impl Recv {
                 .pending_recv
                 .push_back(&mut self.buffer, Event::Headers(message));
             stream.notify_recv();
-        }
 
-        // Only servers can receive a headers frame that initiates the stream.
-        // This is verified in `Streams` before calling this function.
-        if counts.peer().is_server() {
-            self.pending_accept.push(stream);
+            // Only servers can receive a headers frame that initiates the stream.
+            // This is verified in `Streams` before calling this function.
+            if counts.peer().is_server() {
+                self.pending_accept.push(stream);
+            }
         }
 
         Ok(())
