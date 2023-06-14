@@ -425,20 +425,13 @@ where
 
         if let Some(inner) = self.connection.next_incoming() {
             tracing::trace!("received incoming");
-            match inner.take_request() {
-                Ok(req) => {
-                    let (head, _) = req.into_parts();
-                    let body = RecvStream::new(FlowControl::new(inner.clone_to_opaque()));
+            let (head, _) = inner.take_request().into_parts();
+            let body = RecvStream::new(FlowControl::new(inner.clone_to_opaque()));
 
-                    let request = Request::from_parts(head, body);
-                    let respond = SendResponse { inner };
+            let request = Request::from_parts(head, body);
+            let respond = SendResponse { inner };
 
-                    return Poll::Ready(Some(Ok((request, respond))));
-                }
-                Err(e) => {
-                    return Poll::Ready(Some(Err(e.into())));
-                }
-            }
+            return Poll::Ready(Some(Ok((request, respond))));
         }
 
         Poll::Pending
