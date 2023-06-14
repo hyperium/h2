@@ -742,17 +742,31 @@ impl Prioritize {
                             let len =
                                 cmp::min(len, stream_capacity.as_size() as usize) as WindowSize;
 
-                            // There *must* be be enough connection level
-                            // capacity at this point.
-                            debug_assert!(len <= self.flow.window_size());
+                            // we are about to hit the asserts below and there is no good path out
+                            // so try to use the workaround above and hope for the best
+                            if len > self.flow.window_size() || len > stream.send_flow.window_size()
+                            {
+                                tracing::error!(
+                                    len,
+                                    flow_window = %self.flow.window_size(),
+                                    stream_window = &stream.send_flow.window_size(),
+                                    window = %stream_capacity,
+                                    available = %stream.send_flow.available(),
+                                    requested = stream.requested_send_capacity,
+                                    buffered = stream.buffered_send_data,
+                                    flow = ?self.flow,
+                                    stream = ?stream,
+                                    "window size error"
+                                );
 
-                            // Check if the stream level window the peer knows is available. In some
-                            // scenarios, maybe the window we know is available but the window which
-                            // peer knows is not.
-                            if len > 0 && len > stream.send_flow.window_size() {
                                 stream.pending_send.push_front(buffer, frame.into());
                                 continue;
                             }
+
+                            // There *must* be be enough connection level
+                            // capacity at this point.
+                            debug_assert!(len <= self.flow.window_size());
+                            debug_assert!(len <= stream.send_flow.window_size());
 
                             tracing::trace!(len, "sending data frame");
 
