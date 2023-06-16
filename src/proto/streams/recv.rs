@@ -248,6 +248,8 @@ impl Recv {
             // Only servers can receive a headers frame that initiates the stream.
             // This is verified in `Streams` before calling this function.
             if counts.peer().is_server() {
+                // Correctness: never push a stream to `pending_accept` without having the
+                // corresponding headers frame pushed to `stream.pending_recv`.
                 self.pending_accept.push(stream);
             }
         }
@@ -257,7 +259,10 @@ impl Recv {
 
     /// Called by the server to get the request
     ///
-    /// TODO: Should this fn return `Result`?
+    /// # Panics
+    ///
+    /// Panics if `stream.pending_recv` has no `Event::Headers` queued.
+    ///
     pub fn take_request(&mut self, stream: &mut store::Ptr) -> Request<()> {
         use super::peer::PollMessage::*;
 
