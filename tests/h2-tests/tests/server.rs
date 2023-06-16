@@ -1389,9 +1389,13 @@ async fn reject_informational_status_header_in_request() {
         let _ = client.assert_server_handshake().await;
 
         let status_code = 128;
-        assert!(StatusCode::from_u16(status_code).unwrap().is_informational());
+        assert!(StatusCode::from_u16(status_code)
+            .unwrap()
+            .is_informational());
 
-        client.send_frame(frames::headers(1).response(status_code)).await;
+        client
+            .send_frame(frames::headers(1).response(status_code))
+            .await;
 
         client.recv_frame(frames::reset(1).protocol_error()).await;
     };
