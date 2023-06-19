@@ -268,9 +268,7 @@ impl Recv {
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Headers(Server(request))) => request,
-            _ => unreachable!(
-                "This panic should not be reached. Cut an issue at https://github.com/hyperium/h2"
-            ),
+            _ => unreachable!("server stream queue must start with Headers"),
         }
     }
 
