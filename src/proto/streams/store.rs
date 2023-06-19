@@ -226,6 +226,7 @@ impl Drop for Store {
     fn drop(&mut self) {
         use std::thread;
 
+        #[cfg(not(fuzzing))]
         if !thread::panicking() {
             debug_assert!(self.slab.is_empty());
         }

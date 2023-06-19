@@ -448,6 +448,7 @@ where
             // This is handled by resetting the frame then trying to read
             // another frame.
             Err(Error::Reset(id, reason, initiator)) => {
+                #[cfg(not(fuzzing))]
                 debug_assert_eq!(initiator, Initiator::Library);
                 tracing::trace!(?id, ?reason, "stream error");
                 self.streams.send_reset(id, reason);
