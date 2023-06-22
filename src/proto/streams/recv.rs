@@ -229,6 +229,11 @@ impl Recv {
             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
         }
 
+        if pseudo.status.is_some() && counts.peer().is_server() {
+            proto_err!(stream: "cannot use :status header for requests; stream={:?}", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+        }
+
         if !pseudo.is_informational() {
             let message = counts
                 .peer()
@@ -239,27 +244,31 @@ impl Recv {
                 .pending_recv
                 .push_back(&mut self.buffer, Event::Headers(message));
             stream.notify_recv();
-        }
 
-        // Only servers can receive a headers frame that initiates the stream.
-        // This is verified in `Streams` before calling this function.
-        if counts.peer().is_server() {
-            self.pending_accept.push(stream);
+            // Only servers can receive a headers frame that initiates the stream.
+            // This is verified in `Streams` before calling this function.
+            if counts.peer().is_server() {
+                // Correctness: never push a stream to `pending_accept` without having the
+                // corresponding headers frame pushed to `stream.pending_recv`.
+                self.pending_accept.push(stream);
+            }
         }
 
         Ok(())
     }
 
     /// Called by the server to get the request
-    pub fn take_request(&mut self, stream: &mut store::Ptr) -> Result<Request<()>, proto::Error> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if `stream.pending_recv` has no `Event::Headers` queued.
+    ///
+    pub fn take_request(&mut self, stream: &mut store::Ptr) -> Request<()> {
         use super::peer::PollMessage::*;
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Server(request))) => Ok(request),
-            _ => {
-                proto_err!(stream: "received invalid request; stream={:?}", stream.id);
-                Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR))
-            }
+            Some(Event::Headers(Server(request))) => request,
+            _ => unreachable!("server stream queue must start with Headers"),
         }
     }
 
