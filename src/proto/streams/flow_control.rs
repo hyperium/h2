@@ -182,7 +182,7 @@ impl FlowControl {
 
             // Update values
             self.window_size.decrease_by(sz)?;
-            self.available.increase_by(sz)?;
+            self.available.decrease_by(sz)?;
         }
         Ok(())
     }
@@ -222,12 +222,9 @@ impl Window {
     }
 
     pub fn increase_by(&mut self, other: WindowSize) -> Result<(), Reason> {
-        if let Some(v) = self.0.checked_add(other as i32) {
-            self.0 = v;
-            Ok(())
-        } else {
-            Err(Reason::FLOW_CONTROL_ERROR)
-        }
+        let other = self.add(other)?;
+        self.0 = other.0;
+        Ok(())
     }
 
     pub fn add(&self, other: WindowSize) -> Result<Self, Reason> {
