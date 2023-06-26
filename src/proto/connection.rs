@@ -145,7 +145,9 @@ where
 
     /// connection flow control
     pub(crate) fn set_target_window_size(&mut self, size: WindowSize) {
-        self.inner.streams.set_target_connection_window_size(size);
+        let _res = self.inner.streams.set_target_connection_window_size(size);
+        // TODO: proper error handling
+        debug_assert!(_res.is_ok());
     }
 
     /// Send a new SETTINGS frame with an updated initial window size.

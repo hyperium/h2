@@ -90,7 +90,7 @@ impl Recv {
         // settings
         flow.inc_window(DEFAULT_INITIAL_WINDOW_SIZE)
             .expect("invalid initial remote window size");
-        flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE);
+        flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
 
         Recv {
             init_window_sz: config.local_init_window_sz,
@@ -363,7 +363,9 @@ impl Recv {
         self.in_flight_data -= capacity;
 
         // Assign capacity to connection
-        self.flow.assign_capacity(capacity);
+        // TODO: proper error handling
+        let _res = self.flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
 
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
@@ -391,7 +393,9 @@ impl Recv {
         stream.in_flight_recv_data -= capacity;
 
         // Assign capacity to stream
-        stream.recv_flow.assign_capacity(capacity);
+        // TODO: proper error handling
+        let _res = stream.recv_flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
 
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
@@ -437,7 +441,11 @@ impl Recv {
     ///
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.
-    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Waker>) {
+    pub fn set_target_connection_window(
+        &mut self,
+        target: WindowSize,
+        task: &mut Option<Waker>,
+    ) -> Result<(), Reason> {
         tracing::trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
@@ -450,11 +458,15 @@ impl Recv {
         //
         // Update the flow controller with the difference between the new
         // target and the current target.
-        let current = (self.flow.available() + self.in_flight_data).checked_size();
+        let current = self
+            .flow
+            .available()
+            .add(self.in_flight_data)?
+            .checked_size();
         if target > current {
-            self.flow.assign_capacity(target - current);
+            self.flow.assign_capacity(target - current)?;
         } else {
-            self.flow.claim_capacity(current - target);
+            self.flow.claim_capacity(current - target)?;
         }
 
         // If changing the target capacity means we gained a bunch of capacity,
@@ -465,6 +477,7 @@ impl Recv {
                 task.wake();
             }
         }
+        Ok(())
     }
 
     pub(crate) fn apply_local_settings(
@@ -504,9 +517,13 @@ impl Recv {
                     let dec = old_sz - target;
                     tracing::trace!("decrementing all windows; dec={}", dec);
 
-                    store.for_each(|mut stream| {
-                        stream.recv_flow.dec_recv_window(dec);
-                    })
+                    store.try_for_each(|mut stream| {
+                        stream
+                            .recv_flow
+                            .dec_recv_window(dec)
+                            .map_err(proto::Error::library_go_away)?;
+                        Ok::<_, proto::Error>(())
+                    })?;
                 }
                 Ordering::Greater => {
                     // We must increase the (local) window on every open stream.
@@ -519,7 +536,10 @@ impl Recv {
                             .recv_flow
                             .inc_window(inc)
                             .map_err(proto::Error::library_go_away)?;
-                        stream.recv_flow.assign_capacity(inc);
+                        stream
+                            .recv_flow
+                            .assign_capacity(inc)
+                            .map_err(proto::Error::library_go_away)?;
                         Ok::<_, proto::Error>(())
                     })?;
                 }
@@ -626,7 +646,10 @@ impl Recv {
         }
 
         // Update stream level flow control
-        stream.recv_flow.send_data(sz);
+        stream
+            .recv_flow
+            .send_data(sz)
+            .map_err(proto::Error::library_go_away)?;
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
@@ -667,7 +690,7 @@ impl Recv {
         }
 
         // Update connection level flow control
-        self.flow.send_data(sz);
+        self.flow.send_data(sz).map_err(Error::library_go_away)?;
 
         // Track the data as in-flight
         self.in_flight_data += sz;

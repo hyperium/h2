@@ -87,7 +87,9 @@ impl Prioritize {
         flow.inc_window(config.remote_init_window_sz)
             .expect("invalid initial window size");
 
-        flow.assign_capacity(config.remote_init_window_sz);
+        // TODO: proper error handling
+        let _res = flow.assign_capacity(config.remote_init_window_sz);
+        debug_assert!(_res.is_ok());
 
         tracing::trace!("Prioritize::new; flow={:?}", flow);
 
@@ -253,7 +255,9 @@ impl Prioritize {
                 if available as usize > capacity {
                     let diff = available - capacity as WindowSize;
 
-                    stream.send_flow.claim_capacity(diff);
+                    // TODO: proper error handling
+                    let _res = stream.send_flow.claim_capacity(diff);
+                    debug_assert!(_res.is_ok());
 
                     self.assign_connection_capacity(diff, stream, counts);
                 }
@@ -324,7 +328,9 @@ impl Prioritize {
     pub fn reclaim_all_capacity(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
         let available = stream.send_flow.available().as_size();
         if available > 0 {
-            stream.send_flow.claim_capacity(available);
+            // TODO: proper error handling
+            let _res = stream.send_flow.claim_capacity(available);
+            debug_assert!(_res.is_ok());
             // Re-assign all capacity to the connection
             self.assign_connection_capacity(available, stream, counts);
         }
@@ -337,7 +343,9 @@ impl Prioritize {
         if stream.requested_send_capacity as usize > stream.buffered_send_data {
             let reserved = stream.requested_send_capacity - stream.buffered_send_data as WindowSize;
 
-            stream.send_flow.claim_capacity(reserved);
+            // TODO: proper error handling
+            let _res = stream.send_flow.claim_capacity(reserved);
+            debug_assert!(_res.is_ok());
             self.assign_connection_capacity(reserved, stream, counts);
         }
     }
@@ -363,7 +371,9 @@ impl Prioritize {
         let span = tracing::trace_span!("assign_connection_capacity", inc);
         let _e = span.enter();
 
-        self.flow.assign_capacity(inc);
+        // TODO: proper error handling
+        let _res = self.flow.assign_capacity(inc);
+        debug_assert!(_res.is_ok());
 
         // Assign newly acquired capacity to streams pending capacity.
         while self.flow.available() > 0 {
@@ -443,7 +453,9 @@ impl Prioritize {
             stream.assign_capacity(assign, self.max_buffer_size);
 
             // Claim the capacity from the connection
-            self.flow.claim_capacity(assign);
+            // TODO: proper error handling
+            let _res = self.flow.claim_capacity(assign);
+            debug_assert!(_res.is_ok());
         }
 
         tracing::trace!(
@@ -763,12 +775,16 @@ impl Prioritize {
                                 // Assign the capacity back to the connection that
                                 // was just consumed from the stream in the previous
                                 // line.
-                                self.flow.assign_capacity(len);
+                                // TODO: proper error handling
+                                let _res = self.flow.assign_capacity(len);
+                                debug_assert!(_res.is_ok());
                             });
 
                             let (eos, len) = tracing::trace_span!("updating connection flow")
                                 .in_scope(|| {
-                                    self.flow.send_data(len);
+                                    // TODO: proper error handling
+                                    let _res = self.flow.send_data(len);
+                                    debug_assert!(_res.is_ok());
 
                                     // Wrap the frame's data payload to ensure that the
                                     // correct amount of data gets written.
