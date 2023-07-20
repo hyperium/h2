@@ -100,7 +100,7 @@ fn test_story(story: Value) {
             let mut input: Vec<_> = case
                 .expect
                 .iter()
-                .map(|&(ref name, ref value)| {
+                .map(|(name, value)| {
                     Header::new(name.clone().into(), value.clone().into())
                         .unwrap()
                         .into()
