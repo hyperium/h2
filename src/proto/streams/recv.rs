@@ -319,7 +319,11 @@ impl Recv {
             Some(_) => panic!("poll_response called after response returned"),
             None => {
                 if !stream.state.ensure_recv_open()? {
-                    return Poll::Ready(Ok(Response::new(())));
+                    proto_err!(stream: "poll_response: stream={:?} is not opened;",  stream.id);
+                    return Poll::Ready(Err(Error::library_reset(
+                        stream.id,
+                        Reason::PROTOCOL_ERROR,
+                    )));
                 }
 
                 stream.recv_task = Some(cx.waker().clone());
