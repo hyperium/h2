@@ -726,7 +726,11 @@ impl Inner {
                 }
 
                 // The stream must be receive open
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    proto_err!(conn: "recv_push_promise: initiating stream is not opened");
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                }
+
                 stream.key()
             }
             None => {
