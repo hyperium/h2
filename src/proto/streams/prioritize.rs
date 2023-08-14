@@ -520,7 +520,9 @@ impl Prioritize {
         tracing::trace!("poll_complete");
 
         loop {
-            self.schedule_pending_open(store, counts);
+            if let Some(mut stream) = self.pop_pending_open(store, counts) {
+                self.pending_send.push_front(&mut stream);
+            }
 
             match self.pop_frame(buffer, store, max_frame_len, counts) {
                 Some(frame) => {
@@ -874,20 +876,24 @@ impl Prioritize {
         }
     }
 
-    fn schedule_pending_open(&mut self, store: &mut Store, counts: &mut Counts) {
+    fn pop_pending_open<'s>(
+        &mut self,
+        store: &'s mut Store,
+        counts: &mut Counts,
+    ) -> Option<store::Ptr<'s>> {
         tracing::trace!("schedule_pending_open");
         // check for any pending open streams
-        while counts.can_inc_num_send_streams() {
+        if counts.can_inc_num_send_streams() {
             if let Some(mut stream) = self.pending_open.pop(store) {
                 tracing::trace!("schedule_pending_open; stream={:?}", stream.id);
 
                 counts.inc_num_send_streams(&mut stream);
-                self.pending_send.push(&mut stream);
                 stream.notify_send();
-            } else {
-                return;
+                return Some(stream);
             }
         }
+
+        None
     }
 }
 
