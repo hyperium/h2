@@ -510,8 +510,10 @@ where
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|stream| {
-                if stream.is_pending_open() {
+            .map(|(stream, is_full)| {
+                if stream.is_pending_open() && is_full {
+                    // Only prevent sending another request when the request queue
+                    // is not full.
                     self.pending = Some(stream.clone_to_opaque());
                 }
 

@@ -49,6 +49,14 @@ impl Counts {
         }
     }
 
+    /// Returns true when the next opened stream will reach capacity of outbound streams
+    ///
+    /// The number of client send streams is incremented in prioritize; send_request has to guess if
+    /// it should wait before allowing another request to be sent.
+    pub fn next_send_stream_will_reach_capacity(&self) -> bool {
+        self.max_send_streams <= (self.num_send_streams + 1)
+    }
+
     /// Returns the current peer
     pub fn peer(&self) -> peer::Dyn {
         self.peer

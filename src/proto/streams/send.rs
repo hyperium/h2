@@ -143,21 +143,17 @@ impl Send {
         // Update the state
         stream.state.send_open(end_stream)?;
 
-        if counts.peer().is_local_init(frame.stream_id()) {
-            // If we're waiting on a PushPromise anyway
-            // handle potentially queueing the stream at that point
-            if !stream.is_pending_push {
-                if counts.can_inc_num_send_streams() {
-                    counts.inc_num_send_streams(stream);
-                } else {
-                    self.prioritize.queue_open(stream);
-                }
-            }
-        }
+        if counts.peer().is_local_init(frame.stream_id()) && !stream.is_pending_push {
+            stream
+                .pending_send
+                .push_back(buffer, Frame::<B>::from(frame));
 
-        // Queue the frame for sending
-        self.prioritize
-            .queue_frame(frame.into(), buffer, stream, task);
+            self.prioritize.queue_open(stream);
+        } else {
+            // Queue the frame for sending
+            self.prioritize
+                .queue_frame(frame.into(), buffer, stream, task);
+        }
 
         Ok(())
     }

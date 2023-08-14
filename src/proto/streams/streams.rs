@@ -216,7 +216,7 @@ where
         mut request: Request<()>,
         end_of_stream: bool,
         pending: Option<&OpaqueStreamRef>,
-    ) -> Result<StreamRef<B>, SendError> {
+    ) -> Result<(StreamRef<B>, bool), SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -298,10 +298,14 @@ where
         // the lock, so it can't.
         me.refs += 1;
 
-        Ok(StreamRef {
-            opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
-            send_buffer: self.send_buffer.clone(),
-        })
+        let is_full = me.counts.next_send_stream_will_reach_capacity();
+        Ok((
+            StreamRef {
+                opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
+                send_buffer: self.send_buffer.clone(),
+            },
+            is_full,
+        ))
     }
 
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
