@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 edition = "2018"
 
+[features]
+ignore_connection_header = ["h2/ignore_connection_header"]
+
 [dependencies]
 h2 = { path = "../..", features = ["stream", "unstable"] }
 

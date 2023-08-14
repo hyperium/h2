@@ -528,25 +528,84 @@ async fn recv_connection_header() {
     };
 
     let client = async move {
-        let settings = client.assert_server_handshake().await;
-        assert_default_settings!(settings);
-        client.send_frame(req(1, "connection", "foo")).await;
-        client.send_frame(req(3, "keep-alive", "5")).await;
-        client.send_frame(req(5, "proxy-connection", "bar")).await;
-        client
-            .send_frame(req(7, "transfer-encoding", "chunked"))
-            .await;
-        client.send_frame(req(9, "upgrade", "HTTP/2")).await;
-        client.recv_frame(frames::reset(1).protocol_error()).await;
-        client.recv_frame(frames::reset(3).protocol_error()).await;
-        client.recv_frame(frames::reset(5).protocol_error()).await;
-        client.recv_frame(frames::reset(7).protocol_error()).await;
-        client.recv_frame(frames::reset(9).protocol_error()).await;
+        if cfg!(feature = "ignore_connection_header") {
+            let settings = client.assert_server_handshake().await;
+            assert_default_settings!(settings);
+            client
+                .send_frame(
+                    frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .field("connection", "foo")
+                        .eos(),
+                )
+                .await;
+            client
+                .send_frame(
+                    frames::headers(3)
+                        .request("GET", "https://example.com/")
+                        .field("keep-alive", "5")
+                        .eos(),
+                )
+                .await;
+            client
+                .send_frame(
+                    frames::headers(5)
+                        .request("GET", "https://example.com/")
+                        .field("proxy-connection", "bar")
+                        .eos(),
+                )
+                .await;
+            client
+                .send_frame(
+                    frames::headers(7)
+                        .request("GET", "https://example.com/")
+                        .field("upgrade", "HTTP/2")
+                        .eos(),
+                )
+                .await;
+            client
+                .recv_frame(frames::headers(1).response(200).eos())
+                .await;
+            client
+                .recv_frame(frames::headers(3).response(200).eos())
+                .await;
+            client
+                .recv_frame(frames::headers(5).response(200).eos())
+                .await;
+            client
+                .recv_frame(frames::headers(7).response(200).eos())
+                .await;
+        } else {
+            let settings = client.assert_server_handshake().await;
+            assert_default_settings!(settings);
+            client.send_frame(req(1, "connection", "foo")).await;
+            client.send_frame(req(3, "keep-alive", "5")).await;
+            client.send_frame(req(5, "proxy-connection", "bar")).await;
+            client
+                .send_frame(req(7, "transfer-encoding", "chunked"))
+                .await;
+            client.send_frame(req(9, "upgrade", "HTTP/2")).await;
+            client.recv_frame(frames::reset(1).protocol_error()).await;
+            client.recv_frame(frames::reset(3).protocol_error()).await;
+            client.recv_frame(frames::reset(5).protocol_error()).await;
+            client.recv_frame(frames::reset(7).protocol_error()).await;
+            client.recv_frame(frames::reset(9).protocol_error()).await;
+        }
     };
 
     let srv = async move {
         let mut srv = server::handshake(io).await.expect("handshake");
-        assert!(srv.next().await.is_none());
+        if cfg!(feature = "ignore_connection_header") {
+            while let Some(stream) = srv.next().await {
+                let (req, mut stream) = stream.unwrap();
+                // the headers are ignored
+                assert_eq!(req.headers().len(), 0);
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.send_response(rsp, true).unwrap();
+            }
+        } else {
+            assert!(srv.next().await.is_none());
+        }
     };
 
     join(client, srv).await;
