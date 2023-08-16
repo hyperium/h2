@@ -143,16 +143,25 @@ impl Send {
         // Update the state
         stream.state.send_open(end_stream)?;
 
+        let mut pending_open = false;
         if counts.peer().is_local_init(frame.stream_id()) && !stream.is_pending_push {
-            stream
-                .pending_send
-                .push_back(buffer, Frame::<B>::from(frame));
-
             self.prioritize.queue_open(stream);
-        } else {
-            // Queue the frame for sending
-            self.prioritize
-                .queue_frame(frame.into(), buffer, stream, task);
+            pending_open = true;
+        }
+
+        // Queue the frame for sending
+        //
+        // This call expects that, since new streams are in the open queue, new
+        // streams won't be pushed on pending_send.
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
+
+        // Need to notify the connection when pushing onto pending_open since
+        // queue_frame only notifies for pending_send.
+        if pending_open {
+            if let Some(task) = task.take() {
+                task.wake();
+            }
         }
 
         Ok(())
