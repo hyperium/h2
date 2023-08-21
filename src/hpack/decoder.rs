@@ -447,7 +447,7 @@ fn decode_int<B: Buf>(buf: &mut B, prefix_size: u8) -> Result<usize, DecoderErro
     Err(DecoderError::NeedMore(NeedMore::IntegerUnderflow))
 }
 
-fn peek_u8<B: Buf>(buf: &mut B) -> Option<u8> {
+fn peek_u8<B: Buf>(buf: &B) -> Option<u8> {
     if buf.has_remaining() {
         Some(buf.chunk()[0])
     } else {
@@ -835,9 +835,9 @@ mod test {
     fn test_peek_u8() {
         let b = 0xff;
         let mut buf = Cursor::new(vec![b]);
-        assert_eq!(peek_u8(&mut buf), Some(b));
+        assert_eq!(peek_u8(&buf), Some(b));
         assert_eq!(buf.get_u8(), b);
-        assert_eq!(peek_u8(&mut buf), None);
+        assert_eq!(peek_u8(&buf), None);
     }
 
     #[test]
