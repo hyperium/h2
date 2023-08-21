@@ -143,21 +143,26 @@ impl Send {
         // Update the state
         stream.state.send_open(end_stream)?;
 
-        if counts.peer().is_local_init(frame.stream_id()) {
-            // If we're waiting on a PushPromise anyway
-            // handle potentially queueing the stream at that point
-            if !stream.is_pending_push {
-                if counts.can_inc_num_send_streams() {
-                    counts.inc_num_send_streams(stream);
-                } else {
-                    self.prioritize.queue_open(stream);
-                }
-            }
+        let mut pending_open = false;
+        if counts.peer().is_local_init(frame.stream_id()) && !stream.is_pending_push {
+            self.prioritize.queue_open(stream);
+            pending_open = true;
         }
 
         // Queue the frame for sending
+        //
+        // This call expects that, since new streams are in the open queue, new
+        // streams won't be pushed on pending_send.
         self.prioritize
             .queue_frame(frame.into(), buffer, stream, task);
+
+        // Need to notify the connection when pushing onto pending_open since
+        // queue_frame only notifies for pending_send.
+        if pending_open {
+            if let Some(task) = task.take() {
+                task.wake();
+            }
+        }
 
         Ok(())
     }

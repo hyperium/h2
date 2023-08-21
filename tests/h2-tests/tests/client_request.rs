@@ -239,6 +239,8 @@ async fn request_over_max_concurrent_streams_errors() {
 
         // first request is allowed
         let (resp1, mut stream1) = client.send_request(request, false).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -273,6 +275,90 @@ async fn request_over_max_concurrent_streams_errors() {
             stream2
                 .send_data("hello".into(), true)
                 .expect("req2 send_data");
+        })
+        .await;
+        join(async move { h2.await.unwrap() }, async move {
+            resp2.await.unwrap()
+        })
+        .await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        srv.ping_pong([0; 8]).await;
+
+        // limit this server later in life
+        srv.send_frame(frames::settings().max_concurrent_streams(1))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+
+        srv.recv_frame(
+            frames::headers(5)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // first request is allowed
+        let (resp1, _) = client.send_request(request, true).unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // second request is put into pending_open
+        let (resp2, _) = client.send_request(request, true).unwrap();
+
+        h2.drive(async move {
+            resp1.await.expect("req");
         })
         .await;
         join(async move { h2.await.unwrap() }, async move {
@@ -336,6 +422,8 @@ async fn send_request_poll_ready_when_connection_error() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)

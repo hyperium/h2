@@ -296,10 +296,10 @@ async fn push_request_against_concurrency() {
             .await;
         client.recv_frame(frames::data(2, &b""[..]).eos()).await;
         client
-            .recv_frame(frames::headers(1).response(200).eos())
+            .recv_frame(frames::headers(4).response(200).eos())
             .await;
         client
-            .recv_frame(frames::headers(4).response(200).eos())
+            .recv_frame(frames::headers(1).response(200).eos())
             .await;
     };
 
