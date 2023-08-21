@@ -1,3 +1,9 @@
+# 0.3.21 (August 21, 2023)
+
+* Fix opening of new streams over peer's max concurrent limit.
+* Fix `RecvStream` to return data even if it has received a `CANCEL` stream error.
+* Update MSRV to 1.63.
+
 # 0.3.20 (June 26, 2023)
 
 * Fix panic if a server received a request with a `:status` pseudo header in the 1xx range.
