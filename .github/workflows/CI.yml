@@ -93,4 +93,4 @@ jobs:
         with:
           toolchain: ${{ steps.metadata.outputs.msrv }}
 
-      - run: cargo check
+      - run: cargo check -p h2
