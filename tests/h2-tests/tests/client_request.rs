@@ -1454,6 +1454,91 @@ async fn extended_connect_request() {
     join(srv, h2).await;
 }
 
+#[tokio::test]
+async fn rogue_server_odd_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_even_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(2)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_reused_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://camembert.fromage")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::reset(1).stream_closed()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        h2.drive(async {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://camembert.fromage")
+                .body(())
+                .unwrap();
+            let _res = client.send_request(request, true).unwrap().0.await.unwrap();
+        })
+        .await;
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
 const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
