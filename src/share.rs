@@ -5,7 +5,6 @@ use crate::proto::{self, WindowSize};
 use bytes::{Buf, Bytes};
 use http::HeaderMap;
 
-use crate::PollExt;
 use std::fmt;
 #[cfg(feature = "stream")]
 use std::pin::Pin;
@@ -95,7 +94,7 @@ use std::task::{Context, Poll};
 /// [`send_trailers`]: #method.send_trailers
 /// [`send_reset`]: #method.send_reset
 #[derive(Debug)]
-pub struct SendStream<B: Buf> {
+pub struct SendStream<B> {
     inner: proto::StreamRef<B>,
 }
 
@@ -109,8 +108,14 @@ pub struct SendStream<B: Buf> {
 /// new stream.
 ///
 /// [Section 5.1.1]: https://tools.ietf.org/html/rfc7540#section-5.1.1
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct StreamId(u32);
+
+impl From<StreamId> for u32 {
+    fn from(src: StreamId) -> Self {
+        src.0
+    }
+}
 
 /// Receives the body stream and trailers from the remote peer.
 ///
@@ -307,8 +312,8 @@ impl<B: Buf> SendStream<B> {
     pub fn poll_capacity(&mut self, cx: &mut Context) -> Poll<Option<Result<usize, crate::Error>>> {
         self.inner
             .poll_capacity(cx)
-            .map_ok_(|w| w as usize)
-            .map_err_(Into::into)
+            .map_ok(|w| w as usize)
+            .map_err(Into::into)
     }
 
     /// Sends a single data frame to the remote peer.
@@ -383,6 +388,18 @@ impl StreamId {
     pub(crate) fn from_internal(id: crate::frame::StreamId) -> Self {
         StreamId(id.into())
     }
+
+    /// Returns the `u32` corresponding to this `StreamId`
+    ///
+    /// # Note
+    ///
+    /// This is the same as the `From<StreamId>` implementation, but
+    /// included as an inherent method because that implementation doesn't
+    /// appear in rustdocs, as well as a way to force the type instead of
+    /// relying on inference.
+    pub fn as_u32(&self) -> u32 {
+        (*self).into()
+    }
 }
 // ===== impl RecvStream =====
 
@@ -403,7 +420,7 @@ impl RecvStream {
 
     /// Poll for the next data frame.
     pub fn poll_data(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, crate::Error>>> {
-        self.inner.inner.poll_data(cx).map_err_(Into::into)
+        self.inner.inner.poll_data(cx).map_err(Into::into)
     }
 
     #[doc(hidden)]
@@ -539,8 +556,8 @@ impl PingPong {
     pub fn send_ping(&mut self, ping: Ping) -> Result<(), crate::Error> {
         // Passing a `Ping` here is just to be forwards-compatible with
         // eventually allowing choosing a ping payload. For now, we can
-        // just drop it.
-        drop(ping);
+        // just ignore it.
+        let _ = ping;
 
         self.inner.send_ping().map_err(|err| match err {
             Some(err) => err.into(),

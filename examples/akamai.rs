@@ -50,10 +50,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     {
         let (_, session) = tls.get_ref();
         let negotiated_protocol = session.alpn_protocol();
-        assert_eq!(
-            Some(ALPN_H2.as_bytes()),
-            negotiated_protocol.as_ref().map(|x| &**x)
-        );
+        assert_eq!(Some(ALPN_H2.as_bytes()), negotiated_protocol);
     }
 
     println!("Starting client handshake");

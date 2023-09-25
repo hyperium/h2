@@ -1797,3 +1797,200 @@ async fn max_send_buffer_size_poll_capacity_wakes_task() {
 
     join(srv, client).await;
 }
+
+#[tokio::test]
+async fn poll_capacity_wakeup_after_window_update() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(10))
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(10);
+        assert_eq!(stream.capacity(), 0);
+
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+        h2.drive(idle_ms(10)).await;
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(5);
+        assert_eq!(stream.capacity(), 0);
+
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+
+        stream.send_data("".into(), true).unwrap();
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn window_size_decremented_past_zero() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        // let _ = client.assert_server_handshake().await;
+
+        // preface
+        client.write_preface().await;
+
+        // the following http 2 bytes are fuzzer-generated
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 23, 1, 1, 0, 249, 255, 191, 131, 1, 1, 1, 70, 1, 1, 1, 1, 65, 1, 1, 65, 1, 1,
+                65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 9, 247, 0, 121, 255, 255, 184, 1, 65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[0, 0, 3, 0, 1, 0, 249, 255, 191, 1, 1, 190])
+            .await;
+        client
+            .send_bytes(&[0, 0, 2, 50, 107, 0, 0, 0, 1, 0, 0])
+            .await;
+        client
+            .send_bytes(&[0, 0, 5, 2, 0, 0, 0, 0, 1, 128, 0, 55, 0, 0])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 3, 4, 76, 255, 71, 131])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 74, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 30, 4, 0, 0, 0, 0, 0, 0, 4, 56, 184, 171, 125, 65, 0, 35, 65, 65, 65, 61,
+                232, 87, 115, 89, 116, 0, 4, 0, 58, 33, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 177, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 61, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 115, 102, 1, 3, 48, 43,
+                101, 64, 31, 37, 99, 99, 97, 97, 97, 97, 49, 97, 54, 97, 97, 97, 97, 49, 97, 54,
+                97, 99, 54, 53, 53, 51, 53, 99, 99, 97, 97, 99, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 87, 115, 89, 116])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 129, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 18, 67, 67, 61,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 48, 54, 53, 55, 114, 1, 4, 97, 49, 51, 116,
+                64, 2, 117, 115, 4, 103, 101, 110, 116, 64, 8, 57, 111, 110, 116, 101, 110, 115,
+                102, 7, 43, 43, 49, 48, 48, 43, 101, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+
+        // TODO: is CANCEL the right error code to expect here?
+        // client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        // just keep it open
+        let res = poll_fn(move |cx| srv.poll_closed(cx)).await;
+        tracing::debug!("{:?}", res);
+    };
+
+    join(client, srv).await;
+}
