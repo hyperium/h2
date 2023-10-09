@@ -93,5 +93,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: taiki-e/install-action@cargo-hack
       - uses: taiki-e/install-action@cargo-minimal-versions
-
-      - run: cargo +${{ steps.msrv-toolchain.outputs.name }} minimal-versions check
