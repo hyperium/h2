@@ -45,6 +45,12 @@ struct Encoder<B> {
 
     /// Max frame size, this is specified by the peer
     max_frame_size: FrameSize,
+
+    /// Chain payloads bigger than this.
+    chain_threshold: usize,
+
+    /// Min buffer required to attempt to write a frame
+    min_buffer_capacity: usize,
 }
 
 #[derive(Debug)]
@@ -59,13 +65,15 @@ enum Next<B> {
 /// frame that big.
 const DEFAULT_BUFFER_CAPACITY: usize = 16 * 1_024;
 
-/// Min buffer required to attempt to write a frame
-const MIN_BUFFER_CAPACITY: usize = frame::HEADER_LEN + CHAIN_THRESHOLD;
-
-/// Chain payloads bigger than this. The remote will never advertise a max frame
-/// size less than this (well, the spec says the max frame size can't be less
-/// than 16kb, so not even close).
+/// Chain payloads bigger than this when vectored I/O is enabled. The remote
+/// will never advertise a max frame size less than this (well, the spec says
+/// the max frame size can't be less than 16kb, so not even close).
 const CHAIN_THRESHOLD: usize = 256;
+
+/// Chain payloads bigger than this when vectored I/O is **not** enabled.
+/// A larger value in this scenario will reduce the number of small and
+/// fragmented data being sent, and hereby improve the throughput.
+const CHAIN_THRESHOLD_WITHOUT_VECTORED_IO: usize = 1024;
 
 // TODO: Make generic
 impl<T, B> FramedWrite<T, B>
@@ -74,6 +82,11 @@ where
     B: Buf,
 {
     pub fn new(inner: T) -> FramedWrite<T, B> {
+        let chain_threshold = if inner.is_write_vectored() {
+            CHAIN_THRESHOLD
+        } else {
+            CHAIN_THRESHOLD_WITHOUT_VECTORED_IO
+        };
         FramedWrite {
             inner,
             encoder: Encoder {
@@ -82,6 +95,8 @@ where
                 next: None,
                 last_data_frame: None,
                 max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
+                chain_threshold,
+                min_buffer_capacity: chain_threshold + frame::HEADER_LEN,
             },
         }
     }
@@ -122,7 +137,7 @@ where
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
                         let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
-                        ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut buf))?;
+                        ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut buf))?
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
@@ -130,9 +145,9 @@ where
                             Pin::new(&mut self.inner),
                             cx,
                             &mut self.encoder.buf
-                        ))?;
+                        ))?
                     }
-                }
+                };
             }
 
             match self.encoder.unset_frame() {
@@ -206,11 +221,16 @@ where
                     return Err(PayloadTooBig);
                 }
 
-                if len >= CHAIN_THRESHOLD {
+                if len >= self.chain_threshold {
                     let head = v.head();
 
                     // Encode the frame head to the buffer
                     head.encode(len, self.buf.get_mut());
+
+                    if self.buf.get_ref().remaining() < self.chain_threshold {
+                        let extra_bytes = self.chain_threshold - self.buf.remaining();
+                        self.buf.get_mut().put(v.payload_mut().take(extra_bytes));
+                    }
 
                     // Save the data frame
                     self.next = Some(Next::Data(v));
@@ -271,7 +291,9 @@ where
     }
 
     fn has_capacity(&self) -> bool {
-        self.next.is_none() && self.buf.get_ref().remaining_mut() >= MIN_BUFFER_CAPACITY
+        self.next.is_none()
+            && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
+                >= self.min_buffer_capacity)
     }
 
     fn is_empty(&self) -> bool {

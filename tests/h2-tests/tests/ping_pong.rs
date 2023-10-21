@@ -11,9 +11,8 @@ async fn recv_single_ping() {
 
     // Create the handshake
     let h2 = async move {
-        let (client, conn) = client::handshake(m).await.unwrap();
-        let c = conn.await.unwrap();
-        (client, c)
+        let (_client, conn) = client::handshake(m).await.unwrap();
+        let _: () = conn.await.unwrap();
     };
 
     let mock = async move {
@@ -146,6 +145,7 @@ async fn user_notifies_when_connection_closes() {
         srv
     };
 
+    #[allow(clippy::async_yields_async)]
     let client = async move {
         let (_client, mut conn) = client::handshake(io).await.expect("client handshake");
         // yield once so we can ack server settings

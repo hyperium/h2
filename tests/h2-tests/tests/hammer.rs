@@ -58,7 +58,7 @@ impl Server {
     }
 
     fn addr(&self) -> SocketAddr {
-        self.addr.clone()
+        self.addr
     }
 
     fn request_count(&self) -> usize {

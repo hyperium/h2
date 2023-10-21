@@ -5,7 +5,7 @@ name = "h2"
 #   - html_root_url.
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.3.13"
+version = "0.3.21"
 license = "MIT"
 authors = [
   "Carl Lerche <me@carllerche.com>",
@@ -19,6 +19,7 @@ keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
 edition = "2018"
+rust-version = "1.63"
 
 [features]
 # Enables `futures::Stream` implementations for various types.
@@ -43,14 +44,14 @@ members = [
 futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
-tokio-util = { version = "0.7.3", features = ["io", "codec"] }
+tokio-util = { version = "0.7.1", features = ["codec", "io"] }
 tokio = { version = "1", features = ["io-util"] }
 bytes = "1"
 http = "0.2"
-tracing = { version = "0.1.21", default-features = false, features = ["std"] }
+tracing = { version = "0.1.35", default-features = false, features = ["std"] }
 fnv = "1.0.5"
 slab = "0.4.2"
-indexmap = { version = "1.5.2", features = ["std"] }
+indexmap = { version = "2", features = ["std"] }
 
 [dev-dependencies]
 
@@ -66,9 +67,9 @@ serde_json = "1.0.0"
 
 # Examples
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net"] }
-env_logger = { version = "0.9", default-features = false }
-tokio-rustls = "0.23.2"
-webpki-roots = "0.22.2"
+env_logger = { version = "0.10", default-features = false }
+tokio-rustls = "0.24"
+webpki-roots = "0.25"
 
 [package.metadata.docs.rs]
 features = ["stream"]
