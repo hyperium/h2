@@ -1422,7 +1422,7 @@ impl ResponseFuture {
 impl PushPromises {
     /// Get the next `PushPromise`.
     pub async fn push_promise(&mut self) -> Option<Result<PushPromise, crate::Error>> {
-        futures_util::future::poll_fn(move |cx| self.poll_push_promise(cx)).await
+        crate::poll_fn(move |cx| self.poll_push_promise(cx)).await
     }
 
     #[doc(hidden)]
