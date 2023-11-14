@@ -88,6 +88,12 @@ impl<T> FramedRead<T> {
     pub fn set_max_header_list_size(&mut self, val: usize) {
         self.max_header_list_size = val;
     }
+
+    /// Update the header table size setting.
+    #[inline]
+    pub fn set_header_table_size(&mut self, val: usize) {
+        self.hpack.queue_size_update(val);
+    }
 }
 
 /// Decodes a frame.

@@ -391,6 +391,11 @@ impl Mock<frame::Settings> {
         self.0.set_enable_connect_protocol(Some(val));
         self
     }
+
+    pub fn header_table_size(mut self, val: u32) -> Self {
+        self.0.set_header_table_size(Some(val));
+        self
+    }
 }
 
 impl From<Mock<frame::Settings>> for frame::Settings {
