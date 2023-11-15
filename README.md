@@ -36,7 +36,7 @@ To use `h2`, first add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-h2 = "0.3"
+h2 = "0.4"
 ```
 
 Next, add this to your crate:
