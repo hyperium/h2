@@ -1126,6 +1126,7 @@ async fn request_without_authority() {
 
 #[tokio::test]
 async fn serve_when_request_in_response_extensions() {
+    use std::sync::Arc;
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -1149,7 +1150,7 @@ async fn serve_when_request_in_response_extensions() {
         let (req, mut stream) = srv.next().await.unwrap().unwrap();
 
         let mut rsp = http::Response::new(());
-        rsp.extensions_mut().insert(req);
+        rsp.extensions_mut().insert(Arc::new(req));
         stream.send_response(rsp, true).unwrap();
 
         assert!(srv.next().await.is_none());
