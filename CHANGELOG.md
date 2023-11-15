@@ -1,3 +1,9 @@
+# 0.3.22 (November 15, 2023)
+
+* Add `header_table_size(usize)` option to client and server builders.
+* Improve throughput when vectored IO is not available.
+* Update indexmap to 2.
+
 # 0.3.21 (August 21, 2023)
 
 * Fix opening of new streams over peer's max concurrent limit.
