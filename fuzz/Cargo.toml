@@ -16,7 +16,7 @@ tokio = { version = "1", features = [ "full" ] }
 h2 = { path = "../", features = [ "unstable" ] }
 h2-support = { path = "../tests/h2-support" }
 futures = { version = "0.3", default-features = false, features = ["std"] }
-http = "0.2"
+http = "1"
 
 # Prevent this from interfering with workspaces
 [workspace]

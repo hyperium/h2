@@ -508,12 +508,6 @@ where
         self.connection.poll(cx).map_err(Into::into)
     }
 
-    #[doc(hidden)]
-    #[deprecated(note = "renamed to poll_closed")]
-    pub fn poll_close(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
-        self.poll_closed(cx)
-    }
-
     /// Sets the connection to a GOAWAY state.
     ///
     /// Does not terminate the connection. Must continue being polled to close
