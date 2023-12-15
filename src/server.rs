@@ -497,6 +497,21 @@ where
         Ok(())
     }
 
+    /// Set a custom setting in the SETTINGS frame.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a previous call is still pending acknowledgement
+    /// from the remote endpoint.
+    pub fn set_custom_setting(&mut self, id: u16, value: u32) -> Result<(), crate::Error> {
+        self.connection.set_custom_setting(id, value)?;
+        Ok(())
+    }
+
     /// Returns `Ready` when the underlying connection has closed.
     ///
     /// If any new inbound streams are received during a call to `poll_closed`,
@@ -586,6 +601,16 @@ where
     #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
         self.connection.num_wired_streams()
+    }
+
+    /// Returns the value of a custom setting specified in the [SETTINGS frame][1].
+    ///
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.connection.custom_setting(id)
     }
 }
 
@@ -1020,6 +1045,16 @@ impl Builder {
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
     pub fn enable_connect_protocol(&mut self) -> &mut Self {
         self.settings.set_enable_connect_protocol(Some(1));
+        self
+    }
+
+    /// Set a custom setting in the SETTINGS frame.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn set_custom_setting(&mut self, id: u16, value: Option<u32>) -> &mut Self {
+        self.settings.set_custom_setting(id, value);
         self
     }
 

@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::frame::{util, Error, Frame, FrameSize, Head, Kind, StreamId};
 use bytes::{BufMut, BytesMut};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct Settings {
@@ -14,6 +15,7 @@ pub struct Settings {
     max_frame_size: Option<u32>,
     max_header_list_size: Option<u32>,
     enable_connect_protocol: Option<u32>,
+    custom: BTreeMap<u16, u32>,
 }
 
 /// An enum that lists all valid settings that can be sent in a SETTINGS
@@ -29,6 +31,7 @@ pub enum Setting {
     MaxFrameSize(u32),
     MaxHeaderListSize(u32),
     EnableConnectProtocol(u32),
+    Custom(u16, u32),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
@@ -125,6 +128,18 @@ impl Settings {
         self.header_table_size = size;
     }
 
+    pub fn set_custom_setting(&mut self, id: u16, val: Option<u32>) {
+        if let Some(val) = val {
+            self.custom.insert(id, val);
+        } else {
+            self.custom.remove(&id);
+        }
+    }
+
+    pub fn custom_settings(&self) -> &BTreeMap<u16, u32> {
+        &self.custom
+    }
+
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {
         use self::Setting::*;
 
@@ -197,6 +212,9 @@ impl Settings {
                         return Err(Error::InvalidSettingValue);
                     }
                 },
+                Some(Custom(id, val)) => {
+                    settings.custom.insert(id, val);
+                }
                 None => {}
             }
         }
@@ -256,6 +274,10 @@ impl Settings {
         if let Some(v) = self.enable_connect_protocol {
             f(EnableConnectProtocol(v));
         }
+
+        for (id, v) in &self.custom {
+            f(Custom(*id, *v));
+        }
     }
 }
 
@@ -292,6 +314,9 @@ impl fmt::Debug for Settings {
             Setting::EnableConnectProtocol(v) => {
                 builder.field("enable_connect_protocol", &v);
             }
+            Setting::Custom(id, v) => {
+                builder.field(format!("0x{:04x}", id).as_str(), &v);
+            }
         });
 
         builder.finish()
@@ -315,7 +340,7 @@ impl Setting {
             5 => Some(MaxFrameSize(val)),
             6 => Some(MaxHeaderListSize(val)),
             8 => Some(EnableConnectProtocol(val)),
-            _ => None,
+            id => Some(Custom(id, val)),
         }
     }
 
@@ -347,6 +372,7 @@ impl Setting {
             MaxFrameSize(v) => (5, v),
             MaxHeaderListSize(v) => (6, v),
             EnableConnectProtocol(v) => (8, v),
+            Custom(id, v) => (id, v),
         };
 
         dst.put_u16(kind);

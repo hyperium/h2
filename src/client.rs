@@ -557,6 +557,16 @@ where
     pub fn current_max_recv_streams(&self) -> usize {
         self.inner.current_max_recv_streams()
     }
+
+    /// Returns the value of a custom setting specified in the [SETTINGS frame][1].
+    ///
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.inner.custom_setting(id)
+    }
 }
 
 impl<B> fmt::Debug for SendRequest<B>
@@ -856,6 +866,16 @@ impl Builder {
     /// ```
     pub fn max_concurrent_streams(&mut self, max: u32) -> &mut Self {
         self.settings.set_max_concurrent_streams(Some(max));
+        self
+    }
+
+    /// Set a custom setting in the SETTINGS frame.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn custom_setting(&mut self, id: u16, value: u32) -> &mut Self {
+        self.settings.set_custom_setting(id, Some(value));
         self
     }
 

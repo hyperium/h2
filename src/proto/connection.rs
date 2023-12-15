@@ -162,6 +162,13 @@ where
         self.inner.settings.send_settings(settings)
     }
 
+    /// Send a new SETTINGS frame with a custom setting.
+    pub(crate) fn set_custom_setting(&mut self, id: u16, value: u32) -> Result<(), UserError> {
+        let mut settings = frame::Settings::default();
+        settings.set_custom_setting(id, Some(value));
+        self.inner.settings.send_settings(settings)
+    }
+
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by this peer.
     pub(crate) fn max_send_streams(&self) -> usize {
@@ -361,6 +368,10 @@ where
 
     fn clear_expired_reset_streams(&mut self) {
         self.inner.streams.clear_expired_reset_streams();
+    }
+
+    pub(crate) fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.inner.streams.custom_setting(id)
     }
 }
 
