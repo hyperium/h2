@@ -29,6 +29,7 @@ use crate::frame::{StreamId, StreamIdOverflow};
 use crate::proto::*;
 
 use bytes::Bytes;
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -72,4 +73,7 @@ pub struct Config {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     pub local_max_error_reset_streams: Option<usize>,
+
+    /// Custom settings IDs to be tracked from the remote
+    pub allowed_custom_settings: BTreeSet<u16>,
 }

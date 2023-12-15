@@ -122,6 +122,7 @@ use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Method, Request, Response};
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -258,6 +259,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Custom settings IDs to be tracked from the remote
+    allowed_custom_settings: BTreeSet<u16>,
 }
 
 /// Send a response back to the client
@@ -675,8 +679,8 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
-
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            allowed_custom_settings: BTreeSet::new(),
         }
     }
 
@@ -1058,6 +1062,16 @@ impl Builder {
         self
     }
 
+    /// By default, unknown settings recieved from the remote will be ignored.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn allow_custom_setting(&mut self, id: u16) -> &mut Self {
+        self.allowed_custom_settings.insert(id);
+        self
+    }
+
     /// Creates a new configured HTTP/2 server backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
@@ -1420,6 +1434,7 @@ where
                                 .builder
                                 .local_max_error_reset_streams,
                             settings: self.builder.settings.clone(),
+                            allowed_custom_settings: self.builder.allowed_custom_settings.clone(),
                         },
                     );
 

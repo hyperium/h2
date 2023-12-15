@@ -136,8 +136,8 @@ impl Settings {
         }
     }
 
-    pub fn custom_settings(&self) -> &BTreeMap<u16, u32> {
-        &self.custom
+    pub fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.custom.get(&id).copied()
     }
 
     pub fn load(head: Head, payload: &[u8]) -> Result<Settings, Error> {

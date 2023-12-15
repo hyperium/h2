@@ -143,6 +143,7 @@ use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -343,6 +344,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Custom settings IDs to be tracked from the remote
+    allowed_custom_settings: BTreeSet<u16>,
 }
 
 #[derive(Debug)]
@@ -673,6 +677,7 @@ impl Builder {
             settings: Default::default(),
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            allowed_custom_settings: BTreeSet::new(),
         }
     }
 
@@ -876,6 +881,16 @@ impl Builder {
     /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
     pub fn custom_setting(&mut self, id: u16, value: u32) -> &mut Self {
         self.settings.set_custom_setting(id, Some(value));
+        self
+    }
+
+    /// By default, unknown settings recieved from the remote will be ignored.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn allow_custom_setting(&mut self, id: u16) -> &mut Self {
+        self.allowed_custom_settings.insert(id);
         self
     }
 
@@ -1355,6 +1370,7 @@ where
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),
+                allowed_custom_settings: builder.allowed_custom_settings,
             },
         );
         let send_request = SendRequest {

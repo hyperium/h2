@@ -7,6 +7,7 @@ use crate::proto::*;
 
 use bytes::Bytes;
 use futures_core::Stream;
+use std::collections::BTreeSet;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -83,6 +84,7 @@ pub(crate) struct Config {
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
+    pub allowed_custom_settings: BTreeSet<u16>,
 }
 
 #[derive(Debug)]
@@ -123,6 +125,7 @@ where
                     .max_concurrent_streams()
                     .map(|max| max as usize),
                 local_max_error_reset_streams: config.local_error_reset_streams_max,
+                allowed_custom_settings: config.allowed_custom_settings.clone(),
             }
         }
         let streams = Streams::new(streams_config(&config));
