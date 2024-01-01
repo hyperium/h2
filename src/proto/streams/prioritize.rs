@@ -474,7 +474,13 @@ impl Prioritize {
             //
             // In this case, the stream needs to be queued up for when the
             // connection has more capacity.
-            self.pending_capacity.push(stream);
+            if stream.is_send_ready() {
+                // Prioritize assigning capacity to a send-ready stream
+                // See https://github.com/hyperium/hyper/issues/3338
+                self.pending_capacity.push_front(stream);
+            } else {
+                self.pending_capacity.push(stream);
+            }
         }
 
         // If data is buffered and the stream is send ready, then
