@@ -184,7 +184,15 @@ impl Prioritize {
             stream.requested_send_capacity =
                 cmp::min(stream.buffered_send_data, WindowSize::MAX as usize) as WindowSize;
 
-            self.try_assign_capacity(stream);
+            // `try_assign_capacity` will queue the stream to `pending_capacity` if the capcaity
+            // cannot be assigned at the time it is called.
+            //
+            // Streams over the max concurrent count will still call `send_data` so we should be
+            // careful not to put it into `pending_capacity` as it will starve the connection
+            // capacity for other streams
+            if !stream.is_pending_open {
+                self.try_assign_capacity(stream);
+            }
         }
 
         if frame.is_end_stream() {
@@ -474,13 +482,7 @@ impl Prioritize {
             //
             // In this case, the stream needs to be queued up for when the
             // connection has more capacity.
-            if stream.is_send_ready() {
-                // Prioritize assigning capacity to a send-ready stream
-                // See https://github.com/hyperium/hyper/issues/3338
-                self.pending_capacity.push_front(stream);
-            } else {
-                self.pending_capacity.push(stream);
-            }
+            self.pending_capacity.push(stream);
         }
 
         // If data is buffered and the stream is send ready, then
@@ -528,6 +530,7 @@ impl Prioritize {
         loop {
             if let Some(mut stream) = self.pop_pending_open(store, counts) {
                 self.pending_send.push_front(&mut stream);
+                self.try_assign_capacity(&mut stream);
             }
 
             match self.pop_frame(buffer, store, max_frame_len, counts) {
