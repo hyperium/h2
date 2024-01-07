@@ -186,14 +186,18 @@ where
         me.poll_complete(&self.send_buffer, cx, dst)
     }
 
-    pub fn apply_remote_settings(&mut self, frame: &frame::Settings) -> Result<(), Error> {
+    pub fn apply_remote_settings(
+        &mut self,
+        frame: &frame::Settings,
+        is_initial: bool,
+    ) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.apply_remote_settings(frame);
+        me.counts.apply_remote_settings(frame, is_initial);
 
         me.actions.send.apply_remote_settings(
             frame,
