@@ -1661,6 +1661,158 @@ async fn client_builder_header_table_size() {
     join(srv, h2).await;
 }
 
+#[tokio::test]
+async fn default_max_concurrent_send_streams_and_update_it_based_on_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send empty SETTINGS frame (i.e. no MAX_CONCURRENT_STREAMS is set)
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // The default value is 100
+        assert_eq!(h2.max_concurrent_send_streams(), 100);
+        h2.as_mut().await.unwrap();
+        // If the server's initial SETTINGS frame does not include MAX_CONCURRENT_STREAMS,
+        // this should be updated to usize::MAX.
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn configured_max_concurrent_send_streams_and_update_it_based_on_non_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::Builder::new()
+            // Configure the initial value to 2024
+            .initial_max_send_streams(2024)
+            .handshake::<_, bytes::Bytes>(io)
+            .await
+            .unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // It should be pre-configured value before it receives the initial
+        // SETTINGS frame from the server
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        h2.as_mut().await.unwrap();
+        // Now the client has received the initial SETTINGS frame from the
+        // server, which should update the value accordingly
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), 100);
+        h2.as_mut().await.unwrap();
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_non_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings().max_concurrent_streams(2024))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), 100);
+        h2.as_mut().await.unwrap();
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+    };
+
+    join(srv, h2).await;
+}
+
 const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
