@@ -312,9 +312,19 @@ pub struct Builder {
     reset_stream_duration: Duration,
 
     /// Initial maximum number of locally initiated (send) streams.
+    ///
+    /// The default value is 100; this value is derived from what the HTTP/2
+    /// spec recommends as the minimum value that endpoints advertise to their
+    /// peers, meaning that using this value will minimize the likelihood of the
+    /// failure where the local endpoint attempts to open too many streams
+    /// and gets rejected by the remote peer with the `REFUSED_STREAM` error.
+    /// <https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.2-2.6.1>
+    ///
     /// After receiving a Settings frame from the remote peer,
     /// the connection will overwrite this value with the
     /// MAX_CONCURRENT_STREAMS specified in the frame.
+    /// If no value is advertised by the remote peer, it will be
+    /// set to usize::MAX.
     initial_max_send_streams: usize,
 
     /// Initial target window size for new connections.
@@ -642,7 +652,7 @@ impl Builder {
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
             pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             initial_target_connection_window_size: None,
-            initial_max_send_streams: usize::MAX,
+            initial_max_send_streams: 100,
             settings: Default::default(),
             stream_id: 1.into(),
         }
@@ -843,9 +853,20 @@ impl Builder {
 
     /// Sets the initial maximum of locally initiated (send) streams.
     ///
+    /// The default value is 100; this value is derived from what the HTTP/2
+    /// spec recommends as the minimum value that endpoints advertise to their
+    /// peers (see [Section 6.5.2]), meaning that using this value will minimize
+    /// the likelihood of the failure where the local endpoint attempts to open
+    /// too many streams and thus gets rejected by the remote peer with the
+    /// REFUSED_STREAM error.
+    ///
     /// The initial settings will be overwritten by the remote peer when
     /// the Settings frame is received. The new value will be set to the
     /// `max_concurrent_streams()` from the frame.
+    ///
+    /// If no value is advertised in the initial SETTINGS sent from the remote
+    /// peer as part of [HTTP/2 Connection Preface], it will be overwritten to
+    /// `usize::MAX`.
     ///
     /// This setting prevents the caller from exceeding this number of
     /// streams that are counted towards the concurrency limit.
@@ -855,7 +876,9 @@ impl Builder {
     ///
     /// See [Section 5.1.2] in the HTTP/2 spec for more details.
     ///
-    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    /// [Section 6.5.2]: https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.2-2.6.1
+    /// [HTTP/2 Connection Preface]: https://www.rfc-editor.org/rfc/rfc9113.html#name-http-2-connection-preface
+    /// [Section 5.1.2]: https://www.rfc-editor.org/rfc/rfc9113.html#name-stream-concurrency
     ///
     /// # Examples
     ///
