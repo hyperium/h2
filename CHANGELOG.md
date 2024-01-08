@@ -1,3 +1,7 @@
+# 0.4.1 (January 8, 2024)
+
+* Fix assigning connection capacity which could starve streams in some instances.
+
 # 0.4.0 (November 15, 2023)
 
 * Update to `http` 1.0.
