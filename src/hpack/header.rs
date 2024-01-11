@@ -117,6 +117,16 @@ impl Header {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        match *self {
+            Header::Field {
+                ref name,
+                ref value,
+            } => len(name, value) == 0,
+            _ => false,
+        }
+    }
+
     /// Returns the header name
     pub fn name(&self) -> Name {
         match *self {

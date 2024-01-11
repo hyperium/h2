@@ -1,5 +1,7 @@
-mod decoder;
-mod encoder;
+#[allow(missing_docs)]
+pub mod decoder;
+#[allow(missing_docs)]
+pub mod encoder;
 pub(crate) mod header;
 pub(crate) mod huffman;
 mod table;
