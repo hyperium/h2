@@ -312,9 +312,11 @@ pub struct Builder {
     reset_stream_duration: Duration,
 
     /// Initial maximum number of locally initiated (send) streams.
-    /// After receiving a Settings frame from the remote peer,
+    /// After receiving a SETTINGS frame from the remote peer,
     /// the connection will overwrite this value with the
     /// MAX_CONCURRENT_STREAMS specified in the frame.
+    /// If no value is advertised by the remote peer in the initial SETTINGS
+    /// frame, it will be set to usize::MAX.
     initial_max_send_streams: usize,
 
     /// Initial target window size for new connections.
@@ -844,8 +846,10 @@ impl Builder {
     /// Sets the initial maximum of locally initiated (send) streams.
     ///
     /// The initial settings will be overwritten by the remote peer when
-    /// the Settings frame is received. The new value will be set to the
-    /// `max_concurrent_streams()` from the frame.
+    /// the SETTINGS frame is received. The new value will be set to the
+    /// `max_concurrent_streams()` from the frame. If no value is advertised in
+    /// the initial SETTINGS frame from the remote peer as part of
+    /// [HTTP/2 Connection Preface], `usize::MAX` will be set.
     ///
     /// This setting prevents the caller from exceeding this number of
     /// streams that are counted towards the concurrency limit.
@@ -855,7 +859,10 @@ impl Builder {
     ///
     /// See [Section 5.1.2] in the HTTP/2 spec for more details.
     ///
-    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    /// The default value is `usize::MAX`.
+    ///
+    /// [HTTP/2 Connection Preface]: https://httpwg.org/specs/rfc9113.html#preface
+    /// [Section 5.1.2]: https://httpwg.org/specs/rfc9113.html#rfc.section.5.1.2
     ///
     /// # Examples
     ///
