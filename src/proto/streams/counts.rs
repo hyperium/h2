@@ -147,9 +147,11 @@ impl Counts {
         self.num_remote_reset_streams -= 1;
     }
 
-    pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
-        if let Some(val) = settings.max_concurrent_streams() {
-            self.max_send_streams = val as usize;
+    pub fn apply_remote_settings(&mut self, settings: &frame::Settings, is_initial: bool) {
+        match settings.max_concurrent_streams() {
+            Some(val) => self.max_send_streams = val as usize,
+            None if is_initial => self.max_send_streams = usize::MAX,
+            None => {}
         }
     }
 
