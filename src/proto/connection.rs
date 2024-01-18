@@ -82,6 +82,7 @@ pub(crate) struct Config {
     pub reset_stream_max: usize,
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
+    pub reset_flood_pending_frames_min: usize,
     pub settings: frame::Settings,
 }
 
@@ -127,6 +128,7 @@ where
                     .max_concurrent_streams()
                     .map(|max| max as usize),
                 local_max_error_reset_streams: config.local_error_reset_streams_max,
+                reset_flood_pending_frames_min: config.reset_flood_pending_frames_min,
             }
         }
         let streams = Streams::new(streams_config(&config));

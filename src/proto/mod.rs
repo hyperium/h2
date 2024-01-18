@@ -32,7 +32,9 @@ pub type WindowSize = u32;
 // Constants
 pub const MAX_WINDOW_SIZE: WindowSize = (1 << 31) - 1; // i32::MAX as u32
 pub const DEFAULT_REMOTE_RESET_STREAM_MAX: usize = 20;
-pub const DEFAULT_LOCAL_RESET_COUNT_MAX: usize = 1024;
+pub const DEFAULT_LOCAL_RESET_COUNT_MAX: usize = 2048;
+
+pub const DEFAULT_RESET_FLOOD_PENDING_FRAMES_MIN: usize = DEFAULT_LOCAL_RESET_COUNT_MAX / 4;
 pub const DEFAULT_RESET_STREAM_MAX: usize = 10;
 pub const DEFAULT_RESET_STREAM_SECS: u64 = 30;
 pub const DEFAULT_MAX_SEND_BUFFER_SIZE: usize = 1024 * 400;

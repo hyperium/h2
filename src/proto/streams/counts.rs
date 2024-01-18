@@ -41,6 +41,9 @@ pub(super) struct Counts {
     /// Total number of locally reset streams due to protocol error across the
     /// lifetime of the connection.
     num_local_error_reset_streams: usize,
+
+    /// Minimum number of frames after which we will mitigate for Reset Flood
+    min_reset_flood_pending_frames: usize,
 }
 
 impl Counts {
@@ -54,6 +57,7 @@ impl Counts {
             num_recv_streams: 0,
             max_local_reset_streams: config.local_reset_max,
             num_local_reset_streams: 0,
+            min_reset_flood_pending_frames: config.reset_flood_pending_frames_min,
             max_remote_reset_streams: config.remote_reset_max,
             num_remote_reset_streams: 0,
             max_local_error_reset_streams: config.local_max_error_reset_streams,
@@ -96,6 +100,10 @@ impl Counts {
 
     pub(crate) fn max_local_error_resets(&self) -> Option<usize> {
         self.max_local_error_reset_streams
+    }
+
+    pub fn min_reset_flood_pending_frames(&self) -> usize {
+        self.min_reset_flood_pending_frames
     }
 
     /// Returns true if the receive stream concurrency can be incremented

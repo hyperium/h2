@@ -138,7 +138,7 @@
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
-use crate::proto::{self, Error};
+use crate::proto::{self, Error, DEFAULT_RESET_FLOOD_PENDING_FRAMES_MIN};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
@@ -342,8 +342,11 @@ pub struct Builder {
     /// Maximum number of locally reset streams due to protocol error across
     /// the lifetime of the connection.
     ///
-    /// When this gets exceeded, we issue GOAWAYs.
+    /// When this gets exceeded, we issue GOAWAYs if we have more than
+    /// `reset_flood_pending_frames_min` queued.
     local_max_error_reset_streams: Option<usize>,
+
+    reset_flood_pending_frames_min: usize,
 }
 
 #[derive(Debug)]
@@ -654,6 +657,7 @@ impl Builder {
             settings: Default::default(),
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            reset_flood_pending_frames_min: DEFAULT_RESET_FLOOD_PENDING_FRAMES_MIN,
         }
     }
 
@@ -993,7 +997,9 @@ impl Builder {
     /// Too many of these often indicate a malicious client, and there are attacks which can abuse this to DOS servers.
     /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
     ///
-    /// When the number of local resets exceeds this threshold, the client will close the connection.
+    /// When the number of local resets exceeds this threshold, the client will close the connection, but only if
+    /// we have more than `reset_flood_pending_frames_min` frames currently queued for transmission through this
+    /// connection.
     ///
     /// If you really want to disable this, supply [`Option::None`] here.
     /// Disabling this is not recommended and may expose you to DOS attacks.
@@ -1001,6 +1007,14 @@ impl Builder {
     /// The default value is currently 1024, but could change.
     pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
         self.local_max_error_reset_streams = max;
+        self
+    }
+
+    /// Sets the minimum number of pending frames before we mitigate a reset flood.
+    ///
+    /// See [`Self::max_local_error_reset_streams`] for more information.
+    pub fn min_reset_flood_pending_frames(&mut self, min: usize) -> &mut Self {
+        self.reset_flood_pending_frames_min = min;
         self
     }
 
@@ -1325,6 +1339,7 @@ where
                 reset_stream_max: builder.reset_stream_max,
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
+                reset_flood_pending_frames_min: builder.reset_flood_pending_frames_min,
                 settings: builder.settings.clone(),
             },
         );

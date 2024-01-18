@@ -73,6 +73,11 @@ pub struct Config {
     /// Maximum number of locally reset streams due to protocol error across
     /// the lifetime of the connection.
     ///
-    /// When this gets exceeded, we issue GOAWAYs.
+    /// When this gets exceeded, we issue GOAWAYs if the
+    /// reset_flood_pending_frames_min check also fails.
     pub local_max_error_reset_streams: Option<usize>,
+
+    /// Minimum number of pending frames after which we will start mitigating
+    /// reset flood attacks.
+    pub reset_flood_pending_frames_min: usize,
 }

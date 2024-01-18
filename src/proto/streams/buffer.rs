@@ -29,6 +29,10 @@ impl<T> Buffer<T> {
     pub fn new() -> Self {
         Buffer { slab: Slab::new() }
     }
+
+    pub fn len(&self) -> usize {
+        self.slab.len()
+    }
 }
 
 impl Deque {
