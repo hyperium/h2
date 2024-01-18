@@ -1,3 +1,8 @@
+# 0.4.2 (January 17th, 2024)
+
+* Limit error resets for misbehaving connections.
+* Fix selecting MAX_CONCURRENT_STREAMS value if no value is advertised initially.
+
 # 0.4.1 (January 8, 2024)
 
 * Fix assigning connection capacity which could starve streams in some instances.
