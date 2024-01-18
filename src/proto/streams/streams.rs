@@ -1547,7 +1547,14 @@ impl Actions {
         if let Err(Error::Reset(stream_id, reason, initiator)) = res {
             debug_assert_eq!(stream_id, stream.id);
 
-            if counts.can_inc_num_local_error_resets() {
+            // only mitigate a reset flood attack if the cumulative number of local error resets is past our strikeout
+            // threshold AND we have a lot of frames queued up to transmit
+            //
+            // some clients like to send bad stuff at a low but consistent rate, so we need to also gate on frames
+            // queueing up internally so that we only mitigate if they are actually causing us to buffer excessively
+            if counts.can_inc_num_local_error_resets()
+                || buffer.len() < counts.min_reset_flood_pending_frames()
+            {
                 counts.inc_num_local_error_resets();
 
                 // Reset the stream.

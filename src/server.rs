@@ -258,6 +258,10 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Minimum number of pending frames after which we will start mitigating
+    /// reset flood attacks.
+    reset_flood_pending_frames_min: usize,
 }
 
 /// Send a response back to the client
@@ -652,6 +656,7 @@ impl Builder {
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
 
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            reset_flood_pending_frames_min: proto::DEFAULT_RESET_FLOOD_PENDING_FRAMES_MIN,
         }
     }
 
@@ -896,7 +901,8 @@ impl Builder {
     /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
     ///
     /// When the number of local resets exceeds this threshold, the server will issue GOAWAYs with an error code of
-    /// `ENHANCE_YOUR_CALM` to the client.
+    /// `ENHANCE_YOUR_CALM` to the client, but only if there are more than min_reset_flood_pending_frames queued for
+    /// transmission.
     ///
     /// If you really want to disable this, supply [`Option::None`] here.
     /// Disabling this is not recommended and may expose you to DOS attacks.
@@ -904,6 +910,14 @@ impl Builder {
     /// The default value is currently 1024, but could change.
     pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
         self.local_max_error_reset_streams = max;
+        self
+    }
+
+    /// Sets the minimum number of pending frames before we mitigate a reset flood.
+    ///
+    /// See [`Self::max_local_error_reset_streams`] for more information.
+    pub fn min_reset_flood_pending_frames(&mut self, min: usize) -> &mut Self {
+        self.reset_flood_pending_frames_min = min;
         self
     }
 
@@ -1384,6 +1398,9 @@ where
                             local_error_reset_streams_max: self
                                 .builder
                                 .local_max_error_reset_streams,
+                            reset_flood_pending_frames_min: self
+                                .builder
+                                .reset_flood_pending_frames_min,
                             settings: self.builder.settings.clone(),
                         },
                     );
