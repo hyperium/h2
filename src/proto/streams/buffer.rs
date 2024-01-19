@@ -29,6 +29,10 @@ impl<T> Buffer<T> {
     pub fn new() -> Self {
         Buffer { slab: Slab::new() }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
 }
 
 impl Deque {
