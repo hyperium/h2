@@ -1537,8 +1537,7 @@ impl Actions {
     ) {
         counts.transition(stream, |counts, stream| {
             self.send.send_reset(
-                reason,
-                initiator,
+                proto::SendResetContext::new(reason, initiator),
                 send_buffer,
                 stream,
                 counts,
@@ -1557,15 +1556,20 @@ impl Actions {
         counts: &mut Counts,
         res: Result<(), Error>,
     ) -> Result<(), Error> {
-        if let Err(Error::Reset(stream_id, reason, initiator)) = res {
+        if let Err(Error::Reset(stream_id, reason, initiator, status_code)) = res {
             debug_assert_eq!(stream_id, stream.id);
 
             if counts.can_inc_num_local_error_resets() {
                 counts.inc_num_local_error_resets();
 
                 // Reset the stream.
-                self.send
-                    .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                self.send.send_reset(
+                    proto::SendResetContext::with_status_code(reason, initiator, status_code),
+                    buffer,
+                    stream,
+                    counts,
+                    &mut self.task,
+                );
                 Ok(())
             } else {
                 tracing::warn!(

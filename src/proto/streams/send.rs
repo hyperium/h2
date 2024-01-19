@@ -47,6 +47,33 @@ pub(crate) enum PollReset {
     Streaming,
 }
 
+/// Context for `send_reset`.
+pub(crate) struct SendResetContext {
+    reason: Reason,
+    initiator: Initiator,
+    status_code: Option<http::StatusCode>,
+}
+
+impl SendResetContext {
+    /// Create a new `SendResetContext` with and optional `http::StatusCode`.
+    pub(crate) fn with_status_code(
+        reason: Reason,
+        initiator: Initiator,
+        status_code: Option<http::StatusCode>,
+    ) -> Self {
+        Self {
+            reason,
+            initiator,
+            status_code,
+        }
+    }
+
+    /// Create a new `SendResetContext`
+    pub(crate) fn new(reason: Reason, initiator: Initiator) -> Self {
+        Self::with_status_code(reason, initiator, None)
+    }
+}
+
 impl Send {
     /// Create a new `Send`
     pub fn new(config: &Config) -> Self {
@@ -170,8 +197,7 @@ impl Send {
     /// Send an explicit RST_STREAM frame
     pub fn send_reset<B>(
         &mut self,
-        reason: Reason,
-        initiator: Initiator,
+        context: SendResetContext,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
         counts: &mut Counts,
@@ -182,10 +208,16 @@ impl Send {
         let is_empty = stream.pending_send.is_empty();
         let stream_id = stream.id;
 
+        let SendResetContext {
+            reason,
+            initiator,
+            status_code,
+        } = context;
+
         tracing::trace!(
             "send_reset(..., reason={:?}, initiator={:?}, stream={:?}, ..., \
              is_reset={:?}; is_closed={:?}; pending_send.is_empty={:?}; \
-             state={:?} \
+             state={:?}; status_code={:?} \
              ",
             reason,
             initiator,
@@ -193,7 +225,8 @@ impl Send {
             is_reset,
             is_closed,
             is_empty,
-            stream.state
+            stream.state,
+            status_code
         );
 
         if is_reset {
@@ -224,6 +257,19 @@ impl Send {
         // the reset frame before transitioning the stream inside
         // `reclaim_all_capacity`.
         self.prioritize.clear_queue(buffer, stream);
+
+        // For malformed requests, a server may send an HTTP response prior to resetting the stream.
+        if let Some(status_code) = status_code {
+            tracing::trace!("send_reset -- sending response with status code: {status_code}");
+            let pseudo = frame::Pseudo::response(status_code);
+            let fields = http::HeaderMap::default();
+            let mut frame = frame::Headers::new(stream.id, pseudo, fields);
+            frame.set_end_stream();
+
+            tracing::trace!("send_reset -- queueing response; frame={:?}", frame);
+            self.prioritize
+                .queue_frame(frame.into(), buffer, stream, task);
+        }
 
         let frame = frame::Reset::new(stream.id, reason);
 
@@ -378,8 +424,7 @@ impl Send {
             tracing::debug!("recv_stream_window_update !!; err={:?}", e);
 
             self.send_reset(
-                Reason::FLOW_CONTROL_ERROR,
-                Initiator::Library,
+                SendResetContext::new(Reason::FLOW_CONTROL_ERROR, Initiator::Library),
                 buffer,
                 stream,
                 counts,

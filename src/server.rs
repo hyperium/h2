@@ -121,7 +121,7 @@ use crate::proto::{self, Config, Error, Prioritized};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
-use http::{HeaderMap, Method, Request, Response};
+use http::{HeaderMap, Method, Request, Response, StatusCode};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -1517,7 +1517,7 @@ impl proto::Peer for Peer {
         macro_rules! malformed {
             ($($arg:tt)*) => {{
                 tracing::debug!($($arg)*);
-                return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
+                return Err(Error::library_reset_with_status_code(stream_id, Reason::PROTOCOL_ERROR, StatusCode::BAD_REQUEST));
             }}
         }
 
