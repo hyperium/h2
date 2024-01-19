@@ -2,6 +2,7 @@ use futures::future::{join, ready, select, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
+use std::io;
 use std::pin::Pin;
 use std::task::Context;
 
@@ -1773,52 +1774,42 @@ async fn receive_settings_frame_twice_with_second_one_empty() {
 }
 
 #[tokio::test]
-async fn receive_settings_frame_twice_with_second_one_non_empty() {
+async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
-        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
-        srv.send_frame(frames::settings().max_concurrent_streams(42))
-            .await;
-
-        // Handle the client's connection preface
-        srv.read_preface().await.unwrap();
-        match srv.next().await {
-            Some(frame) => match frame.unwrap() {
-                h2::frame::Frame::Settings(_) => {
-                    let ack = frame::Settings::ack();
-                    srv.send(ack.into()).await.unwrap();
-                }
-                frame => {
-                    panic!("unexpected frame: {:?}", frame);
-                }
-            },
-            None => {
-                panic!("unexpected EOF");
-            }
-        }
-
-        // Should receive the ack for the server's initial SETTINGS frame
-        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
-        assert!(frame.is_ack());
-
-        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
-        // This should not update the max_concurrent_send_streams value that
-        // the client manages.
-        srv.send_frame(frames::settings().max_concurrent_streams(2024))
-            .await;
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.close_without_notify();
     };
 
     let h2 = async move {
-        let (_client, h2) = client::handshake(io).await.unwrap();
-        let mut h2 = std::pin::pin!(h2);
-        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
-        h2.as_mut().await.unwrap();
-        // The most-recently advertised value should be used
-        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let err = h2.await.expect_err("should receive UnexpectedEof");
+        assert_eq!(
+            err.get_io().expect("should be UnexpectedEof").kind(),
+            io::ErrorKind::UnexpectedEof,
+        );
     };
-
     join(srv, h2).await;
 }
 

@@ -1416,3 +1416,40 @@ async fn reject_informational_status_header_in_request() {
 
     join(client, srv).await;
 }
+
+#[tokio::test]
+async fn client_drop_connection_without_close_notify() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+    let client = async move {
+        let _recv_settings = client.assert_server_handshake().await;
+        client
+            .send_frame(frames::headers(1).request("GET", "https://example.com/"))
+            .await;
+        client.send_frame(frames::data(1, &b"hello"[..])).await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+
+        client.close_without_notify(); // Client closed without notify causing UnexpectedEof
+    };
+
+    let mut builder = server::Builder::new();
+    builder.max_concurrent_streams(1);
+
+    let h2 = async move {
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, false).unwrap();
+
+        // Step the conn state forward and hitting the EOF
+        // But we have no outstanding request from client to be satisfied, so we should not return
+        // an error
+        let _ = poll_fn(|cx| srv.poll_closed(cx)).await.unwrap();
+    };
+
+    join(client, h2).await;
+}
