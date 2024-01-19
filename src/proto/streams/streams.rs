@@ -323,6 +323,14 @@ where
 }
 
 impl<B> DynStreams<'_, B> {
+    pub fn is_buffer_empty(&self) -> bool {
+        self.send_buffer.is_empty()
+    }
+
+    pub fn is_server(&self) -> bool {
+        self.peer.is_server()
+    }
+
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 
@@ -1508,6 +1516,11 @@ impl<B> SendBuffer<B> {
     fn new() -> Self {
         let inner = Mutex::new(Buffer::new());
         SendBuffer { inner }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        let buf = self.inner.lock().unwrap();
+        buf.is_empty()
     }
 }
 
