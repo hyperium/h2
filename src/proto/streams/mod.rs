@@ -33,9 +33,6 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Config {
-    /// Initial window size of locally initiated streams
-    pub local_init_window_sz: WindowSize,
-
     /// Initial maximum number of locally initiated streams.
     /// After receiving a Settings frame from the remote peer,
     /// the connection will overwrite this value with the
