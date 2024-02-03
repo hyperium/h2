@@ -1453,3 +1453,48 @@ async fn client_drop_connection_without_close_notify() {
 
     join(client, h2).await;
 }
+
+#[tokio::test]
+async fn init_window_size_smaller_than_default_should_use_default_before_ack() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+    let client = async move {
+        // Client can send in some data before ACK;
+        // Server needs to make sure the Recv stream has default window size
+        // as per https://datatracker.ietf.org/doc/html/rfc9113#name-initial-flow-control-window
+        client.write_preface().await;
+        client
+            .send(frame::Settings::default().into())
+            .await
+            .unwrap();
+        client.next().await.expect("unexpected EOF").unwrap();
+        client
+            .send_frame(frames::headers(1).request("GET", "https://example.com/"))
+            .await;
+        client.send_frame(frames::data(1, &b"hello"[..])).await;
+        client.send(frame::Settings::ack().into()).await.unwrap();
+        client.next().await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let mut builder = server::Builder::new();
+    builder.max_concurrent_streams(1);
+    builder.initial_window_size(1);
+    let h2 = async move {
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        // Drive the state forward
+        let _ = poll_fn(|cx| srv.poll_closed(cx)).await.unwrap();
+    };
+
+    join(client, h2).await;
+}
