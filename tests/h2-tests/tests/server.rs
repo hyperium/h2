@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use futures::future::{join, poll_fn};
+use futures::future::join;
 use futures::StreamExt;
 use h2_support::prelude::*;
 use tokio::io::AsyncWriteExt;
