@@ -1501,9 +1501,11 @@ impl proto::Peer for Peer {
 
     const NAME: &'static str = "Server";
 
+    /*
     fn is_server() -> bool {
         true
     }
+    */
 
     fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Server

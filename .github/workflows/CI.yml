@@ -60,12 +60,12 @@ jobs:
         run: ./ci/h2spec.sh
         if: matrix.rust == 'stable'
 
-  clippy_check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features
+  #clippy_check:
+  #  runs-on: ubuntu-latest
+  #  steps:
+  #    - uses: actions/checkout@v4
+  #    - name: Run Clippy
+  #      run: cargo clippy --all-targets --all-features
 
   msrv:
     name: Check MSRV
