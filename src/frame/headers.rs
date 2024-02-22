@@ -972,8 +972,6 @@ fn decoded_header_size(name: usize, value: usize) -> usize {
 
 #[cfg(test)]
 mod test {
-    use std::iter::FromIterator;
-
     use super::*;
     use crate::frame;
     use crate::hpack::{huffman, Encoder};
