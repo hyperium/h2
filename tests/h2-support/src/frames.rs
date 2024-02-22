@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use bytes::Bytes;
-use http::{self, HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode};
 
 use h2::{
     ext::Protocol,
