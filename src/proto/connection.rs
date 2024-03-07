@@ -1,18 +1,18 @@
 use crate::codec::UserError;
 use crate::frame::{Reason, StreamId};
-use crate::{client, frame, server};
+use crate::{client, server};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use futures_core::Stream;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncRead;
 
 /// An H2 connection
 #[derive(Debug)]
@@ -81,6 +81,7 @@ pub(crate) struct Config {
     pub reset_stream_duration: Duration,
     pub reset_stream_max: usize,
     pub remote_reset_stream_max: usize,
+    pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
 }
 
@@ -105,10 +106,6 @@ where
     pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
         fn streams_config(config: &Config) -> streams::Config {
             streams::Config {
-                local_init_window_sz: config
-                    .settings
-                    .initial_window_size()
-                    .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
                 initial_max_send_streams: config.initial_max_send_streams,
                 local_max_buffer_size: config.max_send_buffer_size,
                 local_next_stream_id: config.next_stream_id,
@@ -125,6 +122,7 @@ where
                     .settings
                     .max_concurrent_streams()
                     .map(|max| max as usize),
+                local_max_error_reset_streams: config.local_error_reset_streams_max,
             }
         }
         let streams = Streams::new(streams_config(&config));
@@ -459,12 +457,26 @@ where
             // active streams must be reset.
             //
             // TODO: Are I/O errors recoverable?
-            Err(Error::Io(e, inner)) => {
-                tracing::debug!(error = ?e, "Connection::poll; IO error");
-                let e = Error::Io(e, inner);
+            Err(Error::Io(kind, inner)) => {
+                tracing::debug!(error = ?kind, "Connection::poll; IO error");
+                let e = Error::Io(kind, inner);
 
                 // Reset all active streams
                 self.streams.handle_error(e.clone());
+
+                // Some client implementations drop the connections without notifying its peer
+                // Attempting to read after the client dropped the connection results in UnexpectedEof
+                // If as a server, we don't have anything more to send, just close the connection
+                // without error
+                //
+                // See https://github.com/hyperium/hyper/issues/3427
+                if self.streams.is_server()
+                    && self.streams.is_buffer_empty()
+                    && matches!(kind, io::ErrorKind::UnexpectedEof)
+                {
+                    *self.state = State::Closed(Reason::NO_ERROR, Initiator::Library);
+                    return Ok(());
+                }
 
                 // Return the error
                 Err(e)

@@ -186,14 +186,18 @@ where
         me.poll_complete(&self.send_buffer, cx, dst)
     }
 
-    pub fn apply_remote_settings(&mut self, frame: &frame::Settings) -> Result<(), Error> {
+    pub fn apply_remote_settings(
+        &mut self,
+        frame: &frame::Settings,
+        is_initial: bool,
+    ) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.apply_remote_settings(frame);
+        me.counts.apply_remote_settings(frame, is_initial);
 
         me.actions.send.apply_remote_settings(
             frame,
@@ -319,6 +323,14 @@ where
 }
 
 impl<B> DynStreams<'_, B> {
+    pub fn is_buffer_empty(&self) -> bool {
+        self.send_buffer.is_empty()
+    }
+
+    pub fn is_server(&self) -> bool {
+        self.peer.is_server()
+    }
+
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 
@@ -1505,6 +1517,11 @@ impl<B> SendBuffer<B> {
         let inner = Mutex::new(Buffer::new());
         SendBuffer { inner }
     }
+
+    pub fn is_empty(&self) -> bool {
+        let buf = self.inner.lock().unwrap();
+        buf.is_empty()
+    }
 }
 
 // ===== impl Actions =====
@@ -1542,10 +1559,24 @@ impl Actions {
     ) -> Result<(), Error> {
         if let Err(Error::Reset(stream_id, reason, initiator)) = res {
             debug_assert_eq!(stream_id, stream.id);
-            // Reset the stream.
-            self.send
-                .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
-            Ok(())
+
+            if counts.can_inc_num_local_error_resets() {
+                counts.inc_num_local_error_resets();
+
+                // Reset the stream.
+                self.send
+                    .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                Ok(())
+            } else {
+                tracing::warn!(
+                    "reset_on_recv_stream_err; locally-reset streams reached limit ({:?})",
+                    counts.max_local_error_resets().unwrap(),
+                );
+                Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_internal_resets",
+                ))
+            }
         } else {
             res
         }

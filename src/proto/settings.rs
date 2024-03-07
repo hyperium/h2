@@ -1,6 +1,5 @@
 use crate::codec::UserError;
 use crate::error::Reason;
-use crate::frame;
 use crate::proto::*;
 use std::task::{Context, Poll};
 
@@ -12,6 +11,9 @@ pub(crate) struct Settings {
     /// the socket first then the settings applied **before** receiving any
     /// further frames.
     remote: Option<frame::Settings>,
+    /// Whether the connection has received the initial SETTINGS frame from the
+    /// remote peer.
+    has_received_remote_initial_settings: bool,
 }
 
 #[derive(Debug)]
@@ -32,6 +34,7 @@ impl Settings {
             // the handshake process.
             local: Local::WaitingAck(local),
             remote: None,
+            has_received_remote_initial_settings: false,
         }
     }
 
@@ -96,6 +99,15 @@ impl Settings {
         }
     }
 
+    /// Sets `true` to `self.has_received_remote_initial_settings`.
+    /// Returns `true` if this method is called for the first time.
+    /// (i.e. it is the initial SETTINGS frame from the remote peer)
+    fn mark_remote_initial_settings_as_received(&mut self) -> bool {
+        let has_received = self.has_received_remote_initial_settings;
+        self.has_received_remote_initial_settings = true;
+        !has_received
+    }
+
     pub(crate) fn poll_send<T, B, C, P>(
         &mut self,
         cx: &mut Context,
@@ -108,7 +120,7 @@ impl Settings {
         C: Buf,
         P: Peer,
     {
-        if let Some(settings) = &self.remote {
+        if let Some(settings) = self.remote.clone() {
             if !dst.poll_ready(cx)?.is_ready() {
                 return Poll::Pending;
             }
@@ -121,7 +133,8 @@ impl Settings {
 
             tracing::trace!("ACK sent; applying settings");
 
-            streams.apply_remote_settings(settings)?;
+            let is_initial = self.mark_remote_initial_settings_as_received();
+            streams.apply_remote_settings(&settings, is_initial)?;
 
             if let Some(val) = settings.header_table_size() {
                 dst.set_send_header_table_size(val as usize);
