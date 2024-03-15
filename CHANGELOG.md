@@ -1,3 +1,7 @@
+# 0.3.25 (March 15, 2024)
+
+* Improve performance decoding many headers.
+
 # 0.3.24 (January 17, 2024)
 
 * Limit error resets for misbehaving connections.
