@@ -1,12 +1,12 @@
 use super::store::Resolve;
 use super::*;
 
-use crate::frame::{Reason, StreamId};
+use crate::frame::Reason;
 
 use crate::codec::UserError;
 use crate::codec::UserError::*;
 
-use bytes::buf::{Buf, Take};
+use bytes::buf::Take;
 use std::{
     cmp::{self, Ordering},
     fmt, io, mem,

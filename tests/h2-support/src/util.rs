@@ -1,5 +1,3 @@
-use h2;
-
 use bytes::{BufMut, Bytes};
 use futures::ready;
 use std::future::Future;

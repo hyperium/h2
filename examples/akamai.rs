@@ -5,7 +5,6 @@ use tokio_rustls::TlsConnector;
 
 use tokio_rustls::rustls::{OwnedTrustAnchor, RootCertStore, ServerName};
 
-use std::convert::TryFrom;
 use std::error::Error;
 use std::net::ToSocketAddrs;
 

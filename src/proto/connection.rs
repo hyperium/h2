@@ -1,18 +1,18 @@
 use crate::codec::UserError;
 use crate::frame::{Reason, StreamId};
-use crate::{client, frame, server};
+use crate::{client, server};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use futures_core::Stream;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncRead;
 
 /// An H2 connection
 #[derive(Debug)]
