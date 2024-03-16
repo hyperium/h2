@@ -2,8 +2,8 @@ use crate::codec::Codec;
 use crate::frame::Ping;
 use crate::proto::{self, PingPayload};
 
+use atomic_waker::AtomicWaker;
 use bytes::Buf;
-use futures_util::task::AtomicWaker;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
