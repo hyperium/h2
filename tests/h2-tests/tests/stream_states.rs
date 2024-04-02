@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use futures::future::{join, join3, lazy, poll_fn, try_join};
+use futures::future::{join, join3, lazy, try_join};
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;

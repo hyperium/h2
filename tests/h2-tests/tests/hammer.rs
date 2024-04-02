@@ -8,7 +8,6 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    thread,
 };
 use tokio::net::{TcpListener, TcpStream};
 
