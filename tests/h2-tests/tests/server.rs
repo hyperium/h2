@@ -884,6 +884,55 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 }
 
 #[tokio::test]
+async fn too_many_continuation_frames_sends_goaway() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(1024 * 32));
+
+        // the mock impl automatically splits into CONTINUATION frames if the
+        // headers are too big for one frame. So without a max header list size
+        // set, we'll send a bunch of headers that will eventually get nuked.
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("a".repeat(10_000), "b".repeat(10_000))
+                    .field("c".repeat(10_000), "d".repeat(10_000))
+                    .field("e".repeat(10_000), "f".repeat(10_000))
+                    .field("g".repeat(10_000), "h".repeat(10_000))
+                    .field("i".repeat(10_000), "j".repeat(10_000))
+                    .field("k".repeat(10_000), "l".repeat(10_000))
+                    .field("m".repeat(10_000), "n".repeat(10_000))
+                    .field("o".repeat(10_000), "p".repeat(10_000))
+                    .field("y".repeat(10_000), "z".repeat(10_000)),
+            )
+            .await;
+        client
+            .recv_frame(frames::go_away(0).calm().data("too_many_continuations"))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            // should mean ~3 continuation
+            .max_header_list_size(1024 * 32)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn pending_accept_recv_illegal_content_length_data() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
