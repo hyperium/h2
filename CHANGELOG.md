@@ -1,3 +1,7 @@
+# 0.4.4 (April 3, 2024)
+
+* Limit number of CONTINUATION frames for misbehaving connections.
+
 # 0.4.3 (March 15, 2024)
 
 * Fix flow control limits to not apply until receiving SETTINGS ack.
