@@ -71,3 +71,7 @@ webpki-roots = "0.25"
 
 [package.metadata.docs.rs]
 features = ["stream"]
+
+[[bench]]
+name = "main"
+harness = false
