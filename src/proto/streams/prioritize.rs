@@ -528,6 +528,9 @@ impl Prioritize {
         tracing::trace!("poll_complete");
 
         loop {
+            let span = tracing::debug_span!("poll_complete_loop");
+            let _e = span.enter();
+
             if let Some(mut stream) = self.pop_pending_open(store, counts) {
                 self.pending_send.push_front(&mut stream);
                 self.try_assign_capacity(&mut stream);
