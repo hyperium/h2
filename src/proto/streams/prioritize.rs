@@ -528,6 +528,9 @@ impl Prioritize {
         tracing::trace!("poll_complete");
 
         loop {
+            // Create a new span at the start of the loop to avoid continuously
+            // adding events to the same span due to tracing in the loop, which
+            // would lead to an ongoing increase in memory usage.
             let span = tracing::debug_span!("poll_complete_loop");
             let _e = span.enter();
 
