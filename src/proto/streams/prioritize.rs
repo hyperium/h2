@@ -531,8 +531,7 @@ impl Prioritize {
             // Create a new span at the start of the loop to avoid continuously
             // adding events to the same span due to tracing in the loop, which
             // would lead to an ongoing increase in memory usage.
-            let span = tracing::debug_span!("poll_complete_loop");
-            let _e = span.enter();
+            let _span = tracing::debug_span!("poll_complete_loop").entered();
 
             if let Some(mut stream) = self.pop_pending_open(store, counts) {
                 self.pending_send.push_front(&mut stream);
