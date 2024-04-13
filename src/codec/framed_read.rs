@@ -402,7 +402,7 @@ where
                 partial,
                 bytes,
             )? {
-                tracing::debug!(?frame, "received");
+                tracing::trace!(?frame, "received");
                 return Poll::Ready(Some(Ok(frame)));
             }
         }
