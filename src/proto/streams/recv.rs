@@ -59,6 +59,9 @@ pub(super) struct Recv {
 
     /// If extended connect protocol is enabled.
     is_extended_connect_protocol_enabled: bool,
+
+    /// Ignore the content length header and only stop when peer close stream
+    ignore_content_length: bool,
 }
 
 #[derive(Debug)]
@@ -107,6 +110,7 @@ impl Recv {
             refused: None,
             is_push_enabled: config.local_push_enabled,
             is_extended_connect_protocol_enabled: config.extended_connect_protocol_enabled,
+            ignore_content_length: config.ignore_content_length,
         }
     }
 
@@ -171,7 +175,7 @@ impl Recv {
             counts.inc_num_recv_streams(stream);
         }
 
-        if !stream.content_length.is_head() {
+        if !self.ignore_content_length && !stream.content_length.is_head() {
             use super::stream::ContentLength;
             use http::header;
 
@@ -341,7 +345,7 @@ impl Recv {
         // Transition the state
         stream.state.recv_close()?;
 
-        if stream.ensure_content_length_zero().is_err() {
+        if !self.ignore_content_length && stream.ensure_content_length_zero().is_err() {
             proto_err!(stream: "recv_trailers: content-length is not zero; stream={:?};",  stream.id);
             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR));
         }
@@ -616,7 +620,8 @@ impl Recv {
             return Err(Error::library_reset(stream.id, Reason::FLOW_CONTROL_ERROR));
         }
 
-        if stream.dec_content_length(frame.payload().len()).is_err() {
+        if !self.ignore_content_length && stream.dec_content_length(frame.payload().len()).is_err()
+        {
             proto_err!(stream:
                 "recv_data: content-length overflow; stream={:?}; len={:?}",
                 stream.id,
@@ -626,7 +631,7 @@ impl Recv {
         }
 
         if frame.is_end_stream() {
-            if stream.ensure_content_length_zero().is_err() {
+            if !self.ignore_content_length && stream.ensure_content_length_zero().is_err() {
                 proto_err!(stream:
                     "recv_data: content-length underflow; stream={:?}; len={:?}",
                     stream.id,
