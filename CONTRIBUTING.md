@@ -5,7 +5,7 @@
 ## Getting Help ##
 
 If you have a question about the h2 library or have encountered problems using it, you may
-[file an issue][issue] or ask a question on the [Tokio Gitter][gitter].
+[file an issue][issue] or ask a question on the [Tokio Discord][discord].
 
 ## Submitting a Pull Request ##
 
@@ -81,4 +81,4 @@ Describe the testing you've done to validate your change.  Performance-related
 changes should include before- and after- benchmark results.
 
 [issue]: https://github.com/hyperium/h2/issues/new
-[gitter]: https://gitter.im/tokio-rs/tokio
+[discord]: https://discord.gg/tokio
