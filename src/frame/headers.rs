@@ -554,32 +554,38 @@ impl Pseudo {
     pub fn request(method: Method, uri: Uri, protocol: Option<Protocol>) -> Self {
         let parts = uri::Parts::from(uri);
 
-        let mut path = parts
-            .path_and_query
-            .map(|v| BytesStr::from(v.as_str()))
-            .unwrap_or(BytesStr::from_static(""));
+        let (scheme, path) = if method == Method::CONNECT && protocol.is_none() {
+            (None, None)
+        } else {
+            let path = parts
+                .path_and_query
+                .map(|v| BytesStr::from(v.as_str()))
+                .unwrap_or(BytesStr::from_static(""));
 
-        match method {
-            Method::OPTIONS | Method::CONNECT => {}
-            _ if path.is_empty() => {
-                path = BytesStr::from_static("/");
-            }
-            _ => {}
-        }
+            let path = if !path.is_empty() {
+                path
+            } else {
+                if method == Method::OPTIONS {
+                    BytesStr::from_static("*")
+                } else {
+                    BytesStr::from_static("/")
+                }
+            };
+
+            (parts.scheme, Some(path))
+        };
 
         let mut pseudo = Pseudo {
             method: Some(method),
             scheme: None,
             authority: None,
-            path: Some(path).filter(|p| !p.is_empty()),
+            path,
             protocol,
             status: None,
         };
 
         // If the URI includes a scheme component, add it to the pseudo headers
-        //
-        // TODO: Scheme must be set...
-        if let Some(scheme) = parts.scheme {
+        if let Some(scheme) = scheme {
             pseudo.set_scheme(scheme);
         }
 
@@ -1047,5 +1053,162 @@ mod test {
     fn huff_decode(src: &[u8]) -> BytesMut {
         let mut buf = BytesMut::new();
         huffman::decode(src, &mut buf).unwrap()
+    }
+
+    #[test]
+    fn test_connect_request_pseudo_headers_omits_path_and_scheme() {
+        // CONNECT requests MUST NOT include :scheme & :path pseudo-header fields
+        // See: https://datatracker.ietf.org/doc/html/rfc9113#section-8.5
+
+        assert_eq!(
+            Pseudo::request(
+                Method::CONNECT,
+                Uri::from_static("https://example.com:8443"),
+                None
+            ),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com:8443").into(),
+                ..Default::default()
+            }
+        );
+
+        assert_eq!(
+            Pseudo::request(
+                Method::CONNECT,
+                Uri::from_static("https://example.com/test"),
+                None
+            ),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com").into(),
+                ..Default::default()
+            }
+        );
+
+        assert_eq!(
+            Pseudo::request(Method::CONNECT, Uri::from_static("example.com:8443"), None),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com:8443").into(),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_extended_connect_request_pseudo_headers_includes_path_and_scheme() {
+        // On requests that contain the :protocol pseudo-header field, the
+        // :scheme and :path pseudo-header fields of the target URI (see
+        // Section 5) MUST also be included.
+        // See: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+
+        assert_eq!(
+            Pseudo::request(
+                Method::CONNECT,
+                Uri::from_static("https://example.com:8443"),
+                Protocol::from_static("the-bread-protocol").into()
+            ),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com:8443").into(),
+                scheme: BytesStr::from_static("https").into(),
+                path: BytesStr::from_static("/").into(),
+                protocol: Protocol::from_static("the-bread-protocol").into(),
+                ..Default::default()
+            }
+        );
+
+        assert_eq!(
+            Pseudo::request(
+                Method::CONNECT,
+                Uri::from_static("https://example.com:8443/test"),
+                Protocol::from_static("the-bread-protocol").into()
+            ),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com:8443").into(),
+                scheme: BytesStr::from_static("https").into(),
+                path: BytesStr::from_static("/test").into(),
+                protocol: Protocol::from_static("the-bread-protocol").into(),
+                ..Default::default()
+            }
+        );
+
+        assert_eq!(
+            Pseudo::request(
+                Method::CONNECT,
+                Uri::from_static("http://example.com/a/b/c"),
+                Protocol::from_static("the-bread-protocol").into()
+            ),
+            Pseudo {
+                method: Method::CONNECT.into(),
+                authority: BytesStr::from_static("example.com").into(),
+                scheme: BytesStr::from_static("http").into(),
+                path: BytesStr::from_static("/a/b/c").into(),
+                protocol: Protocol::from_static("the-bread-protocol").into(),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_options_request_with_empty_path_has_asterisk_as_pseudo_path() {
+        // an OPTIONS request for an "http" or "https" URI that does not include a path component;
+        // these MUST include a ":path" pseudo-header field with a value of '*' (see Section 7.1 of [HTTP]).
+        // See: https://datatracker.ietf.org/doc/html/rfc9113#section-8.3.1
+        assert_eq!(
+            Pseudo::request(Method::OPTIONS, Uri::from_static("example.com:8080"), None,),
+            Pseudo {
+                method: Method::OPTIONS.into(),
+                authority: BytesStr::from_static("example.com:8080").into(),
+                path: BytesStr::from_static("*").into(),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_non_option_and_non_connect_requests_include_path_and_scheme() {
+        let methods = [
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::HEAD,
+            Method::PATCH,
+            Method::TRACE,
+        ];
+
+        for method in methods {
+            assert_eq!(
+                Pseudo::request(
+                    method.clone(),
+                    Uri::from_static("http://example.com:8080"),
+                    None,
+                ),
+                Pseudo {
+                    method: method.clone().into(),
+                    authority: BytesStr::from_static("example.com:8080").into(),
+                    scheme: BytesStr::from_static("http").into(),
+                    path: BytesStr::from_static("/").into(),
+                    ..Default::default()
+                }
+            );
+            assert_eq!(
+                Pseudo::request(
+                    method.clone(),
+                    Uri::from_static("https://example.com/a/b/c"),
+                    None,
+                ),
+                Pseudo {
+                    method: method.into(),
+                    authority: BytesStr::from_static("example.com").into(),
+                    scheme: BytesStr::from_static("https").into(),
+                    path: BytesStr::from_static("/a/b/c").into(),
+                    ..Default::default()
+                }
+            );
+        }
     }
 }
