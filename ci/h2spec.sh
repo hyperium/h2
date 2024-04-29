@@ -13,7 +13,7 @@ SERVER_PID=$!
 
 # wait 'til the server is listening before running h2spec, and pipe server's
 # stdout to a log file.
-sed '/listening on Ok(V4(127.0.0.1:5928))/q' <&3 ; cat <&3 > "${LOGFILE}" &
+sed '/listening on Ok(127.0.0.1:5928)/q' <&3 ; cat <&3 > "${LOGFILE}" &
 
 # run h2spec against the server, printing the server log if h2spec failed
 ./h2spec -p 5928

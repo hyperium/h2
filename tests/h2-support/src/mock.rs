@@ -1,12 +1,13 @@
 use crate::SendFrame;
 
 use h2::frame::{self, Frame};
-use h2::{self, RecvError, SendError};
+use h2::proto::Error;
+use h2::SendError;
 
 use futures::future::poll_fn;
 use futures::{ready, Stream, StreamExt};
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use super::assert::assert_frame_eq;
 use std::pin::Pin;
@@ -53,9 +54,12 @@ struct Inner {
 
     /// True when the pipe is closed.
     closed: bool,
+
+    /// Trigger an `UnexpectedEof` error on read
+    unexpected_eof: bool,
 }
 
-const PREFACE: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Create a new mock and handle
 pub fn new() -> (Mock, Handle) {
@@ -72,6 +76,7 @@ pub fn new_with_write_capacity(cap: usize) -> (Mock, Handle) {
         tx_rem: cap,
         tx_rem_task: None,
         closed: false,
+        unexpected_eof: false,
     }));
 
     let mock = Mock {
@@ -93,6 +98,11 @@ impl Handle {
     /// Get a mutable reference to inner Codec.
     pub fn codec_mut(&mut self) -> &mut crate::Codec<Pipe> {
         &mut self.codec
+    }
+
+    pub fn close_without_notify(&mut self) {
+        let mut me = self.codec.get_mut().inner.lock().unwrap();
+        me.unexpected_eof = true;
     }
 
     /// Send a frame
@@ -147,10 +157,11 @@ impl Handle {
         poll_fn(move |cx| {
             while buf.has_remaining() {
                 let res = Pin::new(self.codec.get_mut())
-                    .poll_write_buf(cx, &mut buf)
+                    .poll_write(cx, buf.chunk())
                     .map_err(|e| panic!("write err={:?}", e));
 
-                ready!(res).unwrap();
+                let n = ready!(res).unwrap();
+                buf.advance(n);
             }
 
             Poll::Ready(())
@@ -219,22 +230,15 @@ impl Handle {
         let settings = settings.into();
         self.send(settings.into()).await.unwrap();
 
-        let frame = self.next().await;
-        let settings = match frame {
-            Some(frame) => match frame.unwrap() {
-                Frame::Settings(settings) => {
-                    // Send the ACK
-                    let ack = frame::Settings::ack();
+        let frame = self.next().await.expect("unexpected EOF").unwrap();
+        let settings = assert_settings!(frame);
 
-                    // TODO: Don't unwrap?
-                    self.send(ack.into()).await.unwrap();
+        // Send the ACK
+        let ack = frame::Settings::ack();
 
-                    settings
-                }
-                frame => panic!("unexpected frame; frame={:?}", frame),
-            },
-            None => panic!("unexpected EOF"),
-        };
+        // TODO: Don't unwrap?
+        self.send(ack.into()).await.unwrap();
+
         let frame = self.next().await;
         let f = assert_settings!(frame.unwrap().unwrap());
 
@@ -283,7 +287,7 @@ impl Handle {
 }
 
 impl Stream for Handle {
-    type Item = Result<Frame, RecvError>;
+    type Item = Result<Frame, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.codec).poll_next(cx)
@@ -294,8 +298,8 @@ impl AsyncRead for Handle {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         Pin::new(self.codec.get_mut()).poll_read(cx, buf)
     }
 }
@@ -344,29 +348,36 @@ impl AsyncRead for Mock {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         assert!(
-            buf.len() > 0,
+            buf.remaining() > 0,
             "attempted read with zero length buffer... wut?"
         );
 
         let mut me = self.pipe.inner.lock().unwrap();
 
+        if me.unexpected_eof {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Simulate an unexpected eof error",
+            )));
+        }
+
         if me.rx.is_empty() {
             if me.closed {
-                return Poll::Ready(Ok(0));
+                return Poll::Ready(Ok(()));
             }
 
             me.rx_task = Some(cx.waker().clone());
             return Poll::Pending;
         }
 
-        let n = cmp::min(buf.len(), me.rx.len());
-        buf[..n].copy_from_slice(&me.rx[..n]);
+        let n = cmp::min(buf.remaining(), me.rx.len());
+        buf.put_slice(&me.rx[..n]);
         me.rx.drain(..n);
 
-        Poll::Ready(Ok(n))
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -427,10 +438,10 @@ impl AsyncRead for Pipe {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        buf: &mut ReadBuf,
+    ) -> Poll<io::Result<()>> {
         assert!(
-            buf.len() > 0,
+            buf.remaining() > 0,
             "attempted read with zero length buffer... wut?"
         );
 
@@ -438,18 +449,18 @@ impl AsyncRead for Pipe {
 
         if me.tx.is_empty() {
             if me.closed {
-                return Poll::Ready(Ok(0));
+                return Poll::Ready(Ok(()));
             }
 
             me.tx_task = Some(cx.waker().clone());
             return Poll::Pending;
         }
 
-        let n = cmp::min(buf.len(), me.tx.len());
-        buf[..n].copy_from_slice(&me.tx[..n]);
+        let n = cmp::min(buf.remaining(), me.tx.len());
+        buf.put_slice(&me.tx[..n]);
         me.tx.drain(..n);
 
-        Poll::Ready(Ok(n))
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -479,5 +490,5 @@ impl AsyncWrite for Pipe {
 }
 
 pub async fn idle_ms(ms: u64) {
-    tokio::time::delay_for(Duration::from_millis(ms)).await
+    tokio::time::sleep(Duration::from_millis(ms)).await
 }

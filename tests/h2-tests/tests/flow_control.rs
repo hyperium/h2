@@ -7,7 +7,7 @@ use h2_support::util::yield_once;
 // explicitly requested.
 #[tokio::test]
 async fn send_data_without_requesting_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 1024];
 
@@ -53,7 +53,7 @@ async fn send_data_without_requesting_capacity() {
 
 #[tokio::test]
 async fn release_capacity_sends_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0u8; 16_384];
     let payload_len = payload.len();
@@ -120,7 +120,7 @@ async fn release_capacity_sends_window_update() {
 
 #[tokio::test]
 async fn release_capacity_of_small_amount_does_not_send_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = [0; 16];
 
@@ -175,7 +175,7 @@ fn expand_window_calls_are_coalesced() {}
 
 #[tokio::test]
 async fn recv_data_overflows_connection_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -217,7 +217,7 @@ async fn recv_data_overflows_connection_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: flow-control protocol violated"
+                "connection error detected: flow-control protocol violated"
             );
         };
 
@@ -227,7 +227,7 @@ async fn recv_data_overflows_connection_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: flow-control protocol violated"
+                "connection error detected: flow-control protocol violated"
             );
         };
         join(conn, req).await;
@@ -238,7 +238,7 @@ async fn recv_data_overflows_connection_window() {
 #[tokio::test]
 async fn recv_data_overflows_stream_window() {
     // this tests for when streams have smaller windows than their connection
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -278,7 +278,7 @@ async fn recv_data_overflows_stream_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "protocol error: flow-control protocol violated"
+                "stream error detected: flow-control protocol violated"
             );
         };
 
@@ -295,7 +295,7 @@ fn recv_window_update_causes_overflow() {
 
 #[tokio::test]
 async fn stream_error_release_connection_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -350,7 +350,7 @@ async fn stream_error_release_connection_capacity() {
                     should_recv_bytes -= bytes.len();
                     should_recv_frames -= 1;
                     if should_recv_bytes == 0 {
-                        assert_eq!(should_recv_bytes, 0);
+                        assert_eq!(should_recv_frames, 0);
                     }
                     Ok(())
                 })
@@ -358,7 +358,7 @@ async fn stream_error_release_connection_capacity() {
                 .expect_err("body");
             assert_eq!(
                 err.to_string(),
-                "protocol error: unspecific protocol error detected"
+                "stream error detected: unspecific protocol error detected"
             );
             cap.release_capacity(to_release).expect("release_capacity");
         };
@@ -371,7 +371,7 @@ async fn stream_error_release_connection_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_data_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -443,7 +443,7 @@ async fn stream_close_by_data_frame_releases_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_trailers_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
@@ -516,7 +516,7 @@ async fn stream_close_by_trailers_frame_releases_capacity() {
 
 #[tokio::test]
 async fn stream_close_by_send_reset_frame_releases_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -575,7 +575,7 @@ fn stream_close_by_recv_reset_frame_releases_capacity() {}
 
 #[tokio::test]
 async fn recv_window_update_on_stream_closed_by_data_frame() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -620,7 +620,7 @@ async fn recv_window_update_on_stream_closed_by_data_frame() {
 
 #[tokio::test]
 async fn reserved_capacity_assigned_in_multi_window_updates() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -685,7 +685,7 @@ async fn reserved_capacity_assigned_in_multi_window_updates() {
 async fn connection_notified_on_released_capacity() {
     use tokio::sync::{mpsc, oneshot};
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // We're going to run the connection on a thread in order to isolate task
@@ -794,7 +794,7 @@ async fn connection_notified_on_released_capacity() {
 
 #[tokio::test]
 async fn recv_settings_removes_available_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -841,7 +841,7 @@ async fn recv_settings_removes_available_capacity() {
 
 #[tokio::test]
 async fn recv_settings_keeps_assigned_capacity() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let (sent_settings, sent_settings_rx) = futures::channel::oneshot::channel();
@@ -886,7 +886,7 @@ async fn recv_settings_keeps_assigned_capacity() {
 
 #[tokio::test]
 async fn recv_no_init_window_then_receive_some_init_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -940,9 +940,8 @@ async fn recv_no_init_window_then_receive_some_init_window() {
 #[tokio::test]
 async fn settings_lowered_capacity_returns_capacity_to_connection() {
     use futures::channel::oneshot;
-    use futures::future::{select, Either};
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let (tx1, rx1) = oneshot::channel();
     let (tx2, rx2) = oneshot::channel();
@@ -972,10 +971,9 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
         //
         // A timeout is used here to avoid blocking forever if there is a
         // failure
-        let result = select(rx2, tokio::time::delay_for(Duration::from_secs(5))).await;
-        if let Either::Right((_, _)) = result {
-            panic!("Timed out");
-        }
+        let _ = tokio::time::timeout(Duration::from_secs(5), rx2)
+            .await
+            .unwrap();
 
         idle_ms(500).await;
 
@@ -1004,10 +1002,9 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
     });
 
     // Wait for server handshake to complete.
-    let result = select(rx1, tokio::time::delay_for(Duration::from_secs(5))).await;
-    if let Either::Right((_, _)) = result {
-        panic!("Timed out");
-    }
+    let _ = tokio::time::timeout(Duration::from_secs(5), rx1)
+        .await
+        .unwrap();
 
     let request = Request::post("https://example.com/one").body(()).unwrap();
 
@@ -1049,7 +1046,7 @@ async fn settings_lowered_capacity_returns_capacity_to_connection() {
 
 #[tokio::test]
 async fn client_increase_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1069,7 +1066,7 @@ async fn client_increase_target_window_size() {
 
 #[tokio::test]
 async fn increase_target_window_size_after_using_some() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1110,7 +1107,7 @@ async fn increase_target_window_size_after_using_some() {
 
 #[tokio::test]
 async fn decrease_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1155,7 +1152,7 @@ async fn decrease_target_window_size() {
 
 #[tokio::test]
 async fn client_update_initial_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE * 2;
@@ -1230,7 +1227,7 @@ async fn client_update_initial_window_size() {
 
 #[tokio::test]
 async fn client_decrease_initial_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1355,7 +1352,7 @@ async fn client_decrease_initial_window_size() {
 
 #[tokio::test]
 async fn server_target_window_size() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -1377,7 +1374,7 @@ async fn server_target_window_size() {
 #[tokio::test]
 async fn recv_settings_increase_window_size_after_using_some() {
     // See https://github.com/hyperium/h2/issues/208
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let new_win_size = 16_384 * 4; // 1 bigger than default
@@ -1419,7 +1416,7 @@ async fn recv_settings_increase_window_size_after_using_some() {
 #[tokio::test]
 async fn reserve_capacity_after_peer_closes() {
     // See https://github.com/hyperium/h2/issues/300
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1456,7 +1453,7 @@ async fn reserve_capacity_after_peer_closes() {
 async fn reset_stream_waiting_for_capacity() {
     // This tests that receiving a reset on a stream that has some available
     // connection-level window reassigns that window to another stream.
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
 
@@ -1517,7 +1514,7 @@ async fn reset_stream_waiting_for_capacity() {
 
 #[tokio::test]
 async fn data_padding() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut body = Vec::new();
@@ -1563,4 +1560,437 @@ async fn data_padding() {
     };
 
     join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn poll_capacity_after_send_data_and_reserve() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(5))
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(5);
+
+        // Initial window size was 5 so current capacity is 0 even if we just reserved.
+        assert_eq!(stream.capacity(), 0);
+
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+
+        stream.send_data("".into(), true).unwrap();
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn poll_capacity_after_send_data_and_reserve_with_max_send_buffer_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(10))
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.send_frame(frames::window_update(1, 10)).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(5);
+
+        // Initial window size was 10 but with a max send buffer size of 10 in the client,
+        // so current capacity is 0 even if we just reserved.
+        assert_eq!(stream.capacity(), 0);
+
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+
+        stream.send_data("".into(), true).unwrap();
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn max_send_buffer_size_overflow() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::data(1, &[0; 10][..])).await;
+        srv.recv_frame(frames::data(1, &[][..]).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = conn.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert_eq!(stream.capacity(), 0);
+        stream.reserve_capacity(10);
+        assert_eq!(
+            stream.capacity(),
+            5,
+            "polled capacity not over max buffer size"
+        );
+
+        stream.send_data([0; 10][..].into(), false).unwrap();
+
+        stream.reserve_capacity(15);
+        assert_eq!(
+            stream.capacity(),
+            0,
+            "now with buffered over the max, don't overflow"
+        );
+        stream.send_data([0; 0][..].into(), true).unwrap();
+
+        // Wait for the connection to close
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn max_send_buffer_size_poll_capacity_wakes_task() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::data(1, &[0; 5][..])).await;
+        srv.recv_frame(frames::data(1, &[0; 5][..])).await;
+        srv.recv_frame(frames::data(1, &[0; 5][..])).await;
+        srv.recv_frame(frames::data(1, &[0; 5][..])).await;
+        srv.recv_frame(frames::data(1, &[][..]).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = conn.drive(response).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        assert_eq!(stream.capacity(), 0);
+        const TO_SEND: usize = 20;
+        stream.reserve_capacity(TO_SEND);
+        assert_eq!(
+            stream.capacity(),
+            5,
+            "polled capacity not over max buffer size"
+        );
+
+        let t1 = tokio::spawn(async move {
+            let mut sent = 0;
+            let buf = [0; TO_SEND];
+            loop {
+                match poll_fn(|cx| stream.poll_capacity(cx)).await {
+                    None => panic!("no cap"),
+                    Some(Err(e)) => panic!("cap error: {:?}", e),
+                    Some(Ok(cap)) => {
+                        stream
+                            .send_data(buf[sent..(sent + cap)].to_vec().into(), false)
+                            .unwrap();
+                        sent += cap;
+                        if sent >= TO_SEND {
+                            break;
+                        }
+                    }
+                }
+            }
+            stream.send_data(Bytes::new(), true).unwrap();
+        });
+
+        // Wait for the connection to close
+        conn.await.unwrap();
+        t1.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn poll_capacity_wakeup_after_window_update() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(10))
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        srv.recv_frame(frames::data(1, &b"abcde"[..])).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_send_buffer_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(10);
+        assert_eq!(stream.capacity(), 0);
+
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+        h2.drive(idle_ms(10)).await;
+        stream.send_data("abcde".into(), false).unwrap();
+
+        stream.reserve_capacity(5);
+        assert_eq!(stream.capacity(), 0);
+
+        // This will panic if there is a bug causing h2 to return Ok(0) from poll_capacity.
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+
+        stream.send_data("".into(), true).unwrap();
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn window_size_decremented_past_zero() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        // let _ = client.assert_server_handshake().await;
+
+        // preface
+        client.write_preface().await;
+
+        // the following http 2 bytes are fuzzer-generated
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 23, 1, 1, 0, 249, 255, 191, 131, 1, 1, 1, 70, 1, 1, 1, 1, 65, 1, 1, 65, 1, 1,
+                65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 9, 247, 0, 121, 255, 255, 184, 1, 65, 1, 1, 1, 1, 1, 1, 190,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[0, 0, 3, 0, 1, 0, 249, 255, 191, 1, 1, 190])
+            .await;
+        client
+            .send_bytes(&[0, 0, 2, 50, 107, 0, 0, 0, 1, 0, 0])
+            .await;
+        client
+            .send_bytes(&[0, 0, 5, 2, 0, 0, 0, 0, 1, 128, 0, 55, 0, 0])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 3, 4, 76, 255, 71, 131])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 74, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 30, 4, 0, 0, 0, 0, 0, 0, 4, 56, 184, 171, 125, 65, 0, 35, 65, 65, 65, 61,
+                232, 87, 115, 89, 116, 0, 4, 0, 58, 33, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 177, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 61, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 115, 102, 1, 3, 48, 43,
+                101, 64, 31, 37, 99, 99, 97, 97, 97, 97, 49, 97, 54, 97, 97, 97, 97, 49, 97, 54,
+                97, 99, 54, 53, 53, 51, 53, 99, 99, 97, 97, 99, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 87, 115, 89, 116])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 126, 4, 39, 184, 171, 125, 33, 0, 3, 107, 50, 98,
+            ])
+            .await;
+        client
+            .send_bytes(&[
+                0, 0, 129, 1, 44, 0, 0, 0, 1, 67, 67, 67, 67, 67, 67, 131, 134, 5, 18, 67, 67, 61,
+                67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 48, 54, 53, 55, 114, 1, 4, 97, 49, 51, 116,
+                64, 2, 117, 115, 4, 103, 101, 110, 116, 64, 8, 57, 111, 110, 116, 101, 110, 115,
+                102, 7, 43, 43, 49, 48, 48, 43, 101, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ])
+            .await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client.send_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 1]).await;
+        client
+            .send_bytes(&[
+                0, 0, 12, 4, 0, 0, 0, 0, 0, 0, 4, 0, 58, 171, 125, 33, 79, 3, 107, 49, 98,
+            ])
+            .await;
+
+        // TODO: is CANCEL the right error code to expect here?
+        // client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        // just keep it open
+        let res = poll_fn(move |cx| srv.poll_closed(cx)).await;
+        tracing::debug!("{:?}", res);
+    };
+
+    join(client, srv).await;
 }

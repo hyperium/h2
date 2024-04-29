@@ -29,6 +29,10 @@ impl<T> Buffer<T> {
     pub fn new() -> Self {
         Buffer { slab: Slab::new() }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.slab.is_empty()
+    }
 }
 
 impl Deque {
@@ -92,13 +96,4 @@ impl Deque {
             None => None,
         }
     }
-
-    /*
-    pub fn peek_front<'a, T>(&self, buf: &'a Buffer<T>) -> Option<&'a T> {
-        match self.indices {
-            Some(idxs) => Some(&buf.slab[idxs.head].value),
-            None => None,
-        }
-    }
-    */
 }

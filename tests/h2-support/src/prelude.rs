@@ -2,6 +2,7 @@
 pub use h2;
 
 pub use h2::client;
+pub use h2::ext::Protocol;
 pub use h2::frame::StreamId;
 pub use h2::server;
 pub use h2::*;
@@ -20,15 +21,15 @@ pub use super::{Codec, SendFrame};
 
 // Re-export macros
 pub use super::{
-    assert_closed, assert_data, assert_default_settings, assert_headers, assert_ping, poll_err,
-    poll_frame, raw_codec,
+    assert_closed, assert_data, assert_default_settings, assert_go_away, assert_headers,
+    assert_ping, assert_settings, poll_err, poll_frame, raw_codec,
 };
 
 pub use super::assert::assert_frame_eq;
 
 // Re-export useful crates
 pub use tokio_test::io as mock_io;
-pub use {bytes, env_logger, futures, http, tokio::io as tokio_io};
+pub use {bytes, futures, http, tokio::io as tokio_io, tracing, tracing_subscriber};
 
 // Re-export primary future types
 pub use futures::{Future, Sink, Stream};
@@ -42,10 +43,7 @@ pub use super::client_ext::SendRequestExt;
 // Re-export HTTP types
 pub use http::{uri, HeaderMap, Method, Request, Response, StatusCode, Version};
 
-pub use bytes::{
-    buf::{BufExt, BufMutExt},
-    Buf, BufMut, Bytes, BytesMut,
-};
+pub use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -92,7 +90,7 @@ pub trait ClientExt {
 impl<T, B> ClientExt for client::Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin + 'static,
-    B: Buf + Unpin + 'static,
+    B: Buf,
 {
     fn run<'a, F: Future + Unpin + 'a>(
         &'a mut self,
@@ -105,7 +103,7 @@ where
                     // Connection is done...
                     b.await
                 }
-                Right((v, _)) => return v,
+                Right((v, _)) => v,
                 Left((Err(e), _)) => panic!("err: {:?}", e),
             }
         })
@@ -124,6 +122,7 @@ pub fn build_large_headers() -> Vec<(&'static str, String)> {
         ("eight", build_large_string('8', 4 * 1024)),
         ("nine", "nine".to_string()),
         ("ten", build_large_string('0', 4 * 1024)),
+        ("eleven", build_large_string('1', 32 * 1024)),
     ]
 }
 

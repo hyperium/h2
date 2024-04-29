@@ -1,6 +1,6 @@
 use crate::hpack::{Decoder, Encoder, Header};
 
-use bytes::{buf::BufMutExt, BytesMut};
+use bytes::BytesMut;
 use hex::FromHex;
 use serde_json::Value;
 
@@ -52,8 +52,8 @@ fn test_story(story: Value) {
 
                 Case {
                     seqno: case.get("seqno").unwrap().as_u64().unwrap(),
-                    wire: wire,
-                    expect: expect,
+                    wire,
+                    expect,
                     header_table_size: size,
                 }
             })
@@ -100,18 +100,14 @@ fn test_story(story: Value) {
             let mut input: Vec<_> = case
                 .expect
                 .iter()
-                .map(|&(ref name, ref value)| {
+                .map(|(name, value)| {
                     Header::new(name.clone().into(), value.clone().into())
                         .unwrap()
                         .into()
                 })
                 .collect();
 
-            encoder.encode(
-                None,
-                &mut input.clone().into_iter(),
-                &mut (&mut buf).limit(limit),
-            );
+            encoder.encode(&mut input.clone().into_iter(), &mut buf);
 
             decoder
                 .decode(&mut Cursor::new(&mut buf), |e| {
@@ -138,6 +134,7 @@ fn key_str(e: &Header) -> &str {
         Header::Method(..) => ":method",
         Header::Scheme(..) => ":scheme",
         Header::Path(..) => ":path",
+        Header::Protocol(..) => ":protocol",
         Header::Status(..) => ":status",
     }
 }
@@ -145,10 +142,11 @@ fn key_str(e: &Header) -> &str {
 fn value_str(e: &Header) -> &str {
     match *e {
         Header::Field { ref value, .. } => value.to_str().unwrap(),
-        Header::Authority(ref v) => &**v,
+        Header::Authority(ref v) => v,
         Header::Method(ref m) => m.as_str(),
-        Header::Scheme(ref v) => &**v,
-        Header::Path(ref v) => &**v,
+        Header::Scheme(ref v) => v,
+        Header::Path(ref v) => v,
+        Header::Protocol(ref v) => v.as_str(),
         Header::Status(ref v) => v.as_str(),
     }
 }

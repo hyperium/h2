@@ -130,7 +130,7 @@ fn read_headers_empty_payload() {}
 
 #[tokio::test]
 async fn read_continuation_frames() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let large = build_large_headers();
@@ -190,8 +190,9 @@ async fn read_continuation_frames() {
 #[tokio::test]
 async fn update_max_frame_len_at_rest() {
     use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     // TODO: add test for updating max frame length in flight as well?
     let mut codec = raw_codec! {
         read => [
@@ -211,6 +212,10 @@ async fn update_max_frame_len_at_rest() {
         codec.next().await.unwrap().unwrap_err().to_string(),
         "frame with invalid size"
     );
+
+    // drain codec buffer
+    let mut buf = Vec::new();
+    codec.get_mut().read_to_end(&mut buf).await.unwrap();
 }
 
 #[tokio::test]
@@ -231,7 +236,7 @@ async fn read_goaway_with_debug_data() {
     let data = poll_frame!(GoAway, codec);
     assert_eq!(data.reason(), Reason::ENHANCE_YOUR_CALM);
     assert_eq!(data.last_stream_id(), 1);
-    assert_eq!(data.debug_data(), b"too_many_pings");
+    assert_eq!(&**data.debug_data(), b"too_many_pings");
 
     assert_closed!(codec);
 }

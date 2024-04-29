@@ -11,11 +11,11 @@ use std::fmt;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```ignore
+/// # // We ignore this doctest because the macro is not exported.
 /// let buf: [u8; 4] = [0, 0, 0, 1];
 /// assert_eq!(1u32, unpack_octets_4!(buf, 0, u32));
 /// ```
-#[macro_escape]
 macro_rules! unpack_octets_4 {
     // TODO: Get rid of this macro
     ($buf:expr, $offset:expr, $tip:ty) => {
@@ -24,6 +24,15 @@ macro_rules! unpack_octets_4 {
             | (($buf[$offset + 2] as $tip) << 8)
             | (($buf[$offset + 3] as $tip) << 0)
     };
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_unpack_octets_4() {
+        let buf: [u8; 4] = [0, 0, 0, 1];
+        assert_eq!(1u32, unpack_octets_4!(buf, 0, u32));
+    }
 }
 
 mod data;
@@ -60,7 +69,7 @@ pub use crate::hpack::BytesStr;
 
 pub use self::settings::{
     DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE, DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
-    MAX_INITIAL_WINDOW_SIZE, MAX_MAX_FRAME_SIZE,
+    MAX_MAX_FRAME_SIZE,
 };
 
 pub type FrameSize = u32;

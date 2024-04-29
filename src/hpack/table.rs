@@ -319,7 +319,7 @@ impl Table {
             let mut probe = probe + 1;
 
             probe_loop!(probe < self.indices.len(), {
-                let pos = &mut self.indices[probe as usize];
+                let pos = &mut self.indices[probe];
 
                 prev = match mem::replace(pos, Some(prev)) {
                     Some(p) => p,
@@ -404,7 +404,7 @@ impl Table {
 
         // Find the associated position
         probe_loop!(probe < self.indices.len(), {
-            debug_assert!(!self.indices[probe].is_none());
+            debug_assert!(self.indices[probe].is_some());
 
             let mut pos = self.indices[probe].unwrap();
 
@@ -597,7 +597,7 @@ impl Table {
                         }
 
                         assert!(dist <= their_dist,
-                                "could not find entry; actual={}; desired={};" +
+                                "could not find entry; actual={}; desired={}" +
                                 "probe={}, dist={}; their_dist={}; index={}; msg={}",
                                 actual, desired, probe, dist, their_dist,
                                 index.wrapping_sub(self.inserted), msg);
@@ -656,12 +656,12 @@ fn to_raw_capacity(n: usize) -> usize {
 
 #[inline]
 fn desired_pos(mask: usize, hash: HashValue) -> usize {
-    (hash.0 & mask) as usize
+    hash.0 & mask
 }
 
 #[inline]
 fn probe_distance(mask: usize, hash: HashValue, current: usize) -> usize {
-    current.wrapping_sub(desired_pos(mask, hash)) & mask as usize
+    current.wrapping_sub(desired_pos(mask, hash)) & mask
 }
 
 fn hash_header(header: &Header) -> HashValue {
@@ -751,6 +751,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
             "/index.html" => Some((5, true)),
             _ => Some((4, false)),
         },
+        Header::Protocol(..) => None,
         Header::Status(ref v) => match u16::from(*v) {
             200 => Some((8, true)),
             204 => Some((9, true)),

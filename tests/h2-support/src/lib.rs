@@ -8,6 +8,7 @@ pub mod raw;
 pub mod frames;
 pub mod mock;
 pub mod prelude;
+pub mod trace;
 pub mod util;
 
 mod client_ext;
@@ -24,3 +25,19 @@ pub type Codec<T> = h2::Codec<T, bytes::Bytes>;
 
 // This is the frame type that is sent
 pub type SendFrame = h2::frame::Frame<bytes::Bytes>;
+
+#[macro_export]
+macro_rules! trace_init {
+    () => {
+        let _guard = $crate::trace::init();
+        let span = $crate::prelude::tracing::info_span!(
+            "test",
+            "{}",
+            // get the name of the test thread to generate a unique span for the test
+            std::thread::current()
+                .name()
+                .expect("test threads must be named")
+        );
+        let _e = span.enter();
+    };
+}

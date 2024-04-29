@@ -1,9 +1,8 @@
 use super::*;
 
-use slab;
-
 use indexmap::{self, IndexMap};
 
+use std::convert::Infallible;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
@@ -128,7 +127,21 @@ impl Store {
         }
     }
 
-    pub fn for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
+    #[allow(clippy::blocks_in_conditions)]
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Ptr),
+    {
+        match self.try_for_each(|ptr| {
+            f(ptr);
+            Ok::<_, Infallible>(())
+        }) {
+            Ok(()) => (),
+            Err(infallible) => match infallible {},
+        }
+    }
+
+    pub fn try_for_each<F, E>(&mut self, mut f: F) -> Result<(), E>
     where
         F: FnMut(Ptr) -> Result<(), E>,
     {
@@ -204,6 +217,12 @@ impl Store {
     }
 }
 
+// While running h2 unit/integration tests, enable this debug assertion.
+//
+// In practice, we don't need to ensure this. But the integration tests
+// help to make sure we've cleaned up in cases where we could (like, the
+// runtime isn't suddenly dropping the task for unknown reasons).
+#[cfg(feature = "unstable")]
 impl Drop for Store {
     fn drop(&mut self) {
         use std::thread;
@@ -238,10 +257,10 @@ where
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push(&mut self, stream: &mut store::Ptr) -> bool {
-        log::trace!("Queue::push");
+        tracing::trace!("Queue::push_back");
 
         if N::is_queued(stream) {
-            log::trace!(" -> already queued");
+            tracing::trace!(" -> already queued");
             return false;
         }
 
@@ -253,7 +272,7 @@ where
         // Queue the stream
         match self.indices {
             Some(ref mut idxs) => {
-                log::trace!(" -> existing entries");
+                tracing::trace!(" -> existing entries");
 
                 // Update the current tail node to point to `stream`
                 let key = stream.key();
@@ -263,7 +282,47 @@ where
                 idxs.tail = stream.key();
             }
             None => {
-                log::trace!(" -> first entry");
+                tracing::trace!(" -> first entry");
+                self.indices = Some(store::Indices {
+                    head: stream.key(),
+                    tail: stream.key(),
+                });
+            }
+        }
+
+        true
+    }
+
+    /// Queue the stream
+    ///
+    /// If the stream is already contained by the list, return `false`.
+    pub fn push_front(&mut self, stream: &mut store::Ptr) -> bool {
+        tracing::trace!("Queue::push_front");
+
+        if N::is_queued(stream) {
+            tracing::trace!(" -> already queued");
+            return false;
+        }
+
+        N::set_queued(stream, true);
+
+        // The next pointer shouldn't be set
+        debug_assert!(N::next(stream).is_none());
+
+        // Queue the stream
+        match self.indices {
+            Some(ref mut idxs) => {
+                tracing::trace!(" -> existing entries");
+
+                // Update the provided stream to point to the head node
+                let head_key = stream.resolve(idxs.head).key();
+                N::set_next(stream, Some(head_key));
+
+                // Update the head pointer
+                idxs.head = stream.key();
+            }
+            None => {
+                tracing::trace!(" -> first entry");
                 self.indices = Some(store::Indices {
                     head: stream.key(),
                     tail: stream.key(),
@@ -282,20 +341,24 @@ where
             let mut stream = store.resolve(idxs.head);
 
             if idxs.head == idxs.tail {
-                assert!(N::next(&*stream).is_none());
+                assert!(N::next(&stream).is_none());
                 self.indices = None;
             } else {
-                idxs.head = N::take_next(&mut *stream).unwrap();
+                idxs.head = N::take_next(&mut stream).unwrap();
                 self.indices = Some(idxs);
             }
 
-            debug_assert!(N::is_queued(&*stream));
-            N::set_queued(&mut *stream, false);
+            debug_assert!(N::is_queued(&stream));
+            N::set_queued(&mut stream, false);
 
             return Some(stream);
         }
 
         None
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_none()
     }
 
     pub fn pop_if<'a, R, F>(&mut self, store: &'a mut R, f: F) -> Option<store::Ptr<'a>>
@@ -323,7 +386,7 @@ impl<'a> Ptr<'a> {
     }
 
     pub fn store_mut(&mut self) -> &mut Store {
-        &mut self.store
+        self.store
     }
 
     /// Remove the stream from the store

@@ -1,12 +1,13 @@
-use futures::future::join;
-use futures::{FutureExt, StreamExt};
+use futures::future::{join, select};
+use futures::{pin_mut, FutureExt, StreamExt};
+
 use h2_support::prelude::*;
 use h2_support::DEFAULT_WINDOW_SIZE;
 use std::task::Context;
 
 #[tokio::test]
 async fn single_stream_send_large_body() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 1024];
 
@@ -66,7 +67,7 @@ async fn single_stream_send_large_body() {
 
 #[tokio::test]
 async fn multiple_streams_with_payload_greater_than_default_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 16384 * 5 - 1];
     let payload_clone = payload.clone();
@@ -129,7 +130,7 @@ async fn multiple_streams_with_payload_greater_than_default_window() {
 
 #[tokio::test]
 async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 32_768];
 
@@ -193,7 +194,7 @@ async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
 #[tokio::test]
 async fn single_stream_send_body_greater_than_default_window() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 16384 * 5 - 1];
 
@@ -279,7 +280,7 @@ async fn single_stream_send_body_greater_than_default_window() {
 
 #[tokio::test]
 async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let payload = vec![0; 32_768];
 
@@ -341,7 +342,7 @@ async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
 
 #[tokio::test]
 async fn send_data_receive_window_update() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (m, mut mock) = mock::new();
 
     let h2 = async move {
@@ -407,4 +408,96 @@ async fn send_data_receive_window_update() {
     };
 
     join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn stream_count_over_max_stream_limit_does_not_starve_capacity() {
+    use tokio::sync::oneshot;
+
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let (tx, rx) = oneshot::channel();
+
+    let srv = async move {
+        let _ = srv
+            .assert_client_handshake_with_settings(
+                frames::settings()
+                    // super tiny server
+                    .max_concurrent_streams(1),
+            )
+            .await;
+        srv.recv_frame(frames::headers(1).request("POST", "http://example.com/"))
+            .await;
+
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383]).eos()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        // All of these connection capacities should be assigned to stream 3
+        srv.send_frame(frames::window_update(0, 16384)).await;
+        srv.send_frame(frames::window_update(0, 16384)).await;
+        srv.send_frame(frames::window_update(0, 16384)).await;
+        srv.send_frame(frames::window_update(0, 16383)).await;
+
+        // StreamId(3) should be able to send all of its request with the conn capacity
+        srv.recv_frame(frames::headers(3).request("POST", "http://example.com/"))
+            .await;
+        srv.recv_frame(frames::data(3, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(3, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(3, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(3, vec![0; 16383]).eos()).await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+
+        // Then all the future stream is guaranteed to be send-able by induction
+        tx.send(()).unwrap();
+    };
+
+    fn request() -> Request<()> {
+        Request::builder()
+            .method(Method::POST)
+            .uri("http://example.com/")
+            .body(())
+            .unwrap()
+    }
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let (req1, mut send1) = client.send_request(request(), false).unwrap();
+        let (req2, mut send2) = client.send_request(request(), false).unwrap();
+
+        // Use up the connection window.
+        send1.send_data(vec![0; 65535].into(), true).unwrap();
+        // Queue up for more connection window.
+        send2.send_data(vec![0; 65535].into(), true).unwrap();
+
+        // Queue up more pending open streams
+        for _ in 0..5 {
+            let (_, mut send) = client.send_request(request(), false).unwrap();
+            send.send_data(vec![0; 65535].into(), true).unwrap();
+        }
+
+        let response = conn.drive(req1).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = conn.drive(req2).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let _ = rx.await;
+    };
+
+    let task = join(srv, client);
+    pin_mut!(task);
+
+    let t = tokio::time::sleep(Duration::from_secs(5)).map(|_| panic!("time out"));
+    pin_mut!(t);
+
+    select(task, t).await;
 }

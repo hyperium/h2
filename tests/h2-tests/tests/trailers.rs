@@ -3,7 +3,7 @@ use h2_support::prelude::*;
 
 #[tokio::test]
 async fn recv_trailers_only() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -28,7 +28,7 @@ async fn recv_trailers_only() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     let response = h2.run(response).await.unwrap();
@@ -53,7 +53,7 @@ async fn recv_trailers_only() {
 
 #[tokio::test]
 async fn send_trailers_immediately() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -79,7 +79,7 @@ async fn send_trailers_immediately() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, mut stream) = client.send_request(request, false).unwrap();
 
     let mut trailers = HeaderMap::new();

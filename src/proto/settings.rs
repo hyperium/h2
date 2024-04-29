@@ -1,6 +1,5 @@
-use crate::codec::{RecvError, UserError};
+use crate::codec::UserError;
 use crate::error::Reason;
-use crate::frame;
 use crate::proto::*;
 use std::task::{Context, Poll};
 
@@ -12,6 +11,9 @@ pub(crate) struct Settings {
     /// the socket first then the settings applied **before** receiving any
     /// further frames.
     remote: Option<frame::Settings>,
+    /// Whether the connection has received the initial SETTINGS frame from the
+    /// remote peer.
+    has_received_remote_initial_settings: bool,
 }
 
 #[derive(Debug)]
@@ -32,6 +34,7 @@ impl Settings {
             // the handshake process.
             local: Local::WaitingAck(local),
             remote: None,
+            has_received_remote_initial_settings: false,
         }
     }
 
@@ -40,7 +43,7 @@ impl Settings {
         frame: frame::Settings,
         codec: &mut Codec<T, B>,
         streams: &mut Streams<C, P>,
-    ) -> Result<(), RecvError>
+    ) -> Result<(), Error>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -50,7 +53,7 @@ impl Settings {
         if frame.is_ack() {
             match &self.local {
                 Local::WaitingAck(local) => {
-                    log::debug!("received settings ACK; applying {:?}", local);
+                    tracing::debug!("received settings ACK; applying {:?}", local);
 
                     if let Some(max) = local.max_frame_size() {
                         codec.set_max_recv_frame_size(max as usize);
@@ -58,6 +61,10 @@ impl Settings {
 
                     if let Some(max) = local.max_header_list_size() {
                         codec.set_max_recv_header_list_size(max as usize);
+                    }
+
+                    if let Some(val) = local.header_table_size() {
+                        codec.set_recv_header_table_size(val as usize);
                     }
 
                     streams.apply_local_settings(local)?;
@@ -68,7 +75,7 @@ impl Settings {
                     // We haven't sent any SETTINGS frames to be ACKed, so
                     // this is very bizarre! Remote is either buggy or malicious.
                     proto_err!(conn: "received unexpected settings ack");
-                    Err(RecvError::Connection(Reason::PROTOCOL_ERROR))
+                    Err(Error::library_go_away(Reason::PROTOCOL_ERROR))
                 }
             }
         } else {
@@ -85,11 +92,20 @@ impl Settings {
         match &self.local {
             Local::ToSend(..) | Local::WaitingAck(..) => Err(UserError::SendSettingsWhilePending),
             Local::Synced => {
-                log::trace!("queue to send local settings: {:?}", frame);
+                tracing::trace!("queue to send local settings: {:?}", frame);
                 self.local = Local::ToSend(frame);
                 Ok(())
             }
         }
+    }
+
+    /// Sets `true` to `self.has_received_remote_initial_settings`.
+    /// Returns `true` if this method is called for the first time.
+    /// (i.e. it is the initial SETTINGS frame from the remote peer)
+    fn mark_remote_initial_settings_as_received(&mut self) -> bool {
+        let has_received = self.has_received_remote_initial_settings;
+        self.has_received_remote_initial_settings = true;
+        !has_received
     }
 
     pub(crate) fn poll_send<T, B, C, P>(
@@ -97,14 +113,14 @@ impl Settings {
         cx: &mut Context,
         dst: &mut Codec<T, B>,
         streams: &mut Streams<C, P>,
-    ) -> Poll<Result<(), RecvError>>
+    ) -> Poll<Result<(), Error>>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
         C: Buf,
         P: Peer,
     {
-        if let Some(settings) = &self.remote {
+        if let Some(settings) = self.remote.clone() {
             if !dst.poll_ready(cx)?.is_ready() {
                 return Poll::Pending;
             }
@@ -115,7 +131,10 @@ impl Settings {
             // Buffer the settings frame
             dst.buffer(frame.into()).expect("invalid settings frame");
 
-            log::trace!("ACK sent; applying settings");
+            tracing::trace!("ACK sent; applying settings");
+
+            let is_initial = self.mark_remote_initial_settings_as_received();
+            streams.apply_remote_settings(&settings, is_initial)?;
 
             if let Some(val) = settings.header_table_size() {
                 dst.set_send_header_table_size(val as usize);
@@ -124,8 +143,6 @@ impl Settings {
             if let Some(val) = settings.max_frame_size() {
                 dst.set_max_send_frame_size(val as usize);
             }
-
-            streams.apply_remote_settings(settings)?;
         }
 
         self.remote = None;
@@ -139,7 +156,7 @@ impl Settings {
                 // Buffer the settings frame
                 dst.buffer(settings.clone().into())
                     .expect("invalid settings frame");
-                log::trace!("local settings sent; waiting for ack: {:?}", settings);
+                tracing::trace!("local settings sent; waiting for ack: {:?}", settings);
 
                 self.local = Local::WaitingAck(settings.clone());
             }

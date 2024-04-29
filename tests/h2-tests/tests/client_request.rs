@@ -2,12 +2,13 @@ use futures::future::{join, ready, select, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
+use std::io;
 use std::pin::Pin;
 use std::task::Context;
 
 #[tokio::test]
 async fn handshake() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -16,7 +17,7 @@ async fn handshake() {
 
     let (_client, h2) = client::handshake(mock).await.unwrap();
 
-    log::trace!("hands have been shook");
+    tracing::trace!("hands have been shook");
 
     // At this point, the connection should be closed
     h2.await.unwrap();
@@ -24,7 +25,7 @@ async fn handshake() {
 
 #[tokio::test]
 async fn client_other_thread() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -60,7 +61,7 @@ async fn client_other_thread() {
 
 #[tokio::test]
 async fn recv_invalid_server_stream_id() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let mock = mock_io::Builder::new()
         .handshake()
@@ -84,7 +85,7 @@ async fn recv_invalid_server_stream_id() {
         .body(())
         .unwrap();
 
-    log::info!("sending request");
+    tracing::info!("sending request");
     let (response, _) = client.send_request(request, true).unwrap();
 
     // The connection errors
@@ -96,7 +97,7 @@ async fn recv_invalid_server_stream_id() {
 
 #[tokio::test]
 async fn request_stream_id_overflows() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let h2 = async move {
@@ -149,7 +150,7 @@ async fn request_stream_id_overflows() {
 
 #[tokio::test]
 async fn client_builder_max_concurrent_streams() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let mut settings = frame::Settings::default();
@@ -187,7 +188,7 @@ async fn client_builder_max_concurrent_streams() {
 
 #[tokio::test]
 async fn request_over_max_concurrent_streams_errors() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -239,6 +240,8 @@ async fn request_over_max_concurrent_streams_errors() {
 
         // first request is allowed
         let (resp1, mut stream1) = client.send_request(request, false).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -285,8 +288,92 @@ async fn request_over_max_concurrent_streams_errors() {
 }
 
 #[tokio::test]
+async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        srv.ping_pong([0; 8]).await;
+
+        // limit this server later in life
+        srv.send_frame(frames::settings().max_concurrent_streams(1))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+
+        srv.recv_frame(
+            frames::headers(5)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // first request is allowed
+        let (resp1, _) = client.send_request(request, true).unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // second request is put into pending_open
+        let (resp2, _) = client.send_request(request, true).unwrap();
+
+        h2.drive(async move {
+            resp1.await.expect("req");
+        })
+        .await;
+        join(async move { h2.await.unwrap() }, async move {
+            resp2.await.unwrap()
+        })
+        .await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
 async fn send_request_poll_ready_when_connection_error() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -336,6 +423,8 @@ async fn send_request_poll_ready_when_connection_error() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -371,7 +460,7 @@ async fn send_request_poll_ready_when_connection_error() {
             resp2.await.expect_err("req2");
         }));
 
-        while let Some(_) = unordered.next().await {}
+        while unordered.next().await.is_some() {}
     };
 
     join(srv, h2).await;
@@ -379,7 +468,7 @@ async fn send_request_poll_ready_when_connection_error() {
 
 #[tokio::test]
 async fn send_reset_notifies_recv_stream() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -410,7 +499,11 @@ async fn send_reset_notifies_recv_stream() {
         };
         let rx = async {
             let mut body = res.into_body();
-            body.next().await.unwrap().expect_err("RecvBody");
+            let err = body.next().await.unwrap().expect_err("RecvBody");
+            assert_eq!(
+                err.to_string(),
+                "stream error sent by user: refused stream before processing any application logic"
+            );
         };
 
         // a FuturesUnordered is used on purpose!
@@ -432,7 +525,7 @@ async fn send_reset_notifies_recv_stream() {
 
 #[tokio::test]
 async fn http_11_request_without_scheme_or_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -462,7 +555,7 @@ async fn http_11_request_without_scheme_or_authority() {
 
 #[tokio::test]
 async fn http_2_request_without_scheme_or_authority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -485,9 +578,8 @@ async fn http_2_request_without_scheme_or_authority() {
         client
             .send_request(request, true)
             .expect_err("should be UserError");
-        let ret = h2.await.expect("h2");
+        let _: () = h2.await.expect("h2");
         drop(client);
-        ret
     };
 
     join(srv, h2).await;
@@ -499,7 +591,7 @@ fn request_with_h1_version() {}
 
 #[tokio::test]
 async fn request_with_connection_headers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // can't assert full handshake, since client never sends a request, and
@@ -517,7 +609,7 @@ async fn request_with_connection_headers() {
         ("keep-alive", "5"),
         ("proxy-connection", "bar"),
         ("transfer-encoding", "chunked"),
-        ("upgrade", "HTTP/2.0"),
+        ("upgrade", "HTTP/2"),
         ("te", "boom"),
     ];
 
@@ -542,7 +634,7 @@ async fn request_with_connection_headers() {
 
 #[tokio::test]
 async fn connection_close_notifies_response_future() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -571,7 +663,7 @@ async fn connection_close_notifies_response_future() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
         join(async move { conn.await.expect("conn") }, req).await;
     };
@@ -581,7 +673,7 @@ async fn connection_close_notifies_response_future() {
 
 #[tokio::test]
 async fn connection_close_notifies_client_poll_ready() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -610,7 +702,7 @@ async fn connection_close_notifies_client_poll_ready() {
                 .0
                 .await;
             let err = res.expect_err("response");
-            assert_eq!(err.to_string(), "broken pipe");
+            assert_eq!(err.to_string(), "stream closed because of a broken pipe");
         };
 
         conn.drive(req).await;
@@ -618,7 +710,10 @@ async fn connection_close_notifies_client_poll_ready() {
         let err = poll_fn(move |cx| client.poll_ready(cx))
             .await
             .expect_err("poll_ready");
-        assert_eq!(err.to_string(), "broken pipe");
+        assert_eq!(
+            err.to_string(),
+            "connection closed because of a broken pipe"
+        );
     };
 
     join(srv, client).await;
@@ -626,7 +721,7 @@ async fn connection_close_notifies_client_poll_ready() {
 
 #[tokio::test]
 async fn sending_request_on_closed_connection() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -672,7 +767,7 @@ async fn sending_request_on_closed_connection() {
         };
 
         let poll_err = poll_fn(|cx| client.poll_ready(cx)).await.unwrap_err();
-        let msg = "protocol error: unspecific protocol error detected";
+        let msg = "connection error detected: unspecific protocol error detected";
         assert_eq!(poll_err.to_string(), msg);
 
         let request = Request::builder()
@@ -688,7 +783,7 @@ async fn sending_request_on_closed_connection() {
 
 #[tokio::test]
 async fn recv_too_big_headers() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -708,7 +803,7 @@ async fn recv_too_big_headers() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
         srv.send_frame(frames::headers(3).response(200)).await;
-        // no reset for 1, since it's closed anyways
+        // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
         srv.recv_frame(frames::reset(3).refused()).await;
         idle_ms(10).await;
@@ -751,7 +846,7 @@ async fn recv_too_big_headers() {
 
 #[tokio::test]
 async fn pending_send_request_gets_reset_by_peer_properly() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let payload = Bytes::from(vec![0; (frame::DEFAULT_INITIAL_WINDOW_SIZE * 2) as usize]);
@@ -823,7 +918,7 @@ async fn pending_send_request_gets_reset_by_peer_properly() {
 
 #[tokio::test]
 async fn request_without_path() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -854,7 +949,7 @@ async fn request_without_path() {
 
 #[tokio::test]
 async fn request_options_with_star() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     // Note the lack of trailing slash.
@@ -899,7 +994,7 @@ async fn notify_on_send_capacity() {
     // stream, the client is notified.
     use tokio::sync::oneshot;
 
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (done_tx, done_rx) = oneshot::channel();
@@ -979,7 +1074,7 @@ async fn notify_on_send_capacity() {
 
 #[tokio::test]
 async fn send_stream_poll_reset() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -1017,7 +1112,7 @@ async fn drop_pending_open() {
     // This test checks that a stream queued for pending open behaves correctly when its
     // client drops.
     use tokio::sync::oneshot;
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (init_tx, init_rx) = oneshot::channel();
@@ -1105,7 +1200,7 @@ async fn malformed_response_headers_dont_unlink_stream() {
     // no remaining references correctly resets the stream, without prematurely
     // unlinking it.
     use tokio::sync::oneshot;
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
 
     let (io, mut srv) = mock::new();
     let (drop_tx, drop_rx) = oneshot::channel();
@@ -1171,8 +1266,605 @@ async fn malformed_response_headers_dont_unlink_stream() {
     join(srv, client).await;
 }
 
-const SETTINGS: &'static [u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
-const SETTINGS_ACK: &'static [u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
+#[tokio::test]
+async fn allow_empty_data_for_head() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("HEAD", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", 100),
+        )
+        .await;
+        srv.send_frame(frames::data(1, "").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::HEAD)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let (_, mut body) = response.await.unwrap().into_parts();
+        assert_eq!(body.data().await.unwrap().unwrap(), "");
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn early_hints() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(103)).await;
+        srv.send_frame(frames::headers(1).response(200).field("content-length", 2))
+            .await;
+        srv.send_frame(frames::data(1, "ok").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let (ha, mut body) = response.await.unwrap().into_parts();
+        eprintln!("{:?}", ha);
+        assert_eq!(body.data().await.unwrap().unwrap(), "ok");
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn informational_while_local_streaming() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(103)).await;
+        srv.send_frame(frames::headers(1).response(200).field("content-length", 2))
+            .await;
+        srv.recv_frame(frames::data(1, "hello").eos()).await;
+        srv.send_frame(frames::data(1, "ok").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // don't EOS stream yet..
+        let (response, mut body_tx) = client.send_request(request, false).unwrap();
+        // eventual response is 200, not 103
+        let resp = response.await.expect("response");
+        // assert_eq!(resp.status(), 200);
+        // now we can end the stream
+        body_tx.send_data("hello".into(), true).expect("send_data");
+        let mut body = resp.into_body();
+        assert_eq!(body.data().await.unwrap().unwrap(), "ok");
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn extended_connect_protocol_disabled_by_default() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        assert!(!client.is_extended_connect_protocol_enabled());
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn extended_connect_protocol_enabled_during_handshake() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().enable_connect_protocol(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        assert!(client.is_extended_connect_protocol_enabled());
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn invalid_connect_protocol_enabled_setting() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send a settings frame
+        srv.send(frames::settings().enable_connect_protocol(2).into())
+            .await
+            .unwrap();
+        srv.read_preface().await.unwrap();
+
+        let settings = assert_settings!(srv.next().await.expect("unexpected EOF").unwrap());
+        assert_default_settings!(settings);
+
+        // Send the ACK
+        let ack = frame::Settings::ack();
+
+        // TODO: Don't unwrap?
+        srv.send(ack.into()).await.unwrap();
+
+        let frame = srv.next().await.unwrap().unwrap();
+        let go_away = assert_go_away!(frame);
+        assert_eq!(go_away.reason(), Reason::PROTOCOL_ERROR);
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+
+        let error = h2.drive(response).await.unwrap_err();
+        assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn extended_connect_request() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().enable_connect_protocol(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("CONNECT", "http://bread/baguette")
+                .protocol("the-bread-protocol")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::connect("http://bread/baguette")
+            .extension(Protocol::from("the-bread-protocol"))
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_odd_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_even_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(2)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_reused_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://camembert.fromage")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::reset(1).stream_closed()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        h2.drive(async {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://camembert.fromage")
+                .body(())
+                .unwrap();
+            let _res = client.send_request(request, true).unwrap().0.await.unwrap();
+        })
+        .await;
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn client_builder_header_table_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+    let mut settings = frame::Settings::default();
+
+    settings.set_header_table_size(Some(10000));
+
+    let srv = async move {
+        let recv_settings = srv.assert_client_handshake().await;
+        assert_frame_eq(recv_settings, settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let mut builder = client::Builder::new();
+    builder.header_table_size(10000);
+
+    let h2 = async move {
+        let (mut client, mut h2) = builder.handshake::<_, Bytes>(io).await.unwrap();
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn configured_max_concurrent_send_streams_and_update_it_based_on_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send empty SETTINGS frame (no MAX_CONCURRENT_STREAMS is provided)
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::Builder::new()
+            // Configure the initial value to 2024
+            .initial_max_send_streams(2024)
+            .handshake::<_, bytes::Bytes>(io)
+            .await
+            .unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // It should be pre-configured value before it receives the initial
+        // SETTINGS frame from the server
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        h2.as_mut().await.unwrap();
+        // If the server's initial SETTINGS frame does not include
+        // MAX_CONCURRENT_STREAMS, this should be updated to usize::MAX.
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn configured_max_concurrent_send_streams_and_update_it_based_on_non_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::Builder::new()
+            // Configure the initial value to 2024
+            .initial_max_send_streams(2024)
+            .handshake::<_, bytes::Bytes>(io)
+            .await
+            .unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // It should be pre-configured value before it receives the initial
+        // SETTINGS frame from the server
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        h2.as_mut().await.unwrap();
+        // Now the client has received the initial SETTINGS frame from the
+        // server, which should update the value accordingly
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+        h2.as_mut().await.unwrap();
+        // Even though the second SETTINGS frame contained no value for
+        // MAX_CONCURRENT_STREAMS, update to usize::MAX should not happen
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_non_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings().max_concurrent_streams(2024))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+        h2.as_mut().await.unwrap();
+        // The most-recently advertised value should be used
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let err = h2.await.expect_err("should receive UnexpectedEof");
+        assert_eq!(
+            err.get_io().expect("should be UnexpectedEof").kind(),
+            io::ErrorKind::UnexpectedEof,
+        );
+    };
+    join(srv, h2).await;
+}
+
+const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
+const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
 trait MockH2 {
     fn handshake(&mut self) -> &mut Self;

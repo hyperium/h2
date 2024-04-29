@@ -1,18 +1,18 @@
-//! Client implementation of the HTTP/2.0 protocol.
+//! Client implementation of the HTTP/2 protocol.
 //!
 //! # Getting started
 //!
-//! Running an HTTP/2.0 client requires the caller to establish the underlying
+//! Running an HTTP/2 client requires the caller to establish the underlying
 //! connection as well as get the connection to a state that is ready to begin
-//! the HTTP/2.0 handshake. See [here](../index.html#handshake) for more
+//! the HTTP/2 handshake. See [here](../index.html#handshake) for more
 //! details.
 //!
 //! This could be as basic as using Tokio's [`TcpStream`] to connect to a remote
 //! host, but usually it means using either ALPN or HTTP/1.1 protocol upgrades.
 //!
 //! Once a connection is obtained, it is passed to [`handshake`], which will
-//! begin the [HTTP/2.0 handshake]. This returns a future that completes once
-//! the handshake process is performed and HTTP/2.0 streams may be initialized.
+//! begin the [HTTP/2 handshake]. This returns a future that completes once
+//! the handshake process is performed and HTTP/2 streams may be initialized.
 //!
 //! [`handshake`] uses default configuration values. There are a number of
 //! settings that can be changed by using [`Builder`] instead.
@@ -26,16 +26,16 @@
 //! # Making requests
 //!
 //! Requests are made using the [`SendRequest`] handle provided by the handshake
-//! future. Once a request is submitted, an HTTP/2.0 stream is initialized and
+//! future. Once a request is submitted, an HTTP/2 stream is initialized and
 //! the request is sent to the server.
 //!
 //! A request body and request trailers are sent using [`SendRequest`] and the
 //! server's response is returned once the [`ResponseFuture`] future completes.
 //! Both the [`SendStream`] and [`ResponseFuture`] instances are returned by
-//! [`SendRequest::send_request`] and are tied to the HTTP/2.0 stream
+//! [`SendRequest::send_request`] and are tied to the HTTP/2 stream
 //! initialized by the sent request.
 //!
-//! The [`SendRequest::poll_ready`] function returns `Ready` when a new HTTP/2.0
+//! The [`SendRequest::poll_ready`] function returns `Ready` when a new HTTP/2
 //! stream can be created, i.e. as long as the current number of active streams
 //! is below [`MAX_CONCURRENT_STREAMS`]. If a new stream cannot be created, the
 //! caller will be notified once an existing stream closes, freeing capacity for
@@ -131,13 +131,14 @@
 //! [`SendRequest`]: struct.SendRequest.html
 //! [`ResponseFuture`]: struct.ResponseFuture.html
 //! [`SendRequest::poll_ready`]: struct.SendRequest.html#method.poll_ready
-//! [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+//! [HTTP/2 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 //! [`Builder`]: struct.Builder.html
 //! [`Error`]: ../struct.Error.html
 
-use crate::codec::{Codec, RecvError, SendError, UserError};
+use crate::codec::{Codec, SendError, UserError};
+use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
-use crate::proto;
+use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
@@ -149,8 +150,9 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::usize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tracing::Instrument;
 
-/// Initializes new HTTP/2.0 streams on a connection by sending a request.
+/// Initializes new HTTP/2 streams on a connection by sending a request.
 ///
 /// This type does no work itself. Instead, it is a handle to the inner
 /// connection state held by [`Connection`]. If the associated connection
@@ -160,7 +162,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 /// / threads than their associated [`Connection`] instance. Internally, there
 /// is a buffer used to stage requests before they get written to the
 /// connection. There is no guarantee that requests get written to the
-/// connection in FIFO order as HTTP/2.0 prioritization logic can play a role.
+/// connection in FIFO order as HTTP/2 prioritization logic can play a role.
 ///
 /// [`SendRequest`] implements [`Clone`], enabling the creation of many
 /// instances that are backed by a single connection.
@@ -183,10 +185,10 @@ pub struct ReadySendRequest<B: Buf> {
     inner: Option<SendRequest<B>>,
 }
 
-/// Manages all state associated with an HTTP/2.0 client connection.
+/// Manages all state associated with an HTTP/2 client connection.
 ///
 /// A `Connection` is backed by an I/O resource (usually a TCP socket) and
-/// implements the HTTP/2.0 client logic for that connection. It is responsible
+/// implements the HTTP/2 client logic for that connection. It is responsible
 /// for driving the internal state forward, performing the work requested of the
 /// associated handles ([`SendRequest`], [`ResponseFuture`], [`SendStream`],
 /// [`RecvStream`]).
@@ -219,7 +221,7 @@ pub struct ReadySendRequest<B: Buf> {
 ///     // Submit the connection handle to an executor.
 ///     tokio::spawn(async { connection.await.expect("connection failed"); });
 ///
-///     // Now, use `send_request` to initialize HTTP/2.0 streams.
+///     // Now, use `send_request` to initialize HTTP/2 streams.
 ///     // ...
 /// # Ok(())
 /// # }
@@ -273,7 +275,7 @@ pub struct PushPromises {
 /// Methods can be chained in order to set the configuration values.
 ///
 /// The client is constructed by calling [`handshake`] and passing the I/O
-/// handle that will back the HTTP/2.0 server.
+/// handle that will back the HTTP/2 server.
 ///
 /// New instances of `Builder` are obtained via [`Builder::new`].
 ///
@@ -293,7 +295,7 @@ pub struct PushPromises {
 /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
 ///     -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
 /// # {
-/// // `client_fut` is a future representing the completion of the HTTP/2.0
+/// // `client_fut` is a future representing the completion of the HTTP/2
 /// // handshake.
 /// let client_fut = Builder::new()
 ///     .initial_window_size(1_000_000)
@@ -310,16 +312,25 @@ pub struct Builder {
     reset_stream_duration: Duration,
 
     /// Initial maximum number of locally initiated (send) streams.
-    /// After receiving a Settings frame from the remote peer,
+    /// After receiving a SETTINGS frame from the remote peer,
     /// the connection will overwrite this value with the
     /// MAX_CONCURRENT_STREAMS specified in the frame.
+    /// If no value is advertised by the remote peer in the initial SETTINGS
+    /// frame, it will be set to usize::MAX.
     initial_max_send_streams: usize,
 
     /// Initial target window size for new connections.
     initial_target_connection_window_size: Option<u32>,
 
+    /// Maximum amount of bytes to "buffer" for writing per stream.
+    max_send_buffer_size: usize,
+
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
+
+    /// Maximum number of remotely reset streams to allow in the pending
+    /// accept queue.
+    pending_accept_reset_stream_max: usize,
 
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
@@ -327,6 +338,12 @@ pub struct Builder {
     /// The stream ID of the first (lowest) stream. Subsequent streams will use
     /// monotonically increasing stream IDs.
     stream_id: StreamId,
+
+    /// Maximum number of locally reset streams due to protocol error across
+    /// the lifetime of the connection.
+    ///
+    /// When this gets exceeded, we issue GOAWAYs.
+    local_max_error_reset_streams: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -336,9 +353,9 @@ pub(crate) struct Peer;
 
 impl<B> SendRequest<B>
 where
-    B: Buf + 'static,
+    B: Buf,
 {
-    /// Returns `Ready` when the connection can initialize a new HTTP/2.0
+    /// Returns `Ready` when the connection can initialize a new HTTP/2
     /// stream.
     ///
     /// This function must return `Ready` before `send_request` is called. When
@@ -386,16 +403,16 @@ where
         ReadySendRequest { inner: Some(self) }
     }
 
-    /// Sends a HTTP/2.0 request to the server.
+    /// Sends a HTTP/2 request to the server.
     ///
-    /// `send_request` initializes a new HTTP/2.0 stream on the associated
+    /// `send_request` initializes a new HTTP/2 stream on the associated
     /// connection, then sends the given request using this new stream. Only the
     /// request head is sent.
     ///
     /// On success, a [`ResponseFuture`] instance and [`SendStream`] instance
     /// are returned. The [`ResponseFuture`] instance is used to get the
     /// server's response and the [`SendStream`] instance is used to send a
-    /// request body or trailers to the server over the same HTTP/2.0 stream.
+    /// request body or trailers to the server over the same HTTP/2 stream.
     ///
     /// To send a request body or trailers, set `end_of_stream` to `false`.
     /// Then, use the returned [`SendStream`] instance to stream request body
@@ -501,8 +518,10 @@ where
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|stream| {
-                if stream.is_pending_open() {
+            .map(|(stream, is_full)| {
+                if stream.is_pending_open() && is_full {
+                    // Only prevent sending another request when the request queue
+                    // is not full.
                     self.pending = Some(stream.clone_to_opaque());
                 }
 
@@ -515,6 +534,19 @@ where
 
                 (response, stream)
             })
+    }
+
+    /// Returns whether the [extended CONNECT protocol][1] is enabled or not.
+    ///
+    /// This setting is configured by the server peer by sending the
+    /// [`SETTINGS_ENABLE_CONNECT_PROTOCOL` parameter][2] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    /// [2]: https://datatracker.ietf.org/doc/html/rfc8441#section-3
+    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.inner.is_extended_connect_protocol_enabled()
     }
 }
 
@@ -566,7 +598,7 @@ where
 
 impl<B> Future for ReadySendRequest<B>
 where
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<SendRequest<B>, crate::Error>;
 
@@ -600,7 +632,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .initial_window_size(1_000_000)
@@ -613,12 +645,15 @@ impl Builder {
     /// ```
     pub fn new() -> Builder {
         Builder {
+            max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
             stream_id: 1.into(),
+            local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
 
@@ -642,7 +677,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .initial_window_size(1_000_000)
@@ -677,7 +712,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .initial_connection_window_size(1_000_000)
@@ -692,7 +727,7 @@ impl Builder {
         self
     }
 
-    /// Indicates the size (in octets) of the largest HTTP/2.0 frame payload that the
+    /// Indicates the size (in octets) of the largest HTTP/2 frame payload that the
     /// configured client is able to accept.
     ///
     /// The sender may send data frames that are **smaller** than this value,
@@ -711,7 +746,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .max_frame_size(1_000_000)
@@ -751,7 +786,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .max_header_list_size(16 * 1024)
@@ -786,7 +821,7 @@ impl Builder {
     /// a protocol level error. Instead, the `h2` library will immediately reset
     /// the stream.
     ///
-    /// See [Section 5.1.2] in the HTTP/2.0 spec for more details.
+    /// See [Section 5.1.2] in the HTTP/2 spec for more details.
     ///
     /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
     ///
@@ -800,7 +835,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .max_concurrent_streams(1000)
@@ -818,8 +853,10 @@ impl Builder {
     /// Sets the initial maximum of locally initiated (send) streams.
     ///
     /// The initial settings will be overwritten by the remote peer when
-    /// the Settings frame is received. The new value will be set to the
-    /// `max_concurrent_streams()` from the frame.
+    /// the SETTINGS frame is received. The new value will be set to the
+    /// `max_concurrent_streams()` from the frame. If no value is advertised in
+    /// the initial SETTINGS frame from the remote peer as part of
+    /// [HTTP/2 Connection Preface], `usize::MAX` will be set.
     ///
     /// This setting prevents the caller from exceeding this number of
     /// streams that are counted towards the concurrency limit.
@@ -827,9 +864,12 @@ impl Builder {
     /// Sending streams past the limit returned by the peer will be treated
     /// as a stream error of type PROTOCOL_ERROR or REFUSED_STREAM.
     ///
-    /// See [Section 5.1.2] in the HTTP/2.0 spec for more details.
+    /// See [Section 5.1.2] in the HTTP/2 spec for more details.
     ///
-    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    /// The default value is `usize::MAX`.
+    ///
+    /// [HTTP/2 Connection Preface]: https://httpwg.org/specs/rfc9113.html#preface
+    /// [Section 5.1.2]: https://httpwg.org/specs/rfc9113.html#rfc.section.5.1.2
     ///
     /// # Examples
     ///
@@ -841,7 +881,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .initial_max_send_streams(1000)
@@ -858,7 +898,7 @@ impl Builder {
 
     /// Sets the maximum number of concurrent locally reset streams.
     ///
-    /// When a stream is explicitly reset, the HTTP/2.0 specification requires
+    /// When a stream is explicitly reset, the HTTP/2 specification requires
     /// that any further frames received for that stream must be ignored for
     /// "some time".
     ///
@@ -886,7 +926,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .max_concurrent_reset_streams(1000)
@@ -903,7 +943,7 @@ impl Builder {
 
     /// Sets the duration to remember locally reset streams.
     ///
-    /// When a stream is explicitly reset, the HTTP/2.0 specification requires
+    /// When a stream is explicitly reset, the HTTP/2 specification requires
     /// that any further frames received for that stream must be ignored for
     /// "some time".
     ///
@@ -932,7 +972,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .reset_stream_duration(Duration::from_secs(10))
@@ -947,14 +987,92 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.
+    /// Too many of these often indicate a malicious client, and there are attacks which can abuse this to DOS servers.
+    /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
+    ///
+    /// When the number of local resets exceeds this threshold, the client will close the connection.
+    ///
+    /// If you really want to disable this, supply [`Option::None`] here.
+    /// Disabling this is not recommended and may expose you to DOS attacks.
+    ///
+    /// The default value is currently 1024, but could change.
+    pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
+        self.local_max_error_reset_streams = max;
+        self
+    }
+
+    /// Sets the maximum number of pending-accept remotely-reset streams.
+    ///
+    /// Streams that have been received by the peer, but not accepted by the
+    /// user, can also receive a RST_STREAM. This is a legitimate pattern: one
+    /// could send a request and then shortly after, realize it is not needed,
+    /// sending a CANCEL.
+    ///
+    /// However, since those streams are now "closed", they don't count towards
+    /// the max concurrent streams. So, they will sit in the accept queue,
+    /// using memory.
+    ///
+    /// When the number of remotely-reset streams sitting in the pending-accept
+    /// queue reaches this maximum value, a connection error with the code of
+    /// `ENHANCE_YOUR_CALM` will be sent to the peer, and returned by the
+    /// `Future`.
+    ///
+    /// The default value is currently 20, but could change.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .max_pending_accept_reset_streams(100)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn max_pending_accept_reset_streams(&mut self, max: usize) -> &mut Self {
+        self.pending_accept_reset_stream_max = max;
+        self
+    }
+
+    /// Sets the maximum send buffer size per stream.
+    ///
+    /// Once a stream has buffered up to (or over) the maximum, the stream's
+    /// flow control will not "poll" additional capacity. Once bytes for the
+    /// stream have been written to the connection, the send buffer capacity
+    /// will be freed up again.
+    ///
+    /// The default is currently ~400KB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `max` is larger than `u32::MAX`.
+    pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
+        assert!(max <= std::u32::MAX as usize);
+        self.max_send_buffer_size = max;
+        self
+    }
+
     /// Enables or disables server push promises.
     ///
-    /// This value is included in the initial SETTINGS handshake. When set, the
-    /// server MUST NOT send a push promise. Setting this value to value to
+    /// This value is included in the initial SETTINGS handshake.
+    /// Setting this value to value to
     /// false in the initial SETTINGS handshake guarantees that the remote server
     /// will never send a push promise.
     ///
-    /// This setting can be changed during the life of a single HTTP/2.0
+    /// This setting can be changed during the life of a single HTTP/2
     /// connection by sending another settings frame updating the value.
     ///
     /// Default value: `true`.
@@ -970,7 +1088,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .enable_push(false)
@@ -985,6 +1103,39 @@ impl Builder {
         self
     }
 
+    /// Sets the header table size.
+    ///
+    /// This setting informs the peer of the maximum size of the header compression
+    /// table used to encode header blocks, in octets. The encoder may select any value
+    /// equal to or less than the header table size specified by the sender.
+    ///
+    /// The default value is 4,096.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .header_table_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn header_table_size(&mut self, size: u32) -> &mut Self {
+        self.settings.set_header_table_size(Some(size));
+        self
+    }
+
     /// Sets the first stream ID to something other than 1.
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
@@ -996,22 +1147,22 @@ impl Builder {
         self
     }
 
-    /// Creates a new configured HTTP/2.0 client backed by `io`.
+    /// Creates a new configured HTTP/2 client backed by `io`.
     ///
     /// It is expected that `io` already be in an appropriate state to commence
-    /// the [HTTP/2.0 handshake]. The handshake is completed once both the connection
+    /// the [HTTP/2 handshake]. The handshake is completed once both the connection
     /// preface and the initial settings frame is sent by the client.
     ///
     /// The handshake future does not wait for the initial settings frame from the
     /// server.
     ///
     /// Returns a future which resolves to the [`Connection`] / [`SendRequest`]
-    /// tuple once the HTTP/2.0 handshake has been completed.
+    /// tuple once the HTTP/2 handshake has been completed.
     ///
     /// This function also allows the caller to configure the send payload data
     /// type. See [Outbound data type] for more details.
     ///
-    /// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+    /// [HTTP/2 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
     /// [`Connection`]: struct.Connection.html
     /// [`SendRequest`]: struct.SendRequest.html
     /// [Outbound data type]: ../index.html#outbound-data-type.
@@ -1028,7 +1179,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     ///     -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .handshake(my_io);
@@ -1048,7 +1199,7 @@ impl Builder {
     /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
     /// # -> Result<((SendRequest<&'static [u8]>, Connection<T, &'static [u8]>)), h2::Error>
     /// # {
-    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // `client_fut` is a future representing the completion of the HTTP/2
     /// // handshake.
     /// let client_fut = Builder::new()
     ///     .handshake::<_, &'static [u8]>(my_io);
@@ -1063,7 +1214,7 @@ impl Builder {
     ) -> impl Future<Output = Result<(SendRequest<B>, Connection<T, B>), crate::Error>>
     where
         T: AsyncRead + AsyncWrite + Unpin,
-        B: Buf + 'static,
+        B: Buf,
     {
         Connection::handshake2(io, self.clone())
     }
@@ -1075,19 +1226,19 @@ impl Default for Builder {
     }
 }
 
-/// Creates a new configured HTTP/2.0 client with default configuration
+/// Creates a new configured HTTP/2 client with default configuration
 /// values backed by `io`.
 ///
 /// It is expected that `io` already be in an appropriate state to commence
-/// the [HTTP/2.0 handshake]. See [Handshake] for more details.
+/// the [HTTP/2 handshake]. See [Handshake] for more details.
 ///
 /// Returns a future which resolves to the [`Connection`] / [`SendRequest`]
-/// tuple once the HTTP/2.0 handshake has been completed. The returned
+/// tuple once the HTTP/2 handshake has been completed. The returned
 /// [`Connection`] instance will be using default configuration values. Use
 /// [`Builder`] to customize the configuration values used by a [`Connection`]
 /// instance.
 ///
-/// [HTTP/2.0 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
+/// [HTTP/2 handshake]: http://httpwg.org/specs/rfc7540.html#ConnectionHeader
 /// [Handshake]: ../index.html#handshake
 /// [`Connection`]: struct.Connection.html
 /// [`SendRequest`]: struct.SendRequest.html
@@ -1102,7 +1253,7 @@ impl Default for Builder {
 /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T) -> Result<(), h2::Error>
 /// # {
 /// let (send_request, connection) = client::handshake(my_io).await?;
-/// // The HTTP/2.0 handshake has completed, now start polling
+/// // The HTTP/2 handshake has completed, now start polling
 /// // `connection` and use `send_request` to send requests to the
 /// // server.
 /// # Ok(())
@@ -1115,26 +1266,38 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let builder = Builder::new();
-    builder.handshake(io).await
+    builder
+        .handshake(io)
+        .instrument(tracing::trace_span!("client_handshake"))
+        .await
 }
 
 // ===== impl Connection =====
 
+async fn bind_connection<T>(io: &mut T) -> Result<(), crate::Error>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    tracing::debug!("binding client connection");
+
+    let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    io.write_all(msg).await.map_err(crate::Error::from_io)?;
+
+    tracing::debug!("client connection bound");
+
+    Ok(())
+}
+
 impl<T, B> Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     async fn handshake2(
         mut io: T,
         builder: Builder,
     ) -> Result<(SendRequest<B>, Connection<T, B>), crate::Error> {
-        log::debug!("binding client connection");
-
-        let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        io.write_all(msg).await.map_err(crate::Error::from_io)?;
-
-        log::debug!("client connection bound");
+        bind_connection(&mut io).await?;
 
         // Create the codec
         let mut codec = Codec::new(io);
@@ -1157,8 +1320,11 @@ where
             proto::Config {
                 next_stream_id: builder.stream_id,
                 initial_max_send_streams: builder.initial_max_send_streams,
+                max_send_buffer_size: builder.max_send_buffer_size,
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
+                remote_reset_stream_max: builder.pending_accept_reset_stream_max,
+                local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),
             },
         );
@@ -1224,12 +1390,39 @@ where
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.inner.take_user_pings().map(PingPong::new)
     }
+
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by this client.
+    ///
+    /// This limit is configured by the server peer by sending the
+    /// [`SETTINGS_MAX_CONCURRENT_STREAMS` parameter][1] in a `SETTINGS` frame.
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    pub fn max_concurrent_send_streams(&self) -> usize {
+        self.inner.max_send_streams()
+    }
+    /// Returns the maximum number of concurrent streams that may be initiated
+    /// by the server on this connection.
+    ///
+    /// This returns the value of the [`SETTINGS_MAX_CONCURRENT_STREAMS`
+    /// parameter][1] sent in a `SETTINGS` frame that has been
+    /// acknowledged by the remote peer. The value to be sent is configured by
+    /// the [`Builder::max_concurrent_streams`][2] method before handshaking
+    /// with the remote peer.
+    ///
+    /// [1]: https://tools.ietf.org/html/rfc7540#section-5.1.2
+    /// [2]: ../struct.Builder.html#method.max_concurrent_streams
+    pub fn max_concurrent_recv_streams(&self) -> usize {
+        self.inner.max_recv_streams()
+    }
 }
 
 impl<T, B> Future for Connection<T, B>
 where
     T: AsyncRead + AsyncWrite + Unpin,
-    B: Buf + 'static,
+    B: Buf,
 {
     type Output = Result<(), crate::Error>;
 
@@ -1375,6 +1568,7 @@ impl Peer {
     pub fn convert_send_message(
         id: StreamId,
         request: Request<()>,
+        protocol: Option<Protocol>,
         end_of_stream: bool,
     ) -> Result<Headers, SendError> {
         use http::request::Parts;
@@ -1394,7 +1588,7 @@ impl Peer {
 
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
-        let mut pseudo = Pseudo::request(method, uri);
+        let mut pseudo = Pseudo::request(method, uri, protocol);
 
         if pseudo.scheme.is_none() {
             // If the scheme is not set, then there are a two options.
@@ -1414,7 +1608,7 @@ impl Peer {
                     return Err(UserError::MissingUriSchemeAndAuthority.into());
                 } else {
                     // This is acceptable as per the above comment. However,
-                    // HTTP/2.0 requires that a scheme is set. Since we are
+                    // HTTP/2 requires that a scheme is set. Since we are
                     // forwarding an HTTP 1.1 request, the scheme is set to
                     // "http".
                     pseudo.set_scheme(uri::Scheme::HTTP);
@@ -1438,19 +1632,23 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Response<()>;
 
+    const NAME: &'static str = "Client";
+
     fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Client
     }
 
+    /*
     fn is_server() -> bool {
         false
     }
+    */
 
     fn convert_poll_message(
         pseudo: Pseudo,
         fields: HeaderMap,
         stream_id: StreamId,
-    ) -> Result<Self::Poll, RecvError> {
+    ) -> Result<Self::Poll, Error> {
         let mut b = Response::builder();
 
         b = b.version(Version::HTTP_2);
@@ -1464,10 +1662,7 @@ impl proto::Peer for Peer {
             Err(_) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
-                return Err(RecvError::Stream {
-                    id: stream_id,
-                    reason: Reason::PROTOCOL_ERROR,
-                });
+                return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }
         };
 

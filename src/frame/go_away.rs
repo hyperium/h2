@@ -8,7 +8,6 @@ use crate::frame::{self, Error, Head, Kind, Reason, StreamId};
 pub struct GoAway {
     last_stream_id: StreamId,
     error_code: Reason,
-    #[allow(unused)]
     debug_data: Bytes,
 }
 
@@ -21,6 +20,14 @@ impl GoAway {
         }
     }
 
+    pub fn with_debug_data(last_stream_id: StreamId, reason: Reason, debug_data: Bytes) -> Self {
+        Self {
+            last_stream_id,
+            error_code: reason,
+            debug_data,
+        }
+    }
+
     pub fn last_stream_id(&self) -> StreamId {
         self.last_stream_id
     }
@@ -29,8 +36,7 @@ impl GoAway {
         self.error_code
     }
 
-    #[cfg(feature = "unstable")]
-    pub fn debug_data(&self) -> &[u8] {
+    pub fn debug_data(&self) -> &Bytes {
         &self.debug_data
     }
 
@@ -51,11 +57,12 @@ impl GoAway {
     }
 
     pub fn encode<B: BufMut>(&self, dst: &mut B) {
-        log::trace!("encoding GO_AWAY; code={:?}", self.error_code);
+        tracing::trace!("encoding GO_AWAY; code={:?}", self.error_code);
         let head = Head::new(Kind::GoAway, 0, StreamId::zero());
-        head.encode(8, dst);
+        head.encode(8 + self.debug_data.len(), dst);
         dst.put_u32(self.last_stream_id.into());
         dst.put_u32(self.error_code.into());
+        dst.put(self.debug_data.slice(..));
     }
 }
 

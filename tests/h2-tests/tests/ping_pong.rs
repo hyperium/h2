@@ -6,14 +6,13 @@ use h2_support::prelude::*;
 
 #[tokio::test]
 async fn recv_single_ping() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (m, mut mock) = mock::new();
 
     // Create the handshake
     let h2 = async move {
-        let (client, conn) = client::handshake(m).await.unwrap();
-        let c = conn.await.unwrap();
-        (client, c)
+        let (_client, conn) = client::handshake(m).await.unwrap();
+        let _: () = conn.await.unwrap();
     };
 
     let mock = async move {
@@ -36,7 +35,7 @@ async fn recv_single_ping() {
 
 #[tokio::test]
 async fn recv_multiple_pings() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let client = async move {
@@ -58,7 +57,7 @@ async fn recv_multiple_pings() {
 
 #[tokio::test]
 async fn pong_has_highest_priority() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
     let data = Bytes::from(vec![0; 16_384]);
@@ -96,7 +95,7 @@ async fn pong_has_highest_priority() {
 
 #[tokio::test]
 async fn user_ping_pong() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
     let srv = async move {
@@ -138,7 +137,7 @@ async fn user_ping_pong() {
 
 #[tokio::test]
 async fn user_notifies_when_connection_closes() {
-    let _ = env_logger::try_init();
+    h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -146,6 +145,7 @@ async fn user_notifies_when_connection_closes() {
         srv
     };
 
+    #[allow(clippy::async_yields_async)]
     let client = async move {
         let (_client, mut conn) = client::handshake(io).await.expect("client handshake");
         // yield once so we can ack server settings

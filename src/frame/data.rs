@@ -16,7 +16,7 @@ pub struct Data<T = Bytes> {
     pad_len: Option<u8>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 struct DataFlags(u8);
 
 const END_STREAM: u8 = 0x1;
@@ -36,7 +36,7 @@ impl<T> Data<T> {
         }
     }
 
-    /// Returns the stream identifer that this frame is associated with.
+    /// Returns the stream identifier that this frame is associated with.
     ///
     /// This cannot be a zero stream identifier.
     pub fn stream_id(&self) -> StreamId {
@@ -63,7 +63,7 @@ impl<T> Data<T> {
         }
     }
 
-    /// Returns whther the `PADDED` flag is set on this frame.
+    /// Returns whether the `PADDED` flag is set on this frame.
     #[cfg(feature = "unstable")]
     pub fn is_padded(&self) -> bool {
         self.flags.is_padded()
@@ -148,7 +148,7 @@ impl<T: Buf> Data<T> {
     ///
     /// Panics if `dst` cannot contain the data frame.
     pub(crate) fn encode_chunk<U: BufMut>(&mut self, dst: &mut U) {
-        let len = self.data.remaining() as usize;
+        let len = self.data.remaining();
 
         assert!(dst.remaining_mut() >= len);
 
@@ -208,12 +208,6 @@ impl DataFlags {
     #[cfg(feature = "unstable")]
     fn set_padded(&mut self) {
         self.0 |= PADDED
-    }
-}
-
-impl Default for DataFlags {
-    fn default() -> Self {
-        DataFlags(0)
     }
 }
 
