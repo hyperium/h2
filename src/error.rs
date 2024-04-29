@@ -223,7 +223,9 @@ mod tests {
     fn io_error_source() {
         let err = Error::from_io(io::Error::new(io::ErrorKind::BrokenPipe, "hi"));
         let source = err.source().expect("io error should have source");
-        let io_err = source.downcast_ref::<io::Error>().expect("should be io error");
+        let io_err = source
+            .downcast_ref::<io::Error>()
+            .expect("should be io error");
         assert_eq!(io_err.kind(), io::ErrorKind::BrokenPipe);
     }
 }
