@@ -2,7 +2,7 @@ use crate::SendFrame;
 
 use h2::frame::{self, Frame};
 use h2::proto::Error;
-use h2::{self, SendError};
+use h2::SendError;
 
 use futures::future::poll_fn;
 use futures::{ready, Stream, StreamExt};
@@ -54,6 +54,9 @@ struct Inner {
 
     /// True when the pipe is closed.
     closed: bool,
+
+    /// Trigger an `UnexpectedEof` error on read
+    unexpected_eof: bool,
 }
 
 const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -73,6 +76,7 @@ pub fn new_with_write_capacity(cap: usize) -> (Mock, Handle) {
         tx_rem: cap,
         tx_rem_task: None,
         closed: false,
+        unexpected_eof: false,
     }));
 
     let mock = Mock {
@@ -94,6 +98,11 @@ impl Handle {
     /// Get a mutable reference to inner Codec.
     pub fn codec_mut(&mut self) -> &mut crate::Codec<Pipe> {
         &mut self.codec
+    }
+
+    pub fn close_without_notify(&mut self) {
+        let mut me = self.codec.get_mut().inner.lock().unwrap();
+        me.unexpected_eof = true;
     }
 
     /// Send a frame
@@ -347,6 +356,13 @@ impl AsyncRead for Mock {
         );
 
         let mut me = self.pipe.inner.lock().unwrap();
+
+        if me.unexpected_eof {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Simulate an unexpected eof error",
+            )));
+        }
 
         if me.rx.is_empty() {
             if me.closed {

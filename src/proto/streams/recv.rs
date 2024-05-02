@@ -1,14 +1,14 @@
 use super::*;
 use crate::codec::UserError;
-use crate::frame::{self, PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
-use crate::proto::{self, Error};
+use crate::frame::{PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use crate::proto;
 
 use http::{HeaderMap, Request, Response};
 
 use std::cmp::Ordering;
 use std::io;
 use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug)]
 pub(super) struct Recv {
@@ -93,7 +93,7 @@ impl Recv {
         flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
 
         Recv {
-            init_window_sz: config.local_init_window_sz,
+            init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             flow,
             in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),

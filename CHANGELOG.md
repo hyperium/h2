@@ -1,3 +1,13 @@
+# 0.4.4 (April 3, 2024)
+
+* Limit number of CONTINUATION frames for misbehaving connections.
+
+# 0.4.3 (March 15, 2024)
+
+* Fix flow control limits to not apply until receiving SETTINGS ack.
+* Fix not returning an error if IO ended without `close_notify`.
+* Improve performance of decoding many headers.
+
 # 0.4.2 (January 17th, 2024)
 
 * Limit error resets for misbehaving connections.

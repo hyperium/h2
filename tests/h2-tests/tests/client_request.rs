@@ -2,6 +2,7 @@ use futures::future::{join, ready, select, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
+use std::io;
 use std::pin::Pin;
 use std::task::Context;
 
@@ -1819,6 +1820,46 @@ async fn receive_settings_frame_twice_with_second_one_non_empty() {
         assert_eq!(h2.max_concurrent_send_streams(), 2024);
     };
 
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let err = h2.await.expect_err("should receive UnexpectedEof");
+        assert_eq!(
+            err.get_io().expect("should be UnexpectedEof").kind(),
+            io::ErrorKind::UnexpectedEof,
+        );
+    };
     join(srv, h2).await;
 }
 

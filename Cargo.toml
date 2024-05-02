@@ -3,7 +3,7 @@ name = "h2"
 # When releasing to crates.io:
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.4.2"
+version = "0.4.4"
 license = "MIT"
 authors = [
   "Carl Lerche <me@carllerche.com>",
@@ -16,7 +16,7 @@ readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
-edition = "2018"
+edition = "2021"
 rust-version = "1.63"
 
 [features]
@@ -71,3 +71,7 @@ webpki-roots = "0.25"
 
 [package.metadata.docs.rs]
 features = ["stream"]
+
+[[bench]]
+name = "main"
+harness = false

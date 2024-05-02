@@ -1428,7 +1428,12 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.inner.maybe_close_connection_if_no_streams();
-        self.inner.poll(cx).map_err(Into::into)
+        let result = self.inner.poll(cx).map_err(Into::into);
+        if result.is_pending() && !self.inner.has_streams_or_other_references() {
+            tracing::trace!("last stream closed during poll, wake again");
+            cx.waker().wake_by_ref();
+        }
+        result
     }
 }
 
@@ -1638,9 +1643,11 @@ impl proto::Peer for Peer {
         proto::DynPeer::Client
     }
 
+    /*
     fn is_server() -> bool {
         false
     }
+    */
 
     fn convert_poll_message(
         pseudo: Pseudo,
