@@ -1,6 +1,7 @@
 use crate::codec::Codec;
 use crate::frame::Ping;
 use crate::proto::{self, PingPayload};
+use crate::tracing;
 
 use atomic_waker::AtomicWaker;
 use bytes::Buf;

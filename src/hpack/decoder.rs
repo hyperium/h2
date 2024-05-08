@@ -1,5 +1,5 @@
 use super::{header::BytesStr, huffman, Header};
-use crate::frame;
+use crate::{frame, tracing};
 
 use bytes::{Buf, Bytes, BytesMut};
 use http::header;
@@ -189,8 +189,7 @@ impl Decoder {
             self.last_max_update = size;
         }
 
-        let span = tracing::trace_span!("hpack::decode");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("hpack::decode");
 
         tracing::trace!("decode");
 
@@ -494,6 +493,7 @@ impl Table {
         }
     }
 
+    #[cfg(any(feature = "tracing", test))]
     fn size(&self) -> usize {
         self.size
     }
