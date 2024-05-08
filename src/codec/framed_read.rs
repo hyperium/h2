@@ -126,10 +126,9 @@ fn decode_frame(
     partial_inout: &mut Option<Partial>,
     mut bytes: BytesMut,
 ) -> Result<Option<Frame>, Error> {
-    let span = tracing::trace_span!("FramedRead::decode_frame", offset = bytes.len());
-    let _e = span.enter();
+    let _span = trace_span!("FramedRead::decode_frame", offset = bytes.len());
 
-    tracing::trace!("decoding frame from {}B", bytes.len());
+    trace!("decoding frame from {}B", bytes.len());
 
     // Parse the head
     let head = frame::Head::parse(&bytes);
@@ -141,7 +140,7 @@ fn decode_frame(
 
     let kind = head.kind();
 
-    tracing::trace!(frame.kind = ?kind);
+    trace!(frame.kind = ?kind);
 
     macro_rules! header_block {
         ($frame:ident, $head:ident, $bytes:ident) => ({
@@ -159,8 +158,8 @@ fn decode_frame(
                     // `PROTOCOL_ERROR`.
                     return Err(Error::library_reset($head.stream_id(), Reason::PROTOCOL_ERROR));
                 },
-                Err(e) => {
-                    proto_err!(conn: "failed to load frame; err={:?}", e);
+                Err(_e) => {
+                    proto_err!(conn: "failed to load frame; err={:?}", _e);
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             };
@@ -176,8 +175,8 @@ fn decode_frame(
                     proto_err!(stream: "malformed header block; stream={:?}", id);
                     return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 },
-                Err(e) => {
-                    proto_err!(conn: "failed HPACK decoding; err={:?}", e);
+                Err(_e) => {
+                    proto_err!(conn: "failed HPACK decoding; err={:?}", _e);
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
@@ -185,7 +184,7 @@ fn decode_frame(
             if is_end_headers {
                 frame.into()
             } else {
-                tracing::trace!("loaded partial header block");
+               trace!("loaded partial header block");
                 // Defer returning the frame
                 *partial_inout = Some(Partial {
                     frame: Continuable::$frame(frame),
@@ -202,8 +201,8 @@ fn decode_frame(
         Kind::Settings => {
             let res = frame::Settings::load(head, &bytes[frame::HEADER_LEN..]);
 
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load SETTINGS frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
@@ -211,8 +210,8 @@ fn decode_frame(
         Kind::Ping => {
             let res = frame::Ping::load(head, &bytes[frame::HEADER_LEN..]);
 
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load PING frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load PING frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
@@ -220,8 +219,8 @@ fn decode_frame(
         Kind::WindowUpdate => {
             let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
@@ -231,8 +230,8 @@ fn decode_frame(
             let res = frame::Data::load(head, bytes.freeze());
 
             // TODO: Should this always be connection level? Probably not...
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load DATA frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load DATA frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
@@ -240,16 +239,16 @@ fn decode_frame(
         Kind::Headers => header_block!(Headers, head, bytes),
         Kind::Reset => {
             let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load RESET frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load RESET frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
         }
         Kind::GoAway => {
             let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
+            res.map_err(|_e| {
+                proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", _e);
                 Error::library_go_away(Reason::PROTOCOL_ERROR)
             })?
             .into()
@@ -272,8 +271,8 @@ fn decode_frame(
                     proto_err!(stream: "PRIORITY invalid dependency ID; stream={:?}", id);
                     return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 }
-                Err(e) => {
-                    proto_err!(conn: "failed to load PRIORITY frame; err={:?};", e);
+                Err(_e) => {
+                    proto_err!(conn: "failed to load PRIORITY frame; err={:?};", _e);
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
@@ -301,7 +300,7 @@ fn decode_frame(
             } else {
                 let cnt = partial.continuation_frames_count + 1;
                 if cnt > max_continuation_frames {
-                    tracing::debug!("too_many_continuations, max = {}", max_continuation_frames);
+                    debug!("too_many_continuations, max = {}", max_continuation_frames);
                     return Err(Error::library_go_away_data(
                         Reason::ENHANCE_YOUR_CALM,
                         "too_many_continuations",
@@ -348,8 +347,8 @@ fn decode_frame(
                     proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
                     return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
                 }
-                Err(e) => {
-                    proto_err!(conn: "failed HPACK decoding; err={:?}", e);
+                Err(_e) => {
+                    proto_err!(conn: "failed HPACK decoding; err={:?}", _e);
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
             }
@@ -377,17 +376,16 @@ where
     type Item = Result<Frame, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let span = tracing::trace_span!("FramedRead::poll_next");
-        let _e = span.enter();
+        let _span = trace_span!("FramedRead::poll_next");
         loop {
-            tracing::trace!("poll");
+            trace!("poll");
             let bytes = match ready!(Pin::new(&mut self.inner).poll_next(cx)) {
                 Some(Ok(bytes)) => bytes,
                 Some(Err(e)) => return Poll::Ready(Some(Err(map_err(e)))),
                 None => return Poll::Ready(None),
             };
 
-            tracing::trace!(read.bytes = bytes.len());
+            trace!(read.bytes = bytes.len());
             let Self {
                 ref mut hpack,
                 max_header_list_size,
@@ -402,7 +400,7 @@ where
                 partial,
                 bytes,
             )? {
-                tracing::debug!(?frame, "received");
+                debug!(?frame, "received");
                 return Poll::Ready(Some(Ok(frame)));
             }
         }
