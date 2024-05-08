@@ -121,7 +121,7 @@ impl FlowControl {
             return Err(Reason::FLOW_CONTROL_ERROR);
         }
 
-        tracing::trace!(
+        trace!(
             "inc_window; sz={}; old={}; new={}",
             sz,
             self.window_size,
@@ -137,7 +137,7 @@ impl FlowControl {
     /// This is called after receiving a SETTINGS frame with a lower
     /// INITIAL_WINDOW_SIZE value.
     pub fn dec_send_window(&mut self, sz: WindowSize) -> Result<(), Reason> {
-        tracing::trace!(
+        trace!(
             "dec_window; sz={}; window={}, available={}",
             sz,
             self.window_size,
@@ -153,7 +153,7 @@ impl FlowControl {
     /// This is called after receiving a SETTINGS ACK frame with a lower
     /// INITIAL_WINDOW_SIZE value.
     pub fn dec_recv_window(&mut self, sz: WindowSize) -> Result<(), Reason> {
-        tracing::trace!(
+        trace!(
             "dec_recv_window; sz={}; window={}, available={}",
             sz,
             self.window_size,
@@ -168,7 +168,7 @@ impl FlowControl {
     /// Decrements the window reflecting data has actually been sent. The caller
     /// must ensure that the window has capacity.
     pub fn send_data(&mut self, sz: WindowSize) -> Result<(), Reason> {
-        tracing::trace!(
+        trace!(
             "send_data; sz={}; window={}; available={}",
             sz,
             self.window_size,
