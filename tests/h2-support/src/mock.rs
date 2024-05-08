@@ -2,7 +2,7 @@ use crate::SendFrame;
 
 use h2::frame::{self, Frame};
 use h2::proto::Error;
-use h2::{self, SendError};
+use h2::SendError;
 
 use futures::future::poll_fn;
 use futures::{ready, Stream, StreamExt};

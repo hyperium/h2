@@ -239,6 +239,8 @@ async fn request_over_max_concurrent_streams_errors() {
 
         // first request is allowed
         let (resp1, mut stream1) = client.send_request(request, false).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -273,6 +275,90 @@ async fn request_over_max_concurrent_streams_errors() {
             stream2
                 .send_data("hello".into(), true)
                 .expect("req2 send_data");
+        })
+        .await;
+        join(async move { h2.await.unwrap() }, async move {
+            resp2.await.unwrap()
+        })
+        .await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        srv.ping_pong([0; 8]).await;
+
+        // limit this server later in life
+        srv.send_frame(frames::settings().max_concurrent_streams(1))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+
+        srv.recv_frame(
+            frames::headers(5)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // first request is allowed
+        let (resp1, _) = client.send_request(request, true).unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // second request is put into pending_open
+        let (resp2, _) = client.send_request(request, true).unwrap();
+
+        h2.drive(async move {
+            resp1.await.expect("req");
         })
         .await;
         join(async move { h2.await.unwrap() }, async move {
@@ -336,6 +422,8 @@ async fn send_request_poll_ready_when_connection_error() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -1447,6 +1535,125 @@ async fn extended_connect_request() {
             .extension(Protocol::from("the-bread-protocol"))
             .body(())
             .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_odd_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_even_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(2)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_reused_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://camembert.fromage")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::reset(1).stream_closed()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        h2.drive(async {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://camembert.fromage")
+                .body(())
+                .unwrap();
+            let _res = client.send_request(request, true).unwrap().0.await.unwrap();
+        })
+        .await;
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn client_builder_header_table_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+    let mut settings = frame::Settings::default();
+
+    settings.set_header_table_size(Some(10000));
+
+    let srv = async move {
+        let recv_settings = srv.assert_client_handshake().await;
+        assert_frame_eq(recv_settings, settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let mut builder = client::Builder::new();
+    builder.header_table_size(10000);
+
+    let h2 = async move {
+        let (mut client, mut h2) = builder.handshake::<_, Bytes>(io).await.unwrap();
+        let request = Request::get("https://example.com/").body(()).unwrap();
         let (response, _) = client.send_request(request, true).unwrap();
         h2.drive(response).await.unwrap();
     };

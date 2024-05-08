@@ -40,6 +40,10 @@ impl Error {
         Self::GoAway(Bytes::new(), reason, Initiator::Library)
     }
 
+    pub(crate) fn library_go_away_data(reason: Reason, debug_data: impl Into<Bytes>) -> Self {
+        Self::GoAway(debug_data.into(), reason, Initiator::Library)
+    }
+
     pub(crate) fn remote_reset(stream_id: StreamId, reason: Reason) -> Self {
         Self::Reset(stream_id, reason, Initiator::Remote)
     }

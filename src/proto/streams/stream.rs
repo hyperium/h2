@@ -146,7 +146,9 @@ impl Stream {
         recv_flow
             .inc_window(init_recv_window)
             .expect("invalid initial receive window");
-        recv_flow.assign_capacity(init_recv_window);
+        // TODO: proper error handling?
+        let _res = recv_flow.assign_capacity(init_recv_window);
+        debug_assert!(_res.is_ok());
 
         send_flow
             .inc_window(init_send_window)
@@ -275,7 +277,9 @@ impl Stream {
     pub fn assign_capacity(&mut self, capacity: WindowSize, max_buffer_size: usize) {
         let prev_capacity = self.capacity(max_buffer_size);
         debug_assert!(capacity > 0);
-        self.send_flow.assign_capacity(capacity);
+        // TODO: proper error handling
+        let _res = self.send_flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
 
         tracing::trace!(
             "  assigned capacity to stream; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
@@ -294,7 +298,9 @@ impl Stream {
     pub fn send_data(&mut self, len: WindowSize, max_buffer_size: usize) {
         let prev_capacity = self.capacity(max_buffer_size);
 
-        self.send_flow.send_data(len);
+        // TODO: proper error handling
+        let _res = self.send_flow.send_data(len);
+        debug_assert!(_res.is_ok());
 
         // Decrement the stream's buffered data counter
         debug_assert!(self.buffered_send_data >= len as usize);

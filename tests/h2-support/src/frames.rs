@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::fmt;
 
 use bytes::Bytes;
-use http::{self, HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode};
 
 use h2::{
     ext::Protocol,
@@ -305,8 +305,23 @@ impl Mock<frame::GoAway> {
         self.reason(frame::Reason::NO_ERROR)
     }
 
+    pub fn data<I>(self, debug_data: I) -> Self
+    where
+        I: Into<Bytes>,
+    {
+        Mock(frame::GoAway::with_debug_data(
+            self.0.last_stream_id(),
+            self.0.reason(),
+            debug_data.into(),
+        ))
+    }
+
     pub fn reason(self, reason: frame::Reason) -> Self {
-        Mock(frame::GoAway::new(self.0.last_stream_id(), reason))
+        Mock(frame::GoAway::with_debug_data(
+            self.0.last_stream_id(),
+            reason,
+            self.0.debug_data().clone(),
+        ))
     }
 }
 
@@ -374,6 +389,11 @@ impl Mock<frame::Settings> {
 
     pub fn enable_connect_protocol(mut self, val: u32) -> Self {
         self.0.set_enable_connect_protocol(Some(val));
+        self
+    }
+
+    pub fn header_table_size(mut self, val: u32) -> Self {
+        self.0.set_header_table_size(Some(val));
         self
     }
 }

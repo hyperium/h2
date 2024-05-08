@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use futures::future::{join, join3, lazy, poll_fn, try_join};
+use futures::future::{join, join3, lazy, try_join};
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
@@ -211,9 +211,14 @@ async fn reset_streams_dont_grow_memory_continuously() {
                 .await;
             client.send_frame(frames::reset(n).protocol_error()).await;
         }
+
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            client.recv_frame(frames::go_away((MAX * 2 + 1) as u32).calm()),
+            client.recv_frame(
+                frames::go_away((MAX * 2 + 1) as u32)
+                    .data("too_many_resets")
+                    .calm(),
+            ),
         )
         .await
         .expect("client goaway");
@@ -231,6 +236,53 @@ async fn reset_streams_dont_grow_memory_continuously() {
             .expect_err("server should error");
         // specifically, not 50;
         assert_eq!(21, srv.num_wired_streams());
+    };
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn go_away_with_pending_accepting() {
+    // h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let (sent_go_away_tx, sent_go_away_rx) = oneshot::channel();
+    let (recv_go_away_tx, recv_go_away_rx) = oneshot::channel();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        client
+            .send_frame(frames::headers(1).request("GET", "https://baguette/").eos())
+            .await;
+
+        client
+            .send_frame(frames::headers(3).request("GET", "https://campagne/").eos())
+            .await;
+        client.send_frame(frames::go_away(1).protocol_error()).await;
+
+        sent_go_away_tx.send(()).unwrap();
+
+        recv_go_away_rx.await.unwrap();
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_pending_accept_reset_streams(1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let (_req_1, _send_response_1) = srv.accept().await.unwrap().unwrap();
+
+        poll_fn(|cx| srv.poll_closed(cx))
+            .drive(sent_go_away_rx)
+            .await
+            .unwrap();
+
+        let (_req_2, _send_response_2) = srv.accept().await.unwrap().unwrap();
+
+        recv_go_away_tx.send(()).unwrap();
     };
     join(srv, client).await;
 }
@@ -698,14 +750,14 @@ async fn rst_stream_max() {
         srv.recv_frame(frames::reset(1).cancel()).await;
         srv.recv_frame(frames::reset(3).cancel()).await;
         // sending frame after canceled!
-        // newer streams trump older streams
-        // 3 is still being ignored
-        srv.send_frame(frames::data(3, vec![0; 16]).eos()).await;
+        // olders streams trump newer streams
+        // 1 is still being ignored
+        srv.send_frame(frames::data(1, vec![0; 16]).eos()).await;
         // ping pong to be sure of no goaway
         srv.ping_pong([1; 8]).await;
-        // 1 has been evicted, will get a reset
-        srv.send_frame(frames::data(1, vec![0; 16]).eos()).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        // 3 has been evicted, will get a reset
+        srv.send_frame(frames::data(3, vec![0; 16]).eos()).await;
+        srv.recv_frame(frames::reset(3).stream_closed()).await;
     };
 
     let client = async move {

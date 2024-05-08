@@ -118,7 +118,7 @@ where
         }
     }
 
-    pub fn set_target_connection_window_size(&mut self, size: WindowSize) {
+    pub fn set_target_connection_window_size(&mut self, size: WindowSize) -> Result<(), Reason> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -216,7 +216,7 @@ where
         mut request: Request<()>,
         end_of_stream: bool,
         pending: Option<&OpaqueStreamRef>,
-    ) -> Result<StreamRef<B>, SendError> {
+    ) -> Result<(StreamRef<B>, bool), SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -298,10 +298,14 @@ where
         // the lock, so it can't.
         me.refs += 1;
 
-        Ok(StreamRef {
-            opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
-            send_buffer: self.send_buffer.clone(),
-        })
+        let is_full = me.counts.next_send_stream_will_reach_capacity();
+        Ok((
+            StreamRef {
+                opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
+                send_buffer: self.send_buffer.clone(),
+            },
+            is_full,
+        ))
     }
 
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
@@ -448,7 +452,7 @@ impl Inner {
 
         let stream = self.store.resolve(key);
 
-        if stream.state.is_local_reset() {
+        if stream.state.is_local_error() {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
@@ -726,7 +730,11 @@ impl Inner {
                 }
 
                 // The stream must be receive open
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    proto_err!(conn: "recv_push_promise: initiating stream is not opened");
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                }
+
                 stream.key()
             }
             None => {
@@ -1534,10 +1542,24 @@ impl Actions {
     ) -> Result<(), Error> {
         if let Err(Error::Reset(stream_id, reason, initiator)) = res {
             debug_assert_eq!(stream_id, stream.id);
-            // Reset the stream.
-            self.send
-                .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
-            Ok(())
+
+            if counts.can_inc_num_local_error_resets() {
+                counts.inc_num_local_error_resets();
+
+                // Reset the stream.
+                self.send
+                    .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                Ok(())
+            } else {
+                tracing::warn!(
+                    "reset_on_recv_stream_err; locally-reset streams reached limit ({:?})",
+                    counts.max_local_error_resets().unwrap(),
+                );
+                Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_internal_resets",
+                ))
+            }
         } else {
             res
         }

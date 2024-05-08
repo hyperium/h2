@@ -25,6 +25,7 @@ pub struct Error {
 #[derive(Debug)]
 enum Kind {
     /// A RST_STREAM frame was received or sent.
+    #[allow(dead_code)]
     Reset(StreamId, Reason, Initiator),
 
     /// A GO_AWAY frame was received or sent.
@@ -104,7 +105,7 @@ impl Error {
         )
     }
 
-    /// Returns true if the error was created by `h2.
+    /// Returns true if the error was created by `h2`.
     ///
     /// Such as noticing some protocol error and sending a GOAWAY or RST_STREAM.
     pub fn is_library(&self) -> bool {

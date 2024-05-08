@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use futures::future::{join, poll_fn};
+use futures::future::join;
 use futures::StreamExt;
 use h2_support::prelude::*;
 use tokio::io::AsyncWriteExt;
@@ -296,10 +296,10 @@ async fn push_request_against_concurrency() {
             .await;
         client.recv_frame(frames::data(2, &b""[..]).eos()).await;
         client
-            .recv_frame(frames::headers(1).response(200).eos())
+            .recv_frame(frames::headers(4).response(200).eos())
             .await;
         client
-            .recv_frame(frames::headers(4).response(200).eos())
+            .recv_frame(frames::headers(1).response(200).eos())
             .await;
     };
 
@@ -553,7 +553,7 @@ async fn recv_connection_header() {
 }
 
 #[tokio::test]
-async fn sends_reset_cancel_when_req_body_is_dropped() {
+async fn sends_reset_no_error_when_req_body_is_dropped() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -563,8 +563,11 @@ async fn sends_reset_cancel_when_req_body_is_dropped() {
         client
             .send_frame(frames::headers(1).request("POST", "https://example.com/"))
             .await;
+        // server responded with data before consuming POST-request's body, resulting in `RST_STREAM(NO_ERROR)`.
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
         client
-            .recv_frame(frames::headers(1).response(200).eos())
+            .recv_frame(frames::data(1, vec![0; 16384]).eos())
             .await;
         client
             .recv_frame(frames::reset(1).reason(Reason::NO_ERROR))
@@ -578,7 +581,8 @@ async fn sends_reset_cancel_when_req_body_is_dropped() {
             assert_eq!(req.method(), &http::Method::POST);
 
             let rsp = http::Response::builder().status(200).body(()).unwrap();
-            stream.send_response(rsp, true).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(vec![0; 16384 * 2].into(), true).unwrap();
         }
         assert!(srv.next().await.is_none());
     };
@@ -874,6 +878,55 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
         let req = srv.next().await;
         assert!(req.is_none(), "req is {:?}", req);
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn too_many_continuation_frames_sends_goaway() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(1024 * 32));
+
+        // the mock impl automatically splits into CONTINUATION frames if the
+        // headers are too big for one frame. So without a max header list size
+        // set, we'll send a bunch of headers that will eventually get nuked.
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("a".repeat(10_000), "b".repeat(10_000))
+                    .field("c".repeat(10_000), "d".repeat(10_000))
+                    .field("e".repeat(10_000), "f".repeat(10_000))
+                    .field("g".repeat(10_000), "h".repeat(10_000))
+                    .field("i".repeat(10_000), "j".repeat(10_000))
+                    .field("k".repeat(10_000), "l".repeat(10_000))
+                    .field("m".repeat(10_000), "n".repeat(10_000))
+                    .field("o".repeat(10_000), "p".repeat(10_000))
+                    .field("y".repeat(10_000), "z".repeat(10_000)),
+            )
+            .await;
+        client
+            .recv_frame(frames::go_away(0).calm().data("too_many_continuations"))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            // should mean ~3 continuation
+            .max_header_list_size(1024 * 32)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
     };
 
     join(client, srv).await;
@@ -1370,6 +1423,39 @@ async fn reject_non_authority_target_on_connect_request() {
         let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
 
         assert!(srv.next().await.is_none());
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn reject_informational_status_header_in_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let _ = client.assert_server_handshake().await;
+
+        let status_code = 128;
+        assert!(StatusCode::from_u16(status_code)
+            .unwrap()
+            .is_informational());
+
+        client
+            .send_frame(frames::headers(1).response(status_code))
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
 
         poll_fn(move |cx| srv.poll_closed(cx))
             .await

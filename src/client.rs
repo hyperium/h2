@@ -336,6 +336,12 @@ pub struct Builder {
     /// The stream ID of the first (lowest) stream. Subsequent streams will use
     /// monotonically increasing stream IDs.
     stream_id: StreamId,
+
+    /// Maximum number of locally reset streams due to protocol error across
+    /// the lifetime of the connection.
+    ///
+    /// When this gets exceeded, we issue GOAWAYs.
+    local_max_error_reset_streams: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -510,8 +516,10 @@ where
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|stream| {
-                if stream.is_pending_open() {
+            .map(|(stream, is_full)| {
+                if stream.is_pending_open() && is_full {
+                    // Only prevent sending another request when the request queue
+                    // is not full.
                     self.pending = Some(stream.clone_to_opaque());
                 }
 
@@ -643,6 +651,7 @@ impl Builder {
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
             stream_id: 1.into(),
+            local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
 
@@ -971,6 +980,23 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.
+    /// Too many of these often indicate a malicious client, and there are attacks which can abuse this to DOS servers.
+    /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
+    ///
+    /// When the number of local resets exceeds this threshold, the client will close the connection.
+    ///
+    /// If you really want to disable this, supply [`Option::None`] here.
+    /// Disabling this is not recommended and may expose you to DOS attacks.
+    ///
+    /// The default value is currently 1024, but could change.
+    pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
+        self.local_max_error_reset_streams = max;
+        self
+    }
+
     /// Sets the maximum number of pending-accept remotely-reset streams.
     ///
     /// Streams that have been received by the peer, but not accepted by the
@@ -1021,7 +1047,7 @@ impl Builder {
     /// stream have been written to the connection, the send buffer capacity
     /// will be freed up again.
     ///
-    /// The default is currently ~400MB, but may change.
+    /// The default is currently ~400KB, but may change.
     ///
     /// # Panics
     ///
@@ -1067,6 +1093,39 @@ impl Builder {
     /// ```
     pub fn enable_push(&mut self, enabled: bool) -> &mut Self {
         self.settings.set_enable_push(enabled);
+        self
+    }
+
+    /// Sets the header table size.
+    ///
+    /// This setting informs the peer of the maximum size of the header compression
+    /// table used to encode header blocks, in octets. The encoder may select any value
+    /// equal to or less than the header table size specified by the sender.
+    ///
+    /// The default value is 4,096.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .header_table_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn header_table_size(&mut self, size: u32) -> &mut Self {
+        self.settings.set_header_table_size(Some(size));
         self
     }
 
@@ -1258,6 +1317,7 @@ where
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
+                local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),
             },
         );
@@ -1571,9 +1631,11 @@ impl proto::Peer for Peer {
         proto::DynPeer::Client
     }
 
+    /*
     fn is_server() -> bool {
         false
     }
+    */
 
     fn convert_poll_message(
         pseudo: Pseudo,

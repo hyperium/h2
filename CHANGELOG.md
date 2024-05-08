@@ -1,3 +1,42 @@
+# 0.3.26 (April 3, 2024)
+
+* Limit number of CONTINUATION frames for misbehaving connections.
+
+# 0.3.25 (March 15, 2024)
+
+* Improve performance decoding many headers.
+
+# 0.3.24 (January 17, 2024)
+
+* Limit error resets for misbehaving connections.
+
+# 0.3.23 (January 10, 2024)
+
+* Backport fix from 0.4.1 for stream capacity assignment.
+
+# 0.3.22 (November 15, 2023)
+
+* Add `header_table_size(usize)` option to client and server builders.
+* Improve throughput when vectored IO is not available.
+* Update indexmap to 2.
+
+# 0.3.21 (August 21, 2023)
+
+* Fix opening of new streams over peer's max concurrent limit.
+* Fix `RecvStream` to return data even if it has received a `CANCEL` stream error.
+* Update MSRV to 1.63.
+
+# 0.3.20 (June 26, 2023)
+
+* Fix panic if a server received a request with a `:status` pseudo header in the 1xx range.
+* Fix panic if a reset stream had pending push promises that were more than allowed.
+* Fix potential flow control overflow by subtraction, instead returning a connection error.
+
+# 0.3.19 (May 12, 2023)
+
+* Fix counting reset streams when triggered by a GOAWAY.
+* Send `too_many_resets` in opaque debug data of GOAWAY when too many resets received.
+
 # 0.3.18 (April 17, 2023)
 
 * Fix panic because of opposite check in `is_remote_local()`.
