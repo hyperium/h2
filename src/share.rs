@@ -410,12 +410,12 @@ impl RecvStream {
 
     /// Get the next data frame.
     pub async fn data(&mut self) -> Option<Result<Bytes, crate::Error>> {
-        futures_util::future::poll_fn(move |cx| self.poll_data(cx)).await
+        crate::poll_fn(move |cx| self.poll_data(cx)).await
     }
 
     /// Get optional trailers for this stream.
     pub async fn trailers(&mut self) -> Result<Option<HeaderMap>, crate::Error> {
-        futures_util::future::poll_fn(move |cx| self.poll_trailers(cx)).await
+        crate::poll_fn(move |cx| self.poll_trailers(cx)).await
     }
 
     /// Poll for the next data frame.
@@ -549,7 +549,7 @@ impl PingPong {
     /// Send a PING frame and wait for the peer to send the pong.
     pub async fn ping(&mut self, ping: Ping) -> Result<Pong, crate::Error> {
         self.send_ping(ping)?;
-        futures_util::future::poll_fn(|cx| self.poll_pong(cx)).await
+        crate::poll_fn(|cx| self.poll_pong(cx)).await
     }
 
     #[doc(hidden)]
