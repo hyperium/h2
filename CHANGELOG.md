@@ -1,3 +1,8 @@
+# 0.4.5 (May 17, 2024)
+
+* Fix race condition that sometimes hung connections during shutdown.
+* Fix pseudo header construction for CONNECT and OPTIONS requests.
+
 # 0.4.4 (April 3, 2024)
 
 * Limit number of CONTINUATION frames for misbehaving connections.
