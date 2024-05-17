@@ -585,6 +585,45 @@ async fn http_2_request_without_scheme_or_authority() {
     join(srv, h2).await;
 }
 
+#[tokio::test]
+async fn http_2_connect_request_omit_scheme_and_path_fields() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::CONNECT.into(),
+                    authority: util::byte_str("tunnel.example.com:8443").into(),
+                    ..Default::default()
+                })
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        // In HTTP_2 CONNECT request the ":scheme" and ":path" pseudo-header fields MUST be omitted.
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::CONNECT)
+            .uri("https://tunnel.example.com:8443/")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
 #[test]
 #[ignore]
 fn request_with_h1_version() {}
@@ -1521,8 +1560,14 @@ async fn extended_connect_request() {
 
         srv.recv_frame(
             frames::headers(1)
-                .request("CONNECT", "http://bread/baguette")
-                .protocol("the-bread-protocol")
+                .pseudo(frame::Pseudo {
+                    method: Method::CONNECT.into(),
+                    scheme: util::byte_str("http").into(),
+                    authority: util::byte_str("bread").into(),
+                    path: util::byte_str("/baguette").into(),
+                    protocol: Protocol::from_static("the-bread-protocol").into(),
+                    ..Default::default()
+                })
                 .eos(),
         )
         .await;

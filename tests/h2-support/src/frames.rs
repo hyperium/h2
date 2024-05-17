@@ -4,10 +4,7 @@ use std::fmt;
 use bytes::Bytes;
 use http::{HeaderMap, StatusCode};
 
-use h2::{
-    ext::Protocol,
-    frame::{self, Frame, StreamId},
-};
+use h2::frame::{self, Frame, StreamId};
 
 pub const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 pub const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
@@ -124,16 +121,21 @@ impl Mock<frame::Headers> {
         M::Error: fmt::Debug,
     {
         let method = method.try_into().unwrap();
-        let (id, _, fields) = self.into_parts();
+        let (id, pseudo, fields) = self.into_parts();
         let frame = frame::Headers::new(
             id,
             frame::Pseudo {
-                scheme: None,
                 method: Some(method),
-                ..Default::default()
+                ..pseudo
             },
             fields,
         );
+        Mock(frame)
+    }
+
+    pub fn pseudo(self, pseudo: frame::Pseudo) -> Self {
+        let (id, _, fields) = self.into_parts();
+        let frame = frame::Headers::new(id, pseudo, fields);
         Mock(frame)
     }
 
@@ -180,15 +182,6 @@ impl Mock<frame::Headers> {
         let value = value.parse().unwrap();
 
         pseudo.set_scheme(value);
-
-        Mock(frame::Headers::new(id, pseudo, fields))
-    }
-
-    pub fn protocol(self, value: &str) -> Self {
-        let (id, mut pseudo, fields) = self.into_parts();
-        let value = Protocol::from(value);
-
-        pseudo.set_protocol(value);
 
         Mock(frame::Headers::new(id, pseudo, fields))
     }
