@@ -3,7 +3,7 @@ name = "h2"
 # When releasing to crates.io:
 # - Update CHANGELOG.md.
 # - Create git tag
-version = "0.4.4"
+version = "0.4.5"
 license = "MIT"
 authors = [
   "Carl Lerche <me@carllerche.com>",
@@ -39,9 +39,9 @@ members = [
 ]
 
 [dependencies]
+atomic-waker = "1.0.0"
 futures-core = { version = "0.3", default-features = false }
 futures-sink = { version = "0.3", default-features = false }
-futures-util = { version = "0.3", default-features = false }
 tokio-util = { version = "0.7.1", features = ["codec", "io"] }
 tokio = { version = "1", features = ["io-util"] }
 bytes = "1"
@@ -66,8 +66,12 @@ serde_json = "1.0.0"
 # Examples
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net"] }
 env_logger = { version = "0.10", default-features = false }
-tokio-rustls = "0.24"
-webpki-roots = "0.25"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
 
 [package.metadata.docs.rs]
 features = ["stream"]
+
+[[bench]]
+name = "main"
+harness = false

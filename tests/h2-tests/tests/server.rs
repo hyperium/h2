@@ -1255,11 +1255,11 @@ async fn extended_connect_protocol_disabled_by_default() {
         assert_eq!(settings.is_extended_connect_protocol_enabled(), None);
 
         client
-            .send_frame(
-                frames::headers(1)
-                    .request("CONNECT", "http://bread/baguette")
-                    .protocol("the-bread-protocol"),
-            )
+            .send_frame(frames::headers(1).pseudo(frame::Pseudo::request(
+                Method::CONNECT,
+                uri::Uri::from_static("http://bread/baguette"),
+                Protocol::from_static("the-bread-protocol").into(),
+            )))
             .await;
 
         client.recv_frame(frames::reset(1).protocol_error()).await;
@@ -1288,11 +1288,11 @@ async fn extended_connect_protocol_enabled_during_handshake() {
         assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
 
         client
-            .send_frame(
-                frames::headers(1)
-                    .request("CONNECT", "http://bread/baguette")
-                    .protocol("the-bread-protocol"),
-            )
+            .send_frame(frames::headers(1).pseudo(frame::Pseudo::request(
+                Method::CONNECT,
+                uri::Uri::from_static("http://bread/baguette"),
+                Protocol::from_static("the-bread-protocol").into(),
+            )))
             .await;
 
         client.recv_frame(frames::headers(1).response(200)).await;
@@ -1335,11 +1335,11 @@ async fn reject_pseudo_protocol_on_non_connect_request() {
         assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
 
         client
-            .send_frame(
-                frames::headers(1)
-                    .request("GET", "http://bread/baguette")
-                    .protocol("the-bread-protocol"),
-            )
+            .send_frame(frames::headers(1).pseudo(frame::Pseudo::request(
+                Method::GET,
+                uri::Uri::from_static("http://bread/baguette"),
+                Some(Protocol::from_static("the-bread-protocol")),
+            )))
             .await;
 
         client
@@ -1366,7 +1366,7 @@ async fn reject_pseudo_protocol_on_non_connect_request() {
 }
 
 #[tokio::test]
-async fn reject_authority_target_on_extended_connect_request() {
+async fn reject_extended_connect_request_without_scheme() {
     h2_support::trace_init!();
 
     let (io, mut client) = mock::new();
@@ -1377,11 +1377,12 @@ async fn reject_authority_target_on_extended_connect_request() {
         assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
 
         client
-            .send_frame(
-                frames::headers(1)
-                    .request("CONNECT", "bread:80")
-                    .protocol("the-bread-protocol"),
-            )
+            .send_frame(frames::headers(1).pseudo(frame::Pseudo {
+                method: Method::CONNECT.into(),
+                path: util::byte_str("/").into(),
+                protocol: Protocol::from("the-bread-protocol").into(),
+                ..Default::default()
+            }))
             .await;
 
         client
@@ -1408,7 +1409,7 @@ async fn reject_authority_target_on_extended_connect_request() {
 }
 
 #[tokio::test]
-async fn reject_non_authority_target_on_connect_request() {
+async fn reject_extended_connect_request_without_path() {
     h2_support::trace_init!();
 
     let (io, mut client) = mock::new();
@@ -1419,7 +1420,12 @@ async fn reject_non_authority_target_on_connect_request() {
         assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
 
         client
-            .send_frame(frames::headers(1).request("CONNECT", "https://bread/baguette"))
+            .send_frame(frames::headers(1).pseudo(frame::Pseudo {
+                method: Method::CONNECT.into(),
+                scheme: util::byte_str("https").into(),
+                protocol: Protocol::from("the-bread-protocol").into(),
+                ..Default::default()
+            }))
             .await;
 
         client

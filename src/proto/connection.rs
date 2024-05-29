@@ -242,6 +242,13 @@ where
         }
     }
 
+    /// Checks if there are any streams or references left
+    pub fn has_streams_or_other_references(&self) -> bool {
+        // If we poll() and realize that there are no streams or references
+        // then we can close the connection by transitioning to GOAWAY
+        self.inner.streams.has_streams_or_other_references()
+    }
+
     pub(crate) fn take_user_pings(&mut self) -> Option<UserPings> {
         self.inner.ping_pong.take_user_pings()
     }
