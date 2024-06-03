@@ -141,11 +141,18 @@ where
                     }
                     _ => {
                         tracing::trace!(queued_data_frame = false);
-                        ready!(poll_write_buf(
+                        let n = ready!(poll_write_buf(
                             Pin::new(&mut self.inner),
                             cx,
                             &mut self.encoder.buf
-                        ))?
+                        ))?;
+                        if n == 0 {
+                            return Poll::Ready(Err(io::Error::new(
+                                io::ErrorKind::WriteZero,
+                                "failed to write frame to socket",
+                            )));
+                        }
+                        n
                     }
                 };
             }
