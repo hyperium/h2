@@ -133,7 +133,7 @@ where
 
         loop {
             while !self.encoder.is_empty() {
-                match self.encoder.next {
+                let n = match self.encoder.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
                         let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
@@ -148,6 +148,12 @@ where
                         ))?
                     }
                 };
+                if n == 0 {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write frame to socket",
+                    )));
+                }
             }
 
             match self.encoder.unset_frame() {
