@@ -320,6 +320,16 @@ where
             .send
             .is_extended_connect_protocol_enabled()
     }
+
+    pub fn current_max_send_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_send_streams()
+    }
+
+    pub fn current_max_recv_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_recv_streams()
+    }
 }
 
 impl<B> DynStreams<'_, B> {
