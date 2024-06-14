@@ -333,7 +333,9 @@ impl State {
 
     /// Set the stream state to reset locally.
     pub fn set_reset(&mut self, stream_id: StreamId, reason: Reason, initiator: Initiator) {
-        self.inner = Closed(Cause::Error(Error::Reset(stream_id, reason, initiator)));
+        self.inner = Closed(Cause::Error(Error::Reset(
+            stream_id, reason, initiator, None,
+        )));
     }
 
     /// Set the stream state to a scheduled reset.
@@ -364,7 +366,7 @@ impl State {
     pub fn is_remote_reset(&self) -> bool {
         matches!(
             self.inner,
-            Closed(Cause::Error(Error::Reset(_, _, Initiator::Remote)))
+            Closed(Cause::Error(Error::Reset(_, _, Initiator::Remote, _)))
         )
     }
 
@@ -446,7 +448,7 @@ impl State {
     /// Returns a reason if the stream has been reset.
     pub(super) fn ensure_reason(&self, mode: PollReset) -> Result<Option<Reason>, crate::Error> {
         match self.inner {
-            Closed(Cause::Error(Error::Reset(_, reason, _)))
+            Closed(Cause::Error(Error::Reset(_, reason, _, _)))
             | Closed(Cause::Error(Error::GoAway(_, reason, _)))
             | Closed(Cause::ScheduledLibraryReset(reason)) => Ok(Some(reason)),
             Closed(Cause::Error(ref e)) => Err(e.clone().into()),
