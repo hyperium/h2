@@ -257,10 +257,10 @@ where
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push(&mut self, stream: &mut store::Ptr) -> bool {
-        tracing::trace!("Queue::push_back");
+        trace!("Queue::push_back");
 
         if N::is_queued(stream) {
-            tracing::trace!(" -> already queued");
+            trace!(" -> already queued");
             return false;
         }
 
@@ -272,7 +272,7 @@ where
         // Queue the stream
         match self.indices {
             Some(ref mut idxs) => {
-                tracing::trace!(" -> existing entries");
+                trace!(" -> existing entries");
 
                 // Update the current tail node to point to `stream`
                 let key = stream.key();
@@ -282,7 +282,7 @@ where
                 idxs.tail = stream.key();
             }
             None => {
-                tracing::trace!(" -> first entry");
+                trace!(" -> first entry");
                 self.indices = Some(store::Indices {
                     head: stream.key(),
                     tail: stream.key(),
@@ -297,10 +297,10 @@ where
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push_front(&mut self, stream: &mut store::Ptr) -> bool {
-        tracing::trace!("Queue::push_front");
+        trace!("Queue::push_front");
 
         if N::is_queued(stream) {
-            tracing::trace!(" -> already queued");
+            trace!(" -> already queued");
             return false;
         }
 
@@ -312,7 +312,7 @@ where
         // Queue the stream
         match self.indices {
             Some(ref mut idxs) => {
-                tracing::trace!(" -> existing entries");
+                trace!(" -> existing entries");
 
                 // Update the provided stream to point to the head node
                 let head_key = stream.resolve(idxs.head).key();
@@ -322,7 +322,7 @@ where
                 idxs.head = stream.key();
             }
             None => {
-                tracing::trace!(" -> first entry");
+                trace!(" -> first entry");
                 self.indices = Some(store::Indices {
                     head: stream.key(),
                     tail: stream.key(),

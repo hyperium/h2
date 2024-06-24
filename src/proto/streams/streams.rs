@@ -132,7 +132,7 @@ where
         let me = &mut *me;
         me.actions.recv.next_incoming(&mut me.store).map(|key| {
             let stream = &mut me.store.resolve(key);
-            tracing::trace!(
+            trace!(
                 "next_incoming; id={:?}, state={:?}",
                 stream.id,
                 stream.state
@@ -425,7 +425,7 @@ impl Inner {
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
         if id > self.actions.recv.max_stream_id() {
-            tracing::trace!(
+            trace!(
                 "id ({:?}) > max_stream_id ({:?}), ignoring HEADERS",
                 id,
                 self.actions.recv.max_stream_id()
@@ -445,7 +445,7 @@ impl Inner {
                     // This may be response headers for a stream we've already
                     // forgotten about...
                     if self.actions.may_have_forgotten_stream(peer, id) {
-                        tracing::debug!(
+                        debug!(
                             "recv_headers for old stream={:?}, sending STREAM_CLOSED",
                             id,
                         );
@@ -478,7 +478,7 @@ impl Inner {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
-            tracing::trace!("recv_headers; ignoring trailers on {:?}", stream.id);
+            trace!("recv_headers; ignoring trailers on {:?}", stream.id);
             return Ok(());
         }
 
@@ -487,7 +487,7 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         self.counts.transition(stream, |counts, stream| {
-            tracing::trace!(
+           trace!(
                 "recv_headers; stream={:?}; state={:?}",
                 stream.id,
                 stream.state
@@ -546,7 +546,7 @@ impl Inner {
                 // The GOAWAY process has begun. All streams with a greater ID
                 // than specified as part of GOAWAY should be ignored.
                 if id > self.actions.recv.max_stream_id() {
-                    tracing::trace!(
+                    trace!(
                         "id ({:?}) > max_stream_id ({:?}), ignoring DATA",
                         id,
                         self.actions.recv.max_stream_id()
@@ -555,7 +555,7 @@ impl Inner {
                 }
 
                 if self.actions.may_have_forgotten_stream(peer, id) {
-                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
+                    debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
 
                     let sz = frame.payload().len();
                     // This should have been enforced at the codec::FramedRead layer, so
@@ -607,7 +607,7 @@ impl Inner {
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
         if id > self.actions.recv.max_stream_id() {
-            tracing::trace!(
+            trace!(
                 "id ({:?}) > max_stream_id ({:?}), ignoring RST_STREAM",
                 id,
                 self.actions.recv.max_stream_id()
@@ -743,7 +743,7 @@ impl Inner {
                 // The GOAWAY process has begun. All streams with a greater ID
                 // than specified as part of GOAWAY should be ignored.
                 if id > self.actions.recv.max_stream_id() {
-                    tracing::trace!(
+                    trace!(
                         "id ({:?}) > max_stream_id ({:?}), ignoring PUSH_PROMISE",
                         id,
                         self.actions.recv.max_stream_id()
@@ -851,7 +851,7 @@ impl Inner {
             );
         }
 
-        tracing::trace!("Streams::recv_eof");
+        trace!("Streams::recv_eof");
 
         self.store.for_each(|stream| {
             counts.transition(stream, |counts, stream| {
@@ -966,7 +966,7 @@ where
 
         if let Some(pending) = pending {
             let mut stream = me.store.resolve(pending.key);
-            tracing::trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
+            trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
             if stream.is_pending_open {
                 stream.wait_send(cx);
                 return Poll::Pending;
@@ -1449,7 +1449,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
         Ok(inner) => inner,
         Err(_) => {
             if ::std::thread::panicking() {
-                tracing::trace!("StreamRef::drop; mutex poisoned");
+                trace!("StreamRef::drop; mutex poisoned");
                 return;
             } else {
                 panic!("StreamRef::drop; mutex poisoned");
@@ -1461,7 +1461,7 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     me.refs -= 1;
     let mut stream = me.store.resolve(key);
 
-    tracing::trace!("drop_stream_ref; stream={:?}", stream);
+    trace!("drop_stream_ref; stream={:?}", stream);
 
     // decrement the stream's ref count by 1.
     stream.ref_dec();
@@ -1578,7 +1578,7 @@ impl Actions {
                     .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
                 Ok(())
             } else {
-                tracing::warn!(
+                warn!(
                     "reset_on_recv_stream_err; locally-reset streams reached limit ({:?})",
                     counts.max_local_error_resets().unwrap(),
                 );

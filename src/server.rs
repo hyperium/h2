@@ -120,6 +120,8 @@ use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, Strea
 use crate::proto::{self, Config, Error, Prioritized};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
+#[cfg(feature = "tracing")]
+use ::tracing::instrument::{Instrument, Instrumented};
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Method, Request, Response};
 use std::future::Future;
@@ -128,7 +130,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tracing::instrument::{Instrument, Instrumented};
 
 /// In progress HTTP/2 connection handshake future.
 ///
@@ -151,7 +152,8 @@ pub struct Handshake<T, B: Buf = Bytes> {
     /// The current state of the handshake.
     state: Handshaking<T, B>,
     /// Span tracking the handshake
-    span: tracing::Span,
+    #[cfg(feature = "tracing")]
+    span: ::tracing::Span,
 }
 
 /// Accepts inbound HTTP/2 streams on a connection.
@@ -308,9 +310,17 @@ impl<B: Buf + fmt::Debug> fmt::Debug for SendPushedResponse<B> {
 /// Stages of an in-progress handshake.
 enum Handshaking<T, B: Buf> {
     /// State 1. Connection is flushing pending SETTINGS frame.
+    #[cfg(feature = "tracing")]
     Flushing(Instrumented<Flush<T, Prioritized<B>>>),
+    #[cfg(not(feature = "tracing"))]
+    Flushing(Flush<T, Prioritized<B>>),
+
     /// State 2. Connection is waiting for the client preface.
+    #[cfg(feature = "tracing")]
     ReadingPreface(Instrumented<ReadPreface<T, Prioritized<B>>>),
+    #[cfg(not(feature = "tracing"))]
+    ReadingPreface(ReadPreface<T, Prioritized<B>>),
+
     /// State 3. Handshake is done, polling again would panic.
     Done,
 }
@@ -377,7 +387,9 @@ where
     B: Buf,
 {
     fn handshake2(io: T, builder: Builder) -> Handshake<T, B> {
-        let span = tracing::trace_span!("server_handshake");
+        #[cfg(feature = "tracing")]
+        let span = ::tracing::trace_span!("server_handshake");
+        #[cfg(feature = "tracing")]
         let entered = span.enter();
 
         // Create the codec.
@@ -397,14 +409,19 @@ where
             .expect("invalid SETTINGS frame");
 
         // Create the handshake future.
+        #[cfg(feature = "tracing")]
         let state =
-            Handshaking::Flushing(Flush::new(codec).instrument(tracing::trace_span!("flush")));
+            Handshaking::Flushing(Flush::new(codec).instrument(::tracing::trace_span!("flush")));
+        #[cfg(not(feature = "tracing"))]
+        let state = Handshaking::Flushing(Flush::new(codec));
 
+        #[cfg(feature = "tracing")]
         drop(entered);
 
         Handshake {
             builder,
             state,
+            #[cfg(feature = "tracing")]
             span,
         }
     }
@@ -430,7 +447,7 @@ where
         }
 
         if let Some(inner) = self.connection.next_incoming() {
-            tracing::trace!("received incoming");
+            trace!("received incoming");
             let (head, _) = inner.take_request().into_parts();
             let body = RecvStream::new(FlowControl::new(inner.clone_to_opaque()));
 
@@ -1342,9 +1359,9 @@ where
     type Output = Result<Connection<T, B>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let span = self.span.clone(); // XXX(eliza): T_T
-        let _e = span.enter();
-        tracing::trace!(state = ?self.state);
+        #[cfg(feature = "tracing")]
+        let _span = self.span.clone().entered(); // XXX(eliza): T_T
+        trace!(state = ?self.state);
 
         loop {
             match &mut self.state {
@@ -1354,16 +1371,19 @@ where
                     // for the client preface.
                     let codec = match Pin::new(flush).poll(cx)? {
                         Poll::Pending => {
-                            tracing::trace!(flush.poll = %"Pending");
+                            trace!(flush.poll = %"Pending");
                             return Poll::Pending;
                         }
                         Poll::Ready(flushed) => {
-                            tracing::trace!(flush.poll = %"Ready");
+                            trace!(flush.poll = %"Ready");
                             flushed
                         }
                     };
                     self.state = Handshaking::ReadingPreface(
-                        ReadPreface::new(codec).instrument(tracing::trace_span!("read_preface")),
+                        #[cfg(feature = "tracing")]
+                        ReadPreface::new(codec).instrument(::tracing::trace_span!("read_preface")),
+                        #[cfg(not(feature = "tracing"))]
+                        ReadPreface::new(codec),
                     );
                 }
                 Handshaking::ReadingPreface(read) => {
@@ -1388,7 +1408,7 @@ where
                         },
                     );
 
-                    tracing::trace!("connection established!");
+                    trace!("connection established!");
                     let mut c = Connection { connection };
                     if let Some(sz) = self.builder.initial_target_connection_window_size {
                         c.set_target_window_size(sz);
@@ -1454,15 +1474,14 @@ impl Peer {
         if let Err(e) = frame::PushPromise::validate_request(&request) {
             use PushPromiseHeaderError::*;
             match e {
-                NotSafeAndCacheable => tracing::debug!(
+                NotSafeAndCacheable => debug!(
                     ?promised_id,
                     "convert_push_message: method {} is not safe and cacheable",
                     request.method(),
                 ),
-                InvalidContentLength(e) => tracing::debug!(
+                InvalidContentLength(_e) => debug!(
                     ?promised_id,
-                    "convert_push_message; promised request has invalid content-length {:?}",
-                    e,
+                    "convert_push_message; promised request has invalid content-length {:?}", _e,
                 ),
             }
             return Err(UserError::MalformedHeaders);
@@ -1516,7 +1535,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
-                tracing::debug!($($arg)*);
+               debug!($($arg)*);
                 return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }}
         }
@@ -1552,11 +1571,11 @@ impl proto::Peer for Peer {
         // header
         if let Some(authority) = pseudo.authority {
             let maybe_authority = uri::Authority::from_maybe_shared(authority.clone().into_inner());
-            parts.authority = Some(maybe_authority.or_else(|why| {
+            parts.authority = Some(maybe_authority.or_else(|_why| {
                 malformed!(
                     "malformed headers: malformed authority ({:?}): {}",
                     authority,
-                    why,
+                    _why,
                 )
             })?);
         }
@@ -1567,11 +1586,11 @@ impl proto::Peer for Peer {
                 malformed!("malformed headers: :scheme in CONNECT");
             }
             let maybe_scheme = scheme.parse();
-            let scheme = maybe_scheme.or_else(|why| {
+            let scheme = maybe_scheme.or_else(|_why| {
                 malformed!(
                     "malformed headers: malformed scheme ({:?}): {}",
                     scheme,
-                    why,
+                    _why,
                 )
             })?;
 
@@ -1596,8 +1615,8 @@ impl proto::Peer for Peer {
             }
 
             let maybe_path = uri::PathAndQuery::from_maybe_shared(path.clone().into_inner());
-            parts.path_and_query = Some(maybe_path.or_else(|why| {
-                malformed!("malformed headers: malformed path ({:?}): {}", path, why,)
+            parts.path_and_query = Some(maybe_path.or_else(|_why| {
+                malformed!("malformed headers: malformed path ({:?}): {}", path, _why,)
             })?);
         } else if is_connect && has_protocol {
             malformed!("malformed headers: missing path in extended CONNECT");
@@ -1607,10 +1626,10 @@ impl proto::Peer for Peer {
 
         let mut request = match b.body(()) {
             Ok(request) => request,
-            Err(e) => {
+            Err(_e) => {
                 // TODO: Should there be more specialized handling for different
                 // kinds of errors
-                proto_err!(stream: "error building request: {}; stream={:?}", e, stream_id);
+                proto_err!(stream: "error building request: {}; stream={:?}", _e, stream_id);
                 return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }
         };

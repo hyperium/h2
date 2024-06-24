@@ -128,19 +128,18 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        let span = tracing::trace_span!("FramedWrite::flush");
-        let _e = span.enter();
+        let _span = trace_span!("FramedWrite::flush");
 
         loop {
             while !self.encoder.is_empty() {
                 match self.encoder.next {
                     Some(Next::Data(ref mut frame)) => {
-                        tracing::trace!(queued_data_frame = true);
+                        trace!(queued_data_frame = true);
                         let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
                         ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut buf))?
                     }
                     _ => {
-                        tracing::trace!(queued_data_frame = false);
+                        trace!(queued_data_frame = false);
                         ready!(poll_write_buf(
                             Pin::new(&mut self.inner),
                             cx,
@@ -156,7 +155,7 @@ where
             }
         }
 
-        tracing::trace!("flushing buffer");
+        trace!("flushing buffer");
         // Flush the upstream
         ready!(Pin::new(&mut self.inner).poll_flush(cx))?;
 
@@ -207,10 +206,9 @@ where
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
-        let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
-        let _e = span.enter();
+        let _span = trace_span!("FramedWrite::buffer", frame = ?item);
 
-        tracing::debug!(frame = ?item, "send");
+        debug!(frame = ?item, "send");
 
         match item {
             Frame::Data(mut v) => {
@@ -259,31 +257,31 @@ where
             }
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!(rem = self.buf.remaining(), "encoded settings");
+                trace!(rem = self.buf.remaining(), "encoded settings");
             }
             Frame::GoAway(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!(rem = self.buf.remaining(), "encoded go_away");
+                trace!(rem = self.buf.remaining(), "encoded go_away");
             }
             Frame::Ping(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!(rem = self.buf.remaining(), "encoded ping");
+                trace!(rem = self.buf.remaining(), "encoded ping");
             }
             Frame::WindowUpdate(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!(rem = self.buf.remaining(), "encoded window_update");
+                trace!(rem = self.buf.remaining(), "encoded window_update");
             }
 
             Frame::Priority(_) => {
                 /*
-                v.encode(self.buf.get_mut());
-                tracing::trace!("encoded priority; rem={:?}", self.buf.remaining());
-                */
+                 v.encode(self.buf.get_mut());
+                trace!("encoded priority; rem={:?}", self.buf.remaining());
+                 */
                 unimplemented!();
             }
             Frame::Reset(v) => {
                 v.encode(self.buf.get_mut());
-                tracing::trace!(rem = self.buf.remaining(), "encoded reset");
+                trace!(rem = self.buf.remaining(), "encoded reset");
             }
         }
 

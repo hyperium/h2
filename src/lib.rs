@@ -88,12 +88,15 @@
 #![cfg_attr(not(h2_internal_check_unexpected_cfgs), allow(unexpected_cfgs))]
 #![cfg_attr(test, deny(warnings))]
 
+#[macro_use]
+mod tracing;
+
 macro_rules! proto_err {
     (conn: $($msg:tt)+) => {
-        tracing::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
     (stream: $($msg:tt)+) => {
-        tracing::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
 }
 

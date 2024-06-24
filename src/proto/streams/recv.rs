@@ -158,7 +158,7 @@ impl Recv {
         stream: &mut store::Ptr,
         counts: &mut Counts,
     ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
-        tracing::trace!("opening stream; init_window={}", self.init_window_sz);
+        trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(&frame)?;
 
         if is_initial {
@@ -200,7 +200,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            tracing::debug!(
+            debug!(
                 "stream error REQUEST_HEADER_FIELDS_TOO_LARGE -- \
                  recv_headers: frame is over size; stream={:?}",
                 stream.id
@@ -359,7 +359,7 @@ impl Recv {
 
     /// Releases capacity of the connection
     pub fn release_connection_capacity(&mut self, capacity: WindowSize, task: &mut Option<Waker>) {
-        tracing::trace!(
+        trace!(
             "release_connection_capacity; size={}, connection in_flight_data={}",
             capacity,
             self.in_flight_data,
@@ -387,7 +387,7 @@ impl Recv {
         stream: &mut store::Ptr,
         task: &mut Option<Waker>,
     ) -> Result<(), UserError> {
-        tracing::trace!("release_capacity; size={}", capacity);
+        trace!("release_capacity; size={}", capacity);
 
         if capacity > stream.in_flight_recv_data {
             return Err(UserError::ReleaseCapacityTooBig);
@@ -423,7 +423,7 @@ impl Recv {
             return;
         }
 
-        tracing::trace!(
+        trace!(
             "auto-release closed stream ({:?}) capacity: {:?}",
             stream.id,
             stream.in_flight_recv_data,
@@ -452,7 +452,7 @@ impl Recv {
         target: WindowSize,
         task: &mut Option<Waker>,
     ) -> Result<(), Reason> {
-        tracing::trace!(
+        trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
             self.flow.available(),
@@ -499,7 +499,7 @@ impl Recv {
             let old_sz = self.init_window_sz;
             self.init_window_sz = target;
 
-            tracing::trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
+            trace!("update_initial_window_size; new={}; old={}", target, old_sz,);
 
             // Per RFC 7540 §6.9.2:
             //
@@ -521,7 +521,7 @@ impl Recv {
                 Ordering::Less => {
                     // We must decrease the (local) window on every open stream.
                     let dec = old_sz - target;
-                    tracing::trace!("decrementing all windows; dec={}", dec);
+                    trace!("decrementing all windows; dec={}", dec);
 
                     store.try_for_each(|mut stream| {
                         stream
@@ -534,7 +534,7 @@ impl Recv {
                 Ordering::Greater => {
                     // We must increase the (local) window on every open stream.
                     let inc = target - old_sz;
-                    tracing::trace!("incrementing all windows; inc={}", inc);
+                    trace!("incrementing all windows; inc={}", inc);
                     store.try_for_each(|mut stream| {
                         // XXX: Shouldn't the peer have already noticed our
                         // overflow and sent us a GOAWAY?
@@ -585,7 +585,7 @@ impl Recv {
             return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
         }
 
-        tracing::trace!(
+        trace!(
             "recv_data; size={}; connection={}; stream={}",
             sz,
             self.flow.window_size(),
@@ -593,7 +593,7 @@ impl Recv {
         );
 
         if is_ignoring_frame {
-            tracing::trace!(
+            trace!(
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
@@ -643,7 +643,7 @@ impl Recv {
 
         // Received a frame, but no one cared about it. fix issue#648
         if !stream.is_recv {
-            tracing::trace!(
+            trace!(
                 "recv_data; frame ignored on stream release {:?} for some time",
                 stream.id,
             );
@@ -687,7 +687,7 @@ impl Recv {
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), Error> {
         if self.flow.window_size() < sz {
-            tracing::debug!(
+            debug!(
                 "connection error FLOW_CONTROL_ERROR -- window_size ({:?}) < sz ({:?});",
                 self.flow.window_size(),
                 sz,
@@ -721,7 +721,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            tracing::debug!(
+            debug!(
                 "stream error REFUSED_STREAM -- recv_push_promise: \
                  headers frame is over size; promised_id={:?};",
                 frame.promised_id(),
@@ -745,10 +745,10 @@ impl Recv {
                     req.method(),
                     promised_id,
                 ),
-                InvalidContentLength(e) => proto_err!(
+                InvalidContentLength(_e) => proto_err!(
                     stream:
                     "recv_push_promise; promised request has invalid content-length {:?}; promised_id={:?}",
-                    e,
+                    _e,
                     promised_id,
                 ),
             }
@@ -767,7 +767,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                tracing::debug!(
+                debug!(
                     "stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}",
                     id
                 );
@@ -798,7 +798,7 @@ impl Recv {
             if counts.can_inc_num_remote_reset_streams() {
                 counts.inc_num_remote_reset_streams();
             } else {
-                tracing::warn!(
+                warn!(
                     "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
                     counts.max_remote_reset_streams(),
                 );
@@ -896,7 +896,7 @@ impl Recv {
             return;
         }
 
-        tracing::trace!("enqueue_reset_expiration; {:?}", stream.id);
+        trace!("enqueue_reset_expiration; {:?}", stream.id);
 
         if counts.can_inc_num_reset_streams() {
             counts.inc_num_reset_streams();
@@ -961,8 +961,8 @@ impl Recv {
 
     fn clear_stream_window_update_queue(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_window_updates.pop(store) {
-            counts.transition(stream, |_, stream| {
-                tracing::trace!("clear_stream_window_update_queue; stream={:?}", stream.id);
+            counts.transition(stream, |_, _stream| {
+                trace!("clear_stream_window_update_queue; stream={:?}", _stream.id);
             })
         }
     }
@@ -1052,7 +1052,7 @@ impl Recv {
             };
 
             counts.transition(stream, |_, stream| {
-                tracing::trace!("pending_window_updates -- pop; stream={:?}", stream.id);
+                trace!("pending_window_updates -- pop; stream={:?}", stream.id);
                 debug_assert!(!stream.is_pending_window_update);
 
                 if !stream.state.is_recv_streaming() {
