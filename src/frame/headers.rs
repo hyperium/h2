@@ -564,12 +564,10 @@ impl Pseudo {
 
             let path = if !path.is_empty() {
                 path
+            } else if method == Method::OPTIONS {
+                BytesStr::from_static("*")
             } else {
-                if method == Method::OPTIONS {
-                    BytesStr::from_static("*")
-                } else {
-                    BytesStr::from_static("/")
-                }
+                BytesStr::from_static("/")
             };
 
             (parts.scheme, Some(path))
