@@ -2,7 +2,6 @@ use super::*;
 
 use std::task::{Context, Waker};
 use std::time::Instant;
-use std::usize;
 
 /// Tracks Stream related state
 ///
