@@ -41,7 +41,7 @@
 //! library will start the handshake process, which consists of:
 //!
 //! * The client sends the connection preface (a predefined sequence of 24
-//! octets).
+//!   octets).
 //! * Both the client and the server sending a SETTINGS frame.
 //!
 //! See the [Starting HTTP/2] in the specification for more details.
