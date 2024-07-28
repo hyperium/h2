@@ -85,7 +85,6 @@
     clippy::undocumented_unsafe_blocks
 )]
 #![allow(clippy::type_complexity, clippy::manual_range_contains)]
-#![cfg_attr(not(h2_internal_check_unexpected_cfgs), allow(unexpected_cfgs))]
 #![cfg_attr(test, deny(warnings))]
 
 macro_rules! proto_err {

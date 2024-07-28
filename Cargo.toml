@@ -69,6 +69,9 @@ env_logger = { version = "0.10", default-features = false }
 tokio-rustls = "0.26"
 webpki-roots = "0.26"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [package.metadata.docs.rs]
 features = ["stream"]
 
