@@ -102,6 +102,11 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
+      - name: Make sure tokio 1.38.1 is used for MSRV
+        run: |
+          cargo update
+          cargo update --package tokio --precise 1.38.1
+
       - run: cargo check -p h2
 
   minimal-versions:
