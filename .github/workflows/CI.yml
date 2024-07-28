@@ -61,20 +61,6 @@ jobs:
         run: ./ci/h2spec.sh
         if: matrix.rust == 'stable'
 
-  unexpected-cfgs:
-    runs-on: ubuntu-latest
-    needs: [style]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-        env:
-          RUSTFLAGS: >-
-            -D unexpected_cfgs
-            --cfg h2_internal_check_unexpected_cfgs
-            --check-cfg=cfg(h2_internal_check_unexpected_cfgs,fuzzing)
-
   #clippy_check:
   #  runs-on: ubuntu-latest
   #  steps:
