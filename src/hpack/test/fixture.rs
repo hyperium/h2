@@ -107,7 +107,7 @@ fn test_story(story: Value) {
                 })
                 .collect();
 
-            encoder.encode(&mut input.clone().into_iter(), &mut buf);
+            encoder.encode(input.clone(), &mut buf);
 
             decoder
                 .decode(&mut Cursor::new(&mut buf), |e| {
