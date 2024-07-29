@@ -1,7 +1,5 @@
 use super::*;
 
-use std::usize;
-
 #[derive(Debug)]
 pub(super) struct Counts {
     /// Acting as a client or server. This allows us to track which values to

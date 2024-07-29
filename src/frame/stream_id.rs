@@ -1,5 +1,3 @@
-use std::u32;
-
 /// A stream identifier, as described in [Section 5.1.1] of RFC 7540.
 ///
 /// Streams are identified with an unsigned 31-bit integer. Streams
