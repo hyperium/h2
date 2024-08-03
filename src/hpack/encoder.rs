@@ -62,8 +62,7 @@ impl Encoder {
     where
         I: IntoIterator<Item = Header<Option<HeaderName>>>,
     {
-        let span = tracing::trace_span!("hpack::encode");
-        let _e = span.enter();
+        let _span = trace_span!("hpack::encode");
 
         self.encode_size_updates(dst);
 

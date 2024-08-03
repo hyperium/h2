@@ -92,6 +92,7 @@ impl Counts {
         self.num_local_error_reset_streams += 1;
     }
 
+    #[cfg(feature = "tracing")]
     pub(crate) fn max_local_error_resets(&self) -> Option<usize> {
         self.max_local_error_reset_streams
     }
@@ -150,6 +151,7 @@ impl Counts {
         self.num_local_reset_streams += 1;
     }
 
+    #[cfg(feature = "tracing")]
     pub(crate) fn max_remote_reset_streams(&self) -> usize {
         self.max_remote_reset_streams
     }
@@ -208,7 +210,7 @@ impl Counts {
 
     // TODO: move this to macro?
     pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
-        tracing::trace!(
+        trace!(
             "transition_after; stream={:?}; state={:?}; is_closed={:?}; \
              pending_send_empty={:?}; buffered_send_data={}; \
              num_recv={}; num_send={}",
@@ -230,7 +232,7 @@ impl Counts {
             }
 
             if stream.is_counted {
-                tracing::trace!("dec_num_streams; stream={:?}", stream.id);
+                trace!("dec_num_streams; stream={:?}", stream.id);
                 // Decrement the number of active streams.
                 self.dec_num_streams(&mut stream);
             }

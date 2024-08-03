@@ -141,6 +141,8 @@ use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
+#[cfg(feature = "tracing")]
+use ::tracing::Instrument;
 use bytes::{Buf, Bytes};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
 use std::fmt;
@@ -149,7 +151,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tracing::Instrument;
 
 /// Initializes new HTTP/2 streams on a connection by sending a request.
 ///
@@ -1275,10 +1276,15 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let builder = Builder::new();
-    builder
+
+    #[cfg(feature = "tracing")]
+    return builder
         .handshake(io)
-        .instrument(tracing::trace_span!("client_handshake"))
-        .await
+        .instrument(::tracing::trace_span!("client_handshake"))
+        .await;
+
+    #[cfg(not(feature = "tracing"))]
+    return builder.handshake(io).await;
 }
 
 // ===== impl Connection =====
@@ -1287,12 +1293,12 @@ async fn bind_connection<T>(io: &mut T) -> Result<(), crate::Error>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    tracing::debug!("binding client connection");
+    debug!("binding client connection");
 
     let msg: &'static [u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
     io.write_all(msg).await.map_err(crate::Error::from_io)?;
 
-    tracing::debug!("client connection bound");
+    debug!("client connection bound");
 
     Ok(())
 }
@@ -1439,7 +1445,7 @@ where
         self.inner.maybe_close_connection_if_no_streams();
         let result = self.inner.poll(cx).map_err(Into::into);
         if result.is_pending() && !self.inner.has_streams_or_other_references() {
-            tracing::trace!("last stream closed during poll, wake again");
+            trace!("last stream closed during poll, wake again");
             cx.waker().wake_by_ref();
         }
         result
@@ -1646,6 +1652,7 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Response<()>;
 
+    #[cfg(feature = "tracing")]
     const NAME: &'static str = "Client";
 
     fn r#dyn() -> proto::DynPeer {

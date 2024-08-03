@@ -189,10 +189,9 @@ impl Decoder {
             self.last_max_update = size;
         }
 
-        let span = tracing::trace_span!("hpack::decode");
-        let _e = span.enter();
+        let _span = trace_span!("hpack::decode");
 
-        tracing::trace!("decode");
+        trace!("decode");
 
         while let Some(ty) = peek_u8(src) {
             // At this point we are always at the beginning of the next block
@@ -200,14 +199,14 @@ impl Decoder {
             // determined from the first byte.
             match Representation::load(ty)? {
                 Indexed => {
-                    tracing::trace!(rem = src.remaining(), kind = %"Indexed");
+                    trace!(rem = src.remaining(), kind = %"Indexed");
                     can_resize = false;
                     let entry = self.decode_indexed(src)?;
                     consume(src);
                     f(entry);
                 }
                 LiteralWithIndexing => {
-                    tracing::trace!(rem = src.remaining(), kind = %"LiteralWithIndexing");
+                    trace!(rem = src.remaining(), kind = %"LiteralWithIndexing");
                     can_resize = false;
                     let entry = self.decode_literal(src, true)?;
 
@@ -218,14 +217,14 @@ impl Decoder {
                     f(entry);
                 }
                 LiteralWithoutIndexing => {
-                    tracing::trace!(rem = src.remaining(), kind = %"LiteralWithoutIndexing");
+                    trace!(rem = src.remaining(), kind = %"LiteralWithoutIndexing");
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
                     f(entry);
                 }
                 LiteralNeverIndexed => {
-                    tracing::trace!(rem = src.remaining(), kind = %"LiteralNeverIndexed");
+                    trace!(rem = src.remaining(), kind = %"LiteralNeverIndexed");
                     can_resize = false;
                     let entry = self.decode_literal(src, false)?;
                     consume(src);
@@ -235,7 +234,7 @@ impl Decoder {
                     f(entry);
                 }
                 SizeUpdate => {
-                    tracing::trace!(rem = src.remaining(), kind = %"SizeUpdate");
+                    trace!(rem = src.remaining(), kind = %"SizeUpdate");
                     if !can_resize {
                         return Err(DecoderError::InvalidMaxDynamicSize);
                     }
@@ -257,7 +256,7 @@ impl Decoder {
             return Err(DecoderError::InvalidMaxDynamicSize);
         }
 
-        tracing::debug!(
+        debug!(
             from = self.table.size(),
             to = new_size,
             "Decoder changed max table size"
@@ -318,7 +317,7 @@ impl Decoder {
         let len = decode_int(buf, 7)?;
 
         if len > buf.remaining() {
-            tracing::trace!(len, remaining = buf.remaining(), "decode_string underflow",);
+            trace!(len, remaining = buf.remaining(), "decode_string underflow",);
             return Err(DecoderError::NeedMore(NeedMore::StringUnderflow));
         }
 
@@ -494,6 +493,7 @@ impl Table {
         }
     }
 
+    #[cfg(any(feature = "tracing", test))]
     fn size(&self) -> usize {
         self.size
     }
