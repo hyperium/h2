@@ -1385,6 +1385,7 @@ where
                                 .builder
                                 .local_max_error_reset_streams,
                             settings: self.builder.settings.clone(),
+                            ignore_content_length: false,
                         },
                     );
 

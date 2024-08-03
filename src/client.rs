@@ -343,6 +343,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Ignore content length and only stop receiving when peer close stream
+    ignore_content_length: bool,
 }
 
 #[derive(Debug)]
@@ -663,6 +666,7 @@ impl Builder {
             settings: Default::default(),
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            ignore_content_length: false,
         }
     }
 
@@ -1145,6 +1149,14 @@ impl Builder {
         self
     }
 
+    /// Setup whether to ignore the content length when receiving
+    ///
+    /// If content length is ignored, receiving only stops when server closes stream
+    pub fn ignore_content_length(&mut self, ignore: bool) -> &mut Self {
+        self.ignore_content_length = ignore;
+        self
+    }
+
     /// Sets the first stream ID to something other than 1.
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
@@ -1335,6 +1347,7 @@ where
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),
+                ignore_content_length: builder.ignore_content_length,
             },
         );
         let send_request = SendRequest {
