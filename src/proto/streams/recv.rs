@@ -719,16 +719,16 @@ impl Recv {
             // > that it cannot process.
             //
             // So, if peer is a server, we'll send a 431. In either case,
-            // an error is recorded, which will send a REFUSED_STREAM,
+            // an error is recorded, which will send a PROTOCOL_ERROR,
             // since we don't want any of the data frames either.
             tracing::debug!(
-                "stream error REFUSED_STREAM -- recv_push_promise: \
+                "stream error PROTOCOL_ERROR -- recv_push_promise: \
                  headers frame is over size; promised_id={:?};",
                 frame.promised_id(),
             );
             return Err(Error::library_reset(
                 frame.promised_id(),
-                Reason::REFUSED_STREAM,
+                Reason::PROTOCOL_ERROR,
             ));
         }
 

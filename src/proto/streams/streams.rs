@@ -504,7 +504,7 @@ impl Inner {
 
                             actions.send.schedule_implicit_reset(
                                 stream,
-                                Reason::REFUSED_STREAM,
+                                Reason::PROTOCOL_ERROR,
                                 counts,
                                 &mut actions.task);
 
@@ -512,7 +512,7 @@ impl Inner {
 
                             Ok(())
                         } else {
-                            Err(Error::library_reset(stream.id, Reason::REFUSED_STREAM))
+                            Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR))
                         }
                     },
                     Err(RecvHeaderBlockError::State(err)) => Err(err),

@@ -844,7 +844,7 @@ async fn recv_too_big_headers() {
         srv.send_frame(frames::headers(3).response(200)).await;
         // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
-        srv.recv_frame(frames::reset(3).refused()).await;
+        srv.recv_frame(frames::reset(3).protocol_error()).await;
         idle_ms(10).await;
     };
 
@@ -865,7 +865,7 @@ async fn recv_too_big_headers() {
         // waiting for a response.
         let req1 = tokio::spawn(async move {
             let err = req1.expect("send_request").0.await.expect_err("response1");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         });
 
         let request = Request::builder()
@@ -876,7 +876,7 @@ async fn recv_too_big_headers() {
         let req2 = client.send_request(request, true);
         let req2 = tokio::spawn(async move {
             let err = req2.expect("send_request").0.await.expect_err("response2");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         });
 
         let conn = tokio::spawn(async move {
