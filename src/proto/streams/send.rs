@@ -206,10 +206,7 @@ impl Send {
         }
 
         // Transition the state to reset no matter what.
-        stream.state.set_reset(stream_id, reason, initiator);
-        // Notify the recv task if it's waiting, because it'll
-        // want to hear about the reset.
-        stream.notify_recv();
+        stream.set_reset(reason, initiator);
 
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.

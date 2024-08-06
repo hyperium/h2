@@ -1,5 +1,6 @@
-use futures::future::join;
-use futures::{StreamExt, TryStreamExt};
+use std::iter::FromIterator;
+
+use futures::{future::join, FutureExt as _, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 
 #[tokio::test]
@@ -51,9 +52,15 @@ async fn recv_push_works() {
             let ps: Vec<_> = p.collect().await;
             assert_eq!(1, ps.len())
         };
+        // Use a FuturesUnordered to poll both tasks but only poll them
+        // if they have been notified.
+        let tasks = futures::stream::FuturesUnordered::from_iter([
+            check_resp_status.boxed(),
+            check_pushed_response.boxed(),
+        ])
+        .collect::<()>();
 
-        h2.drive(join(check_resp_status, check_pushed_response))
-            .await;
+        h2.drive(tasks).await;
     };
 
     join(mock, h2).await;
