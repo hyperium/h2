@@ -1,4 +1,3 @@
-use futures::future::join;
 use h2_support::prelude::*;
 
 #[tokio::test]

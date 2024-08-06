@@ -35,7 +35,7 @@ pub use {bytes, futures, http, tokio::io as tokio_io, tracing, tracing_subscribe
 pub use futures::{Future, Sink, Stream};
 
 // And our Future extensions
-pub use super::future_ext::TestFuture;
+pub use super::future_ext::{join, join3, join4, join_all, select, try_join, TestFuture};
 
 // Our client_ext helpers
 pub use super::client_ext::SendRequestExt;
