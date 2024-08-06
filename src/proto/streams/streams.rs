@@ -825,7 +825,7 @@ impl Inner {
 
             let parent = &mut self.store.resolve(parent_key);
             parent.pending_push_promises = ppp;
-            parent.notify_recv();
+            parent.notify_push();
         };
 
         Ok(())

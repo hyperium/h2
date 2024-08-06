@@ -296,7 +296,7 @@ impl Recv {
             let is_open = stream.state.ensure_recv_open()?;
 
             if is_open {
-                stream.recv_task = Some(cx.waker().clone());
+                stream.push_task = Some(cx.waker().clone());
                 Poll::Pending
             } else {
                 Poll::Ready(None)
@@ -760,6 +760,7 @@ impl Recv {
             .pending_recv
             .push_back(&mut self.buffer, Event::Headers(Server(req)));
         stream.notify_recv();
+        stream.notify_push();
         Ok(())
     }
 
@@ -814,6 +815,7 @@ impl Recv {
 
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
 
         Ok(())
     }
@@ -826,6 +828,7 @@ impl Recv {
         // If a receiver is waiting, notify it
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
     }
 
     pub fn go_away(&mut self, last_processed_id: StreamId) {
@@ -837,6 +840,7 @@ impl Recv {
         stream.state.recv_eof();
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
     }
 
     pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
