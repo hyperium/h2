@@ -1,4 +1,4 @@
-use futures::future::{join, join_all, ready, select, Either};
+use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
@@ -849,7 +849,7 @@ async fn recv_too_big_headers() {
     };
 
     let client = async move {
-        let (mut client, conn) = client::Builder::new()
+        let (mut client, mut conn) = client::Builder::new()
             .max_header_list_size(10)
             .handshake::<_, Bytes>(io)
             .await
@@ -863,10 +863,10 @@ async fn recv_too_big_headers() {
         let req1 = client.send_request(request, true);
         // Spawn tasks to ensure that the error wakes up tasks that are blocked
         // waiting for a response.
-        let req1 = tokio::spawn(async move {
+        let req1 = async move {
             let err = req1.expect("send_request").0.await.expect_err("response1");
             assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
-        });
+        };
 
         let request = Request::builder()
             .uri("https://http2.akamai.com/")
@@ -874,19 +874,12 @@ async fn recv_too_big_headers() {
             .unwrap();
 
         let req2 = client.send_request(request, true);
-        let req2 = tokio::spawn(async move {
+        let req2 = async move {
             let err = req2.expect("send_request").0.await.expect_err("response2");
             assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
-        });
+        };
 
-        let conn = tokio::spawn(async move {
-            conn.await.expect("client");
-        });
-        for err in join_all([req1, req2, conn]).await {
-            if let Some(err) = err.err().and_then(|err| err.try_into_panic().ok()) {
-                std::panic::resume_unwind(err);
-            }
-        }
+        conn.drive(join(req1, req2)).await;
     };
 
     join(srv, client).await;
