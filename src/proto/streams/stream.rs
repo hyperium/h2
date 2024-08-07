@@ -1,8 +1,9 @@
+use crate::Reason;
+
 use super::*;
 
 use std::task::{Context, Waker};
 use std::time::Instant;
-use std::usize;
 
 /// Tracks Stream related state
 ///
@@ -105,6 +106,9 @@ pub(super) struct Stream {
     /// Task tracking receiving frames
     pub recv_task: Option<Waker>,
 
+    /// Task tracking pushed promises.
+    pub push_task: Option<Waker>,
+
     /// The stream's pending push promises
     pub pending_push_promises: store::Queue<NextAccept>,
 
@@ -187,6 +191,7 @@ impl Stream {
             pending_recv: buffer::Deque::new(),
             is_recv: true,
             recv_task: None,
+            push_task: None,
             pending_push_promises: store::Queue::new(),
             content_length: ContentLength::Omitted,
         }
@@ -369,6 +374,20 @@ impl Stream {
         if let Some(task) = self.recv_task.take() {
             task.wake();
         }
+    }
+
+    pub(super) fn notify_push(&mut self) {
+        if let Some(task) = self.push_task.take() {
+            task.wake();
+        }
+    }
+
+    /// Set the stream's state to `Closed` with the given reason and initiator.
+    /// Notify the send and receive tasks, if they exist.
+    pub(super) fn set_reset(&mut self, reason: Reason, initiator: Initiator) {
+        self.state.set_reset(self.id, reason, initiator);
+        self.notify_push();
+        self.notify_recv();
     }
 }
 

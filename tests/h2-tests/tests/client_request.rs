@@ -1,10 +1,10 @@
-use futures::future::{join, ready, select, Either};
+use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
-use std::io;
 use std::pin::Pin;
 use std::task::Context;
+use std::{io, panic};
 
 #[tokio::test]
 async fn handshake() {
@@ -844,7 +844,7 @@ async fn recv_too_big_headers() {
         srv.send_frame(frames::headers(3).response(200)).await;
         // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
-        srv.recv_frame(frames::reset(3).refused()).await;
+        srv.recv_frame(frames::reset(3).protocol_error()).await;
         idle_ms(10).await;
     };
 
@@ -861,9 +861,11 @@ async fn recv_too_big_headers() {
             .unwrap();
 
         let req1 = client.send_request(request, true);
+        // Spawn tasks to ensure that the error wakes up tasks that are blocked
+        // waiting for a response.
         let req1 = async move {
             let err = req1.expect("send_request").0.await.expect_err("response1");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         };
 
         let request = Request::builder()
@@ -874,12 +876,12 @@ async fn recv_too_big_headers() {
         let req2 = client.send_request(request, true);
         let req2 = async move {
             let err = req2.expect("send_request").0.await.expect_err("response2");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         };
 
         conn.drive(join(req1, req2)).await;
-        conn.await.expect("client");
     };
+
     join(srv, client).await;
 }
 

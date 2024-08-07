@@ -320,6 +320,16 @@ where
             .send
             .is_extended_connect_protocol_enabled()
     }
+
+    pub fn current_max_send_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_send_streams()
+    }
+
+    pub fn current_max_recv_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_recv_streams()
+    }
 }
 
 impl<B> DynStreams<'_, B> {
@@ -494,7 +504,7 @@ impl Inner {
 
                             actions.send.schedule_implicit_reset(
                                 stream,
-                                Reason::REFUSED_STREAM,
+                                Reason::PROTOCOL_ERROR,
                                 counts,
                                 &mut actions.task);
 
@@ -502,7 +512,7 @@ impl Inner {
 
                             Ok(())
                         } else {
-                            Err(Error::library_reset(stream.id, Reason::REFUSED_STREAM))
+                            Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR))
                         }
                     },
                     Err(RecvHeaderBlockError::State(err)) => Err(err),
@@ -815,7 +825,7 @@ impl Inner {
 
             let parent = &mut self.store.resolve(parent_key);
             parent.pending_push_promises = ppp;
-            parent.notify_recv();
+            parent.notify_push();
         };
 
         Ok(())

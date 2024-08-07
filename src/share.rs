@@ -187,7 +187,7 @@ pub struct RecvStream {
 /// * The window size is now 0 bytes. The peer may not send any more data.
 /// * [`release_capacity`] is called with 1024.
 /// * The receive window size is now 1024 bytes. The peer may now send more
-/// data.
+///   data.
 ///
 /// [flow control]: ../index.html#flow-control
 /// [`release_capacity`]: struct.FlowControl.html#method.release_capacity

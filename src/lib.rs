@@ -41,7 +41,7 @@
 //! library will start the handshake process, which consists of:
 //!
 //! * The client sends the connection preface (a predefined sequence of 24
-//! octets).
+//!   octets).
 //! * Both the client and the server sending a SETTINGS frame.
 //!
 //! See the [Starting HTTP/2] in the specification for more details.
@@ -85,7 +85,6 @@
     clippy::undocumented_unsafe_blocks
 )]
 #![allow(clippy::type_complexity, clippy::manual_range_contains)]
-#![cfg_attr(not(h2_internal_check_unexpected_cfgs), allow(unexpected_cfgs))]
 #![cfg_attr(test, deny(warnings))]
 
 macro_rules! proto_err {

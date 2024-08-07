@@ -1,6 +1,5 @@
 #![deny(warnings)]
 
-use futures::future::join;
 use futures::StreamExt;
 use h2_support::prelude::*;
 use tokio::io::AsyncWriteExt;
@@ -869,7 +868,7 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
         client
             .recv_frame(frames::headers(1).response(431).eos())
             .await;
-        client.recv_frame(frames::reset(1).refused()).await;
+        client.recv_frame(frames::reset(1).protocol_error()).await;
     };
 
     let srv = async move {

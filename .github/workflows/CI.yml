@@ -61,20 +61,6 @@ jobs:
         run: ./ci/h2spec.sh
         if: matrix.rust == 'stable'
 
-  unexpected-cfgs:
-    runs-on: ubuntu-latest
-    needs: [style]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
-        env:
-          RUSTFLAGS: >-
-            -D unexpected_cfgs
-            --cfg h2_internal_check_unexpected_cfgs
-            --check-cfg=cfg(h2_internal_check_unexpected_cfgs,fuzzing)
-
   #clippy_check:
   #  runs-on: ubuntu-latest
   #  steps:
@@ -101,6 +87,11 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Make sure tokio 1.38.1 is used for MSRV
+        run: |
+          cargo update
+          cargo update --package tokio --precise 1.38.1
 
       - run: cargo check -p h2
 

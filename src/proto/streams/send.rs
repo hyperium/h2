@@ -239,7 +239,7 @@ impl Send {
         }
 
         // Transition the state to reset no matter what.
-        stream.state.set_reset(stream_id, reason, initiator);
+        stream.set_reset(reason, initiator);
 
         // If closed AND the send queue is flushed, then the stream cannot be
         // reset explicitly, either. Implicit resets can still be queued.
