@@ -137,6 +137,7 @@ impl Store {
             Ok::<_, Infallible>(())
         }) {
             Ok(()) => (),
+            #[allow(unused)]
             Err(infallible) => match infallible {},
         }
     }
