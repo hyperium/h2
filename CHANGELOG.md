@@ -1,3 +1,10 @@
+# 0.4.6 (August 19, 2024)
+
+* Add `current_max_send_streams()` and `current_max_recv_streams()` to `client::SendRequest`.
+* Fix sending a PROTOCOL_ERROR instead of REFUSED_STREAM when receiving oversized headers.
+* Fix notifying a PushPromise task properly.
+* Fix notifying a stream task when reset.
+
 # 0.4.5 (May 17, 2024)
 
 * Fix race condition that sometimes hung connections during shutdown.
