@@ -2,13 +2,14 @@ use crate::codec::SendError;
 use crate::frame::{Reason, StreamId};
 
 use bytes::Bytes;
+use http::StatusCode;
 use std::fmt;
 use std::io;
 
 /// Either an H2 reason  or an I/O error
 #[derive(Clone, Debug)]
 pub enum Error {
-    Reset(StreamId, Reason, Initiator),
+    Reset(StreamId, Reason, Initiator, Option<StatusCode>),
     GoAway(Bytes, Reason, Initiator),
     Io(io::ErrorKind, Option<String>),
 }
@@ -23,7 +24,7 @@ pub enum Initiator {
 impl Error {
     pub(crate) fn is_local(&self) -> bool {
         match *self {
-            Self::Reset(_, _, initiator) | Self::GoAway(_, _, initiator) => initiator.is_local(),
+            Self::Reset(_, _, initiator, _) | Self::GoAway(_, _, initiator) => initiator.is_local(),
             Self::Io(..) => true,
         }
     }
@@ -33,7 +34,15 @@ impl Error {
     }
 
     pub(crate) fn library_reset(stream_id: StreamId, reason: Reason) -> Self {
-        Self::Reset(stream_id, reason, Initiator::Library)
+        Self::Reset(stream_id, reason, Initiator::Library, None)
+    }
+
+    pub(crate) fn library_reset_with_status_code(
+        stream_id: StreamId,
+        reason: Reason,
+        status_code: StatusCode,
+    ) -> Self {
+        Self::Reset(stream_id, reason, Initiator::Library, Some(status_code))
     }
 
     pub(crate) fn library_go_away(reason: Reason) -> Self {
@@ -45,7 +54,7 @@ impl Error {
     }
 
     pub(crate) fn remote_reset(stream_id: StreamId, reason: Reason) -> Self {
-        Self::Reset(stream_id, reason, Initiator::Remote)
+        Self::Reset(stream_id, reason, Initiator::Remote, None)
     }
 
     pub(crate) fn remote_go_away(debug_data: Bytes, reason: Reason) -> Self {
@@ -65,7 +74,7 @@ impl Initiator {
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Self::Reset(_, reason, _) | Self::GoAway(_, reason, _) => reason.fmt(fmt),
+            Self::Reset(_, reason, _, _) | Self::GoAway(_, reason, _) => reason.fmt(fmt),
             Self::Io(_, Some(ref inner)) => inner.fmt(fmt),
             Self::Io(kind, None) => io::Error::from(kind).fmt(fmt),
         }

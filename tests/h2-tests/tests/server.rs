@@ -503,6 +503,9 @@ async fn recv_invalid_authority() {
         let settings = client.assert_server_handshake().await;
         assert_default_settings!(settings);
         client.send_frame(bad_headers).await;
+        client
+            .recv_frame(frames::headers(1).status(StatusCode::BAD_REQUEST).eos())
+            .await;
         client.recv_frame(frames::reset(1).protocol_error()).await;
     };
 
@@ -1338,6 +1341,9 @@ async fn reject_pseudo_protocol_on_non_connect_request() {
             )))
             .await;
 
+        client
+            .recv_frame(frames::headers(1).status(StatusCode::BAD_REQUEST).eos())
+            .await;
         client.recv_frame(frames::reset(1).protocol_error()).await;
     };
 
@@ -1378,6 +1384,9 @@ async fn reject_extended_connect_request_without_scheme() {
             }))
             .await;
 
+        client
+            .recv_frame(frames::headers(1).status(StatusCode::BAD_REQUEST).eos())
+            .await;
         client.recv_frame(frames::reset(1).protocol_error()).await;
     };
 
@@ -1418,6 +1427,9 @@ async fn reject_extended_connect_request_without_path() {
             }))
             .await;
 
+        client
+            .recv_frame(frames::headers(1).status(StatusCode::BAD_REQUEST).eos())
+            .await;
         client.recv_frame(frames::reset(1).protocol_error()).await;
     };
 

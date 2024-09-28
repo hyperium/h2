@@ -3,6 +3,7 @@ use crate::frame::StreamId;
 use crate::proto::{self, Initiator};
 
 use bytes::Bytes;
+use http::StatusCode;
 use std::{error, fmt, io};
 
 pub use crate::frame::Reason;
@@ -26,7 +27,7 @@ pub struct Error {
 enum Kind {
     /// A RST_STREAM frame was received or sent.
     #[allow(dead_code)]
-    Reset(StreamId, Reason, Initiator),
+    Reset(StreamId, Reason, Initiator, Option<StatusCode>),
 
     /// A GO_AWAY frame was received or sent.
     GoAway(Bytes, Reason, Initiator),
@@ -51,7 +52,7 @@ impl Error {
     /// action taken by the peer (i.e. a protocol error).
     pub fn reason(&self) -> Option<Reason> {
         match self.kind {
-            Kind::Reset(_, reason, _) | Kind::GoAway(_, reason, _) | Kind::Reason(reason) => {
+            Kind::Reset(_, reason, _, _) | Kind::GoAway(_, reason, _) | Kind::Reason(reason) => {
                 Some(reason)
             }
             _ => None,
@@ -101,7 +102,7 @@ impl Error {
     pub fn is_remote(&self) -> bool {
         matches!(
             self.kind,
-            Kind::GoAway(_, _, Initiator::Remote) | Kind::Reset(_, _, Initiator::Remote)
+            Kind::GoAway(_, _, Initiator::Remote) | Kind::Reset(_, _, Initiator::Remote, _)
         )
     }
 
@@ -111,7 +112,7 @@ impl Error {
     pub fn is_library(&self) -> bool {
         matches!(
             self.kind,
-            Kind::GoAway(_, _, Initiator::Library) | Kind::Reset(_, _, Initiator::Library)
+            Kind::GoAway(_, _, Initiator::Library) | Kind::Reset(_, _, Initiator::Library, _)
         )
     }
 }
@@ -122,7 +123,9 @@ impl From<proto::Error> for Error {
 
         Error {
             kind: match src {
-                Reset(stream_id, reason, initiator) => Kind::Reset(stream_id, reason, initiator),
+                Reset(stream_id, reason, initiator, status_code) => {
+                    Kind::Reset(stream_id, reason, initiator, status_code)
+                }
                 GoAway(debug_data, reason, initiator) => {
                     Kind::GoAway(debug_data, reason, initiator)
                 }
@@ -162,13 +165,13 @@ impl From<UserError> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let debug_data = match self.kind {
-            Kind::Reset(_, reason, Initiator::User) => {
+            Kind::Reset(_, reason, Initiator::User, _) => {
                 return write!(fmt, "stream error sent by user: {}", reason)
             }
-            Kind::Reset(_, reason, Initiator::Library) => {
+            Kind::Reset(_, reason, Initiator::Library, _) => {
                 return write!(fmt, "stream error detected: {}", reason)
             }
-            Kind::Reset(_, reason, Initiator::Remote) => {
+            Kind::Reset(_, reason, Initiator::Remote, _) => {
                 return write!(fmt, "stream error received: {}", reason)
             }
             Kind::GoAway(ref debug_data, reason, Initiator::User) => {
