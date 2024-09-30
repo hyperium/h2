@@ -87,6 +87,11 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
+      - name: Pin some dependencies for MSRV
+        run: |
+          cargo update --package tokio --precise 1.38.1
+          cargo update --package tokio-util --precise 0.7.11
+
       - run: cargo check -p h2
 
   minimal-versions:
