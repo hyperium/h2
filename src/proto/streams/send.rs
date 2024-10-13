@@ -138,10 +138,11 @@ impl Send {
 
         Self::check_headers(frame.fields())?;
 
+        let final_response = !frame.is_informational();
         let end_stream = frame.is_end_stream();
 
         // Update the state
-        stream.state.send_open(end_stream)?;
+        stream.state.send_open(final_response, end_stream)?;
 
         let mut pending_open = false;
         if counts.peer().is_local_init(frame.stream_id()) && !stream.is_pending_push {

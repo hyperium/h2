@@ -88,8 +88,12 @@ enum Cause {
 
 impl State {
     /// Opens the send-half of a stream if it is not already open.
-    pub fn send_open(&mut self, eos: bool) -> Result<(), UserError> {
-        let local = Streaming;
+    pub fn send_open(&mut self, final_response: bool, eos: bool) -> Result<(), UserError> {
+        let local = if final_response {
+            Streaming
+        } else {
+            AwaitingHeaders
+        };
 
         self.inner = match self.inner {
             Idle => {
