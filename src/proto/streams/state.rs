@@ -112,7 +112,7 @@ impl State {
                     Open { local, remote }
                 }
             }
-            HalfClosedRemote(AwaitingHeaders) | ReservedLocal => {
+            HalfClosedRemote(AwaitingHeaders | Streaming) | ReservedLocal => {
                 if eos {
                     Closed(Cause::EndStream)
                 } else {
