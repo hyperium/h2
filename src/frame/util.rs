@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::Error;
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 
 /// Strip padding from the given payload.
 ///
@@ -32,8 +32,8 @@ pub fn strip_padding(payload: &mut Bytes) -> Result<u8, Error> {
         return Err(Error::TooMuchPadding);
     }
 
-    let _ = payload.split_to(1);
-    let _ = payload.split_off(payload_len - pad_len - 1);
+    payload.advance(1);
+    payload.truncate(payload_len - pad_len - 1);
 
     Ok(pad_len as u8)
 }
