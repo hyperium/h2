@@ -8,7 +8,7 @@ use crate::hpack;
 
 use futures_core::Stream;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 use std::io;
 
@@ -146,8 +146,7 @@ fn decode_frame(
     macro_rules! header_block {
         ($frame:ident, $head:ident, $bytes:ident) => ({
             // Drop the frame header
-            // TODO: Change to drain: carllerche/bytes#130
-            let _ = $bytes.split_to(frame::HEADER_LEN);
+            $bytes.advance(frame::HEADER_LEN);
 
             // Parse the header frame w/o parsing the payload
             let (mut frame, mut payload) = match frame::$frame::load($head, $bytes) {
@@ -227,7 +226,7 @@ fn decode_frame(
             .into()
         }
         Kind::Data => {
-            let _ = bytes.split_to(frame::HEADER_LEN);
+            bytes.advance(frame::HEADER_LEN);
             let res = frame::Data::load(head, bytes.freeze());
 
             // TODO: Should this always be connection level? Probably not...
