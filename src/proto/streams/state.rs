@@ -413,11 +413,8 @@ impl State {
         matches!(self.inner, Closed(_))
     }
 
-    pub fn is_recv_closed(&self) -> bool {
-        matches!(
-            self.inner,
-            Closed(..) | HalfClosedRemote(..) | ReservedLocal
-        )
+    pub fn is_end_stream(&self) -> bool {
+        matches!(self.inner, Closed(Cause::EndStream))
     }
 
     pub fn is_send_closed(&self) -> bool {
