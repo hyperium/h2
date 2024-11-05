@@ -5,6 +5,7 @@ use super::{
 use crate::codec::UserError;
 use crate::frame::{self, Reason};
 use crate::proto::{self, Error, Initiator};
+use crate::tracing;
 
 use bytes::Buf;
 use tokio::io::AsyncWrite;
@@ -180,6 +181,7 @@ impl Send {
         let is_reset = stream.state.is_reset();
         let is_closed = stream.state.is_closed();
         let is_empty = stream.pending_send.is_empty();
+        #[cfg(feature = "tracing")]
         let stream_id = stream.id;
 
         tracing::trace!(
@@ -487,7 +489,7 @@ impl Send {
                         // and reassign it to other streams.
                         let window_size = stream.send_flow.window_size();
                         let available = stream.send_flow.available().as_size();
-                        let reclaimed = if available > window_size {
+                        let _reclaimed = if available > window_size {
                             // Drop down to `window_size`.
                             let reclaim = available - window_size;
                             stream
@@ -504,7 +506,7 @@ impl Send {
                             "decremented stream window; id={:?}; decr={}; reclaimed={}; flow={:?}",
                             stream.id,
                             dec,
-                            reclaimed,
+                            _reclaimed,
                             stream.send_flow
                         );
 

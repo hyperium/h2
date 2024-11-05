@@ -3,6 +3,7 @@ use std::fmt;
 use bytes::{BufMut, Bytes};
 
 use crate::frame::{self, Error, Head, Kind, Reason, StreamId};
+use crate::tracing;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoAway {
