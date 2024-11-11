@@ -254,6 +254,10 @@ impl Headers {
         &mut self.header_block.pseudo
     }
 
+    pub(crate) fn pseudo(&self) -> &Pseudo {
+        &self.header_block.pseudo
+    }
+
     /// Whether it has status 1xx
     pub(crate) fn is_informational(&self) -> bool {
         self.header_block.pseudo.is_informational()
