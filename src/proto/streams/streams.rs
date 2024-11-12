@@ -1576,6 +1576,9 @@ impl Actions {
                 // Reset the stream.
                 self.send
                     .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                self.recv.enqueue_reset_expiration(stream, counts);
+                // if a RecvStream is parked, ensure it's notified
+                stream.notify_recv();
                 Ok(())
             } else {
                 tracing::warn!(
