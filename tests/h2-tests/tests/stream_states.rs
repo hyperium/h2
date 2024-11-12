@@ -536,7 +536,12 @@ async fn recv_next_stream_id_updated_by_malformed_headers() {
         client.recv_frame(frames::go_away(1).protocol_error()).await;
     };
     let srv = async move {
-        let mut srv = server::handshake(io).await.expect("handshake");
+        let mut srv = server::Builder::new()
+            // forget the bad stream immediately
+            .max_concurrent_reset_streams(0)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
         let res = srv.next().await.unwrap();
         let err = res.unwrap_err();
         assert_eq!(err.reason(), Some(h2::Reason::PROTOCOL_ERROR));
