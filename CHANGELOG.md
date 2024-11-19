@@ -1,3 +1,8 @@
+# 0.4.7 (November 19, 2024)
+
+* Fix treating HEADERS frames with a non-zero content-length but END_STREAM flag as malformed.
+* Fix notifying the stream task when automatically reset on receipt of a stream error.
+
 # 0.4.6 (August 19, 2024)
 
 * Add `current_max_send_streams()` and `current_max_recv_streams()` to `client::SendRequest`.
