@@ -72,4 +72,7 @@ pub struct Config {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     pub local_max_error_reset_streams: Option<usize>,
+
+    /// Ignore the content length header and only stop receiving when peer close stream
+    pub ignore_content_length: bool,
 }
