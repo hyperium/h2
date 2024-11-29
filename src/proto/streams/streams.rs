@@ -1265,10 +1265,7 @@ impl<B> StreamRef<B> {
 
         let mut stream = me.store.resolve(self.opaque.key);
 
-        me.actions
-            .send
-            .poll_reset(cx, &mut stream, mode)
-            .map_err(From::from)
+        me.actions.send.poll_reset(cx, &mut stream, mode)
     }
 
     pub fn clone_to_opaque(&self) -> OpaqueStreamRef {
