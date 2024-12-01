@@ -1454,12 +1454,12 @@ impl Peer {
         if let Err(e) = frame::PushPromise::validate_request(&request) {
             use PushPromiseHeaderError::*;
             match e {
-                NotSafeAndCacheable => tracing::debug!(
+                NotSafeAndCacheable => tracing::trace!(
                     ?promised_id,
                     "convert_push_message: method {} is not safe and cacheable",
                     request.method(),
                 ),
-                InvalidContentLength(e) => tracing::debug!(
+                InvalidContentLength(e) => tracing::trace!(
                     ?promised_id,
                     "convert_push_message; promised request has invalid content-length {:?}",
                     e,
@@ -1516,7 +1516,7 @@ impl proto::Peer for Peer {
 
         macro_rules! malformed {
             ($($arg:tt)*) => {{
-                tracing::debug!($($arg)*);
+                tracing::trace!($($arg)*);
                 return Err(Error::library_reset(stream_id, Reason::PROTOCOL_ERROR));
             }}
         }

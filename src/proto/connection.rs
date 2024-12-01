@@ -135,7 +135,7 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
-                span: tracing::debug_span!("Connection", peer = %P::NAME),
+                span: tracing::trace_span!("Connection", peer = %P::NAME),
                 _phantom: PhantomData,
             },
         }
@@ -432,7 +432,7 @@ where
             // terminating the connection.
             Err(Error::GoAway(debug_data, reason, initiator)) => {
                 let e = Error::GoAway(debug_data.clone(), reason, initiator);
-                tracing::debug!(error = ?e, "Connection::poll; connection error");
+                tracing::trace!(error = ?e, "Connection::poll; connection error");
 
                 // We may have already sent a GOAWAY for this error,
                 // if so, don't send another, just flush and close up.
@@ -465,7 +465,7 @@ where
             //
             // TODO: Are I/O errors recoverable?
             Err(Error::Io(kind, inner)) => {
-                tracing::debug!(error = ?kind, "Connection::poll; IO error");
+                tracing::trace!(error = ?kind, "Connection::poll; IO error");
                 let e = Error::Io(kind, inner);
 
                 // Reset all active streams

@@ -300,7 +300,7 @@ fn decode_frame(
             } else {
                 let cnt = partial.continuation_frames_count + 1;
                 if cnt > max_continuation_frames {
-                    tracing::debug!("too_many_continuations, max = {}", max_continuation_frames);
+                    tracing::trace!("too_many_continuations, max = {}", max_continuation_frames);
                     return Err(Error::library_go_away_data(
                         Reason::ENHANCE_YOUR_CALM,
                         "too_many_continuations",
@@ -401,7 +401,7 @@ where
                 partial,
                 bytes,
             )? {
-                tracing::debug!(?frame, "received");
+                tracing::trace!(?frame, "received");
                 return Poll::Ready(Some(Ok(frame)));
             }
         }

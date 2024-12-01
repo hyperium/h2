@@ -149,7 +149,7 @@ impl Settings {
 
         // Ensure the payload length is correct, each setting is 6 bytes long.
         if payload.len() % 6 != 0 {
-            tracing::debug!("invalid settings payload length; len={:?}", payload.len());
+            tracing::trace!("invalid settings payload length; len={:?}", payload.len());
             return Err(Error::InvalidPayloadAckSettings);
         }
 

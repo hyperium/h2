@@ -257,7 +257,7 @@ impl Decoder {
             return Err(DecoderError::InvalidMaxDynamicSize);
         }
 
-        tracing::debug!(
+        tracing::trace!(
             from = self.table.size(),
             to = new_size,
             "Decoder changed max table size"

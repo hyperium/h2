@@ -53,7 +53,7 @@ impl Settings {
         if frame.is_ack() {
             match &self.local {
                 Local::WaitingAck(local) => {
-                    tracing::debug!("received settings ACK; applying {:?}", local);
+                    tracing::trace!("received settings ACK; applying {:?}", local);
 
                     if let Some(max) = local.max_frame_size() {
                         codec.set_max_recv_frame_size(max as usize);

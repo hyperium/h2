@@ -85,11 +85,11 @@ impl Send {
             || fields.contains_key("keep-alive")
             || fields.contains_key("proxy-connection")
         {
-            tracing::debug!("illegal connection-specific headers found");
+            tracing::trace!("illegal connection-specific headers found");
             return Err(UserError::MalformedHeaders);
         } else if let Some(te) = fields.get(http::header::TE) {
             if te != "trailers" {
-                tracing::debug!("illegal connection-specific headers found");
+                tracing::trace!("illegal connection-specific headers found");
                 return Err(UserError::MalformedHeaders);
             }
         }
@@ -375,7 +375,7 @@ impl Send {
         task: &mut Option<Waker>,
     ) -> Result<(), Reason> {
         if let Err(e) = self.prioritize.recv_stream_window_update(sz, stream) {
-            tracing::debug!("recv_stream_window_update !!; err={:?}", e);
+            tracing::trace!("recv_stream_window_update !!; err={:?}", e);
 
             self.send_reset(
                 Reason::FLOW_CONTROL_ERROR,

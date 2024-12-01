@@ -212,7 +212,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a REFUSED_STREAM,
             // since we don't want any of the data frames either.
-            tracing::debug!(
+            tracing::trace!(
                 "stream error REQUEST_HEADER_FIELDS_TOO_LARGE -- \
                  recv_headers: frame is over size; stream={:?}",
                 stream.id
@@ -699,7 +699,7 @@ impl Recv {
 
     pub fn consume_connection_window(&mut self, sz: WindowSize) -> Result<(), Error> {
         if self.flow.window_size() < sz {
-            tracing::debug!(
+            tracing::trace!(
                 "connection error FLOW_CONTROL_ERROR -- window_size ({:?}) < sz ({:?});",
                 self.flow.window_size(),
                 sz,
@@ -733,7 +733,7 @@ impl Recv {
             // So, if peer is a server, we'll send a 431. In either case,
             // an error is recorded, which will send a PROTOCOL_ERROR,
             // since we don't want any of the data frames either.
-            tracing::debug!(
+            tracing::trace!(
                 "stream error PROTOCOL_ERROR -- recv_push_promise: \
                  headers frame is over size; promised_id={:?};",
                 frame.promised_id(),
@@ -780,7 +780,7 @@ impl Recv {
     pub fn ensure_not_idle(&self, id: StreamId) -> Result<(), Reason> {
         if let Ok(next) = self.next_stream_id {
             if id >= next {
-                tracing::debug!(
+                tracing::trace!(
                     "stream ID implicitly closed, PROTOCOL_ERROR; stream={:?}",
                     id
                 );

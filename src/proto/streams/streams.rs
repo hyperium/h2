@@ -445,7 +445,7 @@ impl Inner {
                     // This may be response headers for a stream we've already
                     // forgotten about...
                     if self.actions.may_have_forgotten_stream(peer, id) {
-                        tracing::debug!(
+                        tracing::trace!(
                             "recv_headers for old stream={:?}, sending STREAM_CLOSED",
                             id,
                         );
@@ -555,7 +555,7 @@ impl Inner {
                 }
 
                 if self.actions.may_have_forgotten_stream(peer, id) {
-                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
+                    tracing::trace!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
 
                     let sz = frame.payload().len();
                     // This should have been enforced at the codec::FramedRead layer, so
