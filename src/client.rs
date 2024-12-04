@@ -139,8 +139,10 @@ use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
-use crate::{FlowControl, PingPong, RecvStream, SendStream};
+use crate::{tracing, FlowControl, PingPong, RecvStream, SendStream};
 
+#[cfg(feature = "tracing")]
+use ::tracing::Instrument;
 use bytes::{Buf, Bytes};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
 use std::fmt;
@@ -149,7 +151,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tracing::Instrument;
 
 /// Initializes new HTTP/2 streams on a connection by sending a request.
 ///
@@ -1275,10 +1276,15 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let builder = Builder::new();
-    builder
+
+    #[cfg(feature = "tracing")]
+    return builder
         .handshake(io)
-        .instrument(tracing::trace_span!("client_handshake"))
-        .await
+        .instrument(::tracing::trace_span!("client_handshake"))
+        .await;
+
+    #[cfg(not(feature = "tracing"))]
+    return builder.handshake(io).await;
 }
 
 // ===== impl Connection =====
@@ -1646,6 +1652,7 @@ impl Peer {
 impl proto::Peer for Peer {
     type Poll = Response<()>;
 
+    #[cfg(feature = "tracing")]
     const NAME: &'static str = "Client";
 
     fn r#dyn() -> proto::DynPeer {

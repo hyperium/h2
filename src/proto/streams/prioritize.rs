@@ -6,6 +6,8 @@ use crate::frame::Reason;
 use crate::codec::UserError;
 use crate::codec::UserError::*;
 
+use crate::tracing;
+
 use bytes::buf::Take;
 use std::{
     cmp::{self, Ordering},
@@ -116,8 +118,7 @@ impl Prioritize {
         stream: &mut store::Ptr,
         task: &mut Option<Waker>,
     ) {
-        let span = tracing::trace_span!("Prioritize::queue_frame", ?stream.id);
-        let _e = span.enter();
+        let _span = tracing::trace_span!("Prioritize::queue_frame", ?stream.id);
         // Queue the frame in the buffer
         stream.pending_send.push_back(buffer, frame);
         self.schedule_send(stream, task);
@@ -172,9 +173,8 @@ impl Prioritize {
         // Update the buffered data counter
         stream.buffered_send_data += sz as usize;
 
-        let span =
+        let _span =
             tracing::trace_span!("send_data", sz, requested = stream.requested_send_capacity);
-        let _e = span.enter();
         tracing::trace!(buffered = stream.buffered_send_data);
 
         // Implicitly request more send capacity if not enough has been
@@ -234,14 +234,13 @@ impl Prioritize {
         stream: &mut store::Ptr,
         counts: &mut Counts,
     ) {
-        let span = tracing::trace_span!(
+        let _span = tracing::trace_span!(
             "reserve_capacity",
             ?stream.id,
             requested = capacity,
             effective = (capacity as usize) + stream.buffered_send_data,
             curr = stream.requested_send_capacity
         );
-        let _e = span.enter();
 
         // Actual capacity is `capacity` + the current amount of buffered data.
         // If it were less, then we could never send out the buffered data.
@@ -294,14 +293,13 @@ impl Prioritize {
         inc: WindowSize,
         stream: &mut store::Ptr,
     ) -> Result<(), Reason> {
-        let span = tracing::trace_span!(
+        let _span = tracing::trace_span!(
             "recv_stream_window_update",
             ?stream.id,
             ?stream.state,
             inc,
             flow = ?stream.send_flow
         );
-        let _e = span.enter();
 
         if stream.state.is_send_closed() && stream.buffered_send_data == 0 {
             // We can't send any data, so don't bother doing anything else.
@@ -359,11 +357,10 @@ impl Prioritize {
     }
 
     pub fn clear_pending_capacity(&mut self, store: &mut Store, counts: &mut Counts) {
-        let span = tracing::trace_span!("clear_pending_capacity");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("clear_pending_capacity");
         while let Some(stream) = self.pending_capacity.pop(store) {
-            counts.transition(stream, |_, stream| {
-                tracing::trace!(?stream.id, "clear_pending_capacity");
+            counts.transition(stream, |_, _stream| {
+                tracing::trace!(?_stream.id, "clear_pending_capacity");
             })
         }
     }
@@ -376,8 +373,7 @@ impl Prioritize {
     ) where
         R: Resolve,
     {
-        let span = tracing::trace_span!("assign_connection_capacity", inc);
-        let _e = span.enter();
+        let _span = tracing::trace_span!("assign_connection_capacity", inc);
 
         // TODO: proper error handling
         let _res = self.flow.assign_capacity(inc);
@@ -422,8 +418,7 @@ impl Prioritize {
             // Can't assign more than what is available
             stream.send_flow.window_size() - stream.send_flow.available().as_size(),
         );
-        let span = tracing::trace_span!("try_assign_capacity", ?stream.id);
-        let _e = span.enter();
+        let _span = tracing::trace_span!("try_assign_capacity", ?stream.id);
         tracing::trace!(
             requested = total_requested,
             additional,
@@ -581,8 +576,7 @@ impl Prioritize {
     where
         B: Buf,
     {
-        let span = tracing::trace_span!("try_reclaim_frame");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("try_reclaim_frame");
 
         // First check if there are any data chunks to take back
         if let Some(frame) = dst.take_last_data_frame() {
@@ -661,12 +655,11 @@ impl Prioritize {
     }
 
     pub fn clear_queue<B>(&mut self, buffer: &mut Buffer<Frame<B>>, stream: &mut store::Ptr) {
-        let span = tracing::trace_span!("clear_queue", ?stream.id);
-        let _e = span.enter();
+        let _span = tracing::trace_span!("clear_queue", ?stream.id);
 
         // TODO: make this more efficient?
-        while let Some(frame) = stream.pending_send.pop_front(buffer) {
-            tracing::trace!(?frame, "dropping");
+        while let Some(_frame) = stream.pending_send.pop_front(buffer) {
+            tracing::trace!(?_frame, "dropping");
         }
 
         stream.buffered_send_data = 0;
@@ -703,14 +696,12 @@ impl Prioritize {
     where
         B: Buf,
     {
-        let span = tracing::trace_span!("pop_frame");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("pop_frame");
 
         loop {
             match self.pending_send.pop(store) {
                 Some(mut stream) => {
-                    let span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
-                    let _e = span.enter();
+                    let _span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
 
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
@@ -780,7 +771,9 @@ impl Prioritize {
                             tracing::trace!(len, "sending data frame");
 
                             // Update the flow control
-                            tracing::trace_span!("updating stream flow").in_scope(|| {
+                            {
+                                let _span = tracing::trace_span!("updating stream flow");
+
                                 stream.send_data(len, self.max_buffer_size);
 
                                 // Assign the capacity back to the connection that
@@ -789,25 +782,26 @@ impl Prioritize {
                                 // TODO: proper error handling
                                 let _res = self.flow.assign_capacity(len);
                                 debug_assert!(_res.is_ok());
-                            });
+                            }
 
-                            let (eos, len) = tracing::trace_span!("updating connection flow")
-                                .in_scope(|| {
-                                    // TODO: proper error handling
-                                    let _res = self.flow.send_data(len);
-                                    debug_assert!(_res.is_ok());
+                            let (eos, len) = {
+                                let _span = tracing::trace_span!("updating connection flow");
 
-                                    // Wrap the frame's data payload to ensure that the
-                                    // correct amount of data gets written.
+                                // TODO: proper error handling
+                                let _res = self.flow.send_data(len);
+                                debug_assert!(_res.is_ok());
 
-                                    let eos = frame.is_end_stream();
-                                    let len = len as usize;
+                                // Wrap the frame's data payload to ensure that the
+                                // correct amount of data gets written.
 
-                                    if frame.payload().remaining() > len {
-                                        frame.set_end_stream(false);
-                                    }
-                                    (eos, len)
-                                });
+                                let eos = frame.is_end_stream();
+                                let len = len as usize;
+
+                                if frame.payload().remaining() > len {
+                                    frame.set_end_stream(false);
+                                }
+                                (eos, len)
+                            };
 
                             Frame::Data(frame.map(|buf| Prioritized {
                                 inner: buf.take(len),
