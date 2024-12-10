@@ -117,7 +117,7 @@ impl<T> Data<T> {
 }
 
 impl Data<Bytes> {
-    pub(crate) fn load(head: Head, mut payload: Bytes) -> Result<Self, Error> {
+    pub fn load(head: Head, mut payload: Bytes) -> Result<Self, Error> {
         let flags = DataFlags::load(head.flag());
 
         // The stream identifier must not be zero
