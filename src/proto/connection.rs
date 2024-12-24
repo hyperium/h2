@@ -59,7 +59,7 @@ where
     /// A `tracing` span tracking the lifetime of the connection.
     span: tracing::Span,
 
-    sleep: Option<Box<Sleep>>,
+    keepalive: Option<Pin<Box<Sleep>>>,
     keepalive_timeout: Option<Duration>,
 
     /// Client or server
@@ -141,7 +141,7 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
-                sleep: None,
+                keepalive: None,
                 keepalive_timeout: config.keepalive_timeout,
                 span: tracing::debug_span!("Connection", peer = %P::NAME),
                 _phantom: PhantomData,
@@ -279,7 +279,7 @@ where
                 State::Open => {
                     let result = match self.poll2(cx) {
                         Poll::Ready(result) => {
-                            self.inner.sleep = None;
+                            self.inner.keepalive = None;
                             result
                         }
                         // The connection is not ready to make progress
@@ -297,17 +297,19 @@ where
                             }
                             if !self.inner.streams.has_streams() {
                                 loop {
-                                    match (self.inner.sleep.as_mut(), self.inner.keepalive_timeout)
-                                    {
+                                    match (
+                                        self.inner.keepalive.as_mut(),
+                                        self.inner.keepalive_timeout,
+                                    ) {
                                         (Some(sleep), _) => {
-                                            let sleep = unsafe { Pin::new_unchecked(&mut **sleep) };
-                                            ready!(sleep.poll(cx));
+                                            ready!(sleep.as_mut().poll(cx));
                                             self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
                                             continue 'outer;
                                         }
                                         (None, Some(timeout)) => {
-                                            let sleep = tokio::time::sleep(timeout);
-                                            self.inner.sleep.replace(Box::new(sleep));
+                                            self.inner
+                                                .keepalive
+                                                .replace(Box::pin(tokio::time::sleep(timeout)));
                                         }
                                         _ => break,
                                     }
