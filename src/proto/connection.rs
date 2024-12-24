@@ -303,7 +303,7 @@ where
                                     ) {
                                         (Some(sleep), _) => {
                                             ready!(sleep.as_mut().poll(cx));
-                                            self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
+                                            self.inner.as_dyn().go_away_now(Reason::KEEPALIVE_TIMEOUT);
                                             continue 'outer;
                                         }
                                         (None, Some(timeout)) => {
