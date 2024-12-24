@@ -58,7 +58,7 @@ impl Reason {
     pub const INADEQUATE_SECURITY: Reason = Reason(12);
     /// The endpoint requires that HTTP/1.1 be used instead of HTTP/2.
     pub const HTTP_1_1_REQUIRED: Reason = Reason(13);
-    /// The endpoint requires that HTTP/1.1 be used instead of HTTP/2.
+    /// The endpoint reach keepalive timeout
     pub const KEEPALIVE_TIMEOUT: Reason = Reason(14);
 
     /// Get a string description of the error code.
