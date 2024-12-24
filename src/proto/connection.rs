@@ -59,7 +59,7 @@ where
     /// A `tracing` span tracking the lifetime of the connection.
     span: tracing::Span,
 
-    sleep: Option<Sleep>,
+    sleep: Option<Box<Sleep>>,
     keepalive_timeout: Option<Duration>,
 
     /// Client or server
@@ -300,15 +300,14 @@ where
                                     match (self.inner.sleep.as_mut(), self.inner.keepalive_timeout)
                                     {
                                         (Some(sleep), _) => {
-                                            tokio::pin!(sleep);
-                                            let x = sl.as_mut();
-                                            ready!(sl.poll(cx));
+                                            let sleep = unsafe { Pin::new_unchecked(&mut **sleep) };
+                                            ready!(sleep.poll(cx));
                                             self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
                                             continue 'outer;
                                         }
                                         (None, Some(timeout)) => {
                                             let sleep = tokio::time::sleep(timeout);
-                                            self.inner.sleep.insert(sleep);
+                                            self.inner.sleep.replace(Box::new(sleep));
                                         }
                                         _ => break,
                                     }

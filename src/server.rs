@@ -258,6 +258,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Keepalive timeout
+    keepalive_timeout: Option<Duration>,
 }
 
 /// Send a response back to the client
@@ -650,7 +653,7 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
-
+            keepalive_timeout: None,
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
@@ -1379,6 +1382,7 @@ where
                             initial_max_send_streams: 0,
                             max_send_buffer_size: self.builder.max_send_buffer_size,
                             reset_stream_duration: self.builder.reset_stream_duration,
+                            keepalive_timeout: self.builder.keepalive_timeout,
                             reset_stream_max: self.builder.reset_stream_max,
                             remote_reset_stream_max: self.builder.pending_accept_reset_stream_max,
                             local_error_reset_streams_max: self
