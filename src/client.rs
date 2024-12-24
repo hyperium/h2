@@ -999,6 +999,11 @@ impl Builder {
         self
     }
 
+    /// Sets the duration connection should be closed when there no stream.
+    pub fn keepalive_timeout(&mut self, dur: Duration) -> &mut Self {
+        self.keepalive_timeout = Some(dur);
+        self
+    }
     /// Sets the maximum number of local resets due to protocol errors made by the remote end.
     ///
     /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.

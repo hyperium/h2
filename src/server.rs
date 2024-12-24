@@ -1018,6 +1018,11 @@ impl Builder {
         self
     }
 
+    /// Sets the duration connection should be closed when there no stream.
+    pub fn keepalive_timeout(&mut self, dur: Duration) -> &mut Self {
+        self.keepalive_timeout = Some(dur);
+        self
+    }
     /// Enables the [extended CONNECT protocol].
     ///
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
