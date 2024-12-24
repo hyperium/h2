@@ -7,12 +7,14 @@ use crate::proto::*;
 
 use bytes::Bytes;
 use futures_core::Stream;
+use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::AsyncRead;
+use tokio::time::Sleep;
 
 /// An H2 connection
 #[derive(Debug)]
@@ -57,6 +59,9 @@ where
     /// A `tracing` span tracking the lifetime of the connection.
     span: tracing::Span,
 
+    sleep: Option<Sleep>,
+    keepalive_timeout: Option<Duration>,
+
     /// Client or server
     _phantom: PhantomData<P>,
 }
@@ -82,6 +87,7 @@ pub(crate) struct Config {
     pub reset_stream_max: usize,
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
+    pub keepalive_timeout: Option<Duration>,
     pub settings: frame::Settings,
 }
 
@@ -135,6 +141,8 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
+                sleep: None,
+                keepalive_timeout: config.keepalive_timeout,
                 span: tracing::debug_span!("Connection", peer = %P::NAME),
                 _phantom: PhantomData,
             },
@@ -263,22 +271,23 @@ where
         let _e = span.enter();
         let span = tracing::trace_span!("poll");
         let _e = span.enter();
-
-        loop {
+        'outer: loop {
             tracing::trace!(connection.state = ?self.inner.state);
             // TODO: probably clean up this glob of code
             match self.inner.state {
                 // When open, continue to poll a frame
                 State::Open => {
                     let result = match self.poll2(cx) {
-                        Poll::Ready(result) => result,
+                        Poll::Ready(result) => {
+                            self.inner.sleep = None;
+                            result
+                        }
                         // The connection is not ready to make progress
                         Poll::Pending => {
                             // Ensure all window updates have been sent.
                             //
                             // This will also handle flushing `self.codec`
                             ready!(self.inner.streams.poll_complete(cx, &mut self.codec))?;
-
                             if (self.inner.error.is_some()
                                 || self.inner.go_away.should_close_on_idle())
                                 && !self.inner.streams.has_streams()
@@ -286,7 +295,25 @@ where
                                 self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
                                 continue;
                             }
-
+                            if !self.inner.streams.has_streams() {
+                                loop {
+                                    match (self.inner.sleep.as_mut(), self.inner.keepalive_timeout)
+                                    {
+                                        (Some(sleep), _) => {
+                                            tokio::pin!(sleep);
+                                            let x = sl.as_mut();
+                                            ready!(sl.poll(cx));
+                                            self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
+                                            continue 'outer;
+                                        }
+                                        (None, Some(timeout)) => {
+                                            let sleep = tokio::time::sleep(timeout);
+                                            self.inner.sleep.insert(sleep);
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                            }
                             return Poll::Pending;
                         }
                     };
