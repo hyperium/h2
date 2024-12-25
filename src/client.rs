@@ -582,7 +582,6 @@ where
     }
 }
 
-#[cfg(feature = "unstable")]
 impl<B> SendRequest<B>
 where
     B: Buf,

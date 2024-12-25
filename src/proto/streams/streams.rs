@@ -1008,7 +1008,6 @@ where
         self.inner.lock().unwrap().counts.max_recv_streams()
     }
 
-    #[cfg(feature = "unstable")]
     pub fn num_active_streams(&self) -> usize {
         let me = self.inner.lock().unwrap();
         me.store.num_active_streams()

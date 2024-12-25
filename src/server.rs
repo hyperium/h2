@@ -584,6 +584,15 @@ where
         self.connection.max_recv_streams()
     }
 
+    /// Returns whether has stream alive
+    pub fn has_streams_or_other_references(&self) -> bool {
+        self.connection.has_streams_or_other_references()
+    }
+    /// Returns the number of current active stream.
+    pub fn active_stream(&self) -> usize {
+        self.connection.active_streams()
+    }
+
     // Could disappear at anytime.
     #[doc(hidden)]
     #[cfg(feature = "unstable")]

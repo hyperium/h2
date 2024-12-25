@@ -181,6 +181,10 @@ where
     pub(crate) fn max_recv_streams(&self) -> usize {
         self.inner.streams.max_recv_streams()
     }
+    /// Returns the number of active stream
+    pub(crate) fn active_streams(&self) -> usize {
+        self.inner.streams.num_active_streams()
+    }
 
     #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
@@ -303,7 +307,9 @@ where
                                     ) {
                                         (Some(sleep), _) => {
                                             ready!(sleep.as_mut().poll(cx));
-                                            self.inner.as_dyn().go_away_now(Reason::KEEPALIVE_TIMEOUT);
+                                            self.inner
+                                                .as_dyn()
+                                                .go_away_now(Reason::KEEPALIVE_TIMEOUT);
                                             continue 'outer;
                                         }
                                         (None, Some(timeout)) => {
