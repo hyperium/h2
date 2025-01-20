@@ -1218,3 +1218,140 @@ async fn reset_new_stream_before_send() {
 
     join(srv, client).await;
 }
+
+#[tokio::test]
+async fn explicit_reset_with_max_concurrent_stream() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        srv.recv_frame(frames::reset(1).cancel()).await;
+
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://www.example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, mut stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream.send_reset(Reason::CANCEL);
+        };
+
+        {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, _) = client.send_request(request, true).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+        };
+
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn implicit_cancel_with_max_concurrent_stream() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        srv.recv_frame(frames::reset(1).cancel()).await;
+
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://www.example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            // This implicitly resets the stream with CANCEL.
+            drop(stream);
+        };
+
+        {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, _) = client.send_request(request, true).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+        };
+
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
