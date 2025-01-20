@@ -365,6 +365,11 @@ impl Mock<frame::Settings> {
         self
     }
 
+    pub fn max_frame_size(mut self, val: u32) -> Self {
+        self.0.set_max_frame_size(Some(val));
+        self
+    }
+
     pub fn initial_window_size(mut self, val: u32) -> Self {
         self.0.set_initial_window_size(Some(val));
         self

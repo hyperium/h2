@@ -1898,3 +1898,96 @@ async fn window_size_decremented_past_zero() {
 
     join(client, srv).await;
 }
+
+#[tokio::test]
+async fn reclaim_reserved_capacity() {
+    use futures::channel::oneshot;
+
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let (depleted_tx, depleted_rx) = oneshot::channel();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383])).await;
+        depleted_tx.send(()).unwrap();
+
+        // By now, this peer's connection window is completely depleted.
+
+        srv.recv_frame(frames::headers(3).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+
+        srv.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let mut depleting_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        depleting_stream
+            .send_data(vec![0; 65535].into(), false)
+            .unwrap();
+        h2.drive(depleted_rx).await.unwrap();
+
+        // By now, the client knows it has completely depleted the server's
+        // connection window.
+
+        depleting_stream.reserve_capacity(1);
+
+        let mut starved_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        // The following call puts starved_stream in pending_send, as the
+        // server's connection window is completely empty.
+        starved_stream.send_data(vec![0; 1].into(), false).unwrap();
+
+        // This drop should change nothing, as it didn't actually reserve
+        // any available connection window, only requested it.
+        drop(depleting_stream);
+
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
