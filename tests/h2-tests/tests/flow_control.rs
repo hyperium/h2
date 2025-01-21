@@ -1859,7 +1859,7 @@ async fn poll_capacity_wakeup_after_window_update() {
 }
 
 #[tokio::test]
-async fn window_size_decremented_past_zero() {
+async fn window_size_does_not_underflow() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -1891,9 +1891,7 @@ async fn window_size_decremented_past_zero() {
         let builder = server::Builder::new();
         let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
 
-        // just keep it open
-        let res = poll_fn(move |cx| srv.poll_closed(cx)).await;
-        tracing::debug!("{:?}", res);
+        poll_fn(move |cx| srv.poll_closed(cx)).await.unwrap();
     };
 
     join(client, srv).await;
