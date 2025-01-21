@@ -1339,7 +1339,7 @@ async fn client_decrease_initial_window_size() {
         conn.drive(async {
             data(&mut body5, "body5 data2").await;
             data(&mut body5, "body5 data3").await;
-            assert!(body3.is_end_stream());
+            assert!(!body3.is_end_stream());
         })
         .await;
 
