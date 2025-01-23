@@ -1,7 +1,7 @@
 use crate::codec::UserError;
 use crate::codec::UserError::*;
 use crate::frame::{self, Frame, FrameSize};
-use crate::hpack;
+use crate::{hpack, tracing};
 
 use bytes::{Buf, BufMut, BytesMut};
 use std::pin::Pin;
@@ -128,8 +128,7 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        let span = tracing::trace_span!("FramedWrite::flush");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("FramedWrite::flush");
 
         loop {
             while !self.encoder.is_empty() {
@@ -207,8 +206,7 @@ where
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
         assert!(self.has_capacity());
-        let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
-        let _e = span.enter();
+        let _span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
 
         tracing::debug!(frame = ?item, "send");
 
