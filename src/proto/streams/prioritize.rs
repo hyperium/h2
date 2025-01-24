@@ -685,8 +685,11 @@ impl Prioritize {
     }
 
     pub fn clear_pending_send(&mut self, store: &mut Store, counts: &mut Counts) {
-        while let Some(stream) = self.pending_send.pop(store) {
+        while let Some(mut stream) = self.pending_send.pop(store) {
             let is_pending_reset = stream.is_pending_reset_expiration();
+            if let Some(reason) = stream.state.get_scheduled_reset() {
+                stream.set_reset(reason, Initiator::Library);
+            }
             counts.transition_after(stream, is_pending_reset);
         }
     }
