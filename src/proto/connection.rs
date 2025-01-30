@@ -1,6 +1,6 @@
 use crate::codec::UserError;
 use crate::frame::{Reason, StreamId};
-use crate::{client, server};
+use crate::{client, server, tracing};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
@@ -55,7 +55,8 @@ where
     streams: Streams<B, P>,
 
     /// A `tracing` span tracking the lifetime of the connection.
-    span: tracing::Span,
+    #[cfg(feature = "tracing")]
+    span: ::tracing::Span,
 
     /// Client or server
     _phantom: PhantomData<P>,
@@ -135,7 +136,8 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
-                span: tracing::debug_span!("Connection", peer = %P::NAME),
+                #[cfg(feature = "tracing")]
+                span: ::tracing::debug_span!("Connection", peer = %P::NAME),
                 _phantom: PhantomData,
             },
         }
@@ -184,9 +186,9 @@ where
     /// Returns `Error` as this may raise errors that are caused by delayed
     /// processing of received frames.
     fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Error>> {
+        #[cfg(feature = "tracing")]
         let _e = self.inner.span.enter();
-        let span = tracing::trace_span!("poll_ready");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("poll_ready");
         // The order of these calls don't really matter too much
         ready!(self.inner.ping_pong.send_pending_pong(cx, &mut self.codec))?;
         ready!(self.inner.ping_pong.send_pending_ping(cx, &mut self.codec))?;
@@ -259,10 +261,9 @@ where
         // order to placate the borrow checker — `self` is mutably borrowed by
         // `poll2`, which means that we can't borrow `self.span` to enter it.
         // The clone is just an atomic ref bump.
-        let span = self.inner.span.clone();
-        let _e = span.enter();
-        let span = tracing::trace_span!("poll");
-        let _e = span.enter();
+        #[cfg(feature = "tracing")]
+        let _span1 = self.inner.span.clone().entered();
+        let _span2 = tracing::trace_span!("poll");
 
         loop {
             tracing::trace!(connection.state = ?self.inner.state);
@@ -540,8 +541,8 @@ where
                 tracing::trace!(?frame, "recv WINDOW_UPDATE");
                 self.streams.recv_window_update(frame)?;
             }
-            Some(Priority(frame)) => {
-                tracing::trace!(?frame, "recv PRIORITY");
+            Some(Priority(_frame)) => {
+                tracing::trace!(?_frame, "recv PRIORITY");
                 // TODO: handle
             }
             None => {
