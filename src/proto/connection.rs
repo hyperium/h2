@@ -242,6 +242,11 @@ where
         }
     }
 
+    /// Checks if there are any streams
+    pub fn has_streams(&self) -> bool {
+        self.inner.streams.has_streams()
+    }
+
     /// Checks if there are any streams or references left
     pub fn has_streams_or_other_references(&self) -> bool {
         // If we poll() and realize that there are no streams or references
