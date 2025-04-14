@@ -1,3 +1,7 @@
+# 0.4.9 (April 14, 2025)
+
+* Add `sever::Connection::has_streams()` method to check for active streams.
+
 # 0.4.8 (February 18, 2025)
 
 * Fix handling implicit stream resets at the more correct time.
