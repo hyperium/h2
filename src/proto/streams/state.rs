@@ -3,6 +3,7 @@ use std::io;
 use crate::codec::UserError;
 use crate::frame::{self, Reason, StreamId};
 use crate::proto::{self, Error, Initiator, PollReset};
+use crate::tracing;
 
 use self::Inner::*;
 use self::Peer::*;
@@ -193,9 +194,9 @@ impl State {
                     HalfClosedLocal(Streaming)
                 }
             }
-            ref state => {
+            ref _state => {
                 // All other transitions result in a protocol error
-                proto_err!(conn: "recv_open: in unexpected state {:?}", state);
+                proto_err!(conn: "recv_open: in unexpected state {:?}", _state);
                 return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
             }
         };
@@ -210,8 +211,8 @@ impl State {
                 self.inner = ReservedRemote;
                 Ok(())
             }
-            ref state => {
-                proto_err!(conn: "reserve_remote: in unexpected state {:?}", state);
+            ref _state => {
+                proto_err!(conn: "reserve_remote: in unexpected state {:?}", _state);
                 Err(Error::library_go_away(Reason::PROTOCOL_ERROR))
             }
         }
@@ -242,8 +243,8 @@ impl State {
                 self.inner = Closed(Cause::EndStream);
                 Ok(())
             }
-            ref state => {
-                proto_err!(conn: "recv_close: in unexpected state {:?}", state);
+            ref _state => {
+                proto_err!(conn: "recv_close: in unexpected state {:?}", _state);
                 Err(Error::library_go_away(Reason::PROTOCOL_ERROR))
             }
         }
@@ -273,11 +274,11 @@ impl State {
             // In either of these cases, we want to overwrite the stream's
             // previous state with the received RST_STREAM, so that the queue
             // will be cleared by `Prioritize::pop_frame`.
-            ref state => {
+            ref _state => {
                 tracing::trace!(
                     "recv_reset; frame={:?}; state={:?}; queued={:?}",
                     frame,
-                    state,
+                    _state,
                     queued
                 );
                 self.inner = Closed(Cause::Error(Error::remote_reset(
@@ -302,8 +303,8 @@ impl State {
     pub fn recv_eof(&mut self) {
         match self.inner {
             Closed(..) => {}
-            ref state => {
-                tracing::trace!("recv_eof; state={:?}", state);
+            ref _state => {
+                tracing::trace!("recv_eof; state={:?}", _state);
                 self.inner = Closed(Cause::Error(
                     io::Error::new(
                         io::ErrorKind::BrokenPipe,

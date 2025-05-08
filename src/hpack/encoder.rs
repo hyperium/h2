@@ -1,5 +1,6 @@
 use super::table::{Index, Table};
 use super::{huffman, Header};
+use crate::tracing;
 
 use bytes::{BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};
@@ -62,8 +63,7 @@ impl Encoder {
     where
         I: IntoIterator<Item = Header<Option<HeaderName>>>,
     {
-        let span = tracing::trace_span!("hpack::encode");
-        let _e = span.enter();
+        let _span = tracing::trace_span!("hpack::encode");
 
         self.encode_size_updates(dst);
 
