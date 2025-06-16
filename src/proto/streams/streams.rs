@@ -958,7 +958,7 @@ impl<B, P> Streams<B, P>
 where
     P: Peer,
 {
-    pub fn as_dyn(&self) -> DynStreams<B> {
+    pub fn as_dyn(&self) -> DynStreams<'_, B> {
         let Self {
             inner,
             send_buffer,
