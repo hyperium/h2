@@ -94,6 +94,7 @@ jobs:
           cargo update --package tokio-util --precise 0.7.11
           cargo update --package hashbrown --precise 0.15.0
           cargo update --package once_cell --precise 1.20.3
+          cargo update --package tracing-core --precise 0.1.33
 
 
       - run: cargo check -p h2
