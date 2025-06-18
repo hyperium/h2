@@ -5,7 +5,7 @@ use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{self, Frame, Reason};
 use crate::proto::{peer, Error, Initiator, Open, Peer, WindowSize};
-use crate::{client, proto, server};
+use crate::{client, proto, server, tracing};
 
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Request, Response};
@@ -487,7 +487,7 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         self.counts.transition(stream, |counts, stream| {
-            tracing::trace!(
+           tracing::trace!(
                 "recv_headers; stream={:?}; state={:?}",
                 stream.id,
                 stream.state
