@@ -254,7 +254,7 @@ impl Headers {
         &mut self.header_block.pseudo
     }
 
-    pub(crate) fn pseudo(&self) -> &Pseudo {
+    pub fn pseudo(&self) -> &Pseudo {
         &self.header_block.pseudo
     }
 
