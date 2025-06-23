@@ -2,9 +2,9 @@ use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
+use std::panic;
 use std::pin::Pin;
 use std::task::Context;
-use std::{io, panic};
 
 #[tokio::test]
 async fn handshake() {
@@ -1914,7 +1914,7 @@ async fn receive_settings_frame_twice_with_second_one_non_empty() {
 }
 
 #[tokio::test]
-async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
+async fn server_drop_connection_without_close_notify() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -1944,11 +1944,7 @@ async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
                 .await
                 .expect("request");
         });
-        let err = h2.await.expect_err("should receive UnexpectedEof");
-        assert_eq!(
-            err.get_io().expect("should be UnexpectedEof").kind(),
-            io::ErrorKind::UnexpectedEof,
-        );
+        let _ = h2.await.unwrap();
     };
     join(srv, h2).await;
 }
