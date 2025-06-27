@@ -337,6 +337,10 @@ impl<B> DynStreams<'_, B> {
         self.send_buffer.is_empty()
     }
 
+    pub fn is_server(&self) -> bool {
+        self.peer.is_server()
+    }
+
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 

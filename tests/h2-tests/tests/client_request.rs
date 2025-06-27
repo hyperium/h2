@@ -2,9 +2,9 @@ use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
-use std::panic;
 use std::pin::Pin;
 use std::task::Context;
+use std::{io, panic};
 
 #[tokio::test]
 async fn handshake() {
@@ -1913,8 +1913,10 @@ async fn receive_settings_frame_twice_with_second_one_non_empty() {
     join(srv, h2).await;
 }
 
+// If the server has not sent a go_away message before dropping the connection
+// make sure the UnexpectedEof error is propogated.
 #[tokio::test]
-async fn server_drop_connection_without_close_notify() {
+async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -1927,6 +1929,48 @@ async fn server_drop_connection_without_close_notify() {
                 .eos(),
         )
         .await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let err = h2.await.expect_err("should receive UnexpectedEof");
+        assert_eq!(
+            err.get_io().expect("should be UnexpectedEof").kind(),
+            io::ErrorKind::UnexpectedEof,
+        );
+    };
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn server_drop_connection_after_go_away() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::go_away(1)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         srv.close_without_notify();
     };
 
