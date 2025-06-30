@@ -482,9 +482,11 @@ where
                 // without error
                 //
                 // See https://github.com/hyperium/hyper/issues/3427
-                if self.streams.is_server()
-                    && self.streams.is_buffer_empty()
+                if self.streams.is_buffer_empty()
                     && matches!(kind, io::ErrorKind::UnexpectedEof)
+                    && (self.streams.is_server()
+                        || self.error.as_ref().map(|f| f.reason() == Reason::NO_ERROR)
+                            == Some(true))
                 {
                     *self.state = State::Closed(Reason::NO_ERROR, Initiator::Library);
                     return Ok(());
