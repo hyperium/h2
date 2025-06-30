@@ -1,3 +1,7 @@
+# 0.4.11 (June 30, 2025)
+
+* Fix client to not return an error when a clean shutdown otherwise doesn't get a TLS close_notify, which some servers don't bother sending.
+
 # 0.4.10 (May 5, 2025)
 
 * Fix `is_end_stream()` to return true only when ended cleanly, not when errored.
