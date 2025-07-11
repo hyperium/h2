@@ -1,3 +1,7 @@
+# 0.3.27 (July 11, 2025)
+
+* Fix notifying wakers when detecting local stream errors.
+
 # 0.3.26 (April 3, 2024)
 
 * Limit number of CONTINUATION frames for misbehaving connections.
