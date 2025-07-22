@@ -14,8 +14,7 @@ use tokio::{net::TcpStream, runtime::Runtime, sync::Barrier};
 
 static REQUESTS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 
-// The magic happens when concurrency is much greater than max_concurrent_streams,
-// though it also seems to reproduce less often with smaller numbers in general.
+// The magic happens when concurrency is much greater than max_concurrent_streams.
 const CONCURRENCY: usize = 100;
 const MAX_CONCURRENT_STREAMS: u32 = 20;
 
