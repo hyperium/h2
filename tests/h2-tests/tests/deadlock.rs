@@ -30,7 +30,6 @@ const TARGET_REQUESTS_COMPLETED: usize = CONCURRENCY * TARGET_REQUESTS_PER_TASK;
 const MUST_MAKE_PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
 const CHECK_FOR_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
-// For easy repro, run as `cargo test -p h2-tests --test deadlock -- --no-capture`
 #[test]
 fn logical_deadlock() {
     let server_addr = serve();
