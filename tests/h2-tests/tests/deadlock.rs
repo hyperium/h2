@@ -1,16 +1,13 @@
 use std::{
     mem,
     net::SocketAddr,
-    sync::{
-        atomic::{self, AtomicUsize},
-        Arc,
-    },
+    sync::atomic::{self, AtomicUsize},
     time::Instant,
 };
 
 use futures::StreamExt;
 use h2_support::prelude::*;
-use tokio::{net::TcpStream, runtime::Runtime, sync::Barrier};
+use tokio::{net::TcpStream, runtime::Runtime};
 
 static REQUESTS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 
@@ -34,9 +31,6 @@ const CHECK_FOR_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 fn logical_deadlock() {
     let server_addr = serve();
 
-    // We start all the tasks at the same time for increased water hammer.
-    let start = Arc::new(Barrier::new(CONCURRENCY));
-
     let runtime = Runtime::new().unwrap();
 
     runtime.block_on(async move {
@@ -53,11 +47,8 @@ fn logical_deadlock() {
         for _ in 0..CONCURRENCY {
             join_handles.push(tokio::spawn({
                 let mut client = client.clone();
-                let start = start.clone();
 
                 async move {
-                    start.wait().await;
-
                     for _ in 0..TARGET_REQUESTS_PER_TASK {
                         let request = Request::builder()
                             .method(Method::POST)
@@ -161,11 +152,7 @@ fn serve() -> SocketAddr {
 
         tokio::spawn(async move {
             loop {
-                println!("Waiting for connection on {}", local_addr);
-
                 let (socket, _) = listener.accept().await.unwrap();
-
-                println!("Accepted connection from {}", socket.peer_addr().unwrap());
 
                 // Fork each connection.
                 tokio::spawn(async move {
