@@ -120,7 +120,7 @@ fn logical_deadlock() {
                 );
             }
 
-            thread::sleep(CHECK_FOR_PROGRESS_INTERVAL);
+            tokio::time::sleep(CHECK_FOR_PROGRESS_INTERVAL).await;
         }
 
         println!("All requests completed successfully.");
