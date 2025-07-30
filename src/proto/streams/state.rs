@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 
 use crate::codec::UserError;
@@ -47,7 +48,7 @@ use self::Peer::*;
 ///        ES: END_STREAM flag
 ///        R:  RST_STREAM frame
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct State {
     inner: Inner,
 }
@@ -463,5 +464,12 @@ impl State {
 impl Default for State {
     fn default() -> State {
         State { inner: Inner::Idle }
+    }
+}
+
+// remove some noise for debug output
+impl fmt::Debug for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
     }
 }
