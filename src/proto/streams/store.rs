@@ -7,6 +7,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
 
+use crate::tracing;
+
 /// Storage for streams
 #[derive(Debug)]
 pub(super) struct Store {

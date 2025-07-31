@@ -87,12 +87,14 @@
 #![allow(clippy::type_complexity, clippy::manual_range_contains)]
 #![cfg_attr(test, deny(warnings))]
 
+mod tracing;
+
 macro_rules! proto_err {
     (conn: $($msg:tt)+) => {
-        tracing::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        crate::tracing::debug!("connection error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
     (stream: $($msg:tt)+) => {
-        tracing::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
+        crate::tracing::debug!("stream error PROTOCOL_ERROR -- {};", format_args!($($msg)+))
     };
 }
 
