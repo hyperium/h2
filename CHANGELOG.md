@@ -1,3 +1,7 @@
+# 0.4.12 (August 5, 2025)
+
+* Fix default limits on max stored reset streams and duration to more reasonable values.
+
 # 0.4.11 (June 30, 2025)
 
 * Fix client to not return an error when a clean shutdown otherwise doesn't get a TLS close_notify, which some servers don't bother sending.
