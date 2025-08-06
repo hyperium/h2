@@ -912,11 +912,15 @@ impl Recv {
             return;
         }
 
-        tracing::trace!("enqueue_reset_expiration; {:?}", stream.id);
-
         if counts.can_inc_num_reset_streams() {
             counts.inc_num_reset_streams();
+            tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
             self.pending_reset_expired.push(stream);
+        } else {
+            tracing::trace!(
+                "enqueue_reset_expiration; dropped {:?}, over max_concurrent_reset_streams",
+                stream.id
+            );
         }
     }
 
