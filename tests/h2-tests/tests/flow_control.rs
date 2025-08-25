@@ -1989,3 +1989,61 @@ async fn reclaim_reserved_capacity() {
 
     join(mock, h2).await;
 }
+
+// ==== abusive window updates ====
+
+#[tokio::test]
+async fn too_many_window_update_resets_causes_go_away() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        for s in (1..21).step_by(2) {
+            client
+                .send_frame(
+                    frames::headers(s)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            // send a bunch of bad window updates before any headers
+            client
+                .send_frame(frames::window_update(s, u32::MAX - 2))
+                .await;
+            client.recv_frame(frames::reset(s).flow_control()).await;
+        }
+
+        client
+            .send_frame(
+                frames::headers(21)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // send a bunch of bad window updates before any headers
+        client
+            .send_frame(frames::window_update(21, u32::MAX - 2))
+            .await;
+        client
+            .recv_frame(frames::go_away(21).calm().data("too_many_internal_resets"))
+            .await;
+    };
+    let srv = async move {
+        let mut conn = server::Builder::new()
+            .max_local_error_reset_streams(Some(10))
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        for _ in (1..21).step_by(2) {
+            let (_, _) = conn.next().await.unwrap().unwrap();
+        }
+        let err = conn.next().await.unwrap().unwrap_err();
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
+    };
+
+    join(srv, client).await;
+}
