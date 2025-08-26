@@ -70,6 +70,41 @@ async fn server_builder_set_max_concurrent_streams() {
 }
 
 #[tokio::test]
+async fn server_builder_set_keepalive_timeout() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+    let h1 = async  {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let mut builder = server::Builder::new();
+    builder.keepalive_timeout(Duration::from_secs(2));
+    let h2 = async move {
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        let res = stream.send_response(rsp, true).unwrap();
+        drop(res);
+        let r1 = srv.accept().await;
+        println!("rrr {r1:?}");
+        assert!(r1.is_some_and(|f| f.is_err_and(|f| f.is_go_away())));
+    };
+    join(h1, h2).await;
+}
+#[tokio::test]
 async fn serve_request() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
