@@ -284,7 +284,9 @@ impl Prioritize {
                 // Try to assign additional capacity to the stream. If none is
                 // currently available, the stream will be queued to receive some
                 // when more becomes available.
-                self.try_assign_capacity(stream);
+                if !stream.is_pending_open {
+                    self.try_assign_capacity(stream);
+                }
             }
         }
     }
