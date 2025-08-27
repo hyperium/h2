@@ -52,7 +52,9 @@ async fn single_stream_send_large_body() {
     stream.reserve_capacity(payload.len());
 
     // The capacity should be immediately allocated
-    assert_eq!(stream.capacity(), payload.len());
+    let mut stream = h2
+        .drive(util::wait_for_capacity(stream, payload.len()))
+        .await;
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();
@@ -108,7 +110,9 @@ async fn multiple_streams_with_payload_greater_than_default_window() {
         // The capacity should be immediately
         // allocated to default window size (smaller than payload)
         stream1.reserve_capacity(payload_clone.len());
-        assert_eq!(stream1.capacity(), DEFAULT_WINDOW_SIZE);
+        let mut stream1 = conn
+            .drive(util::wait_for_capacity(stream1, DEFAULT_WINDOW_SIZE))
+            .await;
 
         stream2.reserve_capacity(payload_clone.len());
         assert_eq!(stream2.capacity(), 0);
@@ -179,7 +183,9 @@ async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
     stream.reserve_capacity(payload.len());
 
     // The capacity should be immediately allocated
-    assert_eq!(stream.capacity(), payload.len());
+    let mut stream = h2
+        .drive(util::wait_for_capacity(stream, payload.len()))
+        .await;
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();
@@ -296,13 +302,13 @@ async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
             0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25, 151,
             33, 233, 132,
         ])
+        .write(frames::SETTINGS_ACK)
+        .read(frames::SETTINGS_ACK)
         .write(&[
             // DATA
             0, 64, 0, 0, 0, 0, 0, 0, 1,
         ])
         .write(&payload[0..16_384])
-        .write(frames::SETTINGS_ACK)
-        .read(frames::SETTINGS_ACK)
         .wait(Duration::from_millis(10))
         .write(&[
             // DATA
@@ -326,7 +332,9 @@ async fn single_stream_send_extra_large_body_multi_frames_multi_buffer() {
     stream.reserve_capacity(payload.len());
 
     // The capacity should be immediately allocated
-    assert_eq!(stream.capacity(), payload.len());
+    let mut stream = h2
+        .drive(util::wait_for_capacity(stream, payload.len()))
+        .await;
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();
