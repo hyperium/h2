@@ -105,6 +105,61 @@ async fn serve_request() {
 }
 
 #[tokio::test]
+async fn serve_request_expect_continue() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .field(http::header::EXPECT, "100-continue")
+                    .request("POST", "https://example.com/"),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(100)).await;
+        client
+            .send_frame(frames::data(1, "hello world").eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::POST);
+        assert_eq!(
+            req.headers().get(http::header::EXPECT),
+            Some(&http::HeaderValue::from_static("100-continue"))
+        );
+
+        let connection_fut = poll_fn(|cx| srv.poll_closed(cx).map(Result::ok));
+        let test_fut = async move {
+            stream.send_continue().unwrap();
+
+            let mut body = req.into_body();
+            assert_eq!(
+                body.next().await.unwrap().unwrap(),
+                Bytes::from_static(b"hello world")
+            );
+            assert!(body.next().await.is_none());
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+        };
+
+        join(connection_fut, test_fut).await;
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn serve_connect() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
