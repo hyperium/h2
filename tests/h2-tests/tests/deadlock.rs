@@ -59,9 +59,14 @@ fn logical_deadlock() {
                         let (response_future, mut request_body) =
                             client.send_request(request, false).unwrap();
 
-                        request_body
-                            .send_data(Bytes::from_static(REQUEST_BODY), true)
-                            .unwrap();
+                        for chunk in REQUEST_BODY.chunks(1000) {
+                            request_body.reserve_capacity(chunk.len());
+
+                            request_body
+                                .send_data(Bytes::from_static(chunk), false)
+                                .unwrap();
+                        }
+                        request_body.send_data(Bytes::new(), true).unwrap();
 
                         // The anomaly we expect to see will result in this await never completing
                         // for all `CONCURRENCY` concurrent requests enqueued on this connection.
@@ -89,6 +94,10 @@ fn logical_deadlock() {
 
                         while let Some(Ok(chunk)) = response_body_stream.next().await {
                             total_length += chunk.len();
+                            response_body_stream
+                                .flow_control()
+                                .release_capacity(chunk.len())
+                                .unwrap();
                         }
 
                         assert_eq!(total_length, 10 * 1024);
@@ -175,6 +184,10 @@ fn serve() -> SocketAddr {
 
                             while let Some(Ok(chunk)) = request_body_stream.next().await {
                                 total_length += chunk.len();
+                                request_body_stream
+                                    .flow_control()
+                                    .release_capacity(chunk.len())
+                                    .unwrap();
                             }
 
                             assert_eq!(total_length, 10 * 1024);
@@ -182,9 +195,14 @@ fn serve() -> SocketAddr {
                             let response =
                                 Response::builder().status(StatusCode::OK).body(()).unwrap();
                             let mut body_sender = responder.send_response(response, false).unwrap();
-                            body_sender
-                                .send_data(Bytes::from_static(RESPONSE_BODY), true)
-                                .unwrap();
+
+                            for chunk in RESPONSE_BODY.chunks(1000) {
+                                body_sender.reserve_capacity(chunk.len());
+                                body_sender
+                                    .send_data(Bytes::from_static(chunk), false)
+                                    .unwrap();
+                            }
+                            body_sender.send_data(Bytes::new(), true).unwrap();
                         });
                     }
                 });
