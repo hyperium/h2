@@ -1150,6 +1150,43 @@ impl<B> StreamRef<B> {
         }
     }
 
+    pub fn send_informational_headers(&mut self, frame: frame::Headers) -> Result<(), UserError> {
+        let mut me = self.opaque.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let stream = me.store.resolve(self.opaque.key);
+        let actions = &mut me.actions;
+        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
+        me.counts.transition(stream, |counts, stream| {
+            // For informational responses (1xx), we need to send headers without
+            // changing the stream state. This allows multiple informational responses
+            // to be sent before the final response.
+
+            // Validate that this is actually an informational response
+            debug_assert!(
+                frame.is_informational(),
+                "Frame must be informational after conversion from informational response"
+            );
+
+            // Ensure the frame is not marked as end_stream for informational responses
+            if frame.is_end_stream() {
+                return Err(UserError::UnexpectedFrameType);
+            }
+
+            // Send the interim informational headers directly to the buffer without state changes
+            // This bypasses the normal send_headers flow that would transition the stream state
+            actions.send.send_interim_informational_headers(
+                frame,
+                send_buffer,
+                stream,
+                counts,
+                &mut actions.task,
+            )
+        })
+    }
+
     pub fn send_response(
         &mut self,
         mut response: Response<()>,
@@ -1333,6 +1370,19 @@ impl OpaqueStreamRef {
         let mut stream = me.store.resolve(self.key);
 
         me.actions.recv.poll_response(cx, &mut stream)
+    }
+
+    /// Called by a client to check for informational responses (1xx status codes)
+    pub fn poll_informational(
+        &mut self,
+        cx: &Context,
+    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        let mut stream = me.store.resolve(self.key);
+
+        me.actions.recv.poll_informational(cx, &mut stream)
     }
     /// Called by a client to check for a pushed request.
     pub fn poll_pushed(

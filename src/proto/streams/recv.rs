@@ -66,6 +66,7 @@ pub(super) enum Event {
     Headers(peer::PollMessage),
     Data(Bytes),
     Trailers(HeaderMap),
+    InformationalHeaders(peer::PollMessage),
 }
 
 #[derive(Debug)]
@@ -264,6 +265,21 @@ impl Recv {
                 // corresponding headers frame pushed to `stream.pending_recv`.
                 self.pending_accept.push(stream);
             }
+        } else {
+            // This is an informational response (1xx status code)
+            // Convert to response and store it for polling
+            let message = counts
+                .peer()
+                .convert_poll_message(pseudo, fields, stream_id)?;
+
+            tracing::trace!("Received informational response: stream_id={:?}", stream_id);
+
+            // Push the informational response onto the stream's recv buffer
+            // with a special event type so it can be polled separately
+            stream
+                .pending_recv
+                .push_back(&mut self.buffer, Event::InformationalHeaders(message));
+            stream.notify_recv();
         }
 
         Ok(())
@@ -324,23 +340,62 @@ impl Recv {
     ) -> Poll<Result<Response<()>, proto::Error>> {
         use super::peer::PollMessage::*;
 
-        // If the buffer is not empty, then the first frame must be a HEADERS
-        // frame or the user violated the contract.
-        match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response)),
-            Some(_) => panic!("poll_response called after response returned"),
-            None => {
-                if !stream.state.ensure_recv_open()? {
-                    proto_err!(stream: "poll_response: stream={:?} is not opened;",  stream.id);
-                    return Poll::Ready(Err(Error::library_reset(
-                        stream.id,
-                        Reason::PROTOCOL_ERROR,
-                    )));
+        // Skip over any interim informational headers to find the main response
+        loop {
+            match stream.pending_recv.pop_front(&mut self.buffer) {
+                Some(Event::Headers(Client(response))) => return Poll::Ready(Ok(response)),
+                Some(Event::InformationalHeaders(_)) => {
+                    tracing::trace!("Skipping informational response in poll_response - should be consumed via poll_informational; stream_id={:?}", stream.id);
+                    continue;
                 }
+                Some(_) => panic!("poll_response called after response returned"),
+                None => {
+                    if !stream.state.ensure_recv_open()? {
+                        proto_err!(stream: "poll_response: stream={:?} is not opened;",  stream.id);
+                        return Poll::Ready(Err(Error::library_reset(
+                            stream.id,
+                            Reason::PROTOCOL_ERROR,
+                        )));
+                    }
 
-                stream.recv_task = Some(cx.waker().clone());
-                Poll::Pending
+                    stream.recv_task = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
             }
+        }
+    }
+
+    /// Called by the client to get informational responses (1xx status codes)
+    pub fn poll_informational(
+        &mut self,
+        cx: &Context,
+        stream: &mut store::Ptr,
+    ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
+        use super::peer::PollMessage::*;
+
+        // Try to pop the front event and check if it's an informational response
+        // If it's not, we put it back
+        if let Some(event) = stream.pending_recv.pop_front(&mut self.buffer) {
+            match event {
+                Event::InformationalHeaders(Client(response)) => {
+                    // Found an informational response, return it
+                    return Poll::Ready(Some(Ok(response)));
+                }
+                other => {
+                    // Not an informational response, put it back at the front
+                    stream.pending_recv.push_front(&mut self.buffer, other);
+                }
+            }
+        }
+
+        // No informational response available at the front
+        if stream.state.ensure_recv_open()? {
+            // Request to get notified once more frames arrive
+            stream.recv_task = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            // No more frames will be received
+            Poll::Ready(None)
         }
     }
 
