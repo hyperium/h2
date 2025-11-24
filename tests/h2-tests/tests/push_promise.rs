@@ -1,4 +1,3 @@
-use futures::future::join;
 use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 
@@ -249,7 +248,7 @@ async fn recv_push_promise_over_max_header_list_size() {
             frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
         )
         .await;
-        srv.recv_frame(frames::reset(2).refused()).await;
+        srv.recv_frame(frames::reset(2).protocol_error()).await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
         idle_ms(10).await;
     };
@@ -272,7 +271,7 @@ async fn recv_push_promise_over_max_header_list_size() {
                 .0
                 .await
                 .expect_err("response");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         };
 
         conn.drive(req).await;

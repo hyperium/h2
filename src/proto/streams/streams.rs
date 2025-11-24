@@ -118,7 +118,7 @@ where
         }
     }
 
-    pub fn set_target_connection_window_size(&mut self, size: WindowSize) {
+    pub fn set_target_connection_window_size(&mut self, size: WindowSize) -> Result<(), Reason> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -186,14 +186,18 @@ where
         me.poll_complete(&self.send_buffer, cx, dst)
     }
 
-    pub fn apply_remote_settings(&mut self, frame: &frame::Settings) -> Result<(), Error> {
+    pub fn apply_remote_settings(
+        &mut self,
+        frame: &frame::Settings,
+        is_initial: bool,
+    ) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.apply_remote_settings(frame);
+        me.counts.apply_remote_settings(frame, is_initial);
 
         me.actions.send.apply_remote_settings(
             frame,
@@ -216,7 +220,7 @@ where
         mut request: Request<()>,
         end_of_stream: bool,
         pending: Option<&OpaqueStreamRef>,
-    ) -> Result<StreamRef<B>, SendError> {
+    ) -> Result<(StreamRef<B>, bool), SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -298,10 +302,14 @@ where
         // the lock, so it can't.
         me.refs += 1;
 
-        Ok(StreamRef {
-            opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
-            send_buffer: self.send_buffer.clone(),
-        })
+        let is_full = me.counts.next_send_stream_will_reach_capacity();
+        Ok((
+            StreamRef {
+                opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
+                send_buffer: self.send_buffer.clone(),
+            },
+            is_full,
+        ))
     }
 
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
@@ -312,9 +320,27 @@ where
             .send
             .is_extended_connect_protocol_enabled()
     }
+
+    pub fn current_max_send_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_send_streams()
+    }
+
+    pub fn current_max_recv_streams(&self) -> usize {
+        let me = self.inner.lock().unwrap();
+        me.counts.max_recv_streams()
+    }
 }
 
 impl<B> DynStreams<'_, B> {
+    pub fn is_buffer_empty(&self) -> bool {
+        self.send_buffer.is_empty()
+    }
+
+    pub fn is_server(&self) -> bool {
+        self.peer.is_server()
+    }
+
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
         let mut me = self.inner.lock().unwrap();
 
@@ -362,7 +388,11 @@ impl<B> DynStreams<'_, B> {
         me.recv_eof(self.send_buffer, clear_pending_accept)
     }
 
-    pub fn send_reset(&mut self, id: StreamId, reason: Reason) {
+    pub fn send_reset(
+        &mut self,
+        id: StreamId,
+        reason: Reason,
+    ) -> Result<(), crate::proto::error::GoAway> {
         let mut me = self.inner.lock().unwrap();
         me.send_reset(self.send_buffer, id, reason)
     }
@@ -448,7 +478,7 @@ impl Inner {
 
         let stream = self.store.resolve(key);
 
-        if stream.state.is_local_reset() {
+        if stream.state.is_local_error() {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
@@ -478,7 +508,7 @@ impl Inner {
 
                             actions.send.schedule_implicit_reset(
                                 stream,
-                                Reason::REFUSED_STREAM,
+                                Reason::PROTOCOL_ERROR,
                                 counts,
                                 &mut actions.task);
 
@@ -486,7 +516,7 @@ impl Inner {
 
                             Ok(())
                         } else {
-                            Err(Error::library_reset(stream.id, Reason::REFUSED_STREAM))
+                            Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR))
                         }
                     },
                     Err(RecvHeaderBlockError::State(err)) => Err(err),
@@ -633,15 +663,23 @@ impl Inner {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
             if let Some(mut stream) = self.store.find_mut(&id) {
-                // This result is ignored as there is nothing to do when there
-                // is an error. The stream is reset by the function on error and
-                // the error is informational.
-                let _ = self.actions.send.recv_stream_window_update(
-                    frame.size_increment(),
+                let res = self
+                    .actions
+                    .send
+                    .recv_stream_window_update(
+                        frame.size_increment(),
+                        send_buffer,
+                        &mut stream,
+                        &mut self.counts,
+                        &mut self.actions.task,
+                    )
+                    .map_err(|reason| Error::library_reset(id, reason));
+
+                return self.actions.reset_on_recv_stream_err(
                     send_buffer,
                     &mut stream,
                     &mut self.counts,
-                    &mut self.actions.task,
+                    res,
                 );
             } else {
                 self.actions
@@ -726,7 +764,11 @@ impl Inner {
                 }
 
                 // The stream must be receive open
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    proto_err!(conn: "recv_push_promise: initiating stream is not opened");
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                }
+
                 stream.key()
             }
             None => {
@@ -795,7 +837,7 @@ impl Inner {
 
             let parent = &mut self.store.resolve(parent_key);
             parent.pending_push_promises = ppp;
-            parent.notify_recv();
+            parent.notify_push();
         };
 
         Ok(())
@@ -874,7 +916,12 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_reset<B>(&mut self, send_buffer: &SendBuffer<B>, id: StreamId, reason: Reason) {
+    fn send_reset<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        id: StreamId,
+        reason: Reason,
+    ) -> Result<(), crate::proto::error::GoAway> {
         let key = match self.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
@@ -915,7 +962,7 @@ impl Inner {
             Initiator::Library,
             &mut self.counts,
             send_buffer,
-        );
+        )
     }
 }
 
@@ -950,7 +997,7 @@ impl<B, P> Streams<B, P>
 where
     P: Peer,
 {
-    pub fn as_dyn(&self) -> DynStreams<B> {
+    pub fn as_dyn(&self) -> DynStreams<'_, B> {
         let Self {
             inner,
             send_buffer,
@@ -1087,8 +1134,20 @@ impl<B> StreamRef<B> {
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.actions
-            .send_reset(stream, reason, Initiator::User, &mut me.counts, send_buffer);
+        match me
+            .actions
+            .send_reset(stream, reason, Initiator::User, &mut me.counts, send_buffer)
+        {
+            Ok(()) => (),
+            Err(crate::proto::error::GoAway { .. }) => {
+                // this should never happen, because Initiator::User resets do
+                // not count toward the local limit.
+                // we could perhaps make this state impossible, if we made the
+                // initiator argument a generic, and so this could return
+                // Infallible instead of an impossible GoAway, but oh well.
+                unreachable!("Initiator::User should not error sending reset");
+            }
+        }
     }
 
     pub fn send_response(
@@ -1235,10 +1294,7 @@ impl<B> StreamRef<B> {
 
         let mut stream = me.store.resolve(self.opaque.key);
 
-        me.actions
-            .send
-            .poll_reset(cx, &mut stream, mode)
-            .map_err(From::from)
+        me.actions.send.poll_reset(cx, &mut stream, mode)
     }
 
     pub fn clone_to_opaque(&self) -> OpaqueStreamRef {
@@ -1497,6 +1553,11 @@ impl<B> SendBuffer<B> {
         let inner = Mutex::new(Buffer::new());
         SendBuffer { inner }
     }
+
+    pub fn is_empty(&self) -> bool {
+        let buf = self.inner.lock().unwrap();
+        buf.is_empty()
+    }
 }
 
 // ===== impl Actions =====
@@ -1509,8 +1570,23 @@ impl Actions {
         initiator: Initiator,
         counts: &mut Counts,
         send_buffer: &mut Buffer<Frame<B>>,
-    ) {
+    ) -> Result<(), crate::proto::error::GoAway> {
         counts.transition(stream, |counts, stream| {
+            if initiator.is_library() {
+                if counts.can_inc_num_local_error_resets() {
+                    counts.inc_num_local_error_resets();
+                } else {
+                    tracing::warn!(
+                        "locally-reset streams reached limit ({:?})",
+                        counts.max_local_error_resets().unwrap(),
+                    );
+                    return Err(crate::proto::error::GoAway {
+                        reason: Reason::ENHANCE_YOUR_CALM,
+                        debug_data: "too_many_internal_resets".into(),
+                    });
+                }
+            }
+
             self.send.send_reset(
                 reason,
                 initiator,
@@ -1522,7 +1598,9 @@ impl Actions {
             self.recv.enqueue_reset_expiration(stream, counts);
             // if a RecvStream is parked, ensure it's notified
             stream.notify_recv();
-        });
+
+            Ok(())
+        })
     }
 
     fn reset_on_recv_stream_err<B>(
@@ -1534,10 +1612,27 @@ impl Actions {
     ) -> Result<(), Error> {
         if let Err(Error::Reset(stream_id, reason, initiator)) = res {
             debug_assert_eq!(stream_id, stream.id);
-            // Reset the stream.
-            self.send
-                .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
-            Ok(())
+
+            if counts.can_inc_num_local_error_resets() {
+                counts.inc_num_local_error_resets();
+
+                // Reset the stream.
+                self.send
+                    .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                self.recv.enqueue_reset_expiration(stream, counts);
+                // if a RecvStream is parked, ensure it's notified
+                stream.notify_recv();
+                Ok(())
+            } else {
+                tracing::warn!(
+                    "reset_on_recv_stream_err; locally-reset streams reached limit ({:?})",
+                    counts.max_local_error_resets().unwrap(),
+                );
+                Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_internal_resets",
+                ))
+            }
         } else {
             res
         }

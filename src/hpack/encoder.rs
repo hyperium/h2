@@ -299,7 +299,6 @@ fn position(buf: &BytesMut) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::hpack::Header;
     use http::*;
 
     #[test]
@@ -696,7 +695,7 @@ mod test {
 
     fn encode(e: &mut Encoder, hdrs: Vec<Header<Option<HeaderName>>>) -> BytesMut {
         let mut dst = BytesMut::with_capacity(1024);
-        e.encode(&mut hdrs.into_iter(), &mut dst);
+        e.encode(hdrs, &mut dst);
         dst
     }
 

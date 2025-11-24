@@ -1,4 +1,3 @@
-use futures::future::{join, join4};
 use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
@@ -1340,7 +1339,7 @@ async fn client_decrease_initial_window_size() {
         conn.drive(async {
             data(&mut body5, "body5 data2").await;
             data(&mut body5, "body5 data3").await;
-            assert!(body3.is_end_stream());
+            assert!(!body3.is_end_stream());
         })
         .await;
 
@@ -1857,4 +1856,194 @@ async fn poll_capacity_wakeup_after_window_update() {
     };
 
     join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn window_size_does_not_underflow() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        // Invalid HEADERS frame (missing mandatory fields).
+        client.send_bytes(&[0, 0, 0, 1, 5, 0, 0, 0, 1]).await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(1329018135))
+            .await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(3809661))
+            .await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(1467177332))
+            .await;
+
+        client
+            .send_frame(frames::settings().initial_window_size(3844989))
+            .await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        poll_fn(move |cx| srv.poll_closed(cx)).await.unwrap();
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn reclaim_reserved_capacity() {
+    use futures::channel::oneshot;
+
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let (depleted_tx, depleted_rx) = oneshot::channel();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383])).await;
+        depleted_tx.send(()).unwrap();
+
+        // By now, this peer's connection window is completely depleted.
+
+        srv.recv_frame(frames::headers(3).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+
+        srv.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let mut depleting_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        depleting_stream
+            .send_data(vec![0; 65535].into(), false)
+            .unwrap();
+        h2.drive(depleted_rx).await.unwrap();
+
+        // By now, the client knows it has completely depleted the server's
+        // connection window.
+
+        depleting_stream.reserve_capacity(1);
+
+        let mut starved_stream = {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://www.example.com/")
+                .body(())
+                .unwrap();
+
+            let (resp, stream) = client.send_request(request, false).unwrap();
+
+            {
+                let resp = h2.drive(resp).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+            }
+
+            stream
+        };
+
+        // The following call puts starved_stream in pending_send, as the
+        // server's connection window is completely empty.
+        starved_stream.send_data(vec![0; 1].into(), false).unwrap();
+
+        // This drop should change nothing, as it didn't actually reserve
+        // any available connection window, only requested it.
+        drop(depleting_stream);
+
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+// ==== abusive window updates ====
+
+#[tokio::test]
+async fn too_many_window_update_resets_causes_go_away() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        for s in (1..21).step_by(2) {
+            client
+                .send_frame(
+                    frames::headers(s)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            // send a bunch of bad window updates before any headers
+            client
+                .send_frame(frames::window_update(s, u32::MAX - 2))
+                .await;
+            client.recv_frame(frames::reset(s).flow_control()).await;
+        }
+
+        client
+            .send_frame(
+                frames::headers(21)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // send a bunch of bad window updates before any headers
+        client
+            .send_frame(frames::window_update(21, u32::MAX - 2))
+            .await;
+        client
+            .recv_frame(frames::go_away(21).calm().data("too_many_internal_resets"))
+            .await;
+    };
+    let srv = async move {
+        let mut conn = server::Builder::new()
+            .max_local_error_reset_streams(Some(10))
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        for _ in (1..21).step_by(2) {
+            let (_, _) = conn.next().await.unwrap().unwrap();
+        }
+        let err = conn.next().await.unwrap().unwrap_err();
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
+    };
+
+    join(srv, client).await;
 }

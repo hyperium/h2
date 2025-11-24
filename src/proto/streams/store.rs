@@ -34,7 +34,6 @@ pub(crate) struct Key {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SlabIndex(u32);
 
-#[derive(Debug)]
 pub(super) struct Queue<N> {
     indices: Option<store::Indices>,
     _p: PhantomData<N>,
@@ -74,7 +73,7 @@ pub(super) struct VacantEntry<'a> {
 }
 
 pub(super) trait Resolve {
-    fn resolve(&mut self, key: Key) -> Ptr;
+    fn resolve(&mut self, key: Key) -> Ptr<'_>;
 }
 
 // ===== impl Store =====
@@ -87,7 +86,7 @@ impl Store {
         }
     }
 
-    pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr> {
+    pub fn find_mut(&mut self, id: &StreamId) -> Option<Ptr<'_>> {
         let index = match self.ids.get(id) {
             Some(key) => *key,
             None => return None,
@@ -102,7 +101,7 @@ impl Store {
         })
     }
 
-    pub fn insert(&mut self, id: StreamId, val: Stream) -> Ptr {
+    pub fn insert(&mut self, id: StreamId, val: Stream) -> Ptr<'_> {
         let index = SlabIndex(self.slab.insert(val) as u32);
         assert!(self.ids.insert(id, index).is_none());
 
@@ -115,7 +114,7 @@ impl Store {
         }
     }
 
-    pub fn find_entry(&mut self, id: StreamId) -> Entry {
+    pub fn find_entry(&mut self, id: StreamId) -> Entry<'_> {
         use self::indexmap::map::Entry::*;
 
         match self.ids.entry(id) {
@@ -127,6 +126,7 @@ impl Store {
         }
     }
 
+    #[allow(clippy::blocks_in_conditions)]
     pub(crate) fn for_each<F>(&mut self, mut f: F)
     where
         F: FnMut(Ptr),
@@ -136,6 +136,7 @@ impl Store {
             Ok::<_, Infallible>(())
         }) {
             Ok(()) => (),
+            #[allow(unused)]
             Err(infallible) => match infallible {},
         }
     }
@@ -175,7 +176,7 @@ impl Store {
 }
 
 impl Resolve for Store {
-    fn resolve(&mut self, key: Key) -> Ptr {
+    fn resolve(&mut self, key: Key) -> Ptr<'_> {
         Ptr { key, store: self }
     }
 }
@@ -256,7 +257,7 @@ where
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push(&mut self, stream: &mut store::Ptr) -> bool {
-        tracing::trace!("Queue::push");
+        tracing::trace!("Queue::push_back");
 
         if N::is_queued(stream) {
             tracing::trace!(" -> already queued");
@@ -279,6 +280,46 @@ where
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
+            }
+            None => {
+                tracing::trace!(" -> first entry");
+                self.indices = Some(store::Indices {
+                    head: stream.key(),
+                    tail: stream.key(),
+                });
+            }
+        }
+
+        true
+    }
+
+    /// Queue the stream
+    ///
+    /// If the stream is already contained by the list, return `false`.
+    pub fn push_front(&mut self, stream: &mut store::Ptr) -> bool {
+        tracing::trace!("Queue::push_front");
+
+        if N::is_queued(stream) {
+            tracing::trace!(" -> already queued");
+            return false;
+        }
+
+        N::set_queued(stream, true);
+
+        // The next pointer shouldn't be set
+        debug_assert!(N::next(stream).is_none());
+
+        // Queue the stream
+        match self.indices {
+            Some(ref mut idxs) => {
+                tracing::trace!(" -> existing entries");
+
+                // Update the provided stream to point to the head node
+                let head_key = stream.resolve(idxs.head).key();
+                N::set_next(stream, Some(head_key));
+
+                // Update the head pointer
+                idxs.head = stream.key();
             }
             None => {
                 tracing::trace!(" -> first entry");
@@ -336,6 +377,15 @@ where
     }
 }
 
+impl<N> fmt::Debug for Queue<N> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Queue")
+            .field("indices", &self.indices)
+            // skip phantom data
+            .finish()
+    }
+}
+
 // ===== impl Ptr =====
 
 impl<'a> Ptr<'a> {
@@ -370,7 +420,7 @@ impl<'a> Ptr<'a> {
 }
 
 impl<'a> Resolve for Ptr<'a> {
-    fn resolve(&mut self, key: Key) -> Ptr {
+    fn resolve(&mut self, key: Key) -> Ptr<'_> {
         Ptr {
             key,
             store: &mut *self.store,

@@ -1,3 +1,95 @@
+# 0.4.12 (August 5, 2025)
+
+* Fix default limits on max stored reset streams and duration to more reasonable values.
+
+# 0.4.11 (June 30, 2025)
+
+* Fix client to not return an error when a clean shutdown otherwise doesn't get a TLS close_notify, which some servers don't bother sending.
+
+# 0.4.10 (May 5, 2025)
+
+* Fix `is_end_stream()` to return true only when ended cleanly, not when errored.
+
+# 0.4.9 (April 14, 2025)
+
+* Add `sever::Connection::has_streams()` method to check for active streams.
+
+# 0.4.8 (February 18, 2025)
+
+* Fix handling implicit stream resets at the more correct time.
+* Fix window size decrements of send-closed streams.
+* Fix reclaiming of reserved capacity when streams are closed.
+* Fix to no longer call `poll_flush` after `poll_shutdown`.
+* Fix busy loop in task when poll_shutdown returns pending.
+
+# 0.4.7 (November 19, 2024)
+
+* Fix treating HEADERS frames with a non-zero content-length but END_STREAM flag as malformed.
+* Fix notifying the stream task when automatically reset on receipt of a stream error.
+
+# 0.4.6 (August 19, 2024)
+
+* Add `current_max_send_streams()` and `current_max_recv_streams()` to `client::SendRequest`.
+* Fix sending a PROTOCOL_ERROR instead of REFUSED_STREAM when receiving oversized headers.
+* Fix notifying a PushPromise task properly.
+* Fix notifying a stream task when reset.
+
+# 0.4.5 (May 17, 2024)
+
+* Fix race condition that sometimes hung connections during shutdown.
+* Fix pseudo header construction for CONNECT and OPTIONS requests.
+
+# 0.4.4 (April 3, 2024)
+
+* Limit number of CONTINUATION frames for misbehaving connections.
+
+# 0.4.3 (March 15, 2024)
+
+* Fix flow control limits to not apply until receiving SETTINGS ack.
+* Fix not returning an error if IO ended without `close_notify`.
+* Improve performance of decoding many headers.
+
+# 0.4.2 (January 17th, 2024)
+
+* Limit error resets for misbehaving connections.
+* Fix selecting MAX_CONCURRENT_STREAMS value if no value is advertised initially.
+
+# 0.4.1 (January 8, 2024)
+
+* Fix assigning connection capacity which could starve streams in some instances.
+
+# 0.4.0 (November 15, 2023)
+
+* Update to `http` 1.0.
+* Remove deprecated `Server::poll_close()`.
+
+# 0.3.22 (November 15, 2023)
+
+* Add `header_table_size(usize)` option to client and server builders.
+* Improve throughput when vectored IO is not available.
+* Update indexmap to 2.
+
+# 0.3.21 (August 21, 2023)
+
+* Fix opening of new streams over peer's max concurrent limit.
+* Fix `RecvStream` to return data even if it has received a `CANCEL` stream error.
+* Update MSRV to 1.63.
+
+# 0.3.20 (June 26, 2023)
+
+* Fix panic if a server received a request with a `:status` pseudo header in the 1xx range.
+* Fix panic if a reset stream had pending push promises that were more than allowed.
+* Fix potential flow control overflow by subtraction, instead returning a connection error.
+
+# 0.3.19 (May 12, 2023)
+
+* Fix counting reset streams when triggered by a GOAWAY.
+* Send `too_many_resets` in opaque debug data of GOAWAY when too many resets received.
+
+# 0.3.18 (April 17, 2023)
+
+* Fix panic because of opposite check in `is_remote_local()`.
+
 # 0.3.17 (April 13, 2023)
 
 * Add `Error::is_library()` method to check if the originated inside `h2`.

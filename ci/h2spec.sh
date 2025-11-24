@@ -1,10 +1,25 @@
 #!/bin/bash
-LOGFILE="h2server.log"
+LOGFILE="/tmp/h2server.log"
 
-if ! [ -e "h2spec" ] ; then
+override_h2spec=false
+
+# Check for optional flag
+while getopts "F" opt; do
+    case $opt in
+        F) override_h2spec=true ;;
+        *) echo "Usage: $0 [-o]"; exit 1 ;;
+    esac
+done
+
+if ! [ -e "/tmp/h2spec" ] || $override_h2spec ; then
     # if we don't already have a h2spec executable, wget it from github
-    wget https://github.com/summerwind/h2spec/releases/download/v2.1.1/h2spec_linux_amd64.tar.gz
-    tar xf h2spec_linux_amd64.tar.gz
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        curl -L -o /tmp/h2spec_darwin_amd64.tar.gz https://github.com/summerwind/h2spec/releases/download/v2.1.1/h2spec_darwin_amd64.tar.gz \
+            && tar xf /tmp/h2spec_darwin_amd64.tar.gz -C /tmp
+    else
+        curl -L -o /tmp/h2spec_linux_amd64.tar.gz https://github.com/summerwind/h2spec/releases/download/v2.1.1/h2spec_linux_amd64.tar.gz \
+            && tar xf /tmp/h2spec_linux_amd64.tar.gz -C /tmp
+    fi
 fi
 
 cargo build --example server
@@ -16,7 +31,7 @@ SERVER_PID=$!
 sed '/listening on Ok(127.0.0.1:5928)/q' <&3 ; cat <&3 > "${LOGFILE}" &
 
 # run h2spec against the server, printing the server log if h2spec failed
-./h2spec -p 5928
+/tmp/h2spec -p 5928
 H2SPEC_STATUS=$?
 if [ "${H2SPEC_STATUS}" -eq 0 ]; then
     echo "h2spec passed!"

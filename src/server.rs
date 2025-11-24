@@ -252,6 +252,12 @@ pub struct Builder {
 
     /// Maximum amount of bytes to "buffer" for writing per stream.
     max_send_buffer_size: usize,
+
+    /// Maximum number of locally reset streams due to protocol error across
+    /// the lifetime of the connection.
+    ///
+    /// When this gets exceeded, we issue GOAWAYs.
+    local_max_error_reset_streams: Option<usize>,
 }
 
 /// Send a response back to the client
@@ -407,7 +413,7 @@ where
     pub async fn accept(
         &mut self,
     ) -> Option<Result<(Request<RecvStream>, SendResponse<B>), crate::Error>> {
-        futures_util::future::poll_fn(move |cx| self.poll_accept(cx)).await
+        crate::poll_fn(move |cx| self.poll_accept(cx)).await
     }
 
     #[doc(hidden)]
@@ -508,12 +514,6 @@ where
         self.connection.poll(cx).map_err(Into::into)
     }
 
-    #[doc(hidden)]
-    #[deprecated(note = "renamed to poll_closed")]
-    pub fn poll_close(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
-        self.poll_closed(cx)
-    }
-
     /// Sets the connection to a GOAWAY state.
     ///
     /// Does not terminate the connection. Must continue being polled to close
@@ -551,6 +551,11 @@ where
     /// This may only be called once. Calling multiple times will return `None`.
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.connection.take_user_pings().map(PingPong::new)
+    }
+
+    /// Checks if there are any streams
+    pub fn has_streams(&self) -> bool {
+        self.connection.has_streams()
     }
 
     /// Returns the maximum number of concurrent streams that may be initiated
@@ -650,6 +655,8 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
+
+            local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
 
@@ -861,7 +868,7 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is 10.
+    /// The default value is currently 50.
     ///
     /// # Examples
     ///
@@ -884,6 +891,24 @@ impl Builder {
     /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.reset_stream_max = max;
+        self
+    }
+
+    /// Sets the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.
+    /// Too many of these often indicate a malicious client, and there are attacks which can abuse this to DOS servers.
+    /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
+    ///
+    /// When the number of local resets exceeds this threshold, the server will issue GOAWAYs with an error code of
+    /// `ENHANCE_YOUR_CALM` to the client.
+    ///
+    /// If you really want to disable this, supply [`Option::None`] here.
+    /// Disabling this is not recommended and may expose you to DOS attacks.
+    ///
+    /// The default value is currently 1024, but could change.
+    pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
+        self.local_max_error_reset_streams = max;
         self
     }
 
@@ -937,13 +962,13 @@ impl Builder {
     /// stream have been written to the connection, the send buffer capacity
     /// will be freed up again.
     ///
-    /// The default is currently ~400MB, but may change.
+    /// The default is currently ~400KB, but may change.
     ///
     /// # Panics
     ///
     /// This function panics if `max` is larger than `u32::MAX`.
     pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
-        assert!(max <= std::u32::MAX as usize);
+        assert!(max <= u32::MAX as usize);
         self.max_send_buffer_size = max;
         self
     }
@@ -968,7 +993,7 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is 30 seconds.
+    /// The default value is currently 1 second.
     ///
     /// # Examples
     ///
@@ -1361,6 +1386,9 @@ where
                             reset_stream_duration: self.builder.reset_stream_duration,
                             reset_stream_max: self.builder.reset_stream_max,
                             remote_reset_stream_max: self.builder.pending_accept_reset_stream_max,
+                            local_error_reset_streams_max: self
+                                .builder
+                                .local_max_error_reset_streams,
                             settings: self.builder.settings.clone(),
                         },
                     );
@@ -1472,9 +1500,11 @@ impl proto::Peer for Peer {
 
     const NAME: &'static str = "Server";
 
+    /*
     fn is_server() -> bool {
         true
     }
+    */
 
     fn r#dyn() -> proto::DynPeer {
         proto::DynPeer::Server

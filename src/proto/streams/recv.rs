@@ -1,14 +1,14 @@
 use super::*;
 use crate::codec::UserError;
-use crate::frame::{self, PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
-use crate::proto::{self, Error};
+use crate::frame::{PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
+use crate::proto;
 
 use http::{HeaderMap, Request, Response};
 
 use std::cmp::Ordering;
 use std::io;
 use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug)]
 pub(super) struct Recv {
@@ -90,10 +90,10 @@ impl Recv {
         // settings
         flow.inc_window(DEFAULT_INITIAL_WINDOW_SIZE)
             .expect("invalid initial remote window size");
-        flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE);
+        flow.assign_capacity(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
 
         Recv {
-            init_window_sz: config.local_init_window_sz,
+            init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             flow,
             in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),
@@ -185,6 +185,18 @@ impl Recv {
                 };
 
                 stream.content_length = ContentLength::Remaining(content_length);
+                // END_STREAM on headers frame with non-zero content-length is malformed.
+                // https://datatracker.ietf.org/doc/html/rfc9113#section-8.1.1
+                if frame.is_end_stream()
+                    && content_length > 0
+                    && frame
+                        .pseudo()
+                        .status
+                        .map_or(true, |status| status != 204 && status != 304)
+                {
+                    proto_err!(stream: "recv_headers with END_STREAM: content-length is not zero; stream={:?};", stream.id);
+                    return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+                }
             }
         }
 
@@ -229,6 +241,11 @@ impl Recv {
             return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
         }
 
+        if pseudo.status.is_some() && counts.peer().is_server() {
+            proto_err!(stream: "cannot use :status header for requests; stream={:?}", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+        }
+
         if !pseudo.is_informational() {
             let message = counts
                 .peer()
@@ -239,12 +256,14 @@ impl Recv {
                 .pending_recv
                 .push_back(&mut self.buffer, Event::Headers(message));
             stream.notify_recv();
-        }
 
-        // Only servers can receive a headers frame that initiates the stream.
-        // This is verified in `Streams` before calling this function.
-        if counts.peer().is_server() {
-            self.pending_accept.push(stream);
+            // Only servers can receive a headers frame that initiates the stream.
+            // This is verified in `Streams` before calling this function.
+            if counts.peer().is_server() {
+                // Correctness: never push a stream to `pending_accept` without having the
+                // corresponding headers frame pushed to `stream.pending_recv`.
+                self.pending_accept.push(stream);
+            }
         }
 
         Ok(())
@@ -252,13 +271,16 @@ impl Recv {
 
     /// Called by the server to get the request
     ///
-    /// TODO: Should this fn return `Result`?
+    /// # Panics
+    ///
+    /// Panics if `stream.pending_recv` has no `Event::Headers` queued.
+    ///
     pub fn take_request(&mut self, stream: &mut store::Ptr) -> Request<()> {
         use super::peer::PollMessage::*;
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
             Some(Event::Headers(Server(request))) => request,
-            _ => panic!(),
+            _ => unreachable!("server stream queue must start with Headers"),
         }
     }
 
@@ -286,7 +308,7 @@ impl Recv {
             let is_open = stream.state.ensure_recv_open()?;
 
             if is_open {
-                stream.recv_task = Some(cx.waker().clone());
+                stream.push_task = Some(cx.waker().clone());
                 Poll::Pending
             } else {
                 Poll::Ready(None)
@@ -308,7 +330,13 @@ impl Recv {
             Some(Event::Headers(Client(response))) => Poll::Ready(Ok(response)),
             Some(_) => panic!("poll_response called after response returned"),
             None => {
-                stream.state.ensure_recv_open()?;
+                if !stream.state.ensure_recv_open()? {
+                    proto_err!(stream: "poll_response: stream={:?} is not opened;",  stream.id);
+                    return Poll::Ready(Err(Error::library_reset(
+                        stream.id,
+                        Reason::PROTOCOL_ERROR,
+                    )));
+                }
 
                 stream.recv_task = Some(cx.waker().clone());
                 Poll::Pending
@@ -353,7 +381,9 @@ impl Recv {
         self.in_flight_data -= capacity;
 
         // Assign capacity to connection
-        self.flow.assign_capacity(capacity);
+        // TODO: proper error handling
+        let _res = self.flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
 
         if self.flow.unclaimed_capacity().is_some() {
             if let Some(task) = task.take() {
@@ -381,7 +411,9 @@ impl Recv {
         stream.in_flight_recv_data -= capacity;
 
         // Assign capacity to stream
-        stream.recv_flow.assign_capacity(capacity);
+        // TODO: proper error handling
+        let _res = stream.recv_flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
 
         if stream.recv_flow.unclaimed_capacity().is_some() {
             // Queue the stream for sending the WINDOW_UPDATE frame.
@@ -427,7 +459,11 @@ impl Recv {
     ///
     /// The `task` is an optional parked task for the `Connection` that might
     /// be blocked on needing more window capacity.
-    pub fn set_target_connection_window(&mut self, target: WindowSize, task: &mut Option<Waker>) {
+    pub fn set_target_connection_window(
+        &mut self,
+        target: WindowSize,
+        task: &mut Option<Waker>,
+    ) -> Result<(), Reason> {
         tracing::trace!(
             "set_target_connection_window; target={}; available={}, reserved={}",
             target,
@@ -440,11 +476,15 @@ impl Recv {
         //
         // Update the flow controller with the difference between the new
         // target and the current target.
-        let current = (self.flow.available() + self.in_flight_data).checked_size();
+        let current = self
+            .flow
+            .available()
+            .add(self.in_flight_data)?
+            .checked_size();
         if target > current {
-            self.flow.assign_capacity(target - current);
+            self.flow.assign_capacity(target - current)?;
         } else {
-            self.flow.claim_capacity(current - target);
+            self.flow.claim_capacity(current - target)?;
         }
 
         // If changing the target capacity means we gained a bunch of capacity,
@@ -455,6 +495,7 @@ impl Recv {
                 task.wake();
             }
         }
+        Ok(())
     }
 
     pub(crate) fn apply_local_settings(
@@ -494,9 +535,13 @@ impl Recv {
                     let dec = old_sz - target;
                     tracing::trace!("decrementing all windows; dec={}", dec);
 
-                    store.for_each(|mut stream| {
-                        stream.recv_flow.dec_recv_window(dec);
-                    })
+                    store.try_for_each(|mut stream| {
+                        stream
+                            .recv_flow
+                            .dec_recv_window(dec)
+                            .map_err(proto::Error::library_go_away)?;
+                        Ok::<_, proto::Error>(())
+                    })?;
                 }
                 Ordering::Greater => {
                     // We must increase the (local) window on every open stream.
@@ -509,7 +554,10 @@ impl Recv {
                             .recv_flow
                             .inc_window(inc)
                             .map_err(proto::Error::library_go_away)?;
-                        stream.recv_flow.assign_capacity(inc);
+                        stream
+                            .recv_flow
+                            .assign_capacity(inc)
+                            .map_err(proto::Error::library_go_away)?;
                         Ok::<_, proto::Error>(())
                     })?;
                 }
@@ -521,7 +569,7 @@ impl Recv {
     }
 
     pub fn is_end_stream(&self, stream: &store::Ptr) -> bool {
-        if !stream.state.is_recv_closed() {
+        if !stream.state.is_recv_end_stream() {
             return false;
         }
 
@@ -537,7 +585,7 @@ impl Recv {
 
         let sz = sz as WindowSize;
 
-        let is_ignoring_frame = stream.state.is_local_reset();
+        let is_ignoring_frame = stream.state.is_local_error();
 
         if !is_ignoring_frame && !stream.state.is_recv_streaming() {
             // TODO: There are cases where this can be a stream error of
@@ -616,7 +664,10 @@ impl Recv {
         }
 
         // Update stream level flow control
-        stream.recv_flow.send_data(sz);
+        stream
+            .recv_flow
+            .send_data(sz)
+            .map_err(proto::Error::library_go_away)?;
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
@@ -657,7 +708,7 @@ impl Recv {
         }
 
         // Update connection level flow control
-        self.flow.send_data(sz);
+        self.flow.send_data(sz).map_err(Error::library_go_away)?;
 
         // Track the data as in-flight
         self.in_flight_data += sz;
@@ -680,16 +731,16 @@ impl Recv {
             // > that it cannot process.
             //
             // So, if peer is a server, we'll send a 431. In either case,
-            // an error is recorded, which will send a REFUSED_STREAM,
+            // an error is recorded, which will send a PROTOCOL_ERROR,
             // since we don't want any of the data frames either.
             tracing::debug!(
-                "stream error REFUSED_STREAM -- recv_push_promise: \
+                "stream error PROTOCOL_ERROR -- recv_push_promise: \
                  headers frame is over size; promised_id={:?};",
                 frame.promised_id(),
             );
             return Err(Error::library_reset(
                 frame.promised_id(),
-                Reason::REFUSED_STREAM,
+                Reason::PROTOCOL_ERROR,
             ));
         }
 
@@ -721,6 +772,7 @@ impl Recv {
             .pending_recv
             .push_back(&mut self.buffer, Event::Headers(Server(req)));
         stream.notify_recv();
+        stream.notify_push();
         Ok(())
     }
 
@@ -763,7 +815,10 @@ impl Recv {
                     "recv_reset; remotely-reset pending-accept streams reached limit ({:?})",
                     counts.max_remote_reset_streams(),
                 );
-                return Err(Error::library_go_away(Reason::ENHANCE_YOUR_CALM));
+                return Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_resets",
+                ));
             }
         }
 
@@ -772,6 +827,7 @@ impl Recv {
 
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
 
         Ok(())
     }
@@ -784,6 +840,7 @@ impl Recv {
         // If a receiver is waiting, notify it
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
     }
 
     pub fn go_away(&mut self, last_processed_id: StreamId) {
@@ -795,6 +852,7 @@ impl Recv {
         stream.state.recv_eof();
         stream.notify_send();
         stream.notify_recv();
+        stream.notify_push();
     }
 
     pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
@@ -850,24 +908,19 @@ impl Recv {
 
     /// Add a locally reset stream to queue to be eventually reaped.
     pub fn enqueue_reset_expiration(&mut self, stream: &mut store::Ptr, counts: &mut Counts) {
-        if !stream.state.is_local_reset() || stream.is_pending_reset_expiration() {
+        if !stream.state.is_local_error() || stream.is_pending_reset_expiration() {
             return;
-        }
-
-        tracing::trace!("enqueue_reset_expiration; {:?}", stream.id);
-
-        if !counts.can_inc_num_reset_streams() {
-            // try to evict 1 stream if possible
-            // if max allow is 0, this won't be able to evict,
-            // and then we'll just bail after
-            if let Some(evicted) = self.pending_reset_expired.pop(stream.store_mut()) {
-                counts.transition_after(evicted, true);
-            }
         }
 
         if counts.can_inc_num_reset_streams() {
             counts.inc_num_reset_streams();
+            tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
             self.pending_reset_expired.push(stream);
+        } else {
+            tracing::trace!(
+                "enqueue_reset_expiration; dropped {:?}, over max_concurrent_reset_streams",
+                stream.id
+            );
         }
     }
 

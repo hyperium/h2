@@ -148,7 +148,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use std::usize;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::Instrument;
 
@@ -312,9 +311,11 @@ pub struct Builder {
     reset_stream_duration: Duration,
 
     /// Initial maximum number of locally initiated (send) streams.
-    /// After receiving a Settings frame from the remote peer,
+    /// After receiving a SETTINGS frame from the remote peer,
     /// the connection will overwrite this value with the
     /// MAX_CONCURRENT_STREAMS specified in the frame.
+    /// If no value is advertised by the remote peer in the initial SETTINGS
+    /// frame, it will be set to usize::MAX.
     initial_max_send_streams: usize,
 
     /// Initial target window size for new connections.
@@ -336,6 +337,12 @@ pub struct Builder {
     /// The stream ID of the first (lowest) stream. Subsequent streams will use
     /// monotonically increasing stream IDs.
     stream_id: StreamId,
+
+    /// Maximum number of locally reset streams due to protocol error across
+    /// the lifetime of the connection.
+    ///
+    /// When this gets exceeded, we issue GOAWAYs.
+    local_max_error_reset_streams: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -510,8 +517,10 @@ where
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|stream| {
-                if stream.is_pending_open() {
+            .map(|(stream, is_full)| {
+                if stream.is_pending_open() && is_full {
+                    // Only prevent sending another request when the request queue
+                    // is not full.
                     self.pending = Some(stream.clone_to_opaque());
                 }
 
@@ -537,6 +546,16 @@ where
     /// [2]: https://datatracker.ietf.org/doc/html/rfc8441#section-3
     pub fn is_extended_connect_protocol_enabled(&self) -> bool {
         self.inner.is_extended_connect_protocol_enabled()
+    }
+
+    /// Returns the current max send streams
+    pub fn current_max_send_streams(&self) -> usize {
+        self.inner.current_max_send_streams()
+    }
+
+    /// Returns the current max recv streams
+    pub fn current_max_recv_streams(&self) -> usize {
+        self.inner.current_max_recv_streams()
     }
 }
 
@@ -643,6 +662,7 @@ impl Builder {
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
             stream_id: 1.into(),
+            local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
 
@@ -842,8 +862,10 @@ impl Builder {
     /// Sets the initial maximum of locally initiated (send) streams.
     ///
     /// The initial settings will be overwritten by the remote peer when
-    /// the Settings frame is received. The new value will be set to the
-    /// `max_concurrent_streams()` from the frame.
+    /// the SETTINGS frame is received. The new value will be set to the
+    /// `max_concurrent_streams()` from the frame. If no value is advertised in
+    /// the initial SETTINGS frame from the remote peer as part of
+    /// [HTTP/2 Connection Preface], `usize::MAX` will be set.
     ///
     /// This setting prevents the caller from exceeding this number of
     /// streams that are counted towards the concurrency limit.
@@ -853,7 +875,10 @@ impl Builder {
     ///
     /// See [Section 5.1.2] in the HTTP/2 spec for more details.
     ///
-    /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
+    /// The default value is `usize::MAX`.
+    ///
+    /// [HTTP/2 Connection Preface]: https://httpwg.org/specs/rfc9113.html#preface
+    /// [Section 5.1.2]: https://httpwg.org/specs/rfc9113.html#rfc.section.5.1.2
     ///
     /// # Examples
     ///
@@ -898,7 +923,7 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is 10.
+    /// The default value is currently 50.
     ///
     /// # Examples
     ///
@@ -943,7 +968,7 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is 30 seconds.
+    /// The default value is currently 1 second.
     ///
     /// # Examples
     ///
@@ -968,6 +993,23 @@ impl Builder {
     /// ```
     pub fn reset_stream_duration(&mut self, dur: Duration) -> &mut Self {
         self.reset_stream_duration = dur;
+        self
+    }
+
+    /// Sets the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.
+    /// Too many of these often indicate a malicious client, and there are attacks which can abuse this to DOS servers.
+    /// This limit protects against these DOS attacks by limiting the amount of resets we can be forced to generate.
+    ///
+    /// When the number of local resets exceeds this threshold, the client will close the connection.
+    ///
+    /// If you really want to disable this, supply [`Option::None`] here.
+    /// Disabling this is not recommended and may expose you to DOS attacks.
+    ///
+    /// The default value is currently 1024, but could change.
+    pub fn max_local_error_reset_streams(&mut self, max: Option<usize>) -> &mut Self {
+        self.local_max_error_reset_streams = max;
         self
     }
 
@@ -1021,13 +1063,13 @@ impl Builder {
     /// stream have been written to the connection, the send buffer capacity
     /// will be freed up again.
     ///
-    /// The default is currently ~400MB, but may change.
+    /// The default is currently ~400KB, but may change.
     ///
     /// # Panics
     ///
     /// This function panics if `max` is larger than `u32::MAX`.
     pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
-        assert!(max <= std::u32::MAX as usize);
+        assert!(max <= u32::MAX as usize);
         self.max_send_buffer_size = max;
         self
     }
@@ -1067,6 +1109,39 @@ impl Builder {
     /// ```
     pub fn enable_push(&mut self, enabled: bool) -> &mut Self {
         self.settings.set_enable_push(enabled);
+        self
+    }
+
+    /// Sets the header table size.
+    ///
+    /// This setting informs the peer of the maximum size of the header compression
+    /// table used to encode header blocks, in octets. The encoder may select any value
+    /// equal to or less than the header table size specified by the sender.
+    ///
+    /// The default value is 4,096.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .header_table_size(1_000_000)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn header_table_size(&mut self, size: u32) -> &mut Self {
+        self.settings.set_header_table_size(Some(size));
         self
     }
 
@@ -1258,6 +1333,7 @@ where
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
+                local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),
             },
         );
@@ -1361,7 +1437,18 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.inner.maybe_close_connection_if_no_streams();
-        self.inner.poll(cx).map_err(Into::into)
+        let had_streams_or_refs = self.inner.has_streams_or_other_references();
+        let result = self.inner.poll(cx).map_err(Into::into);
+        // if we had streams/refs, and don't anymore, wake up one more time to
+        // ensure proper shutdown
+        if result.is_pending()
+            && had_streams_or_refs
+            && !self.inner.has_streams_or_other_references()
+        {
+            tracing::trace!("last stream closed during poll, wake again");
+            cx.waker().wake_by_ref();
+        }
+        result
     }
 }
 
@@ -1420,7 +1507,7 @@ impl ResponseFuture {
 impl PushPromises {
     /// Get the next `PushPromise`.
     pub async fn push_promise(&mut self) -> Option<Result<PushPromise, crate::Error>> {
-        futures_util::future::poll_fn(move |cx| self.poll_push_promise(cx)).await
+        crate::poll_fn(move |cx| self.poll_push_promise(cx)).await
     }
 
     #[doc(hidden)]
@@ -1571,9 +1658,11 @@ impl proto::Peer for Peer {
         proto::DynPeer::Client
     }
 
+    /*
     fn is_server() -> bool {
         false
     }
+    */
 
     fn convert_poll_message(
         pseudo: Pseudo,

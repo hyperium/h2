@@ -13,6 +13,11 @@ pub enum Error {
     Io(io::ErrorKind, Option<String>),
 }
 
+pub struct GoAway {
+    pub debug_data: Bytes,
+    pub reason: Reason,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Initiator {
     User,
@@ -40,6 +45,10 @@ impl Error {
         Self::GoAway(Bytes::new(), reason, Initiator::Library)
     }
 
+    pub(crate) fn library_go_away_data(reason: Reason, debug_data: impl Into<Bytes>) -> Self {
+        Self::GoAway(debug_data.into(), reason, Initiator::Library)
+    }
+
     pub(crate) fn remote_reset(stream_id: StreamId, reason: Reason) -> Self {
         Self::Reset(stream_id, reason, Initiator::Remote)
     }
@@ -55,6 +64,10 @@ impl Initiator {
             Self::User | Self::Library => true,
             Self::Remote => false,
         }
+    }
+
+    pub(crate) fn is_library(&self) -> bool {
+        matches!(self, Self::Library)
     }
 }
 

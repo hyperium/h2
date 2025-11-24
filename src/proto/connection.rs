@@ -1,18 +1,18 @@
 use crate::codec::UserError;
 use crate::frame::{Reason, StreamId};
-use crate::{client, frame, server};
+use crate::{client, server};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 use crate::proto::*;
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use futures_core::Stream;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncRead;
 
 /// An H2 connection
 #[derive(Debug)]
@@ -81,6 +81,7 @@ pub(crate) struct Config {
     pub reset_stream_duration: Duration,
     pub reset_stream_max: usize,
     pub remote_reset_stream_max: usize,
+    pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
 }
 
@@ -105,10 +106,6 @@ where
     pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
         fn streams_config(config: &Config) -> streams::Config {
             streams::Config {
-                local_init_window_sz: config
-                    .settings
-                    .initial_window_size()
-                    .unwrap_or(DEFAULT_INITIAL_WINDOW_SIZE),
                 initial_max_send_streams: config.initial_max_send_streams,
                 local_max_buffer_size: config.max_send_buffer_size,
                 local_next_stream_id: config.next_stream_id,
@@ -125,6 +122,7 @@ where
                     .settings
                     .max_concurrent_streams()
                     .map(|max| max as usize),
+                local_max_error_reset_streams: config.local_error_reset_streams_max,
             }
         }
         let streams = Streams::new(streams_config(&config));
@@ -145,7 +143,9 @@ where
 
     /// connection flow control
     pub(crate) fn set_target_window_size(&mut self, size: WindowSize) {
-        self.inner.streams.set_target_connection_window_size(size);
+        let _res = self.inner.streams.set_target_connection_window_size(size);
+        // TODO: proper error handling
+        debug_assert!(_res.is_ok());
     }
 
     /// Send a new SETTINGS frame with an updated initial window size.
@@ -240,6 +240,18 @@ where
         if !self.inner.streams.has_streams_or_other_references() {
             self.inner.as_dyn().go_away_now(Reason::NO_ERROR);
         }
+    }
+
+    /// Checks if there are any streams
+    pub fn has_streams(&self) -> bool {
+        self.inner.streams.has_streams()
+    }
+
+    /// Checks if there are any streams or references left
+    pub fn has_streams_or_other_references(&self) -> bool {
+        // If we poll() and realize that there are no streams or references
+        // then we can close the connection by transitioning to GOAWAY
+        self.inner.streams.has_streams_or_other_references()
     }
 
     pub(crate) fn take_user_pings(&mut self) -> Option<UserPings> {
@@ -398,6 +410,12 @@ where
         self.go_away.go_away_now(frame);
     }
 
+    fn go_away_now_data(&mut self, e: Reason, data: Bytes) {
+        let last_processed_id = self.streams.last_processed_id();
+        let frame = frame::GoAway::with_debug_data(last_processed_id, e, data);
+        self.go_away.go_away_now(frame);
+    }
+
     fn go_away_from_user(&mut self, e: Reason) {
         let last_processed_id = self.streams.last_processed_id();
         let frame = frame::GoAway::new(last_processed_id, e);
@@ -418,24 +436,7 @@ where
             // error. This is handled by setting a GOAWAY frame followed by
             // terminating the connection.
             Err(Error::GoAway(debug_data, reason, initiator)) => {
-                let e = Error::GoAway(debug_data, reason, initiator);
-                tracing::debug!(error = ?e, "Connection::poll; connection error");
-
-                // We may have already sent a GOAWAY for this error,
-                // if so, don't send another, just flush and close up.
-                if self
-                    .go_away
-                    .going_away()
-                    .map_or(false, |frame| frame.reason() == reason)
-                {
-                    tracing::trace!("    -> already going away");
-                    *self.state = State::Closing(reason, initiator);
-                    return Ok(());
-                }
-
-                // Reset all active streams
-                self.streams.handle_error(e);
-                self.go_away_now(reason);
+                self.handle_go_away(reason, debug_data, initiator);
                 Ok(())
             }
             // Attempting to read a frame resulted in a stream level error.
@@ -444,24 +445,66 @@ where
             Err(Error::Reset(id, reason, initiator)) => {
                 debug_assert_eq!(initiator, Initiator::Library);
                 tracing::trace!(?id, ?reason, "stream error");
-                self.streams.send_reset(id, reason);
+                match self.streams.send_reset(id, reason) {
+                    Ok(()) => (),
+                    Err(crate::proto::error::GoAway { debug_data, reason }) => {
+                        self.handle_go_away(reason, debug_data, Initiator::Library);
+                    }
+                }
                 Ok(())
             }
             // Attempting to read a frame resulted in an I/O error. All
             // active streams must be reset.
             //
             // TODO: Are I/O errors recoverable?
-            Err(Error::Io(e, inner)) => {
-                tracing::debug!(error = ?e, "Connection::poll; IO error");
-                let e = Error::Io(e, inner);
+            Err(Error::Io(kind, inner)) => {
+                tracing::debug!(error = ?kind, "Connection::poll; IO error");
+                let e = Error::Io(kind, inner);
 
                 // Reset all active streams
                 self.streams.handle_error(e.clone());
+
+                // Some client implementations drop the connections without notifying its peer
+                // Attempting to read after the client dropped the connection results in UnexpectedEof
+                // If as a server, we don't have anything more to send, just close the connection
+                // without error
+                //
+                // See https://github.com/hyperium/hyper/issues/3427
+                if self.streams.is_buffer_empty()
+                    && matches!(kind, io::ErrorKind::UnexpectedEof)
+                    && (self.streams.is_server()
+                        || self.error.as_ref().map(|f| f.reason() == Reason::NO_ERROR)
+                            == Some(true))
+                {
+                    *self.state = State::Closed(Reason::NO_ERROR, Initiator::Library);
+                    return Ok(());
+                }
 
                 // Return the error
                 Err(e)
             }
         }
+    }
+
+    fn handle_go_away(&mut self, reason: Reason, debug_data: Bytes, initiator: Initiator) {
+        let e = Error::GoAway(debug_data.clone(), reason, initiator);
+        tracing::debug!(error = ?e, "Connection::poll; connection error");
+
+        // We may have already sent a GOAWAY for this error,
+        // if so, don't send another, just flush and close up.
+        if self
+            .go_away
+            .going_away()
+            .map_or(false, |frame| frame.reason() == reason)
+        {
+            tracing::trace!("    -> already going away");
+            *self.state = State::Closing(reason, initiator);
+            return;
+        }
+
+        // Reset all active streams
+        self.streams.handle_error(e);
+        self.go_away_now_data(reason, debug_data);
     }
 
     fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, Error> {

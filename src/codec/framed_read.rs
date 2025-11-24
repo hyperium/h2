@@ -8,7 +8,7 @@ use crate::hpack;
 
 use futures_core::Stream;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 use std::io;
 
@@ -30,6 +30,8 @@ pub struct FramedRead<T> {
 
     max_header_list_size: usize,
 
+    max_continuation_frames: usize,
+
     partial: Option<Partial>,
 }
 
@@ -41,6 +43,8 @@ struct Partial {
 
     /// Partial header payload
     buf: BytesMut,
+
+    continuation_frames_count: usize,
 }
 
 #[derive(Debug)]
@@ -51,10 +55,14 @@ enum Continuable {
 
 impl<T> FramedRead<T> {
     pub fn new(inner: InnerFramedRead<T, LengthDelimitedCodec>) -> FramedRead<T> {
+        let max_header_list_size = DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE;
+        let max_continuation_frames =
+            calc_max_continuation_frames(max_header_list_size, inner.decoder().max_frame_length());
         FramedRead {
             inner,
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
-            max_header_list_size: DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
+            max_header_list_size,
+            max_continuation_frames,
             partial: None,
         }
     }
@@ -68,7 +76,6 @@ impl<T> FramedRead<T> {
     }
 
     /// Returns the current max frame size setting
-    #[cfg(feature = "unstable")]
     #[inline]
     pub fn max_frame_size(&self) -> usize {
         self.inner.decoder().max_frame_length()
@@ -80,14 +87,33 @@ impl<T> FramedRead<T> {
     #[inline]
     pub fn set_max_frame_size(&mut self, val: usize) {
         assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
-        self.inner.decoder_mut().set_max_frame_length(val)
+        self.inner.decoder_mut().set_max_frame_length(val);
+        // Update max CONTINUATION frames too, since its based on this
+        self.max_continuation_frames = calc_max_continuation_frames(self.max_header_list_size, val);
     }
 
     /// Update the max header list size setting.
     #[inline]
     pub fn set_max_header_list_size(&mut self, val: usize) {
         self.max_header_list_size = val;
+        // Update max CONTINUATION frames too, since its based on this
+        self.max_continuation_frames = calc_max_continuation_frames(val, self.max_frame_size());
     }
+
+    /// Update the header table size setting.
+    #[inline]
+    pub fn set_header_table_size(&mut self, val: usize) {
+        self.hpack.queue_size_update(val);
+    }
+}
+
+fn calc_max_continuation_frames(header_max: usize, frame_max: usize) -> usize {
+    // At least this many frames needed to use max header list size
+    let min_frames_for_list = (header_max / frame_max).max(1);
+    // Some padding for imperfectly packed frames
+    // 25% without floats
+    let padding = min_frames_for_list >> 2;
+    min_frames_for_list.saturating_add(padding).max(5)
 }
 
 /// Decodes a frame.
@@ -96,6 +122,7 @@ impl<T> FramedRead<T> {
 fn decode_frame(
     hpack: &mut hpack::Decoder,
     max_header_list_size: usize,
+    max_continuation_frames: usize,
     partial_inout: &mut Option<Partial>,
     mut bytes: BytesMut,
 ) -> Result<Option<Frame>, Error> {
@@ -119,8 +146,7 @@ fn decode_frame(
     macro_rules! header_block {
         ($frame:ident, $head:ident, $bytes:ident) => ({
             // Drop the frame header
-            // TODO: Change to drain: carllerche/bytes#130
-            let _ = $bytes.split_to(frame::HEADER_LEN);
+            $bytes.advance(frame::HEADER_LEN);
 
             // Parse the header frame w/o parsing the payload
             let (mut frame, mut payload) = match frame::$frame::load($head, $bytes) {
@@ -163,6 +189,7 @@ fn decode_frame(
                 *partial_inout = Some(Partial {
                     frame: Continuable::$frame(frame),
                     buf: payload,
+                    continuation_frames_count: 0,
                 });
 
                 return Ok(None);
@@ -199,7 +226,7 @@ fn decode_frame(
             .into()
         }
         Kind::Data => {
-            let _ = bytes.split_to(frame::HEADER_LEN);
+            bytes.advance(frame::HEADER_LEN);
             let res = frame::Data::load(head, bytes.freeze());
 
             // TODO: Should this always be connection level? Probably not...
@@ -265,6 +292,22 @@ fn decode_frame(
             if partial.frame.stream_id() != head.stream_id() {
                 proto_err!(conn: "CONTINUATION frame stream ID does not match previous frame stream ID");
                 return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+            }
+
+            // Check for CONTINUATION flood
+            if is_end_headers {
+                partial.continuation_frames_count = 0;
+            } else {
+                let cnt = partial.continuation_frames_count + 1;
+                if cnt > max_continuation_frames {
+                    tracing::debug!("too_many_continuations, max = {}", max_continuation_frames);
+                    return Err(Error::library_go_away_data(
+                        Reason::ENHANCE_YOUR_CALM,
+                        "too_many_continuations",
+                    ));
+                } else {
+                    partial.continuation_frames_count = cnt;
+                }
             }
 
             // Extend the buf
@@ -348,9 +391,16 @@ where
                 ref mut hpack,
                 max_header_list_size,
                 ref mut partial,
+                max_continuation_frames,
                 ..
             } = *self;
-            if let Some(frame) = decode_frame(hpack, max_header_list_size, partial, bytes)? {
+            if let Some(frame) = decode_frame(
+                hpack,
+                max_header_list_size,
+                max_continuation_frames,
+                partial,
+                bytes,
+            )? {
                 tracing::debug!(?frame, "received");
                 return Poll::Ready(Some(Ok(frame)));
             }

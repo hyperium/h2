@@ -100,14 +100,14 @@ fn test_story(story: Value) {
             let mut input: Vec<_> = case
                 .expect
                 .iter()
-                .map(|&(ref name, ref value)| {
+                .map(|(name, value)| {
                     Header::new(name.clone().into(), value.clone().into())
                         .unwrap()
                         .into()
                 })
                 .collect();
 
-            encoder.encode(&mut input.clone().into_iter(), &mut buf);
+            encoder.encode(input.clone(), &mut buf);
 
             decoder
                 .decode(&mut Cursor::new(&mut buf), |e| {

@@ -1,9 +1,10 @@
-use futures::future::{join, ready, select, Either};
+use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
 use std::pin::Pin;
 use std::task::Context;
+use std::{io, panic};
 
 #[tokio::test]
 async fn handshake() {
@@ -239,6 +240,8 @@ async fn request_over_max_concurrent_streams_errors() {
 
         // first request is allowed
         let (resp1, mut stream1) = client.send_request(request, false).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -273,6 +276,90 @@ async fn request_over_max_concurrent_streams_errors() {
             stream2
                 .send_data("hello".into(), true)
                 .expect("req2 send_data");
+        })
+        .await;
+        join(async move { h2.await.unwrap() }, async move {
+            resp2.await.unwrap()
+        })
+        .await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        srv.ping_pong([0; 8]).await;
+
+        // limit this server later in life
+        srv.send_frame(frames::settings().max_concurrent_streams(1))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+
+        srv.recv_frame(
+            frames::headers(5)
+                .request("POST", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // first request is allowed
+        let (resp1, _) = client.send_request(request, true).unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // second request is put into pending_open
+        let (resp2, _) = client.send_request(request, true).unwrap();
+
+        h2.drive(async move {
+            resp1.await.expect("req");
         })
         .await;
         join(async move { h2.await.unwrap() }, async move {
@@ -336,6 +423,8 @@ async fn send_request_poll_ready_when_connection_error() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
+        // as long as we let the connection internals tick
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -491,6 +580,45 @@ async fn http_2_request_without_scheme_or_authority() {
             .expect_err("should be UserError");
         let _: () = h2.await.expect("h2");
         drop(client);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn http_2_connect_request_omit_scheme_and_path_fields() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::CONNECT.into(),
+                    authority: util::byte_str("tunnel.example.com:8443").into(),
+                    ..Default::default()
+                })
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        // In HTTP_2 CONNECT request the ":scheme" and ":path" pseudo-header fields MUST be omitted.
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::CONNECT)
+            .uri("https://tunnel.example.com:8443/")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
     };
 
     join(srv, h2).await;
@@ -716,7 +844,7 @@ async fn recv_too_big_headers() {
         srv.send_frame(frames::headers(3).response(200)).await;
         // no reset for 1, since it's closed anyway
         // but reset for 3, since server hasn't closed stream
-        srv.recv_frame(frames::reset(3).refused()).await;
+        srv.recv_frame(frames::reset(3).protocol_error()).await;
         idle_ms(10).await;
     };
 
@@ -733,9 +861,11 @@ async fn recv_too_big_headers() {
             .unwrap();
 
         let req1 = client.send_request(request, true);
+        // Spawn tasks to ensure that the error wakes up tasks that are blocked
+        // waiting for a response.
         let req1 = async move {
             let err = req1.expect("send_request").0.await.expect_err("response1");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         };
 
         let request = Request::builder()
@@ -746,12 +876,12 @@ async fn recv_too_big_headers() {
         let req2 = client.send_request(request, true);
         let req2 = async move {
             let err = req2.expect("send_request").0.await.expect_err("response2");
-            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+            assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
         };
 
         conn.drive(join(req1, req2)).await;
-        conn.await.expect("client");
     };
+
     join(srv, client).await;
 }
 
@@ -1222,6 +1352,49 @@ async fn allow_empty_data_for_head() {
 }
 
 #[tokio::test]
+async fn reject_none_zero_content_length_header_with_end_stream() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", 100)
+                .eos(),
+        )
+        .await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        tokio::spawn(async {
+            h2.await.expect("connection failed");
+        });
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let _ = response.await.unwrap_err();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
 async fn early_hints() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -1432,8 +1605,14 @@ async fn extended_connect_request() {
 
         srv.recv_frame(
             frames::headers(1)
-                .request("CONNECT", "http://bread/baguette")
-                .protocol("the-bread-protocol")
+                .pseudo(frame::Pseudo {
+                    method: Method::CONNECT.into(),
+                    scheme: util::byte_str("http").into(),
+                    authority: util::byte_str("bread").into(),
+                    path: util::byte_str("/baguette").into(),
+                    protocol: Protocol::from_static("the-bread-protocol").into(),
+                    ..Default::default()
+                })
                 .eos(),
         )
         .await;
@@ -1451,6 +1630,366 @@ async fn extended_connect_request() {
         h2.drive(response).await.unwrap();
     };
 
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_odd_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_even_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.send_frame(frames::headers(2)).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.await.unwrap_err();
+        assert!(err.is_go_away());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn rogue_server_reused_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://camembert.fromage")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(1)).await;
+        srv.recv_frame(frames::reset(1).stream_closed()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        h2.drive(async {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://camembert.fromage")
+                .body(())
+                .unwrap();
+            let _res = client.send_request(request, true).unwrap().0.await.unwrap();
+        })
+        .await;
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn client_builder_header_table_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+    let mut settings = frame::Settings::default();
+
+    settings.set_header_table_size(Some(10000));
+
+    let srv = async move {
+        let recv_settings = srv.assert_client_handshake().await;
+        assert_frame_eq(recv_settings, settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let mut builder = client::Builder::new();
+    builder.header_table_size(10000);
+
+    let h2 = async move {
+        let (mut client, mut h2) = builder.handshake::<_, Bytes>(io).await.unwrap();
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn configured_max_concurrent_send_streams_and_update_it_based_on_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send empty SETTINGS frame (no MAX_CONCURRENT_STREAMS is provided)
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::Builder::new()
+            // Configure the initial value to 2024
+            .initial_max_send_streams(2024)
+            .handshake::<_, bytes::Bytes>(io)
+            .await
+            .unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // It should be pre-configured value before it receives the initial
+        // SETTINGS frame from the server
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        h2.as_mut().await.unwrap();
+        // If the server's initial SETTINGS frame does not include
+        // MAX_CONCURRENT_STREAMS, this should be updated to usize::MAX.
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn configured_max_concurrent_send_streams_and_update_it_based_on_non_empty_settings_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::Builder::new()
+            // Configure the initial value to 2024
+            .initial_max_send_streams(2024)
+            .handshake::<_, bytes::Bytes>(io)
+            .await
+            .unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        // It should be pre-configured value before it receives the initial
+        // SETTINGS frame from the server
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+        h2.as_mut().await.unwrap();
+        // Now the client has received the initial SETTINGS frame from the
+        // server, which should update the value accordingly
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings()).await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+        h2.as_mut().await.unwrap();
+        // Even though the second SETTINGS frame contained no value for
+        // MAX_CONCURRENT_STREAMS, update to usize::MAX should not happen
+        assert_eq!(h2.max_concurrent_send_streams(), 42);
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn receive_settings_frame_twice_with_second_one_non_empty() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send the initial SETTINGS frame with MAX_CONCURRENT_STREAMS set to 42
+        srv.send_frame(frames::settings().max_concurrent_streams(42))
+            .await;
+
+        // Handle the client's connection preface
+        srv.read_preface().await.unwrap();
+        match srv.next().await {
+            Some(frame) => match frame.unwrap() {
+                h2::frame::Frame::Settings(_) => {
+                    let ack = frame::Settings::ack();
+                    srv.send(ack.into()).await.unwrap();
+                }
+                frame => {
+                    panic!("unexpected frame: {:?}", frame);
+                }
+            },
+            None => {
+                panic!("unexpected EOF");
+            }
+        }
+
+        // Should receive the ack for the server's initial SETTINGS frame
+        let frame = assert_settings!(srv.next().await.unwrap().unwrap());
+        assert!(frame.is_ack());
+
+        // Send another SETTINGS frame with no MAX_CONCURRENT_STREAMS
+        // This should not update the max_concurrent_send_streams value that
+        // the client manages.
+        srv.send_frame(frames::settings().max_concurrent_streams(2024))
+            .await;
+    };
+
+    let h2 = async move {
+        let (_client, h2) = client::handshake(io).await.unwrap();
+        let mut h2 = std::pin::pin!(h2);
+        assert_eq!(h2.max_concurrent_send_streams(), usize::MAX);
+        h2.as_mut().await.unwrap();
+        // The most-recently advertised value should be used
+        assert_eq!(h2.max_concurrent_send_streams(), 2024);
+    };
+
+    join(srv, h2).await;
+}
+
+// If the server has not sent a go_away message before dropping the connection
+// make sure the UnexpectedEof error is propogated.
+#[tokio::test]
+async fn server_drop_connection_unexpectedly_return_unexpected_eof_err() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let err = h2.await.expect_err("should receive UnexpectedEof");
+        assert_eq!(
+            err.get_io().expect("should be UnexpectedEof").kind(),
+            io::ErrorKind::UnexpectedEof,
+        );
+    };
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn server_drop_connection_after_go_away() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::go_away(1)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        srv.close_without_notify();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let _res = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("request");
+        });
+        let _ = h2.await.unwrap();
+    };
     join(srv, h2).await;
 }
 
