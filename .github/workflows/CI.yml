@@ -92,8 +92,11 @@ jobs:
         run: |
           cargo update --package tokio --precise 1.38.1
           cargo update --package tokio-util --precise 0.7.11
+          cargo update --package indexmap --precise 2.11.3
           cargo update --package hashbrown --precise 0.15.0
           cargo update --package once_cell --precise 1.20.3
+          cargo update --package tracing --precise 0.1.41
+          cargo update --package tracing-subscriber --precise 0.3.19
           cargo update --package tracing-core --precise 0.1.33
 
 
