@@ -343,6 +343,8 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    keepalive_timeout: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -580,7 +582,6 @@ where
     }
 }
 
-#[cfg(feature = "unstable")]
 impl<B> SendRequest<B>
 where
     B: Buf,
@@ -661,6 +662,7 @@ impl Builder {
             initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
+            keepalive_timeout: None,
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
@@ -996,6 +998,11 @@ impl Builder {
         self
     }
 
+    /// Sets the duration connection should be closed when there no stream.
+    pub fn keepalive_timeout(&mut self, dur: Duration) -> &mut Self {
+        self.keepalive_timeout = Some(dur);
+        self
+    }
     /// Sets the maximum number of local resets due to protocol errors made by the remote end.
     ///
     /// Invalid frames and many other protocol errors will lead to resets being generated for those streams.
@@ -1332,6 +1339,7 @@ where
                 max_send_buffer_size: builder.max_send_buffer_size,
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
+                keepalive_timeout: builder.keepalive_timeout,
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings.clone(),

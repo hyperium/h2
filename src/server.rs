@@ -258,6 +258,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Keepalive timeout
+    keepalive_timeout: Option<Duration>,
 }
 
 /// Send a response back to the client
@@ -586,6 +589,15 @@ where
         self.connection.max_recv_streams()
     }
 
+    /// Returns whether has stream alive
+    pub fn has_streams_or_other_references(&self) -> bool {
+        self.connection.has_streams_or_other_references()
+    }
+    /// Returns the number of current active stream.
+    pub fn active_stream(&self) -> usize {
+        self.connection.active_streams()
+    }
+
     // Could disappear at anytime.
     #[doc(hidden)]
     #[cfg(feature = "unstable")]
@@ -655,7 +667,7 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
-
+            keepalive_timeout: None,
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
     }
@@ -1020,6 +1032,11 @@ impl Builder {
         self
     }
 
+    /// Sets the duration connection should be closed when there no stream.
+    pub fn keepalive_timeout(&mut self, dur: Duration) -> &mut Self {
+        self.keepalive_timeout = Some(dur);
+        self
+    }
     /// Enables the [extended CONNECT protocol].
     ///
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
@@ -1384,6 +1401,7 @@ where
                             initial_max_send_streams: 0,
                             max_send_buffer_size: self.builder.max_send_buffer_size,
                             reset_stream_duration: self.builder.reset_stream_duration,
+                            keepalive_timeout: self.builder.keepalive_timeout,
                             reset_stream_max: self.builder.reset_stream_max,
                             remote_reset_stream_max: self.builder.pending_accept_reset_stream_max,
                             local_error_reset_streams_max: self
