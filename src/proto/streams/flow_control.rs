@@ -1,5 +1,6 @@
 use crate::frame::Reason;
 use crate::proto::{WindowSize, MAX_WINDOW_SIZE};
+use crate::tracing;
 
 use std::fmt;
 

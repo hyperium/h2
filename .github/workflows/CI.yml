@@ -51,6 +51,9 @@ jobs:
       - name: Check with unstable flag
         run: cargo check --features unstable
 
+      - name: Check with tracing feature
+        run: cargo check --features tracing
+
       - name: Run lib tests and doc tests
         run: cargo test
 
