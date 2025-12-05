@@ -126,6 +126,8 @@ where
             }
         }
         let streams = Streams::new(streams_config(&config));
+        let span = tracing::debug_span!(parent: None, "Connection", peer = %P::NAME);
+        span.follows_from(tracing::Span::current());
         Connection {
             codec,
             inner: ConnectionInner {
@@ -135,7 +137,7 @@ where
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
-                span: tracing::debug_span!("Connection", peer = %P::NAME),
+                span,
                 _phantom: PhantomData,
             },
         }
