@@ -577,7 +577,8 @@ impl Recv {
     }
 
     pub fn recv_data(&mut self, frame: frame::Data, stream: &mut store::Ptr) -> Result<(), Error> {
-        let sz = frame.payload().len();
+        // could include padding
+        let sz = frame.flow_controlled_len();
 
         // This should have been enforced at the codec::FramedRead layer, so
         // this is just a sanity check.
@@ -628,6 +629,7 @@ impl Recv {
             return Err(Error::library_reset(stream.id, Reason::FLOW_CONTROL_ERROR));
         }
 
+        // use payload len, padding doesn't count for content-length
         if stream.dec_content_length(frame.payload().len()).is_err() {
             proto_err!(stream:
                 "recv_data: content-length overflow; stream={:?}; len={:?}",
@@ -671,6 +673,18 @@ impl Recv {
 
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
+
+        // We auto-release the padded length, since the user cannot.
+        if let Some(padded_len) = frame.padded_len() {
+            tracing::trace!(
+                "recv_data; auto-releasing padded length of {:?} for {:?}",
+                padded_len,
+                stream.id,
+            );
+            let _res = self.release_capacity(padded_len.into(), stream, &mut None);
+            // cannot fail, we JUST added more in_flight data above.
+            debug_assert!(_res.is_ok());
+        }
 
         let event = Event::Data(frame.into_payload());
 

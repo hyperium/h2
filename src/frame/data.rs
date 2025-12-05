@@ -139,6 +139,20 @@ impl Data<Bytes> {
             pad_len,
         })
     }
+
+    pub(crate) fn flow_controlled_len(&self) -> usize {
+        if let Some(pad_len) = self.pad_len {
+            // if PADDED, pad length field counts too (the + 1)
+            self.data.len() + usize::from(pad_len) + 1
+        } else {
+            self.data.len()
+        }
+    }
+
+    /// If this frame is PADDED, it returns the pad len + 1 (length field).
+    pub(crate) fn padded_len(&self) -> Option<u8> {
+        self.pad_len.map(|n| n + 1)
+    }
 }
 
 impl<T: Buf> Data<T> {
