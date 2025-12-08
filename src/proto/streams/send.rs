@@ -167,6 +167,47 @@ impl Send {
         Ok(())
     }
 
+    /// Send interim informational headers (1xx responses) without changing stream state.
+    /// This allows multiple interim informational responses to be sent before the final response.
+    pub fn send_interim_informational_headers<B>(
+        &mut self,
+        frame: frame::Headers,
+        buffer: &mut Buffer<Frame<B>>,
+        stream: &mut store::Ptr,
+        _counts: &mut Counts,
+        task: &mut Option<Waker>,
+    ) -> Result<(), UserError> {
+        tracing::trace!(
+            "send_interim_informational_headers; frame={:?}; stream_id={:?}",
+            frame,
+            frame.stream_id()
+        );
+
+        // Validate headers
+        Self::check_headers(frame.fields())?;
+
+        // Ensure this is an informational response (1xx status code)
+        if !frame.is_informational() {
+            tracing::trace!(
+                "send_interim_informational_headers called with non-informational frame"
+            );
+            return Err(UserError::UnexpectedFrameType);
+        }
+
+        // Ensure the frame is not marked as end_stream for informational responses
+        if frame.is_end_stream() {
+            tracing::trace!("send_interim_informational_headers called with end_stream=true");
+            return Err(UserError::UnexpectedFrameType);
+        }
+
+        // Queue the frame for sending WITHOUT changing stream state
+        // This is the key difference from send_headers - we don't call stream.state.send_open()
+        self.prioritize
+            .queue_frame(frame.into(), buffer, stream, task);
+
+        Ok(())
+    }
+
     /// Send an explicit RST_STREAM frame
     pub fn send_reset<B>(
         &mut self,
