@@ -118,6 +118,84 @@ async fn release_capacity_sends_window_update() {
 }
 
 #[tokio::test]
+async fn window_updates_include_padded_length() {
+    h2_support::trace_init!();
+
+    // Our manual way of sending padding frames, not supported publicly
+    const PAYLOAD_LEN: usize = 16_378; // 16_384; does padding + payload count for max frame size?
+    let mut payload = Vec::with_capacity(PAYLOAD_LEN + 6);
+    payload.push(5);
+    payload.extend_from_slice(&[b'z'; PAYLOAD_LEN][..]);
+    payload.extend_from_slice(&[b'0'; 5][..]);
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &payload[..]).padded()).await;
+        srv.send_frame(frames::data(1, &payload[..]).padded()).await;
+        srv.send_frame(frames::data(1, &payload[..]).padded()).await;
+        // the other 6 was auto-released earlier
+        srv.recv_frame(frames::window_update(0, 32_774)).await;
+        srv.recv_frame(frames::window_update(1, 32_774)).await;
+        srv.send_frame(frames::data(1, &payload[..]).padded().eos())
+            .await;
+        // but not double released here
+        srv.recv_frame(frames::window_update(0, 32_762)).await;
+        // and no one cares about closed stream window
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async move {
+            let resp = client.send_request(request, true).unwrap().0.await.unwrap();
+            // Get the response
+            assert_eq!(resp.status(), StatusCode::OK);
+            let mut body = resp.into_parts().1;
+
+            // read some body to use up window size to below half
+            let buf = body.data().await.unwrap().unwrap();
+            assert_eq!(buf.len(), PAYLOAD_LEN);
+
+            let buf = body.data().await.unwrap().unwrap();
+            assert_eq!(buf.len(), PAYLOAD_LEN);
+
+            let buf = body.data().await.unwrap().unwrap();
+            assert_eq!(buf.len(), PAYLOAD_LEN);
+            body.flow_control().release_capacity(buf.len() * 2).unwrap();
+
+            let buf = body.data().await.unwrap().unwrap();
+            assert_eq!(buf.len(), PAYLOAD_LEN);
+            drop(body);
+            idle_ms(20).await;
+        };
+
+        join(
+            async move {
+                h2.await.unwrap();
+            },
+            req,
+        )
+        .await
+    };
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn release_capacity_of_small_amount_does_not_send_window_update() {
     h2_support::trace_init!();
 
