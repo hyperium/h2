@@ -249,7 +249,7 @@ pub fn main() {
 
     println!();
     println!("// (next-state, byte, flags)");
-    println!("pub const DECODE_TABLE: [[(usize, u8, u8); 16]; 256] = [");
+    println!("pub const DECODE_TABLE: [[(u8, u8, u8); 16]; 256] = [");
 
     decode.print();
 
