@@ -262,7 +262,7 @@ pub const ENCODE_TABLE: [(usize, u64); 257] = [
 ];
 
 // (next-state, byte, flags)
-pub const DECODE_TABLE: [[(usize, u8, u8); 16]; 256] = [
+pub const DECODE_TABLE: [[(u8, u8, u8); 16]; 256] = [
     // 0
     [
         (4, 0, 0x00),
