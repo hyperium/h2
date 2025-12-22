@@ -1102,6 +1102,109 @@ impl Default for Builder {
 // ===== impl SendResponse =====
 
 impl<B: Buf> SendResponse<B> {
+    /// Send an interim informational response (1xx status codes)
+    ///
+    /// This method can be called multiple times before calling `send_response()`
+    /// to send the final response. Only 1xx status codes are allowed.
+    ///
+    /// Interim informational responses are used to provide early feedback to the client
+    /// before the final response is ready. Common examples include:
+    /// - 100 Continue: Indicates the client should continue with the request
+    /// - 103 Early Hints: Provides early hints about resources to preload
+    ///
+    /// # Arguments
+    /// * `response` - HTTP response with 1xx status code and headers
+    ///
+    /// # Returns
+    /// * `Ok(())` - Interim Informational response sent successfully
+    /// * `Err(Error)` - Failed to send (invalid status code, connection error, etc.)
+    ///
+    /// # Examples
+    /// ```rust
+    /// use h2::server;
+    /// use http::{Response, StatusCode};
+    ///
+    /// # async fn example(mut send_response: h2::server::SendResponse<bytes::Bytes>) -> Result<(), h2::Error> {
+    /// // Send 100 Continue before processing request body
+    /// let continue_response = Response::builder()
+    ///     .status(StatusCode::CONTINUE)
+    ///     .body(())
+    ///     .unwrap();
+    /// send_response.send_informational(continue_response)?;
+    ///
+    /// // Later send the final response
+    /// let final_response = Response::builder()
+    ///     .status(StatusCode::OK)
+    ///     .body(())
+    ///     .unwrap();
+    /// let _stream = send_response.send_response(final_response, false)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// This method will return an error if:
+    /// - The response status code is not in the 1xx range
+    /// - The final response has already been sent
+    /// - There is a connection-level error
+    pub fn send_informational(&mut self, response: Response<()>) -> Result<(), crate::Error> {
+        let stream_id = self.inner.stream_id();
+        let status = response.status();
+
+        tracing::trace!(
+            "send_informational called with status: {} on stream: {:?}",
+            status,
+            stream_id
+        );
+
+        // Validate that this is an informational response (1xx status code)
+        if !response.status().is_informational() {
+            tracing::trace!(
+                "invalid informational status code: {} on stream: {:?}",
+                status,
+                stream_id
+            );
+            return Err(crate::Error::from(
+                UserError::InvalidInformationalStatusCode,
+            ));
+        }
+
+        tracing::trace!(
+            "converting informational response to HEADERS frame without END_STREAM flag for stream: {:?}",
+            stream_id
+        );
+
+        let frame = Peer::convert_send_message(
+            stream_id, response, false, // NOT end_of_stream for informational responses
+        );
+
+        tracing::trace!(
+            "sending interim informational headers frame for stream: {:?}",
+            stream_id
+        );
+
+        // Use the proper H2 streams API for sending interim informational headers
+        // This bypasses the normal response flow and allows multiple informational responses
+        let result = self
+            .inner
+            .send_informational_headers(frame)
+            .map_err(Into::into);
+
+        match &result {
+            Ok(()) => tracing::trace!(
+                "Successfully sent informational headers for stream: {:?}",
+                stream_id
+            ),
+            Err(e) => tracing::trace!(
+                "Failed to send informational headers for stream: {:?}: {:?}",
+                stream_id,
+                e
+            ),
+        }
+
+        result
+    }
+
     /// Send a response to a client request.
     ///
     /// On success, a [`SendStream`] instance is returned. This instance can be
