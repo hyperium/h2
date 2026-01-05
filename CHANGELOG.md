@@ -1,3 +1,10 @@
+# 0.4.13 (January 5, 2026)
+
+* Add support for 1xx informational responses on client and server side.
+* Fix auto-releasing of padding bytes of DATA frames for flow control windows.
+* Fix to stop assigning capacity to pending streams which can't use it yet.
+* Fix tracing to not grab the parent for the connection span.
+
 # 0.4.12 (August 5, 2025)
 
 * Fix default limits on max stored reset streams and duration to more reasonable values.
