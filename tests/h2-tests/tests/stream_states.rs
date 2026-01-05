@@ -51,11 +51,11 @@ async fn send_recv_data() {
             0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25, 151,
             33, 233, 132,
         ])
+        .write(frames::SETTINGS_ACK)
         .write(&[
             // DATA
             0, 0, 5, 0, 1, 0, 0, 0, 1, 104, 101, 108, 108, 111,
         ])
-        .write(frames::SETTINGS_ACK)
         // Read response
         .read(&[
             // HEADERS
@@ -78,10 +78,10 @@ async fn send_recv_data() {
     // Reserve send capacity
     stream.reserve_capacity(5);
 
-    assert_eq!(stream.capacity(), 5);
+    let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
 
     // Send the data
-    stream.send_data("hello".as_bytes(), true).unwrap();
+    stream.send_data("hello".into(), true).unwrap();
 
     // Get the response
     let resp = h2.run(response).await.unwrap();

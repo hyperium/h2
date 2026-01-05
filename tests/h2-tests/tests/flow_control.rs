@@ -469,7 +469,7 @@ async fn stream_close_by_data_frame_releases_capacity() {
 
         // The capacity should be immediately available as nothing else is
         // happening on the stream.
-        assert_eq!(s1.capacity(), window_size);
+        let mut s1 = h2.drive(util::wait_for_capacity(s1, window_size)).await;
 
         let request = Request::builder()
             .method(Method::POST)
@@ -492,7 +492,7 @@ async fn stream_close_by_data_frame_releases_capacity() {
         s1.send_data("".into(), true).unwrap();
 
         // The capacity should be available
-        assert_eq!(s2.capacity(), 5);
+        let mut s2 = h2.drive(util::wait_for_capacity(s2, 5)).await;
 
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
@@ -539,9 +539,7 @@ async fn stream_close_by_trailers_frame_releases_capacity() {
         // This effectively reserves the entire connection window
         s1.reserve_capacity(window_size);
 
-        // The capacity should be immediately available as nothing else is
-        // happening on the stream.
-        assert_eq!(s1.capacity(), window_size);
+        let mut s1 = h2.drive(util::wait_for_capacity(s1, window_size)).await;
 
         let request = Request::builder()
             .method(Method::POST)
@@ -564,7 +562,7 @@ async fn stream_close_by_trailers_frame_releases_capacity() {
         s1.send_trailers(Default::default()).unwrap();
 
         // The capacity should be available
-        assert_eq!(s2.capacity(), 5);
+        let mut s2 = h2.drive(util::wait_for_capacity(s2, 5)).await;
 
         // Send the frame
         s2.send_data("hello".into(), true).unwrap();
@@ -997,10 +995,10 @@ async fn recv_no_init_window_then_receive_some_init_window() {
 
         let (response, mut stream) = client.send_request(request, false).unwrap();
 
-        stream.reserve_capacity(11);
+        stream.reserve_capacity(10);
 
-        let mut stream = h2.drive(util::wait_for_capacity(stream, 11)).await;
-        assert_eq!(stream.capacity(), 11);
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 10)).await;
+        assert_eq!(stream.capacity(), 10);
 
         stream.send_data("hello world".into(), true).unwrap();
 
@@ -2062,6 +2060,120 @@ async fn reclaim_reserved_capacity() {
         // any available connection window, only requested it.
         drop(depleting_stream);
 
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn capacity_not_assigned_to_unopened_streams() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let mut settings = frame::Settings::default();
+        settings.set_max_concurrent_streams(Some(1));
+        let settings = srv.assert_client_handshake_with_settings(settings).await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        srv.recv_frame(frames::headers(3).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::window_update(
+            0,
+            frame::DEFAULT_INITIAL_WINDOW_SIZE + 10,
+        ))
+        .await;
+        srv.recv_frame(frames::reset(3).cancel()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response1, mut stream1) = client.send_request(request.clone(), false).unwrap();
+        stream1.send_data("hello".into(), false).unwrap();
+        let (_, mut stream2) = client.send_request(request.clone(), false).unwrap();
+        stream2.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
+        stream1.send_data("world".into(), true).unwrap();
+        h2.drive(response1).await.unwrap();
+        let stream2 = h2
+            .drive(util::wait_for_capacity(
+                stream2,
+                frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
+            ))
+            .await;
+        drop(stream2);
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn new_initial_window_size_capacity_not_assigned_to_unopened_streams() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let mut settings = frame::Settings::default();
+        settings.set_max_concurrent_streams(Some(1));
+        settings.set_initial_window_size(Some(10));
+        let settings = srv.assert_client_handshake_with_settings(settings).await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://www.example.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.send_frame(frames::settings().initial_window_size(frame::DEFAULT_INITIAL_WINDOW_SIZE))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+
+        srv.recv_frame(frames::headers(3).request("POST", "https://www.example.com/"))
+            .await;
+        srv.send_frame(frames::window_update(
+            0,
+            frame::DEFAULT_INITIAL_WINDOW_SIZE + 10,
+        ))
+        .await;
+        srv.recv_frame(frames::reset(3).cancel()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://www.example.com/")
+            .body(())
+            .unwrap();
+
+        let (response1, mut stream1) = client.send_request(request.clone(), false).unwrap();
+        stream1.send_data("hello".into(), false).unwrap();
+        let (_, mut stream2) = client.send_request(request.clone(), false).unwrap();
+        stream2.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
+        h2.drive(response1).await.unwrap();
+        stream1.send_data("world".into(), true).unwrap();
+        let stream2 = h2
+            .drive(util::wait_for_capacity(
+                stream2,
+                frame::DEFAULT_INITIAL_WINDOW_SIZE as usize,
+            ))
+            .await;
+        drop(stream2);
         h2.await.unwrap();
     };
 
