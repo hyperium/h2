@@ -7,6 +7,7 @@ use crate::proto::*;
 
 use bytes::Bytes;
 use futures_core::Stream;
+use std::collections::BTreeSet;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -83,6 +84,7 @@ pub(crate) struct Config {
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
+    pub allowed_custom_settings: BTreeSet<u16>,
 }
 
 #[derive(Debug)]
@@ -123,6 +125,7 @@ where
                     .max_concurrent_streams()
                     .map(|max| max as usize),
                 local_max_error_reset_streams: config.local_error_reset_streams_max,
+                allowed_custom_settings: config.allowed_custom_settings.clone(),
             }
         }
         let streams = Streams::new(streams_config(&config));
@@ -161,6 +164,13 @@ where
     pub(crate) fn set_enable_connect_protocol(&mut self) -> Result<(), UserError> {
         let mut settings = frame::Settings::default();
         settings.set_enable_connect_protocol(Some(1));
+        self.inner.settings.send_settings(settings)
+    }
+
+    /// Send a new SETTINGS frame with a custom setting.
+    pub(crate) fn set_custom_setting(&mut self, id: u16, value: u32) -> Result<(), UserError> {
+        let mut settings = frame::Settings::default();
+        settings.set_custom_setting(id, Some(value));
         self.inner.settings.send_settings(settings)
     }
 
@@ -368,6 +378,10 @@ where
 
     fn clear_expired_reset_streams(&mut self) {
         self.inner.streams.clear_expired_reset_streams();
+    }
+
+    pub(crate) fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.inner.streams.custom_setting(id)
     }
 }
 

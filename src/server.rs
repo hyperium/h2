@@ -122,6 +122,7 @@ use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Method, Request, Response};
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -258,6 +259,9 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// Custom settings IDs to be tracked from the remote
+    allowed_custom_settings: BTreeSet<u16>,
 }
 
 /// Send a response back to the client
@@ -497,6 +501,21 @@ where
         Ok(())
     }
 
+    /// Set a custom setting in the SETTINGS frame.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a previous call is still pending acknowledgement
+    /// from the remote endpoint.
+    pub fn set_custom_setting(&mut self, id: u16, value: u32) -> Result<(), crate::Error> {
+        self.connection.set_custom_setting(id, value)?;
+        Ok(())
+    }
+
     /// Returns `Ready` when the underlying connection has closed.
     ///
     /// If any new inbound streams are received during a call to `poll_closed`,
@@ -592,6 +611,16 @@ where
     pub fn num_wired_streams(&self) -> usize {
         self.connection.num_wired_streams()
     }
+
+    /// Returns the value of a custom setting specified in the [SETTINGS frame][1].
+    ///
+    /// This method returns the currently acknowledged value received from the
+    /// remote.
+    ///
+    /// [1]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.connection.custom_setting(id)
+    }
 }
 
 #[cfg(feature = "stream")]
@@ -655,8 +684,8 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
-
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            allowed_custom_settings: BTreeSet::new(),
         }
     }
 
@@ -1025,6 +1054,26 @@ impl Builder {
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
     pub fn enable_connect_protocol(&mut self) -> &mut Self {
         self.settings.set_enable_connect_protocol(Some(1));
+        self
+    }
+
+    /// Set a custom setting in the SETTINGS frame.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn set_custom_setting(&mut self, id: u16, value: Option<u32>) -> &mut Self {
+        self.settings.set_custom_setting(id, value);
+        self
+    }
+
+    /// By default, unknown settings recieved from the remote will be ignored.
+    ///
+    /// See [Section 6.5] in the HTTP/2 spec for more details.
+    ///
+    /// [Section 6.5]: https://httpwg.org/specs/rfc7540.html#rfc.section.6.5
+    pub fn allow_custom_setting(&mut self, id: u16) -> &mut Self {
+        self.allowed_custom_settings.insert(id);
         self
     }
 
@@ -1493,6 +1542,7 @@ where
                                 .builder
                                 .local_max_error_reset_streams,
                             settings: self.builder.settings.clone(),
+                            allowed_custom_settings: self.builder.allowed_custom_settings.clone(),
                         },
                     );
 
