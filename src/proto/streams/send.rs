@@ -251,11 +251,22 @@ impl Send {
             return;
         }
 
-        // Clear all pending outbound frames.
-        // Note that we don't call `self.recv_err` because we want to enqueue
-        // the reset frame before transitioning the stream inside
-        // `reclaim_all_capacity`.
-        self.prioritize.clear_queue(buffer, stream);
+        // If the stream hasn't been opened yet (its initial HEADERS are still
+        // sitting in `pending_open`/`pending_send`), clearing the queue would
+        // drop those HEADERS and let a RST_STREAM become the first frame on an
+        // idle stream. HTTP/2 forbids that: §5.1 allows only HEADERS/PRIORITY
+        // on idle streams and §6.4 says RST_STREAM on idle is a PROTOCOL_ERROR.
+        // Keep the queued HEADERS so the stream opens, then send the reset
+        // immediately after.
+        if !stream.is_pending_open {
+            // Otherwise, drop any buffered DATA/HEADERS and only send the
+            // reset.
+            //
+            // Note that we don't call `self.recv_err` because we want to enqueue
+            // the reset frame before transitioning the stream inside
+            // `reclaim_all_capacity`.
+            self.prioritize.clear_queue(buffer, stream);
+        }
 
         let frame = frame::Reset::new(stream.id, reason);
 
