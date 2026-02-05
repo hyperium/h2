@@ -82,8 +82,8 @@ impl Send {
         if fields.contains_key(http::header::CONNECTION)
             || fields.contains_key(http::header::TRANSFER_ENCODING)
             || fields.contains_key(http::header::UPGRADE)
-            || fields.contains_key("keep-alive")
-            || fields.contains_key("proxy-connection")
+            || fields.contains_key(http::header::HeaderName::from_static("keep-alive"))
+            || fields.contains_key(http::header::HeaderName::from_static("proxy-connection"))
         {
             tracing::debug!("illegal connection-specific headers found");
             return Err(UserError::MalformedHeaders);
