@@ -243,6 +243,12 @@ impl Mock<frame::PushPromise> {
         Mock(frame)
     }
 
+    pub fn pseudo(self, pseudo: frame::Pseudo) -> Self {
+        let (id, promised, _, fields) = self.into_parts();
+        let frame = frame::PushPromise::new(id, promised, pseudo, fields);
+        Mock(frame)
+    }
+
     pub fn fields(self, fields: HeaderMap) -> Self {
         let (id, promised, pseudo, _) = self.into_parts();
         let frame = frame::PushPromise::new(id, promised, pseudo, fields);

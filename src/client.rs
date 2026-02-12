@@ -137,7 +137,7 @@
 
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
-use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
+use crate::frame::{self, Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
 use crate::{FlowControl, PingPong, RecvStream, SendStream};
 
@@ -428,10 +428,11 @@ where
     /// value of its version field. If the version is set to 2.0, then the
     /// request is encoded as per the specification recommends.
     ///
-    /// If the version is set to a lower value, then the request is encoded to
-    /// preserve the characteristics of HTTP 1.1 and lower. Specifically, host
-    /// headers are permitted and the `:authority` pseudo header is not
-    /// included.
+    /// If the version is set to a lower value, then request-target handling is
+    /// made compatible with HTTP/1.x-style inputs (for example, relative URIs
+    /// are accepted). Headers are still normalized for HTTP/2 transmission:
+    /// `Host` is canonicalized into `:authority` and removed from regular
+    /// headers.
     ///
     /// The caller should always set the request's version field to 2.0 unless
     /// specifically transmitting an HTTP 1.1 request over 2.0.
@@ -1613,7 +1614,7 @@ impl Peer {
             Parts {
                 method,
                 uri,
-                headers,
+                mut headers,
                 version,
                 ..
             },
@@ -1653,6 +1654,9 @@ impl Peer {
                 // TODO: Error
             }
         }
+
+        // Canonicalize Host header into :authority for HTTP/2
+        frame::canonicalize_host_authority(&mut pseudo, &mut headers);
 
         // Create the HEADERS frame
         let mut frame = Headers::new(id, pseudo, headers);

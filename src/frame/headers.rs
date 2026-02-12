@@ -6,6 +6,23 @@ use crate::hpack::{self, BytesStr};
 use http::header::{self, HeaderName, HeaderValue};
 use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
+/// Canonicalize `Host` header into `:authority` pseudo-header for HTTP/2.
+///
+/// - If a `Host` header is present, attempt to parse its first value as a URI authority.
+/// - On success, override `:authority` with the parsed value.
+/// - Always remove all `Host` headers from the regular header map.
+///
+/// Callers should only invoke this in an HTTP/2 context.
+pub(crate) fn canonicalize_host_authority(pseudo: &mut Pseudo, headers: &mut HeaderMap) {
+    if let Some(host) = headers.get(header::HOST) {
+        if let Ok(authority) = uri::Authority::from_maybe_shared(host.as_bytes().to_vec()) {
+            pseudo.set_authority(BytesStr::from(authority.as_str()));
+        }
+    }
+
+    headers.remove(header::HOST);
+}
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use std::fmt;

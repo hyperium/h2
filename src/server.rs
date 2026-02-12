@@ -1581,13 +1581,16 @@ impl Peer {
             Parts {
                 method,
                 uri,
-                headers,
+                mut headers,
                 ..
             },
             _,
         ) = request.into_parts();
 
-        let pseudo = Pseudo::request(method, uri, None);
+        let mut pseudo = Pseudo::request(method, uri, None);
+
+        // Canonicalize Host header into :authority for HTTP/2 push promises
+        frame::canonicalize_host_authority(&mut pseudo, &mut headers);
 
         Ok(frame::PushPromise::new(
             stream_id,
