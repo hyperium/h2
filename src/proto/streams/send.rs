@@ -10,6 +10,7 @@ use bytes::Buf;
 use tokio::io::AsyncWrite;
 
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::task::{Context, Poll, Waker};
 
@@ -38,6 +39,10 @@ pub(super) struct Send {
 
     /// If extended connect protocol is enabled.
     is_extended_connect_protocol_enabled: bool,
+
+    /// Custom settings
+    custom_settings: BTreeMap<u16, u32>,
+    allowed_custom_settings: BTreeSet<u16>,
 }
 
 /// A value to detect which public API has called `poll_reset`.
@@ -57,6 +62,8 @@ impl Send {
             prioritize: Prioritize::new(config),
             is_push_enabled: true,
             is_extended_connect_protocol_enabled: false,
+            custom_settings: BTreeMap::new(),
+            allowed_custom_settings: config.allowed_custom_settings.clone(),
         }
     }
 
@@ -477,6 +484,11 @@ impl Send {
         if let Some(val) = settings.is_extended_connect_protocol_enabled() {
             self.is_extended_connect_protocol_enabled = val;
         }
+        for id in &self.allowed_custom_settings {
+            if let Some(val) = settings.custom_setting(*id) {
+                self.custom_settings.insert(*id, val);
+            }
+        }
 
         // Applies an update to the remote endpoint's initial window size.
         //
@@ -634,5 +646,9 @@ impl Send {
 
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
         self.is_extended_connect_protocol_enabled
+    }
+
+    pub(crate) fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.custom_settings.get(&id).copied()
     }
 }
