@@ -1592,3 +1592,205 @@ async fn init_window_size_smaller_than_default_should_use_default_before_ack() {
 
     join(client, h2).await;
 }
+
+#[tokio::test]
+async fn push_promise_host_authority_mismatch() {
+    // Push promise with URI/Host mismatch: Host wins for :authority, Host retained.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // Expect push promise with authority from Host, Host retained on wire
+        client
+            .recv_frame(
+                frames::push_promise(1, 2)
+                    .pseudo(frame::Pseudo {
+                        method: Method::GET.into(),
+                        scheme: util::byte_str("https").into(),
+                        authority: util::byte_str("example.com").into(),
+                        path: util::byte_str("/style.css").into(),
+                        ..Default::default()
+                    })
+                    .field("host", "example.com"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Push with URI authority example.net but Host: example.com
+        {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://example.net/style.css")
+                .header("host", "example.com")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn push_promise_host_authority_duplicate_first_wins() {
+    // Push promise with duplicate Host: first value wins for :authority.
+    // Host headers retained on wire.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2)
+                    .pseudo(frame::Pseudo {
+                        method: Method::GET.into(),
+                        scheme: util::byte_str("https").into(),
+                        authority: util::byte_str("first.example").into(),
+                        path: util::byte_str("/style.css").into(),
+                        ..Default::default()
+                    })
+                    .field("host", "first.example"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://example.net/style.css")
+                .header("host", "first.example")
+                .header("host", "second.example")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn push_promise_host_authority_invalid_keeps_uri() {
+    // Push promise with invalid Host: URI authority kept, invalid Host stripped.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // Expect push promise with original URI authority; invalid Host stripped
+        client
+            .recv_frame(frames::push_promise(1, 2).pseudo(frame::Pseudo {
+                method: Method::GET.into(),
+                scheme: util::byte_str("https").into(),
+                authority: util::byte_str("example.net").into(),
+                path: util::byte_str("/style.css").into(),
+                ..Default::default()
+            }))
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://example.net/style.css")
+                .header("host", "not:a/good authority")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}

@@ -2059,6 +2059,260 @@ async fn reset_before_headers_reaches_peer_without_headers() {
     join(srv, client).await;
 }
 
+#[tokio::test]
+async fn host_authority_mismatch_host_wins() {
+    // When Host differs from URI authority, Host wins and becomes :authority.
+    // Host is retained.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::GET.into(),
+                    scheme: util::byte_str("https").into(),
+                    authority: util::byte_str("example.com").into(),
+                    path: util::byte_str("/").into(),
+                    ..Default::default()
+                })
+                .field("host", "example.com")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::GET)
+            .uri("https://example.net/")
+            .header("host", "example.com")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn host_authority_http11_version_still_promotes_host() {
+    // Real integration path: higher layers (for example hyper/hyper-util)
+    // commonly pass Request values with the default HTTP/1.1 version even when
+    // the selected transport is HTTP/2. Host wins and is retained on the wire.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::GET.into(),
+                    scheme: util::byte_str("https").into(),
+                    authority: util::byte_str("example.com").into(),
+                    path: util::byte_str("/").into(),
+                    ..Default::default()
+                })
+                .field("host", "example.com")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            // Keep the default request version to model the common caller behavior.
+            .method(Method::GET)
+            .uri("https://example.net/")
+            .header("host", "example.com")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn host_authority_matching_retains_host() {
+    // When Host matches URI authority, Host header is retained on the wire.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::GET.into(),
+                    scheme: util::byte_str("https").into(),
+                    authority: util::byte_str("example.com").into(),
+                    path: util::byte_str("/").into(),
+                    ..Default::default()
+                })
+                .field("host", "example.com")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .header("host", "example.com")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn host_authority_duplicate_host_first_wins() {
+    // When multiple Host headers are present, first value is used for :authority.
+    // Host headers are collapsed to the first value.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::GET.into(),
+                    scheme: util::byte_str("https").into(),
+                    authority: util::byte_str("first.example").into(),
+                    path: util::byte_str("/").into(),
+                    ..Default::default()
+                })
+                .field("host", "first.example")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::GET)
+            .uri("https://example.net/")
+            .header("host", "first.example")
+            .header("host", "second.example")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn host_authority_invalid_host_keeps_uri_authority() {
+    // When Host is invalid (unparseable as authority), URI authority is kept
+    // and invalid Host is stripped to avoid violating RFC 9113 §8.3.1.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .pseudo(frame::Pseudo {
+                    method: Method::GET.into(),
+                    scheme: util::byte_str("https").into(),
+                    authority: util::byte_str("example.net").into(),
+                    path: util::byte_str("/").into(),
+                    ..Default::default()
+                })
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::GET)
+            .uri("https://example.net/")
+            .header("host", "not:a/good authority")
+            .body(())
+            .unwrap();
+
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn host_authority_relative_uri_http2_still_errors() {
+    // Relative URI with HTTP/2 version should still produce MissingUriSchemeAndAuthority
+    // error. The scheme check fires before canonicalization runs, so Host cannot rescue
+    // a relative URI.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(Method::GET)
+            .uri("/")
+            .header("host", "example.com")
+            .body(())
+            .unwrap();
+
+        client
+            .send_request(request, true)
+            .expect_err("should be UserError");
+        let _: () = h2.await.expect("h2");
+        drop(client);
+    };
+
+    join(srv, h2).await;
+}
+
 const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
