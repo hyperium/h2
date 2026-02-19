@@ -1595,7 +1595,7 @@ async fn init_window_size_smaller_than_default_should_use_default_before_ack() {
 
 #[tokio::test]
 async fn push_promise_host_authority_mismatch() {
-    // Push promise with URI/Host mismatch: Host wins for :authority, Host stripped.
+    // Push promise with URI/Host mismatch: Host wins for :authority, Host retained.
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -1610,15 +1610,19 @@ async fn push_promise_host_authority_mismatch() {
                     .eos(),
             )
             .await;
-        // Expect push promise with authority from Host, not URI
+        // Expect push promise with authority from Host, Host retained on wire
         client
-            .recv_frame(frames::push_promise(1, 2).pseudo(frame::Pseudo {
-                method: Method::GET.into(),
-                scheme: util::byte_str("https").into(),
-                authority: util::byte_str("example.com").into(),
-                path: util::byte_str("/style.css").into(),
-                ..Default::default()
-            }))
+            .recv_frame(
+                frames::push_promise(1, 2)
+                    .pseudo(frame::Pseudo {
+                        method: Method::GET.into(),
+                        scheme: util::byte_str("https").into(),
+                        authority: util::byte_str("example.com").into(),
+                        path: util::byte_str("/style.css").into(),
+                        ..Default::default()
+                    })
+                    .field("host", "example.com"),
+            )
             .await;
         client
             .recv_frame(frames::headers(2).response(200).eos())
@@ -1661,6 +1665,7 @@ async fn push_promise_host_authority_mismatch() {
 #[tokio::test]
 async fn push_promise_host_authority_duplicate_first_wins() {
     // Push promise with duplicate Host: first value wins for :authority.
+    // Host headers retained on wire.
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -1676,13 +1681,17 @@ async fn push_promise_host_authority_duplicate_first_wins() {
             )
             .await;
         client
-            .recv_frame(frames::push_promise(1, 2).pseudo(frame::Pseudo {
-                method: Method::GET.into(),
-                scheme: util::byte_str("https").into(),
-                authority: util::byte_str("first.example").into(),
-                path: util::byte_str("/style.css").into(),
-                ..Default::default()
-            }))
+            .recv_frame(
+                frames::push_promise(1, 2)
+                    .pseudo(frame::Pseudo {
+                        method: Method::GET.into(),
+                        scheme: util::byte_str("https").into(),
+                        authority: util::byte_str("first.example").into(),
+                        path: util::byte_str("/style.css").into(),
+                        ..Default::default()
+                    })
+                    .field("host", "first.example"),
+            )
             .await;
         client
             .recv_frame(frames::headers(2).response(200).eos())
@@ -1724,7 +1733,7 @@ async fn push_promise_host_authority_duplicate_first_wins() {
 
 #[tokio::test]
 async fn push_promise_host_authority_invalid_keeps_uri() {
-    // Push promise with invalid Host: keep URI authority, strip Host.
+    // Push promise with invalid Host: URI authority kept, invalid Host stripped.
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
 
@@ -1739,7 +1748,7 @@ async fn push_promise_host_authority_invalid_keeps_uri() {
                     .eos(),
             )
             .await;
-        // Expect push promise with original URI authority since Host is invalid
+        // Expect push promise with original URI authority; invalid Host stripped
         client
             .recv_frame(frames::push_promise(1, 2).pseudo(frame::Pseudo {
                 method: Method::GET.into(),

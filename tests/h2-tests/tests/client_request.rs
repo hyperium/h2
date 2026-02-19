@@ -2060,9 +2060,9 @@ async fn reset_before_headers_reaches_peer_without_headers() {
 }
 
 #[tokio::test]
-async fn host_authority_mismatch_promotes_host_to_authority() {
-    // When Host differs from URI authority, Host should win for :authority
-    // and Host header should be stripped from regular headers.
+async fn host_authority_mismatch_host_wins() {
+    // When Host differs from URI authority, Host wins and becomes :authority.
+    // Host is retained.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -2078,6 +2078,7 @@ async fn host_authority_mismatch_promotes_host_to_authority() {
                     path: util::byte_str("/").into(),
                     ..Default::default()
                 })
+                .field("host", "example.com")
                 .eos(),
         )
         .await;
@@ -2103,11 +2104,10 @@ async fn host_authority_mismatch_promotes_host_to_authority() {
 }
 
 #[tokio::test]
-async fn host_authority_http11_version_still_promotes_host_to_authority() {
+async fn host_authority_http11_version_still_promotes_host() {
     // Real integration path: higher layers (for example hyper/hyper-util)
     // commonly pass Request values with the default HTTP/1.1 version even when
-    // the selected transport is HTTP/2. We still need HTTP/2-compliant
-    // canonicalization on the wire, so Host must promote to :authority here.
+    // the selected transport is HTTP/2. Host wins and is retained on the wire.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -2123,6 +2123,7 @@ async fn host_authority_http11_version_still_promotes_host_to_authority() {
                     path: util::byte_str("/").into(),
                     ..Default::default()
                 })
+                .field("host", "example.com")
                 .eos(),
         )
         .await;
@@ -2148,8 +2149,8 @@ async fn host_authority_http11_version_still_promotes_host_to_authority() {
 }
 
 #[tokio::test]
-async fn host_authority_matching_strips_host() {
-    // When Host matches URI authority, Host header should still be stripped.
+async fn host_authority_matching_retains_host() {
+    // When Host matches URI authority, Host header is retained on the wire.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -2165,6 +2166,7 @@ async fn host_authority_matching_strips_host() {
                     path: util::byte_str("/").into(),
                     ..Default::default()
                 })
+                .field("host", "example.com")
                 .eos(),
         )
         .await;
@@ -2192,6 +2194,7 @@ async fn host_authority_matching_strips_host() {
 #[tokio::test]
 async fn host_authority_duplicate_host_first_wins() {
     // When multiple Host headers are present, first value is used for :authority.
+    // Host headers are collapsed to the first value.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -2207,6 +2210,7 @@ async fn host_authority_duplicate_host_first_wins() {
                     path: util::byte_str("/").into(),
                     ..Default::default()
                 })
+                .field("host", "first.example")
                 .eos(),
         )
         .await;
@@ -2234,7 +2238,8 @@ async fn host_authority_duplicate_host_first_wins() {
 
 #[tokio::test]
 async fn host_authority_invalid_host_keeps_uri_authority() {
-    // When Host is invalid (unparseable as authority), keep URI authority and strip Host.
+    // When Host is invalid (unparseable as authority), URI authority is kept
+    // and invalid Host is stripped to avoid violating RFC 9113 §8.3.1.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -2276,9 +2281,9 @@ async fn host_authority_invalid_host_keeps_uri_authority() {
 
 #[tokio::test]
 async fn host_authority_relative_uri_http2_still_errors() {
-    // Relative URI with HTTP/2 version should still produce MissingUriSchemeAndAuthority error,
-    // even when a Host header is provided. The Host canonicalization does not synthesize
-    // authority for relative URIs.
+    // Relative URI with HTTP/2 version should still produce MissingUriSchemeAndAuthority
+    // error. The scheme check fires before canonicalization runs, so Host cannot rescue
+    // a relative URI.
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 

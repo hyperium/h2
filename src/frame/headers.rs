@@ -6,23 +6,6 @@ use crate::hpack::{self, BytesStr};
 use http::header::{self, HeaderName, HeaderValue};
 use http::{uri, HeaderMap, Method, Request, StatusCode, Uri};
 
-/// Canonicalize `Host` header into `:authority` pseudo-header for HTTP/2.
-///
-/// - If a `Host` header is present, attempt to parse its first value as a URI authority.
-/// - On success, override `:authority` with the parsed value.
-/// - Always remove all `Host` headers from the regular header map.
-///
-/// Callers should only invoke this in an HTTP/2 context.
-pub(crate) fn canonicalize_host_authority(pseudo: &mut Pseudo, headers: &mut HeaderMap) {
-    if let Some(host) = headers.get(header::HOST) {
-        if let Ok(authority) = uri::Authority::from_maybe_shared(host.as_bytes().to_vec()) {
-            pseudo.set_authority(BytesStr::from(authority.as_str()));
-        }
-    }
-
-    headers.remove(header::HOST);
-}
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use std::fmt;
@@ -336,6 +319,41 @@ impl fmt::Debug for Headers {
 }
 
 // ===== util =====
+
+/// Canonicalize `Host` header into `:authority` pseudo-header for HTTP/2.
+///
+/// Per [RFC 9113 §8.3.1][rfc]:
+///
+/// - Clients that generate HTTP/2 requests directly MUST use the `:authority`
+///   pseudo-header field.
+/// - Clients MUST NOT generate a request with a `Host` header field that
+///   differs from the `:authority` pseudo-header field.
+/// - An intermediary that forwards a request over HTTP/2 MAY retain any
+///   `Host` header field.
+///
+/// This function enforces consistency using "Host wins" semantics: if a
+/// `Host` header is present and parseable as a URI authority, its value
+/// overrides `:authority`. The `Host` header is retained on the wire so
+/// that intermediaries can forward it (e.g. when proxying HTTP/1.1 traffic
+/// over an HTTP/2 transport).
+///
+/// [rfc]: https://www.rfc-editor.org/rfc/rfc9113.html#section-8.3.1
+pub(crate) fn canonicalize_host_authority(pseudo: &mut Pseudo, headers: &mut HeaderMap) {
+    if let Some(host) = headers.get(header::HOST) {
+        if let Ok(authority) = uri::Authority::from_maybe_shared(host.as_bytes().to_vec()) {
+            pseudo.set_authority(BytesStr::from(authority.as_str()));
+            // Collapse any duplicate Host values into a single value that
+            // matches the newly-set :authority.
+            if let Ok(normalized) = HeaderValue::from_str(authority.as_str()) {
+                headers.insert(header::HOST, normalized);
+            }
+        } else {
+            // Host is unparseable as an authority; remove it to avoid
+            // sending a value that differs from :authority.
+            headers.remove(header::HOST);
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseU64Error;
