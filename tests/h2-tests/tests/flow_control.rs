@@ -2237,3 +2237,54 @@ async fn too_many_window_update_resets_causes_go_away() {
 
     join(srv, client).await;
 }
+
+/// Regression test for https://github.com/hyperium/h2/issues/880
+#[tokio::test]
+async fn implicit_reset_with_cancel_discards_buffered_data() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(0))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            srv.recv_frame(frames::reset(1).cancel()),
+        )
+        .await
+        .expect("RST_STREAM not received within 5s");
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut send_stream) = client.send_request(request, false).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        send_stream.send_data(vec![0u8; 10].into(), false).unwrap();
+
+        drop(response);
+        drop(send_stream);
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}

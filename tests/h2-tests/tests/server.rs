@@ -782,7 +782,8 @@ async fn sends_reset_cancel_when_res_body_is_dropped() {
             )
             .await;
         client.recv_frame(frames::headers(3).response(200)).await;
-        client.recv_frame(frames::data(3, vec![0; 10])).await;
+        // CANCEL means "stream is no longer needed" (RFC 9113 §7).
+        // Buffered DATA is discarded and RST_STREAM is sent immediately.
         client.recv_frame(frames::reset(3).cancel()).await;
     };
 

@@ -731,6 +731,27 @@ impl Prioritize {
 
                     let frame = match stream.pending_send.pop_front(buffer) {
                         Some(Frame::Data(mut frame)) => {
+                            // If a CANCEL reset is scheduled, the stream is
+                            // "no longer needed" (RFC 9113 §7) and we can
+                            // discard buffered DATA and send RST_STREAM
+                            // immediately. Contrast with NO_ERROR, which is
+                            // sent after a complete response (RFC 9113 §8.1)
+                            // and requires all queued data to be sent first.
+                            //
+                            // See https://github.com/hyperium/h2/issues/880.
+                            if stream.state.get_scheduled_reset() == Some(Reason::CANCEL) {
+                                stream.pending_send.push_front(buffer, frame.into());
+                                self.clear_queue(buffer, &mut stream);
+                                self.reclaim_all_capacity(&mut stream, counts);
+
+                                stream.set_reset(Reason::CANCEL, Initiator::Library);
+
+                                let frame = frame::Reset::new(stream.id, Reason::CANCEL);
+
+                                counts.transition_after(stream, is_pending_reset);
+                                return Some(Frame::Reset(frame));
+                            }
+
                             // Get the amount of capacity remaining for stream's
                             // window.
                             let stream_capacity = stream.send_flow.available();
