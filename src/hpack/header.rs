@@ -96,7 +96,8 @@ impl Header {
         } else {
             // HTTP/2 requires lower case header names
             let name = HeaderName::from_lowercase(&name)?;
-            let value = HeaderValue::from_bytes(&value)?;
+            // Zero-copy: reuse the existing Bytes allocation instead of copying
+            let value = HeaderValue::from_maybe_shared(value)?;
 
             Ok(Header::Field { name, value })
         }
@@ -231,7 +232,8 @@ impl<'a> Name<'a> {
         match self {
             Name::Field(name) => Ok(Header::Field {
                 name: name.clone(),
-                value: HeaderValue::from_bytes(&value)?,
+                // Zero-copy: reuse the existing Bytes allocation instead of copying
+                value: HeaderValue::from_maybe_shared(value)?,
             }),
             Name::Authority => Ok(Header::Authority(BytesStr::try_from(value)?)),
             Name::Method => Ok(Header::Method(Method::from_bytes(&value)?)),
