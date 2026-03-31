@@ -727,8 +727,9 @@ impl Inner {
 
         let err = Error::remote_go_away(frame.debug_data().clone(), frame.reason());
 
+        let peer = counts.peer();
         self.store.for_each(|stream| {
-            if stream.id > last_stream_id {
+            if stream.id > last_stream_id && peer.is_local_init(stream.id) {
                 counts.transition(stream, |counts, stream| {
                     actions.recv.handle_error(&err, &mut *stream);
                     actions.send.handle_error(send_buffer, stream, counts);
