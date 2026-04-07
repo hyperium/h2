@@ -70,6 +70,51 @@ async fn server_builder_set_max_concurrent_streams() {
 }
 
 #[tokio::test]
+async fn server_builder_header_table_size() {
+    h2_support::trace_init!();
+
+    for size in [0, 10000] {
+        let (io, mut client) = mock::new();
+
+        let mut expected = frame::Settings::default();
+        expected.set_header_table_size(Some(size));
+
+        let client = async move {
+            let recv_settings = client.assert_server_handshake().await;
+            assert_frame_eq(recv_settings, expected);
+            client
+                .send_frame(
+                    frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            client
+                .recv_frame(frames::headers(1).response(200).eos())
+                .await;
+        };
+
+        let mut builder = server::Builder::new();
+        builder.header_table_size(size);
+
+        let h2 = async move {
+            let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+            let (req, mut stream) = srv.next().await.unwrap().unwrap();
+            assert_eq!(req.method(), &http::Method::GET);
+            stream
+                .send_response(
+                    http::Response::builder().status(200).body(()).unwrap(),
+                    true,
+                )
+                .unwrap();
+            assert!(srv.next().await.is_none());
+        };
+
+        join(client, h2).await;
+    }
+}
+
+#[tokio::test]
 async fn serve_request() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
