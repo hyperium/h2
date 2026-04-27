@@ -442,14 +442,10 @@ impl Prioritize {
             return;
         }
 
-        // If the stream has requested capacity, then it must be in the
-        // streaming state (more data could be sent) or there is buffered data
-        // waiting to be sent.
-        debug_assert!(
-            stream.state.is_send_streaming() || stream.buffered_send_data > 0,
-            "state={:?}",
-            stream.state
-        );
+        // The stream may have been reset or closed since capacity was requested.
+        if !stream.state.is_send_streaming() && stream.buffered_send_data == 0 {
+            return;
+        }
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available().as_size();
