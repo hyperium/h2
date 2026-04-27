@@ -219,11 +219,28 @@ fn decode_frame(
         Kind::WindowUpdate => {
             let res = frame::WindowUpdate::load(head, &bytes[frame::HEADER_LEN..]);
 
-            res.map_err(|e| {
-                proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
-            })?
-            .into()
+            match res {
+                Ok(frame) => frame.into(),
+                Err(frame::Error::InvalidWindowUpdateValue) => {
+                    // RFC 9113 §6.9.9: "A receiver MUST treat the receipt of a WINDOW_UPDATE
+                    // frame with a flow-control window increment of 0 as a stream error (Section
+                    // 5.4.2) of type PROTOCOL_ERROR; errors on the connection flow-control window
+                    // MUST be treated as a connection error (Section 5.4.1)."
+                    //
+                    // https://www.rfc-editor.org/rfc/rfc9113.html#section-6.9-9
+                    let id = head.stream_id();
+                    if id.is_zero() {
+                        proto_err!(conn: "WINDOW_UPDATE: window_size_increment == 0 on stream 0");
+                        return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                    }
+                    proto_err!(stream: "WINDOW_UPDATE: window_size_increment == 0 on stream {:?}", id);
+                    return Err(Error::library_reset(id, Reason::PROTOCOL_ERROR));
+                }
+                Err(e) => {
+                    proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                }
+            }
         }
         Kind::Data => {
             bytes.advance(frame::HEADER_LEN);

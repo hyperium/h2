@@ -370,6 +370,95 @@ fn recv_window_update_causes_overflow() {
     // A received window update causes the window to overflow.
 }
 
+// Regression test for https://github.com/hyperium/h2/pull/892
+#[tokio::test]
+async fn recv_window_update_zero_increment_on_stream_is_stream_error() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        // Hand-craft a WINDOW_UPDATE on stream 1 with a 0 increment
+        srv.send_bytes(&[
+            0, 0, 4, // length
+            8, // type = WINDOW_UPDATE
+            0, // flags
+            0, 0, 0, 1, // stream id 1
+            0, 0, 0, 0, // increment = 0
+        ])
+        .await;
+        // The bad frame must trigger a stream-level reset, not a GOAWAY
+        srv.recv_frame(frames::reset(1).protocol_error()).await;
+
+        // The connection must survive: a follow-up request still works
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+
+        let req1 = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let (resp1, _send1) = client.send_request(req1, true).unwrap();
+        // First request fails with the stream error; connection stays open
+        let res = conn.drive(resp1).await;
+        assert!(res.is_err(), "first request should error");
+
+        let req2 = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let (resp2, _send2) = client.send_request(req2, true).unwrap();
+        let resp2 = conn.drive(resp2).await.expect("second request");
+        assert_eq!(resp2.status(), StatusCode::OK);
+    };
+    join(mock, h2).await;
+}
+
+// Regression test for https://github.com/hyperium/h2/pull/892
+#[tokio::test]
+async fn recv_window_update_zero_increment_on_connection_is_connection_error() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let _ = srv.assert_client_handshake().await;
+        // Hand-craft a WINDOW_UPDATE on stream 0 with a 0 increment
+        srv.send_bytes(&[
+            0, 0, 4, // length
+            8, // type = WINDOW_UPDATE
+            0, // flags
+            0, 0, 0, 0, // stream id 0
+            0, 0, 0, 0, // increment = 0
+        ])
+        .await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (_client, conn) = client::handshake(io).await.unwrap();
+        let err = conn.await.expect_err("connection should error");
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+    join(mock, h2).await;
+}
+
 #[tokio::test]
 async fn stream_error_release_connection_capacity() {
     h2_support::trace_init!();
