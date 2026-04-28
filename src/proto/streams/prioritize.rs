@@ -731,6 +731,23 @@ impl Prioritize {
 
                     let frame = match stream.pending_send.pop_front(buffer) {
                         Some(Frame::Data(mut frame)) => {
+                            if let Some(reason) = stream.state.get_scheduled_reset() {
+                                // If a reset is scheduled due to cancellation or
+                                // an error, discard buffered DATA and let the `None`
+                                // arm emit the RST_STREAM on the next iteration.
+                                //
+                                // NO_ERROR is excluded. Per RFC 9113 §8.1, a NO_ERROR
+                                // stream reset may only be sent after a complete
+                                // response, which requires sending all queued DATA.
+                                if reason != Reason::NO_ERROR {
+                                    stream.pending_send.push_front(buffer, frame.into());
+                                    self.clear_queue(buffer, &mut stream);
+                                    self.reclaim_all_capacity(&mut stream, counts);
+                                    self.pending_send.push(&mut stream);
+                                    continue;
+                                }
+                            }
+
                             // Get the amount of capacity remaining for stream's
                             // window.
                             let stream_capacity = stream.send_flow.available();
