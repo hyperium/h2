@@ -116,13 +116,15 @@ impl<T, B> Codec<T, B> {
         self.inner.get_mut().get_mut()
     }
 
-    /// Takes the data payload value that was fully written to the socket
-    pub(crate) fn take_last_data_frame(&mut self) -> Option<Data<B>> {
-        self.framed_write().take_last_data_frame()
-    }
-
     fn framed_write(&mut self) -> &mut FramedWrite<T, B> {
         self.inner.get_mut()
+    }
+}
+
+impl<T, B: Buf> Codec<T, B> {
+    /// Take back data frames that have been buffered and/or fully written.
+    pub(crate) fn take_used_data_frames(&mut self) -> impl Iterator<Item = Data<B>> + use<'_, T, B> {
+        self.framed_write().take_used_data_frames()
     }
 }
 

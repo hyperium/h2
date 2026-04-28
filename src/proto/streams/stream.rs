@@ -5,6 +5,7 @@ use super::*;
 use std::fmt;
 use std::task::{Context, Waker};
 use std::time::Instant;
+use std::ops::ControlFlow;
 
 /// Tracks Stream related state
 ///
@@ -72,6 +73,11 @@ pub(super) struct Stream {
 
     /// Set to true when a push is pending for this stream
     pub is_pending_push: bool,
+
+    /// Set to Some(_) when a data frame is in the process of being partially sent.
+    /// Some(ControlFlow::Continue) means that the rest of the data frame should still be sent.
+    /// Some(ControlFlow::Break) means that the rest of the data frame should NOT be sent.
+    pub in_flight_partial_send: Option<ControlFlow<()>>,
 
     // ===== Fields related to receiving =====
     /// Next node in the accept linked list
@@ -178,6 +184,7 @@ impl Stream {
             is_pending_open: false,
             next_open: None,
             is_pending_push: false,
+            in_flight_partial_send: None,
 
             // ===== Fields related to receiving =====
             next_pending_accept: None,
@@ -232,7 +239,12 @@ impl Stream {
         // This is different from the "open" check because reserved streams don't count
         // toward the concurrency limit.
         // See https://httpwg.org/specs/rfc7540.html#rfc.section.5.1.2
-        !self.is_pending_open && !self.is_pending_push
+        //
+        // With in_flight_partial_send, we track whether a data frame is in the process of being partially sent.
+        // If so, we should wait until the last part of that data frame is encoded before sending any other frames for this stream.
+        !self.is_pending_open
+            && !self.is_pending_push
+            && self.in_flight_partial_send != Some(ControlFlow::Continue(()))
     }
 
     /// Returns true if the stream is closed
@@ -418,6 +430,7 @@ impl fmt::Debug for Stream {
             .h2_field_some("next_open", &self.next_open)
             .h2_field_if("is_pending_open", &self.is_pending_open)
             .h2_field_if("is_pending_push", &self.is_pending_push)
+            .h2_field_some("in_flight_partial_send", &self.in_flight_partial_send)
             .h2_field_some("next_pending_accept", &self.next_pending_accept)
             .h2_field_if("is_pending_accept", &self.is_pending_accept)
             .field("recv_flow", &self.recv_flow)

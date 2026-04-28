@@ -9,7 +9,8 @@ use crate::codec::UserError::*;
 use bytes::buf::Take;
 use std::{
     cmp::{self, Ordering},
-    fmt, io, mem,
+    fmt, io,
+    ops::ControlFlow,
     task::{Context, Poll, Waker},
 };
 
@@ -51,21 +52,8 @@ pub(super) struct Prioritize {
     /// Stream ID of the last stream opened.
     last_opened_id: StreamId,
 
-    /// What `DATA` frame is currently being sent in the codec.
-    in_flight_data_frame: InFlightData,
-
     /// The maximum amount of bytes a stream should buffer.
     max_buffer_size: usize,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum InFlightData {
-    /// There is no `DATA` frame in flight.
-    Nothing,
-    /// There is a `DATA` frame in flight belonging to the given stream.
-    DataFrame(store::Key),
-    /// There was a `DATA` frame, but the stream's queue was since cleared.
-    Drop,
 }
 
 pub(crate) struct Prioritized<B> {
@@ -73,9 +61,6 @@ pub(crate) struct Prioritized<B> {
     inner: Take<B>,
 
     end_of_stream: bool,
-
-    // The stream that this is associated with
-    stream: store::Key,
 }
 
 // ===== impl Prioritize =====
@@ -99,7 +84,6 @@ impl Prioritize {
             pending_open: store::Queue::new(),
             flow,
             last_opened_id: StreamId::ZERO,
-            in_flight_data_frame: InFlightData::Nothing,
             max_buffer_size: config.local_max_buffer_size,
         }
     }
@@ -493,18 +477,7 @@ impl Prioritize {
         // If data is buffered and the stream is send ready, then
         // schedule the stream for execution
         if stream.buffered_send_data > 0 && stream.is_send_ready() {
-            // TODO: This assertion isn't *exactly* correct. There can still be
-            // buffered send data while the stream's pending send queue is
-            // empty. This can happen when a large data frame is in the process
-            // of being **partially** sent. Once the window has been sent, the
-            // data frame will be returned to the prioritization layer to be
-            // re-scheduled.
-            //
-            // That said, it would be nice to figure out how to make this
-            // assertion correctly.
-            //
-            // debug_assert!(!stream.pending_send.is_empty());
-
+            debug_assert!(!stream.pending_send.is_empty());
             self.pending_send.push(stream);
         }
     }
@@ -524,8 +497,8 @@ impl Prioritize {
         // Ensure codec is ready
         ready!(dst.poll_ready(cx))?;
 
-        // Reclaim any frame that has previously been written
-        self.reclaim_frame(buffer, store, dst);
+        // Reclaim any frames that have previously been written
+        self.reclaim_frames(buffer, store, dst);
 
         // The max frame length
         let max_frame_len = dst.max_send_frame_size();
@@ -542,24 +515,20 @@ impl Prioritize {
                 Some(frame) => {
                     tracing::trace!(?frame, "writing");
 
-                    debug_assert_eq!(self.in_flight_data_frame, InFlightData::Nothing);
-                    if let Frame::Data(ref frame) = frame {
-                        self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
-                    }
                     dst.buffer(frame).expect("invalid frame");
 
                     // Ensure the codec is ready to try the loop again.
                     ready!(dst.poll_ready(cx))?;
 
                     // Because, always try to reclaim...
-                    self.reclaim_frame(buffer, store, dst);
+                    self.reclaim_frames(buffer, store, dst);
                 }
                 None => {
                     // Try to flush the codec.
                     ready!(dst.flush(cx))?;
 
-                    // This might release a data frame...
-                    if !self.reclaim_frame(buffer, store, dst) {
+                    // This might release data frames...
+                    if !self.reclaim_frames(buffer, store, dst) {
                         return Poll::Ready(Ok(()));
                     }
 
@@ -577,7 +546,7 @@ impl Prioritize {
     /// When a data frame is written to the codec, it may not be written in its
     /// entirety (large chunks are split up into potentially many data frames).
     /// In this case, the stream needs to be reprioritized.
-    fn reclaim_frame<T, B>(
+    fn reclaim_frames<T, B>(
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
@@ -589,12 +558,14 @@ impl Prioritize {
         let span = tracing::trace_span!("try_reclaim_frame");
         let _e = span.enter();
 
+        let mut ret = false;
+
         // First check if there are any data chunks to take back
-        if let Some(frame) = dst.take_last_data_frame() {
-            self.reclaim_frame_inner(buffer, store, frame)
-        } else {
-            false
+        for frame in dst.take_used_data_frames() {
+            ret |= self.reclaim_frame_inner(buffer, store, frame);
         }
+
+        ret
     }
 
     fn reclaim_frame_inner<B>(
@@ -612,36 +583,29 @@ impl Prioritize {
             "reclaimed"
         );
 
-        let mut eos = false;
-        let key = frame.payload().stream;
-
-        match mem::replace(&mut self.in_flight_data_frame, InFlightData::Nothing) {
-            InFlightData::Nothing => panic!("wasn't expecting a frame to reclaim"),
-            InFlightData::Drop => {
-                tracing::trace!("not reclaiming frame for cancelled stream");
-                return false;
-            }
-            InFlightData::DataFrame(k) => {
-                debug_assert_eq!(k, key);
-            }
-        }
-
+        let eos = frame.payload().end_of_stream;
         let mut frame = frame.map(|prioritized| {
             // TODO: Ensure fully written
-            eos = prioritized.end_of_stream;
             prioritized.inner.into_inner()
         });
 
         if frame.payload().has_remaining() {
-            let mut stream = store.resolve(key);
-
-            if eos {
-                frame.set_end_stream(true);
+            if let Some(mut stream) = store.find_mut(&frame.stream_id()) {
+                match stream.in_flight_partial_send {
+                    Some(ControlFlow::Continue(())) => {
+                        stream.in_flight_partial_send = None;
+                        if eos {
+                            frame.set_end_stream(true);
+                        }
+                        self.push_back_frame(frame.into(), buffer, &mut stream);
+                        return true;
+                    }
+                    Some(ControlFlow::Break(())) => tracing::trace!("not reclaiming frame for cancelled stream"),
+                    None => panic!("wasn't expecting a frame to reclaim"),
+                }
+            } else {
+                tracing::debug!(?frame, "not reclaiming frame for stream not found");
             }
-
-            self.push_back_frame(frame.into(), buffer, &mut stream);
-
-            return true;
         }
 
         false
@@ -676,11 +640,8 @@ impl Prioritize {
 
         stream.buffered_send_data = 0;
         stream.requested_send_capacity = 0;
-        if let InFlightData::DataFrame(key) = self.in_flight_data_frame {
-            if stream.key() == key {
-                // This stream could get cleaned up now - don't allow the buffered frame to get reclaimed.
-                self.in_flight_data_frame = InFlightData::Drop;
-            }
+        if stream.in_flight_partial_send == Some(ControlFlow::Continue(())) {
+            stream.in_flight_partial_send = Some(ControlFlow::Break(()));
         }
     }
 
@@ -719,6 +680,14 @@ impl Prioritize {
                 Some(mut stream) => {
                     let span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
                     let _e = span.enter();
+
+                    if stream.in_flight_partial_send == Some(ControlFlow::Continue(())) {
+                        tracing::trace!(
+                            "stream has an in-flight partial send data frame \
+                             that needs to be reclaimed before proceeding"
+                        );
+                        continue;
+                    }
 
                     // It's possible that this stream, besides having data to send,
                     // is also queued to send a reset, and thus is already in the queue
@@ -813,6 +782,7 @@ impl Prioritize {
 
                                     if frame.payload().remaining() > len {
                                         frame.set_end_stream(false);
+                                        stream.in_flight_partial_send = Some(ControlFlow::Continue(()));
                                     }
                                     (eos, len)
                                 });
@@ -820,7 +790,6 @@ impl Prioritize {
                             Frame::Data(frame.map(|buf| Prioritized {
                                 inner: buf.take(len),
                                 end_of_stream: eos,
-                                stream: stream.key(),
                             }))
                         }
                         Some(Frame::PushPromise(pp)) => {
@@ -939,7 +908,6 @@ impl<B: Buf> fmt::Debug for Prioritized<B> {
         fmt.debug_struct("Prioritized")
             .field("remaining", &self.inner.get_ref().remaining())
             .field("end_of_stream", &self.end_of_stream)
-            .field("stream", &self.stream)
             .finish()
     }
 }
