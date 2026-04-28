@@ -561,7 +561,7 @@ impl Inner {
                 if self.actions.may_have_forgotten_stream(peer, id) {
                     tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
 
-                    let sz = frame.payload().len();
+                    let sz = frame.flow_controlled_len();
                     // This should have been enforced at the codec::FramedRead layer, so
                     // this is just a sanity check.
                     assert!(sz <= super::MAX_WINDOW_SIZE as usize);
@@ -581,7 +581,7 @@ impl Inner {
         let send_buffer = &mut *send_buffer;
 
         self.counts.transition(stream, |counts, stream| {
-            let sz = frame.payload().len();
+            let sz = frame.flow_controlled_len();
             let res = actions.recv.recv_data(frame, stream);
 
             // Any stream error after receiving a DATA frame means
