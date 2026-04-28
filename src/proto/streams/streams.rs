@@ -555,6 +555,13 @@ impl Inner {
                         id,
                         self.actions.recv.max_stream_id()
                     );
+
+                    // We still need to account for connection-level flow control.
+                    let sz = frame.flow_controlled_len();
+                    assert!(sz <= super::MAX_WINDOW_SIZE as usize);
+                    let sz = sz as WindowSize;
+                    self.actions.recv.ignore_data(sz)?;
+
                     return Ok(());
                 }
 
@@ -566,8 +573,8 @@ impl Inner {
                     // this is just a sanity check.
                     assert!(sz <= super::MAX_WINDOW_SIZE as usize);
                     let sz = sz as WindowSize;
-
                     self.actions.recv.ignore_data(sz)?;
+
                     return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
                 }
 
