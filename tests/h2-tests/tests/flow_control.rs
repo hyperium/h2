@@ -2670,3 +2670,58 @@ async fn poll_capacity_woken_on_library_reset() {
         join(srv, client).await;
     }
 }
+
+/// A WINDOW_UPDATE followed by a SETTINGS decrease can cancel each other out, resulting
+/// in zero capacity. `poll_capacity` must return `Pending` (not `Ready(Ok(0))`) in that case.
+#[tokio::test]
+async fn poll_capacity_window_update_settings_race() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_initial_window_size(Some(0));
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake_with_settings(settings).await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        idle_ms(50).await;
+
+        // Give stream capacity then immediately take it back
+        srv.send_frame(frames::window_update(1, 1024)).await;
+        srv.send_frame(frames::settings().initial_window_size(0))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+
+        // Now give real, usable capacity
+        srv.send_frame(frames::window_update(0, 11)).await;
+        srv.send_frame(frames::window_update(1, 11)).await;
+        srv.recv_frame(frames::data(1, "hello world").eos()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        stream.reserve_capacity(11);
+
+        // `wait_for_capacity` panics if `poll_capacity` ever returns `Ok(0)`
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 11)).await;
+        stream.send_data("hello world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
