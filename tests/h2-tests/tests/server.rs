@@ -1700,3 +1700,120 @@ async fn init_window_size_smaller_than_default_should_use_default_before_ack() {
 
     join(client, h2).await;
 }
+
+/// Malformed frames with wrong payload lengths must produce
+/// GOAWAY(FRAME_SIZE_ERROR).
+#[tokio::test]
+async fn frame_size_errors_use_correct_error_code() {
+    h2_support::trace_init!();
+
+    // Each entry: raw frame bytes with an invalid payload length.
+    let cases: &[(&str, &[u8])] = &[
+        // PING with 4 bytes instead of 8
+        ("PING", &[0, 0, 4, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4]),
+        // WINDOW_UPDATE with 2 bytes instead of 4
+        ("WINDOW_UPDATE", &[0, 0, 2, 8, 0, 0, 0, 0, 0, 0, 1]),
+        // RST_STREAM with 2 bytes instead of 4 on stream 1
+        ("RST_STREAM", &[0, 0, 2, 3, 0, 0, 0, 0, 1, 0, 1]),
+        // SETTINGS with 5 bytes, not a multiple of 6
+        ("SETTINGS", &[0, 0, 5, 4, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5]),
+        // SETTINGS ACK with 1 byte payload instead of 0
+        ("SETTINGS_ACK", &[0, 0, 1, 4, 1, 0, 0, 0, 0, 0]),
+        // PRIORITY with 3 bytes instead of 5 on stream 1
+        ("PRIORITY", &[0, 0, 3, 2, 0, 0, 0, 0, 1, 0, 0, 0]),
+        // GOAWAY with 4 bytes instead of ≥8
+        ("GOAWAY", &[0, 0, 4, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    ];
+
+    for (name, bad_frame) in cases {
+        let (io, mut client) = mock::new();
+
+        let client = async move {
+            let settings = client.assert_server_handshake().await;
+            assert_default_settings!(settings);
+
+            // Open stream 1 so RST_STREAM/PRIORITY have a valid target.
+            client
+                .send_frame(
+                    frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            client
+                .recv_frame(frames::headers(1).response(200).eos())
+                .await;
+            client.send_bytes(bad_frame).await;
+            client.recv_frame(frames::go_away(1).frame_size()).await;
+        };
+
+        let srv = async move {
+            let mut srv = server::handshake(io).await.expect("handshake");
+            let (_req, mut respond) = srv.next().await.unwrap().unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            respond.send_response(rsp, true).unwrap();
+            let err = srv.next().await.unwrap().expect_err(name);
+            assert!(err.is_go_away());
+            assert!(err.is_library());
+            assert_eq!(err.reason(), Some(Reason::FRAME_SIZE_ERROR));
+        };
+
+        join(client, srv).await;
+    }
+}
+
+/// A SETTINGS frame with INITIAL_WINDOW_SIZE exceeding 2^31-1 must
+/// produce GOAWAY(FLOW_CONTROL_ERROR).
+#[tokio::test]
+async fn settings_initial_window_size_overflow_is_flow_control_error() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        client
+            .send_frame(frames::settings().initial_window_size(0xFFFFFFFF))
+            .await;
+        client.recv_frame(frames::go_away(0).flow_control()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::FLOW_CONTROL_ERROR));
+    };
+
+    join(client, srv).await;
+}
+
+/// A HEADERS frame with an invalid HPACK block must produce
+/// GOAWAY(COMPRESSION_ERROR).
+#[tokio::test]
+async fn hpack_error_is_compression_error() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        // HEADERS(stream 1, END_HEADERS|END_STREAM) with 0xFE:
+        // HPACK indexed reference to index 126, which doesn't exist.
+        client.send_bytes(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0xFE]).await;
+        client.recv_frame(frames::go_away(0).compression()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::COMPRESSION_ERROR));
+    };
+
+    join(client, srv).await;
+}

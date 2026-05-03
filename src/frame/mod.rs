@@ -141,6 +141,9 @@ pub enum Error {
     /// An invalid setting value was provided
     InvalidSettingValue,
 
+    /// The SETTINGS_INITIAL_WINDOW_SIZE value exceeds the maximum (2^31-1).
+    InvalidInitialWindowSize,
+
     /// An invalid window update value
     InvalidWindowUpdateValue,
 
@@ -168,4 +171,23 @@ pub enum Error {
 
     /// Failed to perform HPACK decoding
     Hpack(hpack::DecoderError),
+}
+
+impl Error {
+    /// Returns the appropriate HTTP/2 reason code for this frame error.
+    pub(crate) fn reason(&self) -> Reason {
+        match self {
+            Error::BadFrameSize
+            | Error::InvalidPayloadLength
+            | Error::InvalidPayloadAckSettings => Reason::FRAME_SIZE_ERROR,
+            Error::InvalidInitialWindowSize => Reason::FLOW_CONTROL_ERROR,
+            Error::Hpack(_) => Reason::COMPRESSION_ERROR,
+            Error::TooMuchPadding
+            | Error::InvalidSettingValue
+            | Error::InvalidWindowUpdateValue
+            | Error::InvalidStreamId
+            | Error::MalformedMessage
+            | Error::InvalidDependencyId => Reason::PROTOCOL_ERROR,
+        }
+    }
 }

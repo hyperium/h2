@@ -290,6 +290,10 @@ impl Mock<frame::GoAway> {
         self.reason(frame::Reason::FRAME_SIZE_ERROR)
     }
 
+    pub fn compression(self) -> Self {
+        self.reason(frame::Reason::COMPRESSION_ERROR)
+    }
+
     pub fn calm(self) -> Self {
         self.reason(frame::Reason::ENHANCE_YOUR_CALM)
     }
