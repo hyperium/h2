@@ -1,3 +1,14 @@
+# 0.4.14 (May 5, 2026)
+
+* Add `header_table_size()` option to server builder.
+* Fix leaking connection flow control of padded DATA frames when stream is reset.
+* Fix leaking connection flow control when canceling a stream after reserving capacity.
+* Fix leaking connection flow control when receiving a DATA frame after GOAWAY.
+* Fix waking the `poll_capacity` when locally reseting a stream from library.
+* Fix sending HEADERS on a reset stream before the RST_STREAM frame.
+* Fix receiving GOAWAY to not close peer-initiated streams.
+* Optimize header value decoding to copy less bytes.
+
 # 0.4.13 (January 5, 2026)
 
 * Add support for 1xx informational responses on client and server side.
