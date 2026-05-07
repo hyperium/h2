@@ -39,17 +39,29 @@ where
 
     /// Returns a new `Codec` with the given read buffer size
     pub fn with_recv_buffer_size(io: T, recv_buffer_size: usize) -> Self {
-        Self::with_max_recv_frame_size_and_recv_buffer_size(io, frame::DEFAULT_MAX_FRAME_SIZE as usize, recv_buffer_size)
+        Self::with_max_recv_frame_size_and_recv_buffer_size(
+            io,
+            frame::DEFAULT_MAX_FRAME_SIZE as usize,
+            recv_buffer_size,
+        )
     }
 
     /// Returns a new `Codec` with the given maximum frame size
     #[allow(dead_code)]
     pub fn with_max_recv_frame_size(io: T, max_frame_size: usize) -> Self {
-        Self::with_max_recv_frame_size_and_recv_buffer_size(io, max_frame_size, proto::DEFAULT_RECV_BUFFER_SIZE)
+        Self::with_max_recv_frame_size_and_recv_buffer_size(
+            io,
+            max_frame_size,
+            proto::DEFAULT_RECV_BUFFER_SIZE,
+        )
     }
 
     /// Returns a new `Codec` with the given maximum frame size and read buffer size
-    pub fn with_max_recv_frame_size_and_recv_buffer_size(io: T, max_frame_size: usize, recv_buffer_size: usize) -> Self {
+    pub fn with_max_recv_frame_size_and_recv_buffer_size(
+        io: T,
+        max_frame_size: usize,
+        recv_buffer_size: usize,
+    ) -> Self {
         // Wrap with writer
         let framed_write = FramedWrite::new(io);
 
