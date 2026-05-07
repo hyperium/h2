@@ -123,7 +123,9 @@ impl<T, B> Codec<T, B> {
 
 impl<T, B: Buf> Codec<T, B> {
     /// Take back data frames that have been buffered and/or fully written.
-    pub(crate) fn take_used_data_frames(&mut self) -> impl Iterator<Item = Data<B>> + use<'_, T, B> {
+    pub(crate) fn take_used_data_frames(
+        &mut self,
+    ) -> impl Iterator<Item = Data<B>> + use<'_, T, B> {
         self.framed_write().take_used_data_frames()
     }
 }

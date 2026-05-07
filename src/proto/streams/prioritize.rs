@@ -600,7 +600,9 @@ impl Prioritize {
                         self.push_back_frame(frame.into(), buffer, &mut stream);
                         return true;
                     }
-                    Some(ControlFlow::Break(())) => tracing::trace!("not reclaiming frame for cancelled stream"),
+                    Some(ControlFlow::Break(())) => {
+                        tracing::trace!("not reclaiming frame for cancelled stream");
+                    }
                     None => panic!("wasn't expecting a frame to reclaim"),
                 }
             } else {
@@ -782,7 +784,8 @@ impl Prioritize {
 
                                     if frame.payload().remaining() > len {
                                         frame.set_end_stream(false);
-                                        stream.in_flight_partial_send = Some(ControlFlow::Continue(()));
+                                        stream.in_flight_partial_send =
+                                            Some(ControlFlow::Continue(()));
                                     }
                                     (eos, len)
                                 });

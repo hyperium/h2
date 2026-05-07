@@ -139,8 +139,13 @@ where
         let _e = span.enter();
 
         loop {
-            while ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut self.encoder))?.is_continue() {
-            }
+            while ready!(poll_write_buf(
+                Pin::new(&mut self.inner),
+                cx,
+                &mut self.encoder
+            ))?
+            .is_continue()
+            {}
 
             self.encoder.reclaim_empty_buffer();
 
@@ -219,7 +224,10 @@ where
                 }
 
                 // Push the most recent data frame...
-                self.next_vec.push_back(BufElement { buf_len: buf_len_to_push, data_frame: v });
+                self.next_vec.push_back(BufElement {
+                    buf_len: buf_len_to_push,
+                    data_frame: v,
+                });
             }
             Frame::Headers(v) => {
                 let mut buf = limited_write_buf!(self);
@@ -303,7 +311,8 @@ impl<B: Buf> Buf for Encoder<B> {
             if next.buf_len > 0 {
                 let i = n.min(next.buf_len);
                 self.buf.get_mut().advance(i);
-                self.buf.set_position(self.buf.position().checked_sub(i as u64).unwrap());
+                self.buf
+                    .set_position(self.buf.position().checked_sub(i as u64).unwrap());
                 n -= i;
                 next.buf_len -= i;
                 if next.buf_len > 0 {
@@ -403,8 +412,13 @@ impl<T, B> FramedWrite<T, B> {
 
 impl<T, B: Buf> FramedWrite<T, B> {
     /// Take back data frames that have been buffered and/or fully written.
-    pub fn take_used_data_frames(&mut self) -> impl Iterator<Item = frame::Data<B>> + use<'_, T, B> {
-        UsedDataFrameTaker { vec: &mut self.encoder.next_vec, index: 0 }
+    pub fn take_used_data_frames(
+        &mut self,
+    ) -> impl Iterator<Item = frame::Data<B>> + use<'_, T, B> {
+        UsedDataFrameTaker {
+            vec: &mut self.encoder.next_vec,
+            index: 0,
+        }
     }
 }
 

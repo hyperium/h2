@@ -3,9 +3,9 @@ use crate::Reason;
 use super::*;
 
 use std::fmt;
+use std::ops::ControlFlow;
 use std::task::{Context, Waker};
 use std::time::Instant;
-use std::ops::ControlFlow;
 
 /// Tracks Stream related state
 ///
