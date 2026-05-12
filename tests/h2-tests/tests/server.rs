@@ -635,6 +635,55 @@ async fn sends_reset_no_error_when_req_body_is_dropped() {
 }
 
 #[tokio::test]
+async fn no_error_response_body_delivered_before_rst() {
+    // When a server sends a large response body and drops the request
+    // body without reading it, NO_ERROR is scheduled. The response DATA
+    // must still be delivered.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16383])).await;
+        // These window updates allow the full response to be delivered.
+        client.send_frame(frames::window_update(0, 65535)).await;
+        client.send_frame(frames::window_update(1, 65535)).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 1]).eos()).await;
+        client
+            .recv_frame(frames::reset(1).reason(Reason::NO_ERROR))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        {
+            let (req, mut stream) = srv.next().await.unwrap().unwrap();
+            assert_eq!(req.method(), &http::Method::POST);
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            // Response body larger than the stream window. The first 65535 bytes
+            // are sent immediately, and the remaining bytes wait for the client's
+            // WINDOW_UPDATE.
+            tx.send_data(vec![0; 16384 * 6].into(), true).unwrap();
+        }
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn abrupt_shutdown() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
@@ -890,7 +939,8 @@ async fn sends_reset_cancel_when_res_body_is_dropped() {
             )
             .await;
         client.recv_frame(frames::headers(3).response(200)).await;
-        client.recv_frame(frames::data(3, vec![0; 10])).await;
+        // CANCEL means "stream is no longer needed" (RFC 9113 §7). Buffered DATA
+        // is discarded and RST_STREAM is sent immediately.
         client.recv_frame(frames::reset(3).cancel()).await;
     };
 

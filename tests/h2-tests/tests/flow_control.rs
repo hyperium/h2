@@ -1805,6 +1805,95 @@ async fn reserve_capacity_then_cancel_does_not_leak() {
 }
 
 #[tokio::test]
+async fn scheduled_reset_with_buffered_data_sends_rst() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(0))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            srv.recv_frame(frames::reset(1).cancel()),
+        )
+        .await
+        .expect("RST_STREAM not received within 5s");
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Buffer data that can never be sent (zero stream window).
+        stream.send_data(vec![0u8; 10].into(), false).unwrap();
+        // Drop both handles to schedule a CANCEL reset.
+        drop(stream);
+        drop(resp);
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn scheduled_reset_with_excess_buffered_data_is_cleaned_up() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383])).await;
+        srv.send_frame(frames::window_update(0, 65535)).await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        // Buffer the full window plus excess. The first 65535 bytes
+        // are sent, and the remaining 1000 are stuck.
+        stream
+            .send_data(vec![0u8; 65535 + 1000].into(), false)
+            .unwrap();
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        drop(stream);
+        drop(resp);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(5), conn)
+            .await
+            .expect("connection did not shut down within 5s")
+            .unwrap();
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn data_padding() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
