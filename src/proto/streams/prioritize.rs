@@ -477,7 +477,15 @@ impl Prioritize {
         // If data is buffered and the stream is send ready, then
         // schedule the stream for execution
         if stream.buffered_send_data > 0 && stream.is_send_ready() {
-            debug_assert!(!stream.pending_send.is_empty());
+            // TODO: This assertion isn't *exactly* correct. There can still be
+            // buffered send data while the stream's pending send queue is
+            // empty and the stream is send ready. This can happen when
+            // try_assign_capacity is called from send_data.
+            //
+            // That said, it would be nice to figure out how to make this
+            // assertion correctly.
+            //
+            // debug_assert!(!stream.pending_send.is_empty());
             self.pending_send.push(stream);
         }
     }
