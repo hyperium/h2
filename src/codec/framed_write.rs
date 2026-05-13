@@ -412,9 +412,7 @@ impl<T, B> FramedWrite<T, B> {
 
 impl<T, B: Buf> FramedWrite<T, B> {
     /// Take back data frames that have been buffered and/or fully written.
-    pub fn take_used_data_frames(
-        &mut self,
-    ) -> impl Iterator<Item = frame::Data<B>> + use<'_, T, B> {
+    pub fn take_used_data_frames(&mut self) -> impl Iterator<Item = frame::Data<B>> + '_ {
         UsedDataFrameTaker {
             vec: &mut self.encoder.next_vec,
             index: 0,
