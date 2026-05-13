@@ -61,6 +61,9 @@ pub(crate) struct Prioritized<B> {
     inner: Take<B>,
 
     end_of_stream: bool,
+
+    // The stream that this is associated with
+    stream: store::Key,
 }
 
 // ===== impl Prioritize =====
@@ -591,6 +594,7 @@ impl Prioritize {
             "reclaimed"
         );
 
+        let key = frame.payload().stream;
         let eos = frame.payload().end_of_stream;
         let mut frame = frame.map(|prioritized| {
             // TODO: Ensure fully written
@@ -598,23 +602,19 @@ impl Prioritize {
         });
 
         if frame.payload().has_remaining() {
-            if let Some(mut stream) = store.find_mut(&frame.stream_id()) {
-                match stream.in_flight_partial_send {
-                    Some(ControlFlow::Continue(())) => {
-                        stream.in_flight_partial_send = None;
-                        if eos {
-                            frame.set_end_stream(true);
-                        }
-                        self.push_back_frame(frame.into(), buffer, &mut stream);
-                        return true;
+            let mut stream = store.resolve(key);
+            match stream.in_flight_partial_send.take() {
+                Some(ControlFlow::Continue(())) => {
+                    if eos {
+                        frame.set_end_stream(true);
                     }
-                    Some(ControlFlow::Break(())) => {
-                        tracing::trace!("not reclaiming frame for cancelled stream");
-                    }
-                    None => panic!("wasn't expecting a frame to reclaim"),
+                    self.push_back_frame(frame.into(), buffer, &mut stream);
+                    return true;
                 }
-            } else {
-                tracing::debug!(?frame, "not reclaiming frame for stream not found");
+                Some(ControlFlow::Break(())) => {
+                    tracing::trace!("not reclaiming frame for cancelled stream");
+                }
+                None => panic!("wasn't expecting a frame to reclaim"),
             }
         }
 
@@ -801,6 +801,7 @@ impl Prioritize {
                             Frame::Data(frame.map(|buf| Prioritized {
                                 inner: buf.take(len),
                                 end_of_stream: eos,
+                                stream: stream.key(),
                             }))
                         }
                         Some(Frame::PushPromise(pp)) => {
@@ -919,6 +920,7 @@ impl<B: Buf> fmt::Debug for Prioritized<B> {
         fmt.debug_struct("Prioritized")
             .field("remaining", &self.inner.get_ref().remaining())
             .field("end_of_stream", &self.end_of_stream)
+            .field("stream", &self.stream)
             .finish()
     }
 }
