@@ -113,16 +113,23 @@ where
     /// Calling this function may result in the current contents of the buffer
     /// to be flushed to `T`.
     pub fn poll_ready(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        if !self.encoder.has_capacity() {
-            // Try flushing
-            ready!(self.flush(cx))?;
+        if !self.encoder.has_vec_capacity() {
+            self.poll_ready_inner(cx)
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
 
-            if !self.encoder.has_capacity() {
-                return Poll::Pending;
+    #[cold]
+    fn poll_ready_inner(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        loop {
+            // Try flushing
+            ready!(self.flush_inner(cx, /* flush_all: */ false))?;
+
+            if self.encoder.has_capacity() {
+                return Poll::Ready(Ok(()));
             }
         }
-
-        Poll::Ready(Ok(()))
     }
 
     /// Buffer a frame.
@@ -135,7 +142,12 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        let span = tracing::trace_span!("FramedWrite::flush");
+        self.flush_inner(cx, /* flush_all: */ true)
+    }
+
+    #[inline]
+    fn flush_inner(&mut self, cx: &mut Context, flush_all: bool) -> Poll<io::Result<()>> {
+        let span = tracing::trace_span!("FramedWrite::flush", %flush_all);
         let _e = span.enter();
 
         loop {
@@ -145,9 +157,14 @@ where
                 &mut self.encoder
             ))?
             .is_continue()
+                && (flush_all || !self.encoder.has_capacity())
             {}
 
-            self.encoder.reclaim_empty_buffer();
+            if flush_all {
+                assert_eq!(self.encoder.buf.position(), 0);
+                assert_eq!(self.encoder.buf.remaining(), 0);
+            }
+            self.encoder.reclaim_buffer();
 
             if let Some(frame) = self.encoder.next_continuation.take() {
                 let mut buf = limited_write_buf!(self.encoder);
@@ -178,16 +195,15 @@ impl<B> Encoder<B>
 where
     B: Buf,
 {
-    fn reclaim_empty_buffer(&mut self) {
-        assert_eq!(self.buf.position(), 0);
-        assert_eq!(self.buf.remaining(), 0);
+    #[inline]
+    fn reclaim_buffer(&mut self) {
         let buf = self.buf.get_mut();
-        let _ = buf.try_reclaim(buf.capacity() + 1);
+        let _ = buf.try_reclaim(buf.capacity() + buf.len() + 1);
     }
 
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
-        assert!(self.has_capacity());
+        assert!(self.has_vec_capacity());
         let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
         let _e = span.enter();
 
@@ -272,6 +288,12 @@ where
 
     fn has_capacity(&self) -> bool {
         self.next_continuation.is_none()
+            && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
+                >= self.min_buffer_capacity)
+    }
+
+    fn has_vec_capacity(&self) -> bool {
+        self.next_continuation.is_none()
             && self.next_vec.len() < self.next_vec.capacity()
             && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
                 >= self.min_buffer_capacity)
@@ -299,11 +321,11 @@ impl<B: Buf> Buf for Encoder<B> {
                 return &self.buf.get_ref()[..next.buf_len];
             }
             let slice = next.data_frame.payload().chunk();
-            if slice.len() > 0 {
+            if !slice.is_empty() {
                 return slice;
             }
         }
-        return &*self.buf.get_ref();
+        self.buf.get_ref()
     }
 
     fn advance(&mut self, mut n: usize) {
@@ -376,7 +398,7 @@ impl<B: Buf> Buf for Encoder<B> {
     }
 
     fn has_remaining(&self) -> bool {
-        if self.buf.get_ref().len() > 0 {
+        if !self.buf.get_ref().is_empty() {
             return true;
         }
         for next in self.next_vec.iter() {
@@ -458,7 +480,7 @@ fn poll_write_buf<T: AsyncWrite + ?Sized, B: Buf>(
         ready!(io.poll_write_vectored(cx, &slices[..cnt]))?
     } else {
         let slice = buf.chunk();
-        if slice.len() == 0 {
+        if slice.is_empty() {
             return Poll::Ready(Ok(ControlFlow::Break(0)));
         }
         ready!(io.poll_write(cx, slice))?
