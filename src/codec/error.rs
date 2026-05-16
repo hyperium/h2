@@ -1,6 +1,6 @@
 use crate::proto::Error;
 
-use std::{error, fmt, io};
+use std::{fmt, io};
 
 /// Errors caused by sending a message
 #[derive(Debug)]
@@ -56,8 +56,6 @@ pub enum UserError {
 
 // ===== impl SendError =====
 
-impl error::Error for SendError {}
-
 impl fmt::Display for SendError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -80,8 +78,6 @@ impl From<UserError> for SendError {
 }
 
 // ===== impl UserError =====
-
-impl error::Error for UserError {}
 
 impl fmt::Display for UserError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
