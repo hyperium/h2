@@ -276,6 +276,11 @@ impl Handle {
         .await;
     }
 
+    pub fn set_write_capacity(&mut self, num: usize) {
+        let mut i = self.codec.get_mut().inner.lock().unwrap();
+        i.tx_rem = num;
+    }
+
     pub async fn unbounded_bytes(&mut self) {
         let mut i = self.codec.get_mut().inner.lock().unwrap();
         i.tx_rem = usize::MAX;

@@ -1,8 +1,8 @@
 use std::error::Error;
 
 use bytes::Bytes;
-use h2::server::{self, SendResponse};
 use h2::RecvStream;
+use h2::server::{self, SendResponse};
 use http::Request;
 use tokio::net::{TcpListener, TcpStream};
 

@@ -1,5 +1,5 @@
 use super::table::{Index, Table};
-use super::{huffman, Header};
+use super::{Header, huffman};
 
 use bytes::{BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};

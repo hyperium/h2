@@ -1,5 +1,5 @@
 use crate::frame::Reason;
-use crate::proto::{WindowSize, MAX_WINDOW_SIZE};
+use crate::proto::{MAX_WINDOW_SIZE, WindowSize};
 
 use std::fmt;
 
@@ -200,11 +200,7 @@ pub struct Window(i32);
 
 impl Window {
     pub fn as_size(&self) -> WindowSize {
-        if self.0 < 0 {
-            0
-        } else {
-            self.0 as WindowSize
-        }
+        if self.0 < 0 { 0 } else { self.0 as WindowSize }
     }
 
     pub fn checked_size(&self) -> WindowSize {

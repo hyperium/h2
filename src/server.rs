@@ -1630,7 +1630,7 @@ impl proto::Peer for Peer {
         fields: HeaderMap,
         stream_id: StreamId,
     ) -> Result<Self::Poll, Error> {
-        use http::{uri, Version};
+        use http::{Version, uri};
 
         let mut b = Request::builder();
 

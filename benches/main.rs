@@ -1,8 +1,7 @@
 use bytes::Bytes;
 use h2::{
-    client,
+    RecvStream, client,
     server::{self, SendResponse},
-    RecvStream,
 };
 use http::Request;
 

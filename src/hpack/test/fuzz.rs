@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
 use rand::distributions::Slice;
 use rand::rngs::StdRng;
-use rand::{thread_rng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, thread_rng};
 
 use std::io::Cursor;
 use std::ops::ControlFlow;
@@ -182,7 +182,7 @@ impl FuzzHpack {
 
 impl Arbitrary for FuzzHpack {
     fn arbitrary(_: &mut Gen) -> Self {
-        FuzzHpack::new(thread_rng().gen())
+        FuzzHpack::new(thread_rng().r#gen())
     }
 }
 
@@ -234,7 +234,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                 Header::Path(to_shared(value))
             }
             4 => {
-                let status = (g.gen::<u16>() % 500) + 100;
+                let status = (g.r#gen::<u16>() % 500) + 100;
 
                 Header::Status(StatusCode::from_u16(status).unwrap())
             }
