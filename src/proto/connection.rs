@@ -583,8 +583,8 @@ where
     T: AsyncRead + AsyncWrite,
     B: Buf,
 {
-    pub(crate) fn streams(&self) -> &Streams<B, client::Peer> {
-        &self.inner.streams
+    pub(crate) fn injector(&self) -> super::Injector<B> {
+        self.inner.streams.injector()
     }
 }
 

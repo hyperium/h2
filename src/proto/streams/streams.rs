@@ -1,5 +1,9 @@
-use super::recv::RecvHeaderBlockError;
+use super::buffer;
+use super::counts;
+use super::recv::{self, RecvHeaderBlockError};
+use super::send::{self, PreparedReserveCapacity, PreparedSendData, PreparedSendReset};
 use super::store::{self, Entry, Resolve, Store};
+use super::stream;
 use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
@@ -9,10 +13,11 @@ use crate::{client, proto, server};
 
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Request, Response};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 use tokio::io::AsyncWrite;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{fmt, io};
 
 #[derive(Debug)]
@@ -22,7 +27,7 @@ where
 {
     /// Holds most of the connection and stream related state for processing
     /// HTTP/2 frames associated with streams.
-    inner: Arc<Mutex<Inner>>,
+    inner: Inner,
 
     /// This is the queue of frames to be written to the wire. This is split out
     /// to avoid requiring a `B` generic on all public API types even if `B` is
@@ -34,6 +39,8 @@ where
     /// been shown to be necessary.
     send_buffer: Arc<SendBuffer<B>>,
 
+    shared: Arc<Shared>,
+
     _p: ::std::marker::PhantomData<P>,
 }
 
@@ -41,9 +48,10 @@ where
 // Ensures that the methods only get one instantiation, instead of two (client and server)
 #[derive(Debug)]
 pub(crate) struct DynStreams<'a, B> {
-    inner: &'a Mutex<Inner>,
+    inner: &'a mut Inner,
 
     send_buffer: &'a SendBuffer<B>,
+    shared: &'a Shared,
 
     peer: peer::Dyn,
 }
@@ -57,8 +65,16 @@ pub(crate) struct StreamRef<B> {
 
 /// Reference to the stream state that hides the send data chunk generic
 pub(crate) struct OpaqueStreamRef {
-    inner: Arc<Mutex<Inner>>,
-    key: store::Key,
+    shared: Arc<Shared>,
+    stream: Arc<stream::Shared>,
+}
+
+/// An injector of streams into the connection.
+///
+/// Used by the `client::SendRequest`.
+pub(crate) struct Injector<B> {
+    send_buffer: Arc<SendBuffer<B>>,
+    shared: Arc<Shared>,
 }
 
 /// Fields needed to manage state related to managing the set of streams. This
@@ -73,11 +89,8 @@ struct Inner {
     /// Connection level state and performs actions on streams
     actions: Actions,
 
-    /// Stores stream state
+    /// Stores stream state, uniquely owned by the connection task.
     store: Store,
-
-    /// The number of stream refs to this shared state.
-    refs: usize,
 }
 
 #[derive(Debug)]
@@ -87,12 +100,26 @@ struct Actions {
 
     /// Manages state transitions initiated by sending frames
     send: Send,
+}
 
-    /// Task that calls `poll_complete`.
-    task: Option<Waker>,
+/// The new place to store the synchronized state.
+///
+/// Only things shared are in here, the connection doesn't need to share
+/// everything.
+#[derive(Debug)]
+struct Shared {
+    counts: counts::Shared,
+    recv: recv::Shared,
+    send: send::Shared,
 
     /// If the connection errors, a copy is kept for any StreamRefs.
-    conn_error: Option<proto::Error>,
+    conn_error: RwLock<Option<Error>>,
+
+    queued_request_headers: AtomicUsize,
+    pending_ops: Mutex<PendingOps>,
+
+    /// Task that drives connection-level processing.
+    conn_task: ConnWaker,
 }
 
 /// Contains the buffer of frames to be written to the wire.
@@ -100,6 +127,118 @@ struct Actions {
 struct SendBuffer<B> {
     inner: Mutex<Buffer<Frame<B>>>,
 }
+
+#[derive(Debug)]
+struct PendingOps {
+    buffer: Buffer<QueuedOp>,
+    queue: buffer::Deque,
+}
+
+#[derive(Debug)]
+enum ConnOp {
+    RequestHeaders {
+        frame: frame::Headers,
+    },
+    ReleaseCapacity {
+        capacity: WindowSize,
+    },
+    PushPromise {
+        frame: frame::PushPromise,
+        promised: Arc<stream::Shared>,
+    },
+    Data {
+        prepared: PreparedSendData,
+        // NOTE: we don't store the frame::Data in here, because of the generic
+        // It's stashed in the send buffer, linked in a separate queue on the
+        // stream itself.
+    },
+    DropStreamRef,
+    ReserveCapacity {
+        prepared: PreparedReserveCapacity,
+    },
+    Trailers {
+        frame: frame::Headers,
+    },
+    Reset {
+        reason: Reason,
+        prepared: PreparedSendReset,
+    },
+    InformationalHeaders {
+        frame: frame::Headers,
+    },
+    ResponseHeaders {
+        frame: frame::Headers,
+    },
+}
+
+#[derive(Debug)]
+struct QueuedOp {
+    stream: Arc<stream::Shared>,
+    op: ConnOp,
+}
+
+impl PendingOps {
+    fn new() -> Self {
+        Self {
+            buffer: Buffer::new(),
+            queue: buffer::Deque::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    fn push_back(&mut self, op: QueuedOp) {
+        self.queue.push_back(&mut self.buffer, op);
+    }
+
+    fn pop_front(&mut self) -> Option<QueuedOp> {
+        self.queue.pop_front(&mut self.buffer)
+    }
+
+    fn for_each_pending_stream<F>(&self, mut f: F)
+    where
+        F: FnMut(&Arc<stream::Shared>),
+    {
+        for queued_op in self.queue.iter(&self.buffer) {
+            f(&queued_op.stream);
+        }
+    }
+
+    fn has_queued_request_headers_for(&self, id: StreamId) -> bool {
+        self.queue.iter(&self.buffer).any(|queued_op| {
+            queued_op.stream.id == id && matches!(queued_op.op, ConnOp::RequestHeaders { .. })
+        })
+    }
+
+    fn has_queued_frame_for(&self, id: StreamId) -> bool {
+        self.queue.iter(&self.buffer).any(|queued_op| {
+            queued_op.stream.id == id
+                && matches!(
+                    queued_op.op,
+                    ConnOp::RequestHeaders { .. }
+                        | ConnOp::PushPromise { .. }
+                        | ConnOp::Data { .. }
+                        | ConnOp::Trailers { .. }
+                        | ConnOp::Reset { .. }
+                        | ConnOp::InformationalHeaders { .. }
+                        | ConnOp::ResponseHeaders { .. }
+                )
+        })
+    }
+}
+
+/// Assert that there is no pending request for this StreamRef.
+#[derive(Debug)]
+struct AssertNoPendingRequest;
+
+/// A newtype around the connection waker.
+///
+/// As a separate type, function arguments can better indicate which waker
+/// is expected for any given action.
+#[derive(Debug)]
+pub(super) struct ConnWaker(atomic_waker::AtomicWaker);
 
 // ===== impl Streams =====
 
@@ -111,43 +250,54 @@ where
     pub fn new(config: Config) -> Self {
         let peer = P::r#dyn();
 
+        let (recv, recv_shared) = Recv::new(peer, &config);
+        let (send, send_shared) = Send::new(&config);
+        let counts_shared = counts::Shared::new(&config);
+
         Streams {
-            inner: Inner::new(peer, config),
+            inner: Inner::new(peer, recv, send, config),
             send_buffer: Arc::new(SendBuffer::new()),
+            shared: Arc::new(Shared {
+                counts: counts_shared,
+                recv: recv_shared,
+                send: send_shared,
+                conn_error: RwLock::new(None),
+                queued_request_headers: AtomicUsize::new(0),
+                pending_ops: Mutex::new(PendingOps::new()),
+                conn_task: ConnWaker::new(),
+            }),
             _p: ::std::marker::PhantomData,
         }
     }
 
     pub fn set_target_connection_window_size(&mut self, size: WindowSize) -> Result<(), Reason> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
+        let me = &mut self.inner;
 
         me.actions
             .recv
-            .set_target_connection_window(size, &mut me.actions.task)
+            .set_target_connection_window(size, &self.shared.conn_task)
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions.recv.next_incoming(&mut me.store).map(|key| {
-            let stream = &mut me.store.resolve(key);
+        let me = &mut self.inner;
+        let store = &mut me.store;
+
+        me.actions.recv.next_incoming(store).map(|key| {
+            let stream = &mut store.resolve(key);
+            let shared = stream.shared();
             tracing::trace!(
                 "next_incoming; id={:?}, state={:?}",
                 stream.id,
-                stream.state
+                shared.state
             );
-            // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
-            // the lock, so it can't.
-            me.refs += 1;
-
             // Pending-accepted remotely-reset streams are counted.
-            if stream.state.is_remote_reset() {
+            if shared.state.is_remote_reset() {
                 me.counts.dec_num_remote_reset_streams();
             }
+            drop(shared);
 
             StreamRef {
-                opaque: OpaqueStreamRef::new(self.inner.clone(), stream),
+                opaque: OpaqueStreamRef::new(self.shared.clone(), stream),
                 send_buffer: self.send_buffer.clone(),
             }
         })
@@ -161,17 +311,16 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions.recv.send_pending_refusal(cx, dst)
+        self.inner.actions.recv.send_pending_refusal(cx, dst)
     }
 
     pub fn clear_expired_reset_streams(&mut self) {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions
-            .recv
-            .clear_expired_reset_streams(&mut me.store, &mut me.counts);
+        let me = &mut self.inner;
+        me.actions.recv.clear_expired_reset_streams(
+            &self.shared.counts,
+            &mut me.store,
+            &mut me.counts,
+        );
     }
 
     pub fn poll_complete<T>(
@@ -182,8 +331,8 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        let mut me = self.inner.lock().unwrap();
-        me.poll_complete(&self.send_buffer, cx, dst)
+        self.inner
+            .poll_complete(&self.send_buffer, &self.shared, cx, dst)
     }
 
     pub fn apply_remote_settings(
@@ -191,150 +340,43 @@ where
         frame: &frame::Settings,
         is_initial: bool,
     ) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
+        let me = &mut self.inner;
 
         let mut send_buffer = self.send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        me.counts.apply_remote_settings(frame, is_initial);
+        me.counts
+            .apply_remote_settings(&self.shared.counts, frame, is_initial);
 
         me.actions.send.apply_remote_settings(
+            &self.shared.send,
             frame,
             send_buffer,
             &mut me.store,
+            &self.shared.counts,
             &mut me.counts,
-            &mut me.actions.task,
+            &self.shared.conn_task,
         )
     }
 
     pub fn apply_local_settings(&mut self, frame: &frame::Settings) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        me.actions.recv.apply_local_settings(frame, &mut me.store)
+        let me = &mut self.inner;
+        me.actions
+            .recv
+            .apply_local_settings(&self.shared.recv, frame, &mut me.store)
     }
 
-    pub fn send_request(
-        &mut self,
-        mut request: Request<()>,
-        end_of_stream: bool,
-        pending: Option<&OpaqueStreamRef>,
-    ) -> Result<(StreamRef<B>, bool), SendError> {
-        use super::stream::ContentLength;
-        use http::Method;
-
-        let protocol = request.extensions_mut().remove::<Protocol>();
-
-        // Clear before taking lock, incase extensions contain a StreamRef.
-        request.extensions_mut().clear();
-
-        // TODO: There is a hazard with assigning a stream ID before the
-        // prioritize layer. If prioritization reorders new streams, this
-        // implicitly closes the earlier stream IDs.
-        //
-        // See: hyperium/h2#11
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        me.actions.ensure_no_conn_error()?;
-        me.actions.send.ensure_next_stream_id()?;
-
-        // The `pending` argument is provided by the `Client`, and holds
-        // a store `Key` of a `Stream` that may have been not been opened
-        // yet.
-        //
-        // If that stream is still pending, the Client isn't allowed to
-        // queue up another pending stream. They should use `poll_ready`.
-        if let Some(stream) = pending {
-            if me.store.resolve(stream.key).is_pending_open {
-                return Err(UserError::Rejected.into());
-            }
+    pub fn injector(&self) -> Injector<B> {
+        Injector {
+            shared: self.shared.clone(),
+            send_buffer: self.send_buffer.clone(),
         }
-
-        if me.counts.peer().is_server() {
-            // Servers cannot open streams. PushPromise must first be reserved.
-            return Err(UserError::UnexpectedFrameType.into());
-        }
-
-        let stream_id = me.actions.send.open()?;
-
-        let mut stream = Stream::new(
-            stream_id,
-            me.actions.send.init_window_sz(),
-            me.actions.recv.init_window_sz(),
-        );
-
-        if *request.method() == Method::HEAD {
-            stream.content_length = ContentLength::Head;
-        }
-
-        // Convert the message
-        let headers =
-            client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
-
-        let mut stream = me.store.insert(stream.id, stream);
-
-        let sent = me.actions.send.send_headers(
-            headers,
-            send_buffer,
-            &mut stream,
-            &mut me.counts,
-            &mut me.actions.task,
-        );
-
-        // send_headers can return a UserError, if it does,
-        // we should forget about this stream.
-        if let Err(err) = sent {
-            stream.unlink();
-            stream.remove();
-            return Err(err.into());
-        }
-
-        // Given that the stream has been initialized, it should not be in the
-        // closed state.
-        debug_assert!(!stream.state.is_closed());
-
-        // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
-        // the lock, so it can't.
-        me.refs += 1;
-
-        let is_full = me.counts.next_send_stream_will_reach_capacity();
-        Ok((
-            StreamRef {
-                opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
-                send_buffer: self.send_buffer.clone(),
-            },
-            is_full,
-        ))
-    }
-
-    pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .actions
-            .send
-            .is_extended_connect_protocol_enabled()
-    }
-
-    pub fn current_max_send_streams(&self) -> usize {
-        let me = self.inner.lock().unwrap();
-        me.counts.max_send_streams()
-    }
-
-    pub fn current_max_recv_streams(&self) -> usize {
-        let me = self.inner.lock().unwrap();
-        me.counts.max_recv_streams()
     }
 }
 
 impl<B> DynStreams<'_, B> {
     pub fn is_buffer_empty(&self) -> bool {
-        self.send_buffer.is_empty()
+        self.send_buffer.is_empty() && self.shared.pending_ops.lock().unwrap().is_empty()
     }
 
     pub fn is_server(&self) -> bool {
@@ -342,50 +384,46 @@ impl<B> DynStreams<'_, B> {
     }
 
     pub fn recv_headers(&mut self, frame: frame::Headers) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-
-        me.recv_headers(self.peer, self.send_buffer, frame)
+        self.inner
+            .recv_headers(self.peer, self.send_buffer, self.shared, frame)
     }
 
     pub fn recv_data(&mut self, frame: frame::Data) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_data(self.peer, self.send_buffer, frame)
+        self.inner
+            .recv_data(self.peer, self.send_buffer, self.shared, frame)
     }
 
     pub fn recv_reset(&mut self, frame: frame::Reset) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-
-        me.recv_reset(self.send_buffer, frame)
+        self.inner.recv_reset(self.send_buffer, self.shared, frame)
     }
 
     /// Notify all streams that a connection-level error happened.
     pub fn handle_error(&mut self, err: proto::Error) -> StreamId {
-        let mut me = self.inner.lock().unwrap();
-        me.handle_error(self.send_buffer, err)
+        self.inner.handle_error(self.send_buffer, self.shared, err)
     }
 
     pub fn recv_go_away(&mut self, frame: &frame::GoAway) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_go_away(self.send_buffer, frame)
+        self.inner
+            .recv_go_away(self.send_buffer, self.shared, frame)
     }
 
     pub fn last_processed_id(&self) -> StreamId {
-        self.inner.lock().unwrap().actions.recv.last_processed_id()
+        self.inner.actions.recv.last_processed_id()
     }
 
     pub fn recv_window_update(&mut self, frame: frame::WindowUpdate) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_window_update(self.send_buffer, frame)
+        self.inner
+            .recv_window_update(self.send_buffer, self.shared, frame)
     }
 
     pub fn recv_push_promise(&mut self, frame: frame::PushPromise) -> Result<(), Error> {
-        let mut me = self.inner.lock().unwrap();
-        me.recv_push_promise(self.send_buffer, frame)
+        self.inner
+            .recv_push_promise(self.send_buffer, self.shared, frame)
     }
 
     pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
-        let mut me = self.inner.lock().map_err(|_| ())?;
-        me.recv_eof(self.send_buffer, clear_pending_accept)
+        self.inner
+            .recv_eof(self.send_buffer, self.shared, clear_pending_accept)
     }
 
     pub fn send_reset(
@@ -393,38 +431,88 @@ impl<B> DynStreams<'_, B> {
         id: StreamId,
         reason: Reason,
     ) -> Result<(), crate::proto::error::GoAway> {
-        let mut me = self.inner.lock().unwrap();
-        me.send_reset(self.send_buffer, id, reason)
+        self.inner
+            .send_reset(self.send_buffer, self.shared, id, reason)
     }
 
     pub fn send_go_away(&mut self, last_processed_id: StreamId) {
-        let mut me = self.inner.lock().unwrap();
-        me.actions.recv.go_away(last_processed_id);
+        self.inner.actions.recv.go_away(last_processed_id);
+    }
+}
+
+fn reconcile_deferred_recv_window(stream: &mut Stream, target: WindowSize) {
+    let mut recv = stream.recv();
+    let current = recv.recv_flow.window_size();
+
+    match target.cmp(&current) {
+        std::cmp::Ordering::Less => {
+            let dec = current - target;
+            let res = recv.recv_flow.dec_recv_window(dec);
+            debug_assert!(
+                res.is_ok(),
+                "deferred recv window decrement should be valid"
+            );
+        }
+        std::cmp::Ordering::Greater => {
+            let inc = target - current;
+            let res = recv.recv_flow.inc_window(inc);
+            debug_assert!(
+                res.is_ok(),
+                "deferred recv window increment should be valid"
+            );
+            let res = recv.recv_flow.assign_capacity(inc);
+            debug_assert!(
+                res.is_ok(),
+                "deferred recv capacity assignment should be valid"
+            );
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+}
+
+fn reconcile_deferred_send_window(stream: &mut Stream, target: WindowSize) {
+    let mut send = stream.send();
+    let current = send.send_flow.window_size();
+
+    match target.cmp(&current) {
+        std::cmp::Ordering::Less => {
+            let dec = current - target;
+            let res = send.send_flow.dec_send_window(dec);
+            debug_assert!(
+                res.is_ok(),
+                "deferred send window decrement should be valid"
+            );
+        }
+        std::cmp::Ordering::Greater => {
+            let inc = target - current;
+            let res = send.send_flow.inc_window(inc);
+            debug_assert!(
+                res.is_ok(),
+                "deferred send window increment should be valid"
+            );
+        }
+        std::cmp::Ordering::Equal => {}
     }
 }
 
 impl Inner {
-    fn new(peer: peer::Dyn, config: Config) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Inner {
+    fn new(peer: peer::Dyn, recv: Recv, send: Send, config: Config) -> Self {
+        Inner {
             counts: Counts::new(peer, &config),
-            actions: Actions {
-                recv: Recv::new(peer, &config),
-                send: Send::new(&config),
-                task: None,
-                conn_error: None,
-            },
+            actions: Actions { recv, send },
             store: Store::new(),
-            refs: 1,
-        }))
+        }
     }
 
     fn recv_headers<B>(
         &mut self,
         peer: peer::Dyn,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: frame::Headers,
     ) -> Result<(), Error> {
         let id = frame.stream_id();
+        let store = &mut self.store;
 
         // The GOAWAY process has begun. All streams with a greater ID than
         // specified as part of GOAWAY should be ignored.
@@ -437,7 +525,7 @@ impl Inner {
             return Ok(());
         }
 
-        let key = match self.store.find_entry(id) {
+        let key = match store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
                 // Client: it's possible to send a request, and then send
@@ -448,7 +536,7 @@ impl Inner {
                 if !peer.is_server() {
                     // This may be response headers for a stream we've already
                     // forgotten about...
-                    if self.actions.may_have_forgotten_stream(peer, id) {
+                    if self.actions.may_have_forgotten_stream(peer, shared, id) {
                         tracing::debug!(
                             "recv_headers for old stream={:?}, sending STREAM_CLOSED",
                             id,
@@ -460,30 +548,32 @@ impl Inner {
                 match self
                     .actions
                     .recv
-                    .open(id, Open::Headers, &mut self.counts)?
+                    .open(id, Open::Headers, &shared.counts, &mut self.counts)?
                 {
                     Some(stream_id) => {
                         let stream = Stream::new(
                             stream_id,
-                            self.actions.send.init_window_sz(),
-                            self.actions.recv.init_window_sz(),
+                            shared.send.init_window_sz(),
+                            shared.recv.init_window_sz(),
                         );
 
-                        e.insert(stream)
+                        let key = e.insert(stream);
+                        shared.counts.inc_num_wired_streams();
+                        key
                     }
                     None => return Ok(()),
                 }
             }
         };
 
-        let stream = self.store.resolve(key);
+        let stream = store.resolve(key);
 
-        if stream.is_pending_open {
+        if stream.send().is_pending_open {
             proto_err!(conn: "recv_headers: received frame on idle stream {:?}", id);
             return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
         }
 
-        if stream.state.is_local_error() {
+        if stream.shared().state.is_local_error() {
             // Locally reset streams must ignore frames "for some time".
             // This is because the remote may have sent trailers before
             // receiving the RST_STREAM frame.
@@ -495,27 +585,38 @@ impl Inner {
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        self.counts.transition(stream, |counts, stream| {
+        self.counts.transition(&shared.counts, stream, |counts, stream| {
             tracing::trace!(
                 "recv_headers; stream={:?}; state={:?}",
                 stream.id,
-                stream.state
+                stream.shared().state
             );
 
-            let res = if stream.state.is_recv_headers() {
-                match actions.recv.recv_headers(frame, stream, counts) {
+            let res = if stream.shared().state.is_recv_headers() {
+                match actions
+                    .recv
+                    .recv_headers(&shared.recv, frame, stream, &shared.counts, counts)
+                {
                     Ok(()) => Ok(()),
                     Err(RecvHeaderBlockError::Oversize(resp)) => {
                         if let Some(resp) = resp {
                             let sent = actions.send.send_headers(
-                                resp, send_buffer, stream, counts, &mut actions.task);
+                                &shared.send,
+                                resp,
+                                send_buffer,
+                                stream,
+                                counts,
+                                &shared.conn_task,
+                            );
                             debug_assert!(sent.is_ok(), "oversize response should not fail");
 
                             actions.send.schedule_implicit_reset(
                                 stream,
                                 Reason::PROTOCOL_ERROR,
+                                &shared.counts,
                                 counts,
-                                &mut actions.task);
+                                &shared.conn_task,
+                            );
 
                             actions.recv.enqueue_reset_expiration(stream, counts);
 
@@ -534,10 +635,17 @@ impl Inner {
                     return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR));
                 }
 
-                actions.recv.recv_trailers(frame, stream)
+                actions.recv.recv_trailers(&shared.recv, frame, stream)
             };
 
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
+            actions.reset_on_recv_stream_err(
+                send_buffer,
+                stream,
+                &shared.counts,
+                counts,
+                res,
+                &shared.conn_task,
+            )
         })
     }
 
@@ -545,11 +653,13 @@ impl Inner {
         &mut self,
         peer: peer::Dyn,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: frame::Data,
     ) -> Result<(), Error> {
         let id = frame.stream_id();
+        let store = &mut self.store;
 
-        let stream = match self.store.find_mut(&id) {
+        let stream = match store.find_mut(&id) {
             Some(stream) => stream,
             None => {
                 // The GOAWAY process has begun. All streams with a greater ID
@@ -565,12 +675,12 @@ impl Inner {
                     let sz = frame.flow_controlled_len();
                     assert!(sz <= super::MAX_WINDOW_SIZE as usize);
                     let sz = sz as WindowSize;
-                    self.actions.recv.ignore_data(sz)?;
+                    self.actions.recv.ignore_data(sz, &shared.conn_task)?;
 
                     return Ok(());
                 }
 
-                if self.actions.may_have_forgotten_stream(peer, id) {
+                if self.actions.may_have_forgotten_stream(peer, shared, id) {
                     tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
 
                     let sz = frame.flow_controlled_len();
@@ -578,8 +688,8 @@ impl Inner {
                     // this is just a sanity check.
                     assert!(sz <= super::MAX_WINDOW_SIZE as usize);
                     let sz = sz as WindowSize;
-                    self.actions.recv.ignore_data(sz)?;
 
+                    self.actions.recv.ignore_data(sz, &shared.conn_task)?;
                     return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
                 }
 
@@ -592,28 +702,40 @@ impl Inner {
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
 
-        self.counts.transition(stream, |counts, stream| {
-            let sz = frame.flow_controlled_len();
-            let res = actions.recv.recv_data(frame, stream);
-
-            // Any stream error after receiving a DATA frame means
-            // we won't give the data to the user, and so they can't
-            // release the capacity. We do it automatically.
-            if let Err(Error::Reset(..)) = res {
-                actions
+        self.counts
+            .transition(&shared.counts, stream, |counts, stream| {
+                let sz = frame.flow_controlled_len();
+                let res = actions
                     .recv
-                    .release_connection_capacity(sz as WindowSize, &mut None);
-            }
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
-        })
+                    .recv_data(&shared.recv, &shared.conn_task, frame, stream);
+
+                // Any stream error after receiving a DATA frame means
+                // we won't give the data to the user, and so they can't
+                // release the capacity. We do it automatically.
+                if let Err(Error::Reset(..)) = res {
+                    actions
+                        .recv
+                        .release_connection_capacity(sz as WindowSize, &shared.conn_task);
+                }
+                actions.reset_on_recv_stream_err(
+                    send_buffer,
+                    stream,
+                    &shared.counts,
+                    counts,
+                    res,
+                    &shared.conn_task,
+                )
+            })
     }
 
     fn recv_reset<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: frame::Reset,
     ) -> Result<(), Error> {
         let id = frame.stream_id();
+        let store = &mut self.store;
 
         if id.is_zero() {
             proto_err!(conn: "recv_reset: invalid stream ID 0");
@@ -631,19 +753,19 @@ impl Inner {
             return Ok(());
         }
 
-        let stream = match self.store.find_mut(&id) {
+        let stream = match store.find_mut(&id) {
             Some(stream) => stream,
             None => {
                 // TODO: Are there other error cases?
                 self.actions
-                    .ensure_not_idle(self.counts.peer(), id)
+                    .ensure_not_idle(self.counts.peer(), shared, id)
                     .map_err(Error::library_go_away)?;
 
                 return Ok(());
             }
         };
 
-        if stream.is_pending_open {
+        if stream.send().is_pending_open {
             proto_err!(conn: "recv_reset: received frame on idle stream {:?}", id);
             return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
         }
@@ -653,20 +775,29 @@ impl Inner {
 
         let actions = &mut self.actions;
 
-        self.counts.transition(stream, |counts, stream| {
-            actions.recv.recv_reset(frame, stream, counts)?;
-            actions.send.handle_error(send_buffer, stream, counts);
-            assert!(stream.state.is_closed());
-            Ok(())
-        })
+        self.counts
+            .transition(&shared.counts, stream, |counts, stream| {
+                let has_queued_frame =
+                    stream.inner().is_pending_send || shared.has_queued_frame_for(stream.id);
+                actions
+                    .recv
+                    .recv_reset(frame, stream, counts, has_queued_frame)?;
+                actions
+                    .send
+                    .handle_error(send_buffer, stream, &shared.counts, counts);
+                assert!(stream.shared().state.is_closed());
+                Ok(())
+            })
     }
 
     fn recv_window_update<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: frame::WindowUpdate,
     ) -> Result<(), Error> {
         let id = frame.stream_id();
+        let store = &mut self.store;
 
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
@@ -674,13 +805,13 @@ impl Inner {
         if id.is_zero() {
             self.actions
                 .send
-                .recv_connection_window_update(frame, &mut self.store, &mut self.counts)
+                .recv_connection_window_update(frame, &mut *store, &shared.counts, &mut self.counts)
                 .map_err(Error::library_go_away)?;
         } else {
             // The remote may send window updates for streams that the local now
             // considers closed. It's ok...
-            if let Some(mut stream) = self.store.find_mut(&id) {
-                if stream.is_pending_open {
+            if let Some(mut stream) = store.find_mut(&id) {
+                if stream.send().is_pending_open {
                     proto_err!(conn: "recv_window_update: received frame on idle stream {:?}", id);
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
@@ -692,20 +823,23 @@ impl Inner {
                         frame.size_increment(),
                         send_buffer,
                         &mut stream,
+                        &shared.counts,
                         &mut self.counts,
-                        &mut self.actions.task,
+                        &shared.conn_task,
                     )
                     .map_err(|reason| Error::library_reset(id, reason));
 
                 return self.actions.reset_on_recv_stream_err(
                     send_buffer,
                     &mut stream,
+                    &shared.counts,
                     &mut self.counts,
                     res,
+                    &shared.conn_task,
                 );
             } else {
                 self.actions
-                    .ensure_not_idle(self.counts.peer(), id)
+                    .ensure_not_idle(self.counts.peer(), shared, id)
                     .map_err(Error::library_go_away)?;
             }
         }
@@ -713,22 +847,37 @@ impl Inner {
         Ok(())
     }
 
-    fn handle_error<B>(&mut self, send_buffer: &SendBuffer<B>, err: proto::Error) -> StreamId {
+    fn handle_error<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        err: proto::Error,
+    ) -> StreamId {
         let actions = &mut self.actions;
         let counts = &mut self.counts;
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
+        let store = &mut self.store;
 
         let last_processed_id = actions.recv.last_processed_id();
 
-        self.store.for_each(|stream| {
-            counts.transition(stream, |counts, stream| {
-                actions.recv.handle_error(&err, &mut *stream);
-                actions.send.handle_error(send_buffer, stream, counts);
+        store.for_each(|stream| {
+            counts.transition(&shared.counts, stream, |counts, stream| {
+                actions.recv.handle_error(&err, &*stream);
+                actions
+                    .send
+                    .handle_error(send_buffer, stream, &shared.counts, counts);
             })
         });
 
-        actions.conn_error = Some(err);
+        *shared.conn_error.write().unwrap() = Some(err);
+        if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
+            shared
+                .pending_ops
+                .lock()
+                .unwrap()
+                .for_each_pending_stream(|stream| stream.handle_error(err));
+        }
 
         last_processed_id
     }
@@ -736,12 +885,14 @@ impl Inner {
     fn recv_go_away<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: &frame::GoAway,
     ) -> Result<(), Error> {
         let actions = &mut self.actions;
         let counts = &mut self.counts;
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
+        let store = &mut self.store;
 
         let last_stream_id = frame.last_stream_id();
 
@@ -750,16 +901,29 @@ impl Inner {
         let err = Error::remote_go_away(frame.debug_data().clone(), frame.reason());
 
         let peer = counts.peer();
-        self.store.for_each(|stream| {
+        store.for_each(|stream| {
             if stream.id > last_stream_id && peer.is_local_init(stream.id) {
-                counts.transition(stream, |counts, stream| {
-                    actions.recv.handle_error(&err, &mut *stream);
-                    actions.send.handle_error(send_buffer, stream, counts);
+                counts.transition(&shared.counts, stream, |counts, stream| {
+                    actions.recv.handle_error(&err, &*stream);
+                    actions
+                        .send
+                        .handle_error(send_buffer, stream, &shared.counts, counts);
                 })
             }
         });
 
-        actions.conn_error = Some(err);
+        *shared.conn_error.write().unwrap() = Some(err);
+        if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
+            shared
+                .pending_ops
+                .lock()
+                .unwrap()
+                .for_each_pending_stream(|stream| {
+                    if peer.is_local_init(stream.id) && stream.id > last_stream_id {
+                        stream.handle_error(err);
+                    }
+                });
+        }
 
         Ok(())
     }
@@ -767,13 +931,15 @@ impl Inner {
     fn recv_push_promise<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         frame: frame::PushPromise,
     ) -> Result<(), Error> {
         let id = frame.stream_id();
         let promised_id = frame.promised_id();
+        let store = &mut self.store;
 
         // First, ensure that the initiating stream is still in a valid state.
-        let parent_key = match self.store.find_mut(&id) {
+        let parent_key = match store.find_mut(&id) {
             Some(stream) => {
                 // The GOAWAY process has begun. All streams with a greater ID
                 // than specified as part of GOAWAY should be ignored.
@@ -787,7 +953,7 @@ impl Inner {
                 }
 
                 // The stream must be receive open
-                if !stream.state.ensure_recv_open()? {
+                if !stream.shared().state.ensure_recv_open()? {
                     proto_err!(conn: "recv_push_promise: initiating stream is not opened");
                     return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
                 }
@@ -805,7 +971,7 @@ impl Inner {
         // could grow in memory indefinitely.
 
         // Ensure that we can reserve streams
-        self.actions.recv.ensure_can_reserve()?;
+        self.actions.recv.ensure_can_reserve(&shared.recv)?;
 
         // Next, open the stream.
         //
@@ -814,7 +980,12 @@ impl Inner {
         if self
             .actions
             .recv
-            .open(promised_id, Open::PushPromise, &mut self.counts)?
+            .open(
+                promised_id,
+                Open::PushPromise,
+                &shared.counts,
+                &mut self.counts,
+            )?
             .is_none()
         {
             return Ok(());
@@ -822,44 +993,45 @@ impl Inner {
 
         // Try to handle the frame and create a corresponding key for the pushed stream
         // this requires a bit of indirection to make the borrow checker happy.
-        let child_key: Option<store::Key> = {
+        let child_stream: Option<Arc<stream::Shared>> = {
             // Create state for the stream
-            let stream = self.store.insert(promised_id, {
+            let stream = store.insert(promised_id, {
                 Stream::new(
                     promised_id,
-                    self.actions.send.init_window_sz(),
-                    self.actions.recv.init_window_sz(),
+                    shared.send.init_window_sz(),
+                    shared.recv.init_window_sz(),
                 )
             });
+            shared.counts.inc_num_wired_streams();
 
             let actions = &mut self.actions;
 
-            self.counts.transition(stream, |counts, stream| {
-                let stream_valid = actions.recv.recv_push_promise(frame, stream);
+            self.counts
+                .transition(&shared.counts, stream, |counts, stream| {
+                    let stream_valid = actions.recv.recv_push_promise(&shared.recv, frame, stream);
 
-                match stream_valid {
-                    Ok(()) => Ok(Some(stream.key())),
-                    _ => {
-                        let mut send_buffer = send_buffer.inner.lock().unwrap();
-                        actions
-                            .reset_on_recv_stream_err(
-                                &mut *send_buffer,
-                                stream,
-                                counts,
-                                stream_valid,
-                            )
-                            .map(|()| None)
+                    match stream_valid {
+                        Ok(()) => Ok(Some(stream.clone_shared())),
+                        _ => {
+                            let mut send_buffer = send_buffer.inner.lock().unwrap();
+                            actions
+                                .reset_on_recv_stream_err(
+                                    &mut *send_buffer,
+                                    stream,
+                                    &shared.counts,
+                                    counts,
+                                    stream_valid,
+                                    &shared.conn_task,
+                                )
+                                .map(|()| None)
+                        }
                     }
-                }
-            })?
+                })?
         };
         // If we're successful, push the headers and stream...
-        if let Some(child) = child_key {
-            let mut ppp = self.store[parent_key].pending_push_promises.take();
-            ppp.push(&mut self.store.resolve(child));
-
-            let parent = &mut self.store.resolve(parent_key);
-            parent.pending_push_promises = ppp;
+        if let Some(child) = child_stream {
+            let parent = &mut store.resolve(parent_key);
+            shared.recv.push_pushed(parent.shared_ref(), child);
             parent.notify_push();
         };
 
@@ -869,15 +1041,17 @@ impl Inner {
     fn recv_eof<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         clear_pending_accept: bool,
     ) -> Result<(), ()> {
         let actions = &mut self.actions;
         let counts = &mut self.counts;
         let mut send_buffer = send_buffer.inner.lock().unwrap();
         let send_buffer = &mut *send_buffer;
+        let store = &mut self.store;
 
-        if actions.conn_error.is_none() {
-            actions.conn_error = Some(
+        if shared.conn_error.read().unwrap().is_none() {
+            *shared.conn_error.write().unwrap() = Some(
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     "connection closed because of a broken pipe",
@@ -888,23 +1062,34 @@ impl Inner {
 
         tracing::trace!("Streams::recv_eof");
 
-        self.store.for_each(|stream| {
-            counts.transition(stream, |counts, stream| {
+        store.for_each(|stream| {
+            counts.transition(&shared.counts, stream, |counts, stream| {
                 actions.recv.recv_eof(stream);
 
                 // This handles resetting send state associated with the
                 // stream
-                actions.send.handle_error(send_buffer, stream, counts);
+                actions
+                    .send
+                    .handle_error(send_buffer, stream, &shared.counts, counts);
             })
         });
 
-        actions.clear_queues(clear_pending_accept, &mut self.store, counts);
+        if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
+            shared
+                .pending_ops
+                .lock()
+                .unwrap()
+                .for_each_pending_stream(|stream| stream.handle_error(err));
+        }
+
+        actions.clear_queues(clear_pending_accept, &shared.counts, store, counts);
         Ok(())
     }
 
     fn poll_complete<T, B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
     ) -> Poll<io::Result<()>>
@@ -912,36 +1097,321 @@ impl Inner {
         T: AsyncWrite + Unpin,
         B: Buf,
     {
-        let mut send_buffer = send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
+        self.process_pending_conn_ops(send_buffer, shared);
 
         // Send WINDOW_UPDATE frames first
         //
         // TODO: It would probably be better to interleave updates w/ data
         // frames.
-        ready!(self
-            .actions
-            .recv
-            .poll_complete(cx, &mut self.store, &mut self.counts, dst))?;
+        {
+            ready!(self.actions.recv.poll_complete(
+                cx,
+                &mut self.store,
+                &shared.counts,
+                &mut self.counts,
+                dst
+            ))?;
+        }
 
         // Send any other pending frames
-        ready!(self.actions.send.poll_complete(
-            cx,
-            send_buffer,
-            &mut self.store,
-            &mut self.counts,
-            dst
-        ))?;
+        let mut send_buffer = send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+        {
+            ready!(self.actions.send.poll_complete(
+                cx,
+                send_buffer,
+                &mut self.store,
+                &shared.counts,
+                &mut self.counts,
+                dst
+            ))?;
+        }
 
         // Nothing else to do, track the task
-        self.actions.task = Some(cx.waker().clone());
+        shared.conn_task.register(cx.waker());
 
         Poll::Ready(Ok(()))
+    }
+
+    fn process_pending_conn_ops<B>(&mut self, send_buffer: &SendBuffer<B>, shared: &Shared)
+    where
+        B: Buf,
+    {
+        let actions = &mut self.actions;
+        let counts = &mut self.counts;
+
+        while let Some(queued_op) = {
+            let mut pending_ops = shared.pending_ops.lock().unwrap();
+            pending_ops.pop_front()
+        } {
+            let QueuedOp { stream, op } = queued_op;
+            if matches!(&op, ConnOp::RequestHeaders { .. }) {
+                let prev = shared.queued_request_headers.fetch_sub(1, Ordering::Relaxed);
+                debug_assert!(prev > 0, "queued_request_headers must stay in sync");
+            }
+            match op {
+                ConnOp::DropStreamRef => {
+                    stream.ops_dec();
+                    release_queued_send_ref(
+                        actions,
+                        counts,
+                        shared,
+                        &shared.counts,
+                        &mut self.store,
+                        &stream,
+                    );
+                }
+                ConnOp::Reset { reason, prepared } => {
+                    stream.ops_dec();
+                    let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream)
+                    else {
+                        continue;
+                    };
+                    let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                    let send_frames = &mut *send_frames_guard;
+
+                    actions.send.send_prepared_reset(
+                        reason,
+                        prepared,
+                        send_frames,
+                        &mut stream_ptr,
+                        &shared.counts,
+                        counts,
+                        &shared.conn_task,
+                    );
+                    drop(stream_ptr);
+                    if prepared.send_explicit_reset {
+                    } else {
+                        release_queued_send_ref(
+                            actions,
+                            counts,
+                            shared,
+                            &shared.counts,
+                            &mut self.store,
+                            &stream,
+                        );
+                    }
+                }
+                other => {
+                    stream.ops_dec();
+                    match &other {
+                        ConnOp::RequestHeaders { frame } => {
+                            if self.store.find_mut_even_if_unlinked(&stream).is_none() {
+                                let (
+                                    is_unreferenced,
+                                    is_closed_without_reset,
+                                    is_ignored_by_go_away,
+                                ) = {
+                                    let shared_state = stream.state();
+                                    (
+                                        shared_state.ref_count == 0,
+                                        shared_state.state.is_closed()
+                                            && !shared_state.state.is_local_reset(),
+                                        counts.peer().is_local_init(stream.id)
+                                            && actions.send.is_ignored_by_go_away(stream.id),
+                                    )
+                                };
+
+                                if is_ignored_by_go_away {
+                                    if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
+                                        stream.handle_error(err);
+                                    }
+                                }
+
+                                if is_unreferenced
+                                    || is_closed_without_reset
+                                    || is_ignored_by_go_away
+                                {
+                                    continue;
+                                }
+
+                                let mut stream = Stream::new_with_shared(stream.clone());
+                                reconcile_deferred_send_window(
+                                    &mut stream,
+                                    shared.send.init_window_sz(),
+                                );
+                                reconcile_deferred_recv_window(
+                                    &mut stream,
+                                    shared.recv.init_window_sz(),
+                                );
+                                if frame.pseudo().method == Some(http::Method::HEAD) {
+                                    stream.inner_mut().content_length = stream::ContentLength::Head;
+                                }
+                                self.store.insert(stream.id, stream);
+                                shared.counts.inc_num_wired_streams();
+                            }
+                        }
+                        ConnOp::PushPromise { promised, .. } => {
+                            if self.store.find_mut_even_if_unlinked(&promised).is_none() {
+                                let mut stream = Stream::new_with_shared(promised.clone());
+                                reconcile_deferred_send_window(
+                                    &mut stream,
+                                    shared.send.init_window_sz(),
+                                );
+                                reconcile_deferred_recv_window(
+                                    &mut stream,
+                                    shared.recv.init_window_sz(),
+                                );
+                                self.store.insert(stream.id, stream);
+                                shared.counts.inc_num_wired_streams();
+                            }
+                        }
+                        _ => {}
+                    }
+                    let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream)
+                    else {
+                        continue;
+                    };
+
+                    let drop_if_stream_reset = matches!(
+                        &other,
+                        ConnOp::Data { .. }
+                            | ConnOp::Trailers { .. }
+                            | ConnOp::InformationalHeaders { .. }
+                            | ConnOp::ResponseHeaders { .. }
+                    );
+                    let stream_is_reset = {
+                        let shared_state = stream_ptr.shared();
+                        shared_state.state.is_reset()
+                    };
+                    if drop_if_stream_reset && stream_is_reset {
+                        if let ConnOp::Data { .. } = other {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
+                            debug_assert!(
+                                matches!(frame, None | Some(Frame::Data(_))),
+                                "pending_op_data must only contain DATA frames"
+                            );
+                        }
+
+                        let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+                        counts.transition_after(&shared.counts, stream_ptr, is_pending_reset);
+                        continue;
+                    }
+
+                    match other {
+                        ConnOp::RequestHeaders { frame } => {
+                            let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+                            let should_send = {
+                                stream_ptr.notify_send();
+                                let shared = stream_ptr.shared();
+                                !shared.state.is_closed() || shared.state.is_local_reset()
+                            };
+                            if !should_send {
+                                counts.transition_after(
+                                    &shared.counts,
+                                    stream_ptr,
+                                    is_pending_reset,
+                                );
+                                continue;
+                            }
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            actions.send.send_headers_after_prepare(
+                                &shared.send,
+                                frame,
+                                send_frames,
+                                &mut stream_ptr,
+                                counts,
+                                &shared.conn_task,
+                            );
+                        }
+                        ConnOp::ReleaseCapacity { capacity } => {
+                            actions
+                                .recv
+                                .release_connection_capacity(capacity, &shared.conn_task);
+                            actions
+                                .recv
+                                .schedule_stream_window_update(&mut stream_ptr, &shared.conn_task);
+                        }
+                        ConnOp::Data { prepared } => {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
+                            match frame {
+                                Some(Frame::Data(frame)) => {
+                                    actions.send.send_prepared_data(
+                                        frame,
+                                        prepared,
+                                        send_frames,
+                                        &mut stream_ptr,
+                                        &shared.counts,
+                                        counts,
+                                        &shared.conn_task,
+                                    );
+                                }
+                                Some(frame) => {
+                                    unreachable!(
+                                        "pending_op_data must only contain DATA frames: {frame:?}"
+                                    )
+                                }
+                                None => {}
+                            }
+                        }
+                        ConnOp::ReserveCapacity { prepared } => {
+                            actions.send.apply_reserve_capacity(
+                                prepared,
+                                &mut stream_ptr,
+                                &shared.counts,
+                                counts,
+                            );
+                        }
+                        ConnOp::PushPromise { frame, promised: _ } => {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            actions.send.send_push_promise_frame(
+                                &shared.send,
+                                frame,
+                                send_frames,
+                                &mut stream_ptr,
+                                &shared.conn_task,
+                            );
+                        }
+                        ConnOp::Trailers { frame } => {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            actions.send.send_trailers_frame(
+                                frame,
+                                send_frames,
+                                &mut stream_ptr,
+                                &shared.counts,
+                                counts,
+                                &shared.conn_task,
+                            );
+                        }
+                        ConnOp::InformationalHeaders { frame } => {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            actions.send.send_interim_informational_headers_frame(
+                                frame,
+                                send_frames,
+                                &mut stream_ptr,
+                                &shared.conn_task,
+                            );
+                        }
+                        ConnOp::ResponseHeaders { frame } => {
+                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+                            let send_frames = &mut *send_frames_guard;
+                            actions.send.send_headers_frame(
+                                &shared.send,
+                                frame,
+                                send_frames,
+                                &mut stream_ptr,
+                                &shared.conn_task,
+                            );
+                        }
+                        ConnOp::DropStreamRef | ConnOp::Reset { .. } => unreachable!(),
+                    }
+                }
+            }
+        }
     }
 
     fn send_reset<B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
+        shared: &Shared,
         id: StreamId,
         reason: Reason,
     ) -> Result<(), crate::proto::error::GoAway> {
@@ -963,7 +1433,7 @@ impl Inner {
                 if self.counts.peer().is_local_init(id) {
                     // We normally would open this stream, so update our
                     // next-send-id record.
-                    self.actions.send.maybe_reset_next_stream_id(id);
+                    shared.send.maybe_reset_next_stream_id(id);
                 } else {
                     // We normally would recv this stream, so update our
                     // next-recv-id record.
@@ -972,7 +1442,9 @@ impl Inner {
 
                 let stream = Stream::new(id, 0, 0);
 
-                e.insert(stream)
+                let key = e.insert(stream);
+                shared.counts.inc_num_wired_streams();
+                key
             }
         };
 
@@ -983,36 +1455,11 @@ impl Inner {
             stream,
             reason,
             Initiator::Library,
+            &shared.counts,
             &mut self.counts,
             send_buffer,
+            &shared.conn_task,
         )
-    }
-}
-
-impl<B> Streams<B, client::Peer>
-where
-    B: Buf,
-{
-    pub fn poll_pending_open(
-        &mut self,
-        cx: &Context,
-        pending: Option<&OpaqueStreamRef>,
-    ) -> Poll<Result<(), crate::Error>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        me.actions.ensure_no_conn_error()?;
-        me.actions.send.ensure_next_stream_id()?;
-
-        if let Some(pending) = pending {
-            let mut stream = me.store.resolve(pending.key);
-            tracing::trace!("poll_pending_open; stream = {:?}", stream.is_pending_open);
-            if stream.is_pending_open {
-                stream.wait_send(cx);
-                return Poll::Pending;
-            }
-        }
-        Poll::Ready(Ok(()))
     }
 }
 
@@ -1020,69 +1467,45 @@ impl<B, P> Streams<B, P>
 where
     P: Peer,
 {
-    pub fn as_dyn(&self) -> DynStreams<'_, B> {
+    pub fn as_dyn(&mut self) -> DynStreams<'_, B> {
         let Self {
             inner,
             send_buffer,
+            shared,
             _p,
         } = self;
         DynStreams {
             inner,
             send_buffer,
+            shared,
             peer: P::r#dyn(),
         }
     }
 
     /// This function is safe to call multiple times.
-    ///
-    /// A `Result` is returned to avoid panicking if the mutex is poisoned.
     pub fn recv_eof(&mut self, clear_pending_accept: bool) -> Result<(), ()> {
         self.as_dyn().recv_eof(clear_pending_accept)
     }
 
     pub(crate) fn max_send_streams(&self) -> usize {
-        self.inner.lock().unwrap().counts.max_send_streams()
+        self.inner.counts.max_send_streams(&self.shared.counts)
     }
 
     pub(crate) fn max_recv_streams(&self) -> usize {
-        self.inner.lock().unwrap().counts.max_recv_streams()
-    }
-
-    #[cfg(feature = "unstable")]
-    pub fn num_active_streams(&self) -> usize {
-        let me = self.inner.lock().unwrap();
-        me.store.num_active_streams()
+        self.inner.counts.max_recv_streams(&self.shared.counts)
     }
 
     pub fn has_streams(&self) -> bool {
-        let me = self.inner.lock().unwrap();
-        me.counts.has_streams()
+        self.inner.counts.has_streams(&self.shared.counts)
     }
 
     pub fn has_streams_or_other_references(&self) -> bool {
-        let me = self.inner.lock().unwrap();
-        me.counts.has_streams() || me.refs > 1
+        self.inner.counts.has_streams(&self.shared.counts) || Arc::strong_count(&self.shared) > 1
     }
 
     #[cfg(feature = "unstable")]
     pub fn num_wired_streams(&self) -> usize {
-        let me = self.inner.lock().unwrap();
-        me.store.num_wired_streams()
-    }
-}
-
-// no derive because we don't need B and P to be Clone.
-impl<B, P> Clone for Streams<B, P>
-where
-    P: Peer,
-{
-    fn clone(&self) -> Self {
-        self.inner.lock().unwrap().refs += 1;
-        Streams {
-            inner: self.inner.clone(),
-            send_buffer: self.send_buffer.clone(),
-            _p: ::std::marker::PhantomData,
-        }
+        self.shared.counts.num_wired_streams()
     }
 }
 
@@ -1091,13 +1514,147 @@ where
     P: Peer,
 {
     fn drop(&mut self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.refs -= 1;
-            if inner.refs == 1 {
-                if let Some(task) = inner.actions.task.take() {
-                    task.wake();
-                }
+        if Arc::strong_count(&self.shared) == 2 {
+            self.shared.conn_task.wake();
+        }
+    }
+}
+
+// ===== impl Injector =====
+
+impl<B> Injector<B>
+where
+    B: Buf,
+{
+    pub fn poll_pending_open(
+        &mut self,
+        cx: &Context,
+        pending: Option<&OpaqueStreamRef>,
+    ) -> Poll<Result<(), crate::Error>> {
+        self.shared.ensure_no_conn_error()?;
+        self.shared.send.ensure_next_stream_id()?;
+
+        if let Some(pending) = pending {
+            let is_pending_open = pending.stream.is_pending_open();
+            tracing::trace!("poll_pending_open; stream = {:?}", is_pending_open);
+            if is_pending_open {
+                pending.stream.wait_send(cx);
+                return Poll::Pending;
             }
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    pub fn enqueue_request(
+        &mut self,
+        mut request: Request<()>,
+        end_of_stream: bool,
+        pending: Option<&OpaqueStreamRef>,
+    ) -> Result<StreamRef<B>, SendError> {
+        // The `pending` argument is provided by the `Client`, and holds
+        // a store `Key` of a `Stream` that may have been not been opened
+        // yet.
+        //
+        // If that stream is still pending, the Client isn't allowed to
+        // queue up another pending stream. They should use `poll_ready`.
+        if let Some(stream) = pending {
+            if stream.stream.is_pending_open() {
+                return Err(UserError::Rejected.into());
+            }
+        }
+        let pending = AssertNoPendingRequest;
+
+        let protocol = request.extensions_mut().remove::<Protocol>();
+
+        // Clear before taking lock, incase extensions contain a StreamRef.
+        request.extensions_mut().clear();
+
+        self.shared.ensure_no_conn_error()?;
+        self.shared.send.ensure_next_stream_id()?;
+
+        let stream = self.prepare_request(
+            request,
+            protocol,
+            end_of_stream,
+            pending,
+            self.shared.send.init_window_sz(),
+            self.shared.recv.init_window_sz(),
+        )?;
+
+        Ok(stream)
+    }
+
+    fn prepare_request(
+        &mut self,
+        request: Request<()>,
+        protocol: Option<Protocol>,
+        end_of_stream: bool,
+        _: AssertNoPendingRequest,
+        init_send_window: WindowSize,
+        init_recv_window: WindowSize,
+    ) -> Result<StreamRef<B>, SendError> {
+        // TODO: There is a hazard with assigning a stream ID before the
+        // prioritize layer. If prioritization reorders new streams, this
+        // implicitly closes the earlier stream IDs.
+        //
+        // See: hyperium/h2#11
+
+        let stream_id = self.shared.send.open()?;
+        let stream = stream::Shared::new(stream_id, init_send_window, init_recv_window);
+
+        // Convert the message
+        let headers =
+            client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
+
+        Send::check_headers(headers.fields())?;
+        {
+            let queued_request_headers = self.shared.pending_request_headers_count();
+            let is_pending_open = self.shared.counts.num_send_streams() + queued_request_headers
+                >= self.shared.counts.max_send_streams();
+            stream.state().state.send_open(end_of_stream)?;
+            stream.send().is_pending_open = is_pending_open;
+        }
+
+        let stream_ref = StreamRef {
+            opaque: OpaqueStreamRef::from_shared(self.shared.clone(), stream.clone()),
+            send_buffer: self.send_buffer.clone(),
+        };
+
+        self.shared
+            .push_op(ConnOp::RequestHeaders { frame: headers }, stream);
+
+        Ok(stream_ref)
+    }
+
+    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.shared.send.is_extended_connect_protocol_enabled()
+    }
+
+    pub fn current_max_send_streams(&self) -> usize {
+        self.shared.counts.max_send_streams()
+    }
+
+    pub fn current_max_recv_streams(&self) -> usize {
+        self.shared.counts.current_max_recv_streams()
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn num_active_streams(&self) -> usize {
+        self.shared.counts.num_active_streams()
+    }
+
+    #[cfg(feature = "unstable")]
+    pub fn num_wired_streams(&self) -> usize {
+        self.shared.counts.num_wired_streams()
+    }
+}
+
+// no derive because we don't need B and P to be Clone.
+impl<B> Clone for Injector<B> {
+    fn clone(&self) -> Self {
+        Injector {
+            send_buffer: self.send_buffer.clone(),
+            shared: self.shared.clone(),
         }
     }
 }
@@ -1109,105 +1666,75 @@ impl<B> StreamRef<B> {
     where
         B: Buf,
     {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let stream = me.store.resolve(self.opaque.key);
-        let actions = &mut me.actions;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        me.counts.transition(stream, |counts, stream| {
-            // Create the data frame
-            let mut frame = frame::Data::new(stream.id, data);
+        let (frame, prepared) = {
+            let mut frame = frame::Data::new(self.opaque.stream.id, data);
             frame.set_end_stream(end_stream);
+            let prepared = Send::prepare_data(&frame, &self.opaque.stream)?;
+            (frame, prepared)
+        };
 
-            // Send the data frame
-            actions
-                .send
-                .send_data(frame, send_buffer, stream, counts, &mut actions.task)
-        })
+        self.send_buffer
+            .push_pending_op_data(frame.into(), &self.opaque.stream);
+
+        self.opaque
+            .shared
+            .push_op(ConnOp::Data { prepared }, self.opaque.stream.clone());
+
+        Ok(())
     }
 
     pub fn send_trailers(&mut self, trailers: HeaderMap) -> Result<(), UserError> {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        if !self.opaque.stream.state().state.is_send_streaming() {
+            return Err(UserError::UnexpectedFrameType);
+        }
+        self.opaque.stream.state().state.send_close();
+        let frame = frame::Headers::trailers(self.opaque.stream.id, trailers);
 
-        let stream = me.store.resolve(self.opaque.key);
-        let actions = &mut me.actions;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
+        self.opaque
+            .shared
+            .push_op(ConnOp::Trailers { frame }, self.opaque.stream.clone());
 
-        me.counts.transition(stream, |counts, stream| {
-            // Create the trailers frame
-            let frame = frame::Headers::trailers(stream.id, trailers);
-
-            // Send the trailers frame
-            actions
-                .send
-                .send_trailers(frame, send_buffer, stream, counts, &mut actions.task)
-        })
+        Ok(())
     }
 
     pub fn send_reset(&mut self, reason: Reason) {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        let has_queued_request_headers = self
+            .opaque
+            .shared
+            .has_queued_request_headers_for(self.opaque.stream.id);
+        let prepared = Send::prepare_reset(
+            &self.opaque.stream,
+            self.is_pending_open() || has_queued_request_headers,
+            reason,
+            Initiator::User,
+        );
 
-        let stream = me.store.resolve(self.opaque.key);
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        match me
-            .actions
-            .send_reset(stream, reason, Initiator::User, &mut me.counts, send_buffer)
-        {
-            Ok(()) => (),
-            Err(crate::proto::error::GoAway { .. }) => {
-                // this should never happen, because Initiator::User resets do
-                // not count toward the local limit.
-                // we could perhaps make this state impossible, if we made the
-                // initiator argument a generic, and so this could return
-                // Infallible instead of an impossible GoAway, but oh well.
-                unreachable!("Initiator::User should not error sending reset");
-            }
+        if let Some(prepared) = prepared {
+            self.opaque.shared.push_op(
+                ConnOp::Reset { reason, prepared },
+                self.opaque.stream.clone(),
+            );
         }
     }
 
     pub fn send_informational_headers(&mut self, frame: frame::Headers) -> Result<(), UserError> {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        debug_assert!(
+            frame.is_informational(),
+            "Frame must be informational after conversion from informational response"
+        );
 
-        let stream = me.store.resolve(self.opaque.key);
-        let actions = &mut me.actions;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
+        if frame.is_end_stream() {
+            return Err(UserError::UnexpectedFrameType);
+        }
 
-        me.counts.transition(stream, |counts, stream| {
-            // For informational responses (1xx), we need to send headers without
-            // changing the stream state. This allows multiple informational responses
-            // to be sent before the final response.
+        Send::check_headers(frame.fields())?;
 
-            // Validate that this is actually an informational response
-            debug_assert!(
-                frame.is_informational(),
-                "Frame must be informational after conversion from informational response"
-            );
+        self.opaque.shared.push_op(
+            ConnOp::InformationalHeaders { frame },
+            self.opaque.stream.clone(),
+        );
 
-            // Ensure the frame is not marked as end_stream for informational responses
-            if frame.is_end_stream() {
-                return Err(UserError::UnexpectedFrameType);
-            }
-
-            // Send the interim informational headers directly to the buffer without state changes
-            // This bypasses the normal send_headers flow that would transition the stream state
-            actions.send.send_interim_informational_headers(
-                frame,
-                send_buffer,
-                stream,
-                counts,
-                &mut actions.task,
-            )
-        })
+        Ok(())
     }
 
     pub fn send_response(
@@ -1217,21 +1744,17 @@ impl<B> StreamRef<B> {
     ) -> Result<(), UserError> {
         // Clear before taking lock, incase extensions contain a StreamRef.
         response.extensions_mut().clear();
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        let frame =
+            server::Peer::convert_send_message(self.opaque.stream.id, response, end_of_stream);
+        Send::check_headers(frame.fields())?;
+        self.opaque.stream.state().state.send_open(end_of_stream)?;
 
-        let stream = me.store.resolve(self.opaque.key);
-        let actions = &mut me.actions;
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
+        self.opaque.shared.push_op(
+            ConnOp::ResponseHeaders { frame },
+            self.opaque.stream.clone(),
+        );
 
-        me.counts.transition(stream, |counts, stream| {
-            let frame = server::Peer::convert_send_message(stream.id, response, end_of_stream);
-
-            actions
-                .send
-                .send_headers(frame, send_buffer, stream, counts, &mut actions.task)
-        })
+        Ok(())
     }
 
     pub fn send_push_promise(
@@ -1240,49 +1763,35 @@ impl<B> StreamRef<B> {
     ) -> Result<StreamRef<B>, UserError> {
         // Clear before taking lock, incase extensions contain a StreamRef.
         request.extensions_mut().clear();
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        let promised_id = self.opaque.shared.send.reserve_local()?;
 
-        let mut send_buffer = self.send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
-
-        let actions = &mut me.actions;
-        let promised_id = actions.send.reserve_local()?;
-
-        let child_key = {
-            let mut child_stream = me.store.insert(
-                promised_id,
-                Stream::new(
-                    promised_id,
-                    actions.send.init_window_sz(),
-                    actions.recv.init_window_sz(),
-                ),
-            );
-            child_stream.state.reserve_local()?;
-            child_stream.is_pending_push = true;
-            child_stream.key()
-        };
-
-        let pushed = {
-            let mut stream = me.store.resolve(self.opaque.key);
-
-            let frame = crate::server::Peer::convert_push_message(stream.id, promised_id, request)?;
-
-            actions
-                .send
-                .send_push_promise(frame, send_buffer, &mut stream, &mut actions.task)
-        };
-
-        if let Err(err) = pushed {
-            let mut child_stream = me.store.resolve(child_key);
-            child_stream.unlink();
-            child_stream.remove();
-            return Err(err);
+        if !self.opaque.shared.send.is_push_enabled() {
+            return Err(UserError::PeerDisabledServerPush);
         }
 
-        me.refs += 1;
-        let opaque =
-            OpaqueStreamRef::new(self.opaque.inner.clone(), &mut me.store.resolve(child_key));
+        let frame =
+            crate::server::Peer::convert_push_message(self.opaque.stream.id, promised_id, request)?;
+        Send::check_headers(frame.fields())?;
+
+        let child_stream = stream::Shared::new(
+            promised_id,
+            self.opaque.shared.send.init_window_sz(),
+            self.opaque.shared.recv.init_window_sz(),
+        );
+        {
+            child_stream.state().state.reserve_local()?;
+            child_stream.state().is_pending_push = true;
+        }
+
+        self.opaque.shared.push_op(
+            ConnOp::PushPromise {
+                frame,
+                promised: child_stream.clone(),
+            },
+            self.opaque.stream.clone(),
+        );
+
+        let opaque = OpaqueStreamRef::from_shared(self.opaque.shared.clone(), child_stream);
 
         Ok(StreamRef {
             opaque,
@@ -1298,49 +1807,37 @@ impl<B> StreamRef<B> {
     ///
     /// This function panics if the request isn't present.
     pub fn take_request(&self) -> Request<()> {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.opaque.key);
-        me.actions.recv.take_request(&mut stream)
+        super::recv::take_request(&self.opaque.stream, &self.opaque.shared.recv)
     }
 
     /// Called by a client to see if the current stream is pending open
     pub fn is_pending_open(&self) -> bool {
-        let mut me = self.opaque.inner.lock().unwrap();
-        me.store.resolve(self.opaque.key).is_pending_open
+        self.opaque.stream.is_pending_open()
     }
 
     /// Request capacity to send data
     pub fn reserve_capacity(&mut self, capacity: WindowSize) {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
+        let prepared = send::prepare_reserve_capacity(capacity, &self.opaque.stream);
 
-        let mut stream = me.store.resolve(self.opaque.key);
-
-        me.actions
-            .send
-            .reserve_capacity(capacity, &mut stream, &mut me.counts)
+        if let Some(prepared) = prepared {
+            self.opaque.shared.push_op(
+                ConnOp::ReserveCapacity { prepared },
+                self.opaque.stream.clone(),
+            );
+        }
     }
 
     /// Returns the stream's current send capacity.
     pub fn capacity(&self) -> WindowSize {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.opaque.key);
-
-        me.actions.send.capacity(&mut stream)
+        self.opaque.shared.send.capacity(&self.opaque.stream)
     }
 
     /// Request to be notified when the stream's capacity increases
     pub fn poll_capacity(&mut self, cx: &Context) -> Poll<Option<Result<WindowSize, UserError>>> {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.opaque.key);
-
-        me.actions.send.poll_capacity(cx, &mut stream)
+        self.opaque
+            .shared
+            .send
+            .poll_capacity(cx, &self.opaque.stream)
     }
 
     /// Request to be notified for if a `RST_STREAM` is received for this stream.
@@ -1349,12 +1846,7 @@ impl<B> StreamRef<B> {
         cx: &Context,
         mode: proto::PollReset,
     ) -> Poll<Result<Reason, crate::Error>> {
-        let mut me = self.opaque.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.opaque.key);
-
-        me.actions.send.poll_reset(cx, &mut stream, mode)
+        super::send::poll_reset(cx, &self.opaque.stream, mode)
     }
 
     pub fn clone_to_opaque(&self) -> OpaqueStreamRef {
@@ -1378,21 +1870,17 @@ impl<B> Clone for StreamRef<B> {
 // ===== impl OpaqueStreamRef =====
 
 impl OpaqueStreamRef {
-    fn new(inner: Arc<Mutex<Inner>>, stream: &mut store::Ptr) -> OpaqueStreamRef {
+    fn new(shared: Arc<Shared>, stream: &mut store::Ptr) -> OpaqueStreamRef {
+        OpaqueStreamRef::from_shared(shared, stream.clone_shared())
+    }
+
+    fn from_shared(shared: Arc<Shared>, stream: Arc<stream::Shared>) -> OpaqueStreamRef {
         stream.ref_inc();
-        OpaqueStreamRef {
-            inner,
-            key: stream.key(),
-        }
+        OpaqueStreamRef { shared, stream }
     }
     /// Called by a client to check for a received response.
     pub fn poll_response(&mut self, cx: &Context) -> Poll<Result<Response<()>, proto::Error>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_response(cx, &mut stream)
+        super::recv::poll_response(cx, &self.stream, &self.shared.recv)
     }
 
     /// Called by a client to check for informational responses (1xx status codes)
@@ -1400,213 +1888,160 @@ impl OpaqueStreamRef {
         &mut self,
         cx: &Context,
     ) -> Poll<Option<Result<Response<()>, proto::Error>>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_informational(cx, &mut stream)
+        super::recv::poll_informational(cx, &self.stream, &self.shared.recv)
     }
     /// Called by a client to check for a pushed request.
     pub fn poll_pushed(
         &mut self,
         cx: &Context,
     ) -> Poll<Option<Result<(Request<()>, OpaqueStreamRef), proto::Error>>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-        me.actions
-            .recv
-            .poll_pushed(cx, &mut stream)
-            .map_ok(|(h, key)| {
-                me.refs += 1;
-                let opaque_ref =
-                    OpaqueStreamRef::new(self.inner.clone(), &mut me.store.resolve(key));
-                (h, opaque_ref)
-            })
+        super::recv::poll_pushed(cx, &self.stream, &self.shared.recv).map_ok(|(h, stream)| {
+            let opaque_ref = OpaqueStreamRef::from_shared(self.shared.clone(), stream);
+            (h, opaque_ref)
+        })
     }
 
     pub fn is_end_stream(&self) -> bool {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let stream = me.store.resolve(self.key);
-
-        me.actions.recv.is_end_stream(&stream)
+        super::recv::is_end_stream(&self.stream)
     }
 
     pub fn poll_data(&mut self, cx: &Context) -> Poll<Option<Result<Bytes, proto::Error>>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_data(cx, &mut stream)
+        super::recv::poll_data(cx, &self.stream, &self.shared.recv)
     }
 
     pub fn poll_trailers(&mut self, cx: &Context) -> Poll<Option<Result<HeaderMap, proto::Error>>> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-
-        me.actions.recv.poll_trailers(cx, &mut stream)
+        super::recv::poll_trailers(cx, &self.stream, &self.shared.recv)
     }
 
     pub(crate) fn available_recv_capacity(&self) -> isize {
-        let me = self.inner.lock().unwrap();
-        let me = &*me;
-
-        let stream = &me.store[self.key];
-        stream.recv_flow.available().into()
+        self.stream.recv().recv_flow.available().into()
     }
 
     pub(crate) fn used_recv_capacity(&self) -> WindowSize {
-        let me = self.inner.lock().unwrap();
-        let me = &*me;
-
-        let stream = &me.store[self.key];
-        stream.in_flight_recv_data
+        self.stream.recv().in_flight_recv_data
     }
 
     /// Releases recv capacity back to the peer. This may result in sending
     /// WINDOW_UPDATE frames on both the stream and connection.
     pub fn release_capacity(&mut self, capacity: WindowSize) -> Result<(), UserError> {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
+        super::recv::release_capacity_local(capacity, &self.stream)?;
 
-        let mut stream = me.store.resolve(self.key);
+        self.shared
+            .push_op(ConnOp::ReleaseCapacity { capacity }, self.stream.clone());
 
-        me.actions
-            .recv
-            .release_capacity(capacity, &mut stream, &mut me.actions.task)
+        Ok(())
     }
 
     /// Clear the receive queue and set the status to no longer receive data frames.
     pub(crate) fn clear_recv_buffer(&mut self) {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-
-        let mut stream = me.store.resolve(self.key);
-        stream.is_recv = false;
-        me.actions.recv.clear_recv_buffer(&mut stream);
+        self.stream.recv().is_recv = false;
+        self.shared.recv.clear(&self.stream);
     }
 
     pub fn stream_id(&self) -> StreamId {
-        self.inner.lock().unwrap().store[self.key].id
+        self.stream.id
     }
 }
 
 impl fmt::Debug for OpaqueStreamRef {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        use std::sync::TryLockError::*;
-
-        match self.inner.try_lock() {
-            Ok(me) => {
-                let stream = &me.store[self.key];
-                fmt.debug_struct("OpaqueStreamRef")
-                    .field("stream_id", &stream.id)
-                    .field("ref_count", &stream.ref_count)
-                    .finish()
-            }
-            Err(Poisoned(_)) => fmt
-                .debug_struct("OpaqueStreamRef")
-                .field("inner", &"<Poisoned>")
-                .finish(),
-            Err(WouldBlock) => fmt
-                .debug_struct("OpaqueStreamRef")
-                .field("inner", &"<Locked>")
-                .finish(),
-        }
+        let state = self.stream.state();
+        fmt.debug_struct("OpaqueStreamRef")
+            .field("stream_id", &self.stream.id)
+            .field("ref_count", &state.ref_count)
+            .finish()
     }
 }
 
 impl Clone for OpaqueStreamRef {
     fn clone(&self) -> Self {
-        // Increment the ref count
-        let mut inner = self.inner.lock().unwrap();
-        inner.store.resolve(self.key).ref_inc();
-        inner.refs += 1;
+        self.stream.ref_inc();
 
         OpaqueStreamRef {
-            inner: self.inner.clone(),
-            key: self.key,
+            shared: self.shared.clone(),
+            stream: self.stream.clone(),
         }
     }
 }
 
 impl Drop for OpaqueStreamRef {
     fn drop(&mut self) {
-        drop_stream_ref(&self.inner, self.key);
+        drop_stream_ref(&self.shared, &self.stream);
     }
 }
 
 // TODO: Move back in fn above
-fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
-    let mut me = match inner.lock() {
-        Ok(inner) => inner,
-        Err(_) => {
-            if ::std::thread::panicking() {
-                tracing::trace!("StreamRef::drop; mutex poisoned");
-                return;
-            } else {
-                panic!("StreamRef::drop; mutex poisoned");
-            }
-        }
-    };
-
-    let me = &mut *me;
-    me.refs -= 1;
-    let mut stream = me.store.resolve(key);
-
+fn drop_stream_ref(shared: &Shared, stream: &Arc<stream::Shared>) {
     tracing::trace!("drop_stream_ref; stream={:?}", stream);
+
+    // Keep the stream alive until the deferred cleanup op runs.
+    stream.ops_inc();
 
     // decrement the stream's ref count by 1.
     stream.ref_dec();
 
-    let actions = &mut me.actions;
+    shared.enqueue_op(ConnOp::DropStreamRef, stream.clone());
+}
 
-    // If the stream is not referenced and it is already
-    // closed (does not have to go through logic below
-    // of canceling the stream), we should notify the task
-    // (connection) so that it can close properly
-    if stream.ref_count == 0 && stream.is_closed() {
-        if let Some(task) = actions.task.take() {
-            task.wake();
-        }
+fn release_queued_send_ref(
+    actions: &mut Actions,
+    counts: &mut Counts,
+    shared: &Shared,
+    counts_shared: &counts::Shared,
+    store: &mut Store,
+    stream: &Arc<stream::Shared>,
+) {
+    let Some(stream) = store.find_mut_even_if_unlinked(&stream) else {
+        return;
+    };
+
+    tracing::trace!("release_queued_send_ref; stream={:?}", stream);
+
+    let is_closed = stream.is_closed();
+    let is_unreferenced_and_closed = {
+        let shared = stream.shared();
+        shared.ref_count == 0 && is_closed
+    };
+    if is_unreferenced_and_closed {
+        shared.conn_task.wake();
     }
 
-    me.counts.transition(stream, |counts, stream| {
-        maybe_cancel(stream, actions, counts);
+    counts.transition(counts_shared, stream, |counts, stream| {
+        maybe_cancel(stream, actions, &shared.counts, counts, &shared.conn_task);
 
-        if stream.ref_count == 0 {
-            // Release any recv window back to connection, no one can access
-            // it anymore.
+        if stream.shared().ref_count == 0 {
             actions
                 .recv
-                .release_closed_capacity(stream, &mut actions.task);
+                .release_closed_capacity(stream, &shared.conn_task, &shared.recv);
 
-            // We won't be able to reach our push promises anymore
-            let mut ppp = stream.pending_push_promises.take();
-            while let Some(promise) = ppp.pop(stream.store_mut()) {
-                counts.transition(promise, |counts, stream| {
-                    maybe_cancel(stream, actions, counts);
-                });
+            while let Some(promise) = shared.recv.pop_pushed(stream.shared_ref()) {
+                if let Some(promise) = stream.store_mut().find_mut(&promise.id) {
+                    counts.transition(counts_shared, promise, |counts, stream| {
+                        maybe_cancel(stream, actions, counts_shared, counts, &shared.conn_task);
+                    });
+                }
             }
         }
     });
 }
 
-fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Counts) {
+fn maybe_cancel(
+    stream: &mut store::Ptr,
+    actions: &mut Actions,
+    counts_shared: &counts::Shared,
+    counts: &mut Counts,
+    conn_task: &ConnWaker,
+) {
     if stream.is_canceled_interest() {
         // Server is allowed to early respond without fully consuming the client input stream
         // But per the RFC, must send a RST_STREAM(NO_ERROR) in such cases. https://www.rfc-editor.org/rfc/rfc7540#section-8.1
         // Some other http2 implementation may interpret other error code as fatal if not respected (i.e: nginx https://trac.nginx.org/nginx/ticket/2376)
-        let reason = if counts.peer().is_server()
-            && stream.state.is_send_closed()
-            && stream.state.is_recv_streaming()
-        {
+        let reason = if {
+            let shared = stream.shared();
+            counts.peer().is_server()
+                && shared.state.is_send_closed()
+                && shared.state.is_recv_streaming()
+        } {
             Reason::NO_ERROR
         } else {
             Reason::CANCEL
@@ -1614,7 +2049,7 @@ fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Cou
 
         actions
             .send
-            .schedule_implicit_reset(stream, reason, counts, &mut actions.task);
+            .schedule_implicit_reset(stream, reason, counts_shared, counts, conn_task);
         actions.recv.enqueue_reset_expiration(stream, counts);
     }
 }
@@ -1631,6 +2066,54 @@ impl<B> SendBuffer<B> {
         let buf = self.inner.lock().unwrap();
         buf.is_empty()
     }
+
+    fn push_pending_op_data(&self, frame: Frame<B>, stream: &stream::Shared) {
+        let mut send_frames = self.inner.lock().unwrap();
+        stream
+            .send()
+            .pending_op_data
+            .push_back(&mut send_frames, frame);
+    }
+}
+
+impl Shared {
+    fn push_op(&self, op: ConnOp, stream: Arc<stream::Shared>) {
+        stream.ops_inc();
+        self.enqueue_op(op, stream);
+    }
+
+    fn enqueue_op(&self, op: ConnOp, stream: Arc<stream::Shared>) {
+        if matches!(&op, ConnOp::RequestHeaders { .. }) {
+            self.queued_request_headers.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut pending_ops = self.pending_ops.lock().unwrap();
+        pending_ops.push_back(QueuedOp { stream, op });
+
+        self.conn_task.wake();
+    }
+
+    fn pending_request_headers_count(&self) -> usize {
+        self.queued_request_headers.load(Ordering::Relaxed)
+    }
+
+    fn has_queued_request_headers_for(&self, id: StreamId) -> bool {
+        self.pending_ops
+            .lock()
+            .unwrap()
+            .has_queued_request_headers_for(id)
+    }
+
+    fn has_queued_frame_for(&self, id: StreamId) -> bool {
+        self.pending_ops.lock().unwrap().has_queued_frame_for(id)
+    }
+
+    fn ensure_no_conn_error(&self) -> Result<(), proto::Error> {
+        if let Some(ref err) = *self.conn_error.read().unwrap() {
+            Err(err.clone())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 // ===== impl Actions =====
@@ -1641,10 +2124,12 @@ impl Actions {
         stream: store::Ptr,
         reason: Reason,
         initiator: Initiator,
+        counts_shared: &counts::Shared,
         counts: &mut Counts,
         send_buffer: &mut Buffer<Frame<B>>,
+        conn_task: &ConnWaker,
     ) -> Result<(), crate::proto::error::GoAway> {
-        counts.transition(stream, |counts, stream| {
+        counts.transition(counts_shared, stream, |counts, stream| {
             if initiator.is_library() {
                 if counts.can_inc_num_local_error_resets() {
                     counts.inc_num_local_error_resets();
@@ -1665,8 +2150,9 @@ impl Actions {
                 initiator,
                 send_buffer,
                 stream,
+                counts_shared,
                 counts,
-                &mut self.task,
+                conn_task,
             );
             self.recv.enqueue_reset_expiration(stream, counts);
             // if a RecvStream is parked, ensure it's notified
@@ -1680,8 +2166,10 @@ impl Actions {
         &mut self,
         buffer: &mut Buffer<Frame<B>>,
         stream: &mut store::Ptr,
+        counts_shared: &counts::Shared,
         counts: &mut Counts,
         res: Result<(), Error>,
+        conn_task: &ConnWaker,
     ) -> Result<(), Error> {
         if let Err(Error::Reset(stream_id, reason, initiator)) = res {
             debug_assert_eq!(stream_id, stream.id);
@@ -1690,8 +2178,15 @@ impl Actions {
                 counts.inc_num_local_error_resets();
 
                 // Reset the stream.
-                self.send
-                    .send_reset(reason, initiator, buffer, stream, counts, &mut self.task);
+                self.send.send_reset(
+                    reason,
+                    initiator,
+                    buffer,
+                    stream,
+                    counts_shared,
+                    counts,
+                    conn_task,
+                );
                 self.recv.enqueue_reset_expiration(stream, counts);
                 // if a RecvStream is parked, ensure it's notified
                 stream.notify_recv();
@@ -1711,19 +2206,16 @@ impl Actions {
         }
     }
 
-    fn ensure_not_idle(&mut self, peer: peer::Dyn, id: StreamId) -> Result<(), Reason> {
+    fn ensure_not_idle(
+        &self,
+        peer: peer::Dyn,
+        shared: &Shared,
+        id: StreamId,
+    ) -> Result<(), Reason> {
         if peer.is_local_init(id) {
-            self.send.ensure_not_idle(id)
+            shared.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
-        }
-    }
-
-    fn ensure_no_conn_error(&self) -> Result<(), proto::Error> {
-        if let Some(ref err) = self.conn_error {
-            Err(err.clone())
-        } else {
-            Ok(())
         }
     }
 
@@ -1736,19 +2228,42 @@ impl Actions {
     /// is more likely to be latency/memory constraints that caused this,
     /// and not a bad actor. So be less catastrophic, the spec allows
     /// us to send another RST_STREAM of STREAM_CLOSED.
-    fn may_have_forgotten_stream(&self, peer: peer::Dyn, id: StreamId) -> bool {
+    fn may_have_forgotten_stream(&self, peer: peer::Dyn, shared: &Shared, id: StreamId) -> bool {
         if id.is_zero() {
             return false;
         }
         if peer.is_local_init(id) {
-            self.send.may_have_created_stream(id)
+            shared.send.may_have_created_stream(id)
         } else {
             self.recv.may_have_created_stream(id)
         }
     }
 
-    fn clear_queues(&mut self, clear_pending_accept: bool, store: &mut Store, counts: &mut Counts) {
-        self.recv.clear_queues(clear_pending_accept, store, counts);
-        self.send.clear_queues(store, counts);
+    fn clear_queues(
+        &mut self,
+        clear_pending_accept: bool,
+        counts_shared: &counts::Shared,
+        store: &mut Store,
+        counts: &mut Counts,
+    ) {
+        self.recv
+            .clear_queues(clear_pending_accept, store, counts_shared, counts);
+        self.send.clear_queues(counts_shared, store, counts);
+    }
+}
+
+// ===== impl ConnWaker =====
+
+impl ConnWaker {
+    fn new() -> Self {
+        ConnWaker(atomic_waker::AtomicWaker::new())
+    }
+
+    pub(super) fn register(&self, waker: &Waker) {
+        self.0.register(waker);
+    }
+
+    pub(super) fn wake(&self) {
+        self.0.wake();
     }
 }

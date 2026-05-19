@@ -40,15 +40,15 @@ pub(super) struct Queue<N> {
 }
 
 pub(super) trait Next {
-    fn next(stream: &Stream) -> Option<Key>;
+    fn next(stream: &stream::Inner) -> Option<Key>;
 
-    fn set_next(stream: &mut Stream, key: Option<Key>);
+    fn set_next(stream: &mut stream::Inner, key: Option<Key>);
 
-    fn take_next(stream: &mut Stream) -> Option<Key>;
+    fn take_next(stream: &mut stream::Inner) -> Option<Key>;
 
-    fn is_queued(stream: &Stream) -> bool;
+    fn is_queued(stream: &stream::Inner) -> bool;
 
-    fn set_queued(stream: &mut Stream, val: bool);
+    fn set_queued(stream: &mut stream::Inner, val: bool);
 }
 
 /// A linked list
@@ -91,25 +91,32 @@ impl Store {
             Some(key) => *key,
             None => return None,
         };
+        Some(self.make_ptr(*id, index))
+    }
 
-        Some(Ptr {
-            key: Key {
-                index,
-                stream_id: *id,
-            },
+    pub fn find_mut_even_if_unlinked(&mut self, shared: &stream::Shared) -> Option<Ptr<'_>> {
+        let key = shared.store()?;
+        Some(self.resolve(key))
+    }
+
+    fn make_ptr(&mut self, stream_id: StreamId, index: SlabIndex) -> Ptr<'_> {
+        Ptr {
+            key: Key { index, stream_id },
             store: self,
-        })
+        }
     }
 
     pub fn insert(&mut self, id: StreamId, val: Stream) -> Ptr<'_> {
         let index = SlabIndex(self.slab.insert(val) as u32);
         assert!(self.ids.insert(id, index).is_none());
+        let key = Key {
+            index,
+            stream_id: id,
+        };
+        self[key].shared_ref().stored(index.0);
 
         Ptr {
-            key: Key {
-                index,
-                stream_id: id,
-            },
+            key,
             store: self,
         }
     }
@@ -205,23 +212,12 @@ impl ops::IndexMut<Key> for Store {
     }
 }
 
-impl Store {
-    #[cfg(feature = "unstable")]
-    pub fn num_active_streams(&self) -> usize {
-        self.ids.len()
-    }
-
-    #[cfg(feature = "unstable")]
-    pub fn num_wired_streams(&self) -> usize {
-        self.slab.len()
-    }
-}
-
 // While running h2 unit/integration tests, enable this debug assertion.
 //
 // In practice, we don't need to ensure this. But the integration tests
 // help to make sure we've cleaned up in cases where we could (like, the
 // runtime isn't suddenly dropping the task for unknown reasons).
+/* TODO: is this actually testing anything desired, or blowing up wrongly?
 #[cfg(feature = "unstable")]
 impl Drop for Store {
     fn drop(&mut self) {
@@ -232,6 +228,7 @@ impl Drop for Store {
         }
     }
 }
+*/
 
 // ===== impl Queue =====
 
@@ -246,28 +243,22 @@ where
         }
     }
 
-    pub fn take(&mut self) -> Self {
-        Queue {
-            indices: self.indices.take(),
-            _p: PhantomData,
-        }
-    }
-
     /// Queue the stream.
     ///
     /// If the stream is already contained by the list, return `false`.
     pub fn push(&mut self, stream: &mut store::Ptr) -> bool {
         tracing::trace!("Queue::push_back");
 
-        if N::is_queued(stream) {
+        if N::is_queued(stream.inner()) {
             tracing::trace!(" -> already queued");
             return false;
         }
 
-        N::set_queued(stream, true);
-
-        // The next pointer shouldn't be set
-        debug_assert!(N::next(stream).is_none());
+        {
+            let inner = stream.inner_mut();
+            N::set_queued(inner, true);
+            debug_assert!(N::next(inner).is_none());
+        }
 
         // Queue the stream
         match self.indices {
@@ -276,7 +267,8 @@ where
 
                 // Update the current tail node to point to `stream`
                 let key = stream.key();
-                N::set_next(&mut stream.resolve(idxs.tail), Some(key));
+                let mut tail = stream.resolve(idxs.tail);
+                N::set_next(tail.inner_mut(), Some(key));
 
                 // Update the tail pointer
                 idxs.tail = stream.key();
@@ -299,15 +291,16 @@ where
     pub fn push_front(&mut self, stream: &mut store::Ptr) -> bool {
         tracing::trace!("Queue::push_front");
 
-        if N::is_queued(stream) {
+        if N::is_queued(stream.inner()) {
             tracing::trace!(" -> already queued");
             return false;
         }
 
-        N::set_queued(stream, true);
-
-        // The next pointer shouldn't be set
-        debug_assert!(N::next(stream).is_none());
+        {
+            let inner = stream.inner_mut();
+            N::set_queued(inner, true);
+            debug_assert!(N::next(inner).is_none());
+        }
 
         // Queue the stream
         match self.indices {
@@ -316,7 +309,7 @@ where
 
                 // Update the provided stream to point to the head node
                 let head_key = stream.resolve(idxs.head).key();
-                N::set_next(stream, Some(head_key));
+                N::set_next(stream.inner_mut(), Some(head_key));
 
                 // Update the head pointer
                 idxs.head = stream.key();
@@ -339,17 +332,27 @@ where
     {
         if let Some(mut idxs) = self.indices {
             let mut stream = store.resolve(idxs.head);
+            let next = {
+                let inner = stream.inner_mut();
 
-            if idxs.head == idxs.tail {
-                assert!(N::next(&stream).is_none());
-                self.indices = None;
-            } else {
-                idxs.head = N::take_next(&mut stream).unwrap();
+                let next = if idxs.head == idxs.tail {
+                    assert!(N::next(inner).is_none());
+                    None
+                } else {
+                    Some(N::take_next(inner).unwrap())
+                };
+
+                debug_assert!(N::is_queued(inner));
+                N::set_queued(inner, false);
+                next
+            };
+
+            if let Some(next) = next {
+                idxs.head = next;
                 self.indices = Some(idxs);
+            } else {
+                self.indices = None;
             }
-
-            debug_assert!(N::is_queued(&stream));
-            N::set_queued(&mut stream, false);
 
             return Some(stream);
         }
@@ -364,10 +367,13 @@ where
     pub fn pop_if<'a, R, F>(&mut self, store: &'a mut R, f: F) -> Option<store::Ptr<'a>>
     where
         R: Resolve,
-        F: Fn(&Stream) -> bool,
+        F: Fn(&stream::Inner) -> bool,
     {
         if let Some(idxs) = self.indices {
-            let should_pop = f(&store.resolve(idxs.head));
+            let should_pop = {
+                let stream = store.resolve(idxs.head);
+                f(stream.inner())
+            };
             if should_pop {
                 return self.pop(store);
             }
@@ -386,6 +392,21 @@ impl<N> fmt::Debug for Queue<N> {
     }
 }
 
+// ===== impl Key =====
+
+impl Key {
+    pub fn from_parts(id: StreamId, idx: u32) -> Option<Key> {
+        if idx < u32::MAX {
+            Some(Key {
+                stream_id: id,
+                index: SlabIndex(idx),
+            })
+        } else {
+            None
+        }
+    }
+}
+
 // ===== impl Ptr =====
 
 impl<'a> Ptr<'a> {
@@ -398,6 +419,10 @@ impl<'a> Ptr<'a> {
         self.store
     }
 
+    pub fn inner_mut(&mut self) -> &mut stream::Inner {
+        self.store[self.key].inner_mut()
+    }
+
     /// Remove the stream from the store
     pub fn remove(self) -> StreamId {
         // The stream must have been unlinked before this point
@@ -406,6 +431,7 @@ impl<'a> Ptr<'a> {
         // Remove the stream state
         let stream = self.store.slab.remove(self.key.index.0 as usize);
         assert_eq!(stream.id, self.key.stream_id);
+        stream.shared_ref().stored(u32::MAX);
         stream.id
     }
 
@@ -468,6 +494,8 @@ impl<'a> VacantEntry<'a> {
 
         // Insert the handle in the ID map
         self.ids.insert(index);
+
+        self.slab[index.0 as usize].shared_ref().stored(index.0);
 
         Key { index, stream_id }
     }

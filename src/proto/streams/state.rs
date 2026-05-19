@@ -369,6 +369,17 @@ impl State {
         )
     }
 
+    pub fn is_local_reset(&self) -> bool {
+        matches!(
+            self.inner,
+            Closed(Cause::Error(Error::Reset(
+                _,
+                _,
+                Initiator::User | Initiator::Library
+            ))) | Closed(Cause::ScheduledLibraryReset(..))
+        )
+    }
+
     /// Returns true if the stream is already reset.
     pub fn is_reset(&self) -> bool {
         match self.inner {

@@ -348,6 +348,7 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
+        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -861,6 +862,7 @@ async fn recv_too_big_headers() {
             .unwrap();
 
         let req1 = client.send_request(request, true);
+        client = conn.drive(client.ready()).await.unwrap();
         // Spawn tasks to ensure that the error wakes up tasks that are blocked
         // waiting for a response.
         let req1 = async move {
@@ -1253,10 +1255,26 @@ async fn malformed_response_headers_dont_unlink_stream() {
 
         srv.recv_frame(frames::headers(1).request("GET", "http://example.com/"))
             .await;
-        srv.recv_frame(frames::headers(3).request("GET", "http://example.com/"))
-            .await;
-        srv.recv_frame(frames::headers(5).request("GET", "http://example.com/"))
-            .await;
+        loop {
+            match srv.next().await.unwrap().unwrap() {
+                frame::Frame::Data(d) if d.stream_id() == StreamId::from(1) => {}
+                frame::Frame::Headers(h) => {
+                    assert_frame_eq(h, frames::headers(3).request("GET", "http://example.com/"));
+                    break;
+                }
+                other => panic!("unexpected frame before stream 3 headers: {:?}", other),
+            }
+        }
+        loop {
+            match srv.next().await.unwrap().unwrap() {
+                frame::Frame::Data(d) if d.stream_id() == StreamId::from(1) => {}
+                frame::Frame::Headers(h) => {
+                    assert_frame_eq(h, frames::headers(5).request("GET", "http://example.com/"));
+                    break;
+                }
+                other => panic!("unexpected frame before stream 5 headers: {:?}", other),
+            }
+        }
         drop_tx.send(()).unwrap();
         queued_rx.await.unwrap();
         srv.send_bytes(&[
@@ -1280,7 +1298,7 @@ async fn malformed_response_headers_dont_unlink_stream() {
     }
 
     let client = async move {
-        let (mut client, conn) = client::Builder::new()
+        let (mut client, mut conn) = client::Builder::new()
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
@@ -1288,7 +1306,9 @@ async fn malformed_response_headers_dont_unlink_stream() {
         let (_req1, mut send1) = client.send_request(request(), false).unwrap();
         // Use up most of the connection window.
         send1.send_data(vec![0; 65534].into(), true).unwrap();
+        client = conn.drive(client.ready()).await.unwrap();
         let (req2, mut send2) = client.send_request(request(), false).unwrap();
+        client = conn.drive(client.ready()).await.unwrap();
         let (req3, mut send3) = client.send_request(request(), false).unwrap();
 
         let f = async move {

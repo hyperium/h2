@@ -12,6 +12,12 @@ pub struct Deque {
     indices: Option<Indices>,
 }
 
+#[derive(Debug)]
+pub struct Iter<'a, T> {
+    buf: &'a Buffer<T>,
+    next: Option<usize>,
+}
+
 /// Tracks the head & tail for a sequence of frames in a `Buffer`.
 #[derive(Debug, Default, Copy, Clone)]
 struct Indices {
@@ -42,6 +48,13 @@ impl Deque {
 
     pub fn is_empty(&self) -> bool {
         self.indices.is_none()
+    }
+
+    pub fn iter<'a, T>(&'a self, buf: &'a Buffer<T>) -> Iter<'a, T> {
+        Iter {
+            buf,
+            next: self.indices.map(|idxs| idxs.head),
+        }
     }
 
     pub fn push_back<T>(&mut self, buf: &mut Buffer<T>, value: T) {
@@ -95,5 +108,16 @@ impl Deque {
             }
             None => None,
         }
+    }
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let key = self.next?;
+        let slot = &self.buf.slab[key];
+        self.next = slot.next;
+        Some(&slot.value)
     }
 }

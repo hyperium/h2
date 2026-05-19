@@ -1,8 +1,11 @@
+use crate::proto;
 use crate::Reason;
 
 use super::*;
 
 use std::fmt;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::task::{Context, Waker};
 use std::time::Instant;
 
@@ -20,24 +23,38 @@ use std::time::Instant;
 pub(super) struct Stream {
     /// The h2 stream identifier
     pub id: StreamId,
+    shared_state: Arc<Shared>,
+    inner: Inner,
+}
 
+#[derive(Debug)]
+pub(super) struct Shared {
+    /// The h2 stream identifier
+    pub id: StreamId,
+    /// The store SlabIndex, if stored. If not, it will be u32::MAX.
+    store: AtomicU32,
+    state: Mutex<SharedState>,
+    send: Mutex<Send>,
+    recv: Mutex<Recv>,
+}
+
+#[derive(Debug)]
+pub(super) struct SharedState {
     /// Current state of the stream
     pub state: State,
-
-    /// Set to `true` when the stream is counted against the connection's max
-    /// concurrent streams.
-    pub is_counted: bool,
 
     /// Number of outstanding handles pointing to this stream
     pub ref_count: usize,
 
-    // ===== Fields related to sending =====
-    /// Next node in the accept linked list
-    pub next_pending_send: Option<store::Key>,
+    /// Number of queued send operations waiting to be applied.
+    pub pending_operation_count: usize,
 
-    /// Set to true when the stream is pending accept
-    pub is_pending_send: bool,
+    /// Set to true when a push is pending for this stream
+    pub is_pending_push: bool,
+}
 
+#[derive(Debug)]
+pub(super) struct Send {
     /// Send data flow control
     pub send_flow: FlowControl,
 
@@ -54,48 +71,22 @@ pub(super) struct Stream {
     /// Frames pending for this stream being sent to the socket
     pub pending_send: buffer::Deque,
 
-    /// Next node in the linked list of streams waiting for additional
-    /// connection level capacity.
-    pub next_pending_send_capacity: Option<store::Key>,
-
-    /// True if the stream is waiting for outbound connection capacity
-    pub is_pending_send_capacity: bool,
+    /// DATA frames queued by send ops but not yet applied on the connection task.
+    pub pending_op_data: buffer::Deque,
 
     /// Set to true when the send capacity has been incremented
     pub send_capacity_inc: bool,
 
-    /// Next node in the open linked list
-    pub next_open: Option<store::Key>,
-
-    /// Set to true when the stream is pending to be opened
+    /// Set to true when the stream is pending to be opened.
     pub is_pending_open: bool,
+}
 
-    /// Set to true when a push is pending for this stream
-    pub is_pending_push: bool,
-
-    // ===== Fields related to receiving =====
-    /// Next node in the accept linked list
-    pub next_pending_accept: Option<store::Key>,
-
-    /// Set to true when the stream is pending accept
-    pub is_pending_accept: bool,
-
+#[derive(Debug)]
+pub(super) struct Recv {
     /// Receive data flow control
     pub recv_flow: FlowControl,
 
     pub in_flight_recv_data: WindowSize,
-
-    /// Next node in the linked list of streams waiting to send window updates.
-    pub next_window_update: Option<store::Key>,
-
-    /// True if the stream is waiting to send a window update
-    pub is_pending_window_update: bool,
-
-    /// The time when this stream may have been locally reset.
-    pub reset_at: Option<Instant>,
-
-    /// Next node in list of reset streams that should expire eventually
-    pub next_reset_expire: Option<store::Key>,
 
     /// Frames pending for this stream to read
     pub pending_recv: buffer::Deque,
@@ -109,8 +100,54 @@ pub(super) struct Stream {
     /// Task tracking pushed promises.
     pub push_task: Option<Waker>,
 
-    /// The stream's pending push promises
-    pub pending_push_promises: store::Queue<NextAccept>,
+    /// Streams promised off this stream that are waiting to be observed.
+    pub pending_push_promises: buffer::Deque,
+}
+
+#[derive(Debug)]
+pub(super) struct Inner {
+    /// Set to `true` when the stream is counted against the connection's max
+    /// concurrent streams.
+    pub is_counted: bool,
+
+    // ===== Fields related to sending =====
+    /// Next node in the accept linked list
+    pub next_pending_send: Option<store::Key>,
+
+    /// Set to true when the stream is pending accept
+    pub is_pending_send: bool,
+
+    /// Next node in the linked list of streams waiting for additional
+    /// connection level capacity.
+    pub next_pending_send_capacity: Option<store::Key>,
+
+    /// True if the stream is waiting for outbound connection capacity
+    pub is_pending_send_capacity: bool,
+
+    /// Next node in the open linked list
+    pub next_open: Option<store::Key>,
+
+    /// Set to true when the stream is queued in the pending-open list.
+    pub is_queued_open: bool,
+
+    // ===== Fields related to receiving =====
+    /// Next node in the accept linked list
+    pub next_pending_accept: Option<store::Key>,
+
+    /// Set to true when the stream is pending accept
+    pub is_pending_accept: bool,
+
+    /// Next node in the linked list of streams waiting to send window updates.
+    pub next_window_update: Option<store::Key>,
+
+    /// True if the stream is waiting to send a window update
+    pub is_pending_window_update: bool,
+
+    /// The time when this stream may have been locally reset.
+    pub reset_at: Option<Instant>,
+
+    /// Next node in list of reset streams that should expire eventually
+    pub next_reset_expire: Option<store::Key>,
 
     /// Validate content-length headers
     pub content_length: ContentLength,
@@ -130,6 +167,7 @@ pub(super) struct NextAccept;
 #[derive(Debug)]
 pub(super) struct NextSend;
 
+/// Used for the "operation" queue
 #[derive(Debug)]
 pub(super) struct NextSendCapacity;
 
@@ -144,122 +182,109 @@ pub(super) struct NextResetExpire;
 
 impl Stream {
     pub fn new(id: StreamId, init_send_window: WindowSize, init_recv_window: WindowSize) -> Stream {
-        let mut send_flow = FlowControl::new();
-        let mut recv_flow = FlowControl::new();
+        let shared_state = Shared::new(id, init_send_window, init_recv_window);
+        Stream::new_with_shared(shared_state)
+    }
 
-        recv_flow
-            .inc_window(init_recv_window)
-            .expect("invalid initial receive window");
-        // TODO: proper error handling?
-        let _res = recv_flow.assign_capacity(init_recv_window);
-        debug_assert!(_res.is_ok());
-
-        send_flow
-            .inc_window(init_send_window)
-            .expect("invalid initial send window size");
-
+    pub fn new_with_shared(shared_state: Arc<Shared>) -> Stream {
+        let id = shared_state.id;
         Stream {
             id,
-            state: State::default(),
-            ref_count: 0,
-            is_counted: false,
+            shared_state,
+            inner: Inner {
+                is_counted: false,
 
-            // ===== Fields related to sending =====
-            next_pending_send: None,
-            is_pending_send: false,
-            send_flow,
-            requested_send_capacity: 0,
-            buffered_send_data: 0,
-            send_task: None,
-            pending_send: buffer::Deque::new(),
-            is_pending_send_capacity: false,
-            next_pending_send_capacity: None,
-            send_capacity_inc: false,
-            is_pending_open: false,
-            next_open: None,
-            is_pending_push: false,
+                // ===== Fields related to sending =====
+                next_pending_send: None,
+                is_pending_send: false,
+                is_pending_send_capacity: false,
+                next_pending_send_capacity: None,
+                is_queued_open: false,
+                next_open: None,
 
-            // ===== Fields related to receiving =====
-            next_pending_accept: None,
-            is_pending_accept: false,
-            recv_flow,
-            in_flight_recv_data: 0,
-            next_window_update: None,
-            is_pending_window_update: false,
-            reset_at: None,
-            next_reset_expire: None,
-            pending_recv: buffer::Deque::new(),
-            is_recv: true,
-            recv_task: None,
-            push_task: None,
-            pending_push_promises: store::Queue::new(),
-            content_length: ContentLength::Omitted,
+                // ===== Fields related to receiving =====
+                next_pending_accept: None,
+                is_pending_accept: false,
+                next_window_update: None,
+                is_pending_window_update: false,
+                reset_at: None,
+                next_reset_expire: None,
+                content_length: ContentLength::Omitted,
+            },
         }
     }
 
-    /// Increment the stream's ref count
-    pub fn ref_inc(&mut self) {
-        assert!(self.ref_count < usize::MAX);
-        self.ref_count += 1;
+    pub fn shared_ref(&self) -> &Shared {
+        self.shared_state.as_ref()
     }
 
-    /// Decrements the stream's ref count
-    pub fn ref_dec(&mut self) {
-        assert!(self.ref_count > 0);
-        self.ref_count -= 1;
+    pub fn clone_shared(&self) -> Arc<Shared> {
+        self.shared_state.clone()
+    }
+
+    pub fn shared(&self) -> MutexGuard<'_, SharedState> {
+        self.shared_state.state()
+    }
+
+    pub fn send(&self) -> MutexGuard<'_, Send> {
+        self.shared_state.send()
+    }
+
+    pub fn recv(&self) -> MutexGuard<'_, Recv> {
+        self.shared_state.recv()
+    }
+
+    pub fn inner(&self) -> &Inner {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut Inner {
+        &mut self.inner
     }
 
     /// Returns true if stream is currently being held for some time because of
     /// a local reset.
     pub fn is_pending_reset_expiration(&self) -> bool {
-        self.reset_at.is_some()
+        self.inner().is_pending_reset_expiration()
     }
 
     /// Returns true if frames for this stream are ready to be sent over the wire
     pub fn is_send_ready(&self) -> bool {
-        // Why do we check pending_open?
-        //
-        // We allow users to call send_request() which schedules a stream to be pending_open
-        // if there is no room according to the concurrency limit (max_send_streams), and we
-        // also allow data to be buffered for send with send_data() if there is no capacity for
-        // the stream to send the data, which attempts to place the stream in pending_send.
-        // If the stream is not open, we don't want the stream to be scheduled for
-        // execution (pending_send). Note that if the stream is in pending_open, it will be
-        // pushed to pending_send when there is room for an open stream.
-        //
-        // In pending_push we track whether a PushPromise still needs to be sent
-        // from a different stream before we can start sending frames on this one.
-        // This is different from the "open" check because reserved streams don't count
-        // toward the concurrency limit.
-        // See https://httpwg.org/specs/rfc7540.html#rfc.section.5.1.2
-        !self.is_pending_open && !self.is_pending_push
+        let is_pending_open = self.send().is_pending_open;
+        let is_pending_push = self.shared().is_pending_push;
+        !is_pending_open && !is_pending_push
     }
 
     /// Returns true if the stream is closed
     pub fn is_closed(&self) -> bool {
-        // The state has fully transitioned to closed.
-        self.state.is_closed() &&
-            // Because outbound frames transition the stream state before being
-            // buffered, we have to ensure that all frames have been flushed.
-            self.pending_send.is_empty() &&
-            // Sometimes large data frames are sent out in chunks. After a chunk
-            // of the frame is sent, the remainder is pushed back onto the send
-            // queue to be rescheduled.
-            //
-            // Checking for additional buffered data lets us catch this case.
-            self.buffered_send_data == 0
+        self.shared_state.is_closed()
     }
 
     /// Returns true if the stream is no longer in use
     pub fn is_released(&self) -> bool {
-        // The stream is closed and fully flushed
-        self.is_closed() &&
-            // There are no more outstanding references to the stream
-            self.ref_count == 0 &&
-            // The stream is not in any queue
-            !self.is_pending_send && !self.is_pending_send_capacity &&
-            !self.is_pending_accept && !self.is_pending_window_update &&
-            !self.is_pending_open && self.reset_at.is_none()
+        let (ref_count, pending_operation_count, is_closed) = {
+            let shared = self.shared();
+            let send = self.send();
+            (
+                shared.ref_count,
+                shared.pending_operation_count,
+                shared.state.is_closed()
+                    && send.pending_send.is_empty()
+                    && send.pending_op_data.is_empty()
+                    && send.buffered_send_data == 0,
+            )
+        };
+
+        let inner = self.inner();
+        is_closed
+            && ref_count == 0
+            && pending_operation_count == 0
+            && !inner.is_pending_send
+            && !inner.is_pending_send_capacity
+            && !inner.is_pending_accept
+            && !inner.is_pending_window_update
+            && !inner.is_queued_open
+            && inner.reset_at.is_none()
     }
 
     /// Returns true when the consumer of the stream has dropped all handles
@@ -268,74 +293,506 @@ impl Stream {
     ///
     /// In this case, a reset should be sent.
     pub fn is_canceled_interest(&self) -> bool {
-        self.ref_count == 0 && !self.state.is_closed()
+        self.shared_state.is_canceled_interest()
     }
 
-    /// Current available stream send capacity
-    pub fn capacity(&self, max_buffer_size: usize) -> WindowSize {
-        let available = self.send_flow.available().as_size() as usize;
-        let buffered = self.buffered_send_data;
-
-        available.min(max_buffer_size).saturating_sub(buffered) as WindowSize
+    pub fn assign_capacity(&self, capacity: WindowSize, max_buffer_size: usize) {
+        self.shared_state.assign_capacity(capacity, max_buffer_size);
     }
 
-    pub fn assign_capacity(&mut self, capacity: WindowSize, max_buffer_size: usize) {
-        let prev_capacity = self.capacity(max_buffer_size);
-        debug_assert!(capacity > 0);
-        // TODO: proper error handling
-        let _res = self.send_flow.assign_capacity(capacity);
-        debug_assert!(_res.is_ok());
-
-        tracing::trace!(
-            "  assigned capacity to stream; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
-            self.send_flow.available(),
-            self.buffered_send_data,
-            self.id,
-            max_buffer_size,
-            prev_capacity,
-        );
-
-        if prev_capacity < self.capacity(max_buffer_size) {
-            self.notify_capacity();
-        }
-    }
-
-    pub fn send_data(&mut self, len: WindowSize, max_buffer_size: usize) {
-        let prev_capacity = self.capacity(max_buffer_size);
-
-        // TODO: proper error handling
-        let _res = self.send_flow.send_data(len);
-        debug_assert!(_res.is_ok());
-
-        // Decrement the stream's buffered data counter
-        debug_assert!(self.buffered_send_data >= len as usize);
-        self.buffered_send_data -= len as usize;
-        self.requested_send_capacity -= len;
-
-        tracing::trace!(
-            "  sent stream data; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
-            self.send_flow.available(),
-            self.buffered_send_data,
-            self.id,
-            max_buffer_size,
-            prev_capacity,
-        );
-
-        if prev_capacity < self.capacity(max_buffer_size) {
-            self.notify_capacity();
-        }
+    pub fn send_data(&self, len: WindowSize, max_buffer_size: usize) {
+        self.shared_state.send_data(len, max_buffer_size);
     }
 
     /// If the capacity was limited because of the max_send_buffer_size,
     /// then consider waking the send task again...
-    pub fn notify_capacity(&mut self) {
+    /// Returns `Err` when the decrement cannot be completed due to overflow.
+    pub fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
+        self.inner_mut().dec_content_length(len)
+    }
+
+    pub fn ensure_content_length_zero(&self) -> Result<(), ()> {
+        self.inner().ensure_content_length_zero()
+    }
+
+    pub fn notify_send(&self) {
+        self.shared_state.notify_send();
+    }
+
+    pub fn notify_recv(&self) {
+        self.shared_state.notify_recv();
+    }
+
+    pub(super) fn notify_push(&self) {
+        self.shared_state.notify_push();
+    }
+
+    /// Set the stream's state to `Closed` with the given reason and initiator.
+    /// Notify the send, receive, and push tasks, if they exist.
+    pub(super) fn set_reset(&self, reason: Reason, initiator: Initiator) {
+        self.shared_state.set_reset(reason, initiator);
+    }
+}
+
+impl fmt::Debug for Stream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let inner = self.inner();
+        let state = self.shared();
+        let send = self.send();
+        let recv = self.recv();
+        f.debug_struct("Stream")
+            .field("id", &self.id)
+            .field("state", &state.state)
+            .field("is_counted", &inner.is_counted)
+            .field("ref_count", &state.ref_count)
+            .h2_field_some("next_pending_send", &inner.next_pending_send)
+            .h2_field_if("is_pending_send", &inner.is_pending_send)
+            .field("send_flow", &send.send_flow)
+            .field("requested_send_capacity", &send.requested_send_capacity)
+            .field("buffered_send_data", &send.buffered_send_data)
+            .h2_field_some("send_task", &send.send_task.as_ref().map(|_| ()))
+            .h2_field_if_then(
+                "pending_send",
+                !send.pending_send.is_empty(),
+                &send.pending_send,
+            )
+            .h2_field_if_then(
+                "pending_op_data",
+                !send.pending_op_data.is_empty(),
+                &send.pending_op_data,
+            )
+            .h2_field_if_then(
+                "pending_operation_count",
+                state.pending_operation_count > 0,
+                &state.pending_operation_count,
+            )
+            .h2_field_some(
+                "next_pending_send_capacity",
+                &inner.next_pending_send_capacity,
+            )
+            .h2_field_if("is_pending_send_capacity", &inner.is_pending_send_capacity)
+            .h2_field_if("send_capacity_inc", &send.send_capacity_inc)
+            .h2_field_some("next_open", &inner.next_open)
+            .h2_field_if("is_pending_open", &send.is_pending_open)
+            .h2_field_if("is_pending_push", &state.is_pending_push)
+            .h2_field_some("next_pending_accept", &inner.next_pending_accept)
+            .h2_field_if("is_pending_accept", &inner.is_pending_accept)
+            .field("recv_flow", &recv.recv_flow)
+            .field("in_flight_recv_data", &recv.in_flight_recv_data)
+            .h2_field_some("next_window_update", &inner.next_window_update)
+            .h2_field_if("is_pending_window_update", &inner.is_pending_window_update)
+            .h2_field_some("reset_at", &inner.reset_at)
+            .h2_field_some("next_reset_expire", &inner.next_reset_expire)
+            .h2_field_if_then(
+                "pending_recv",
+                !recv.pending_recv.is_empty(),
+                &recv.pending_recv,
+            )
+            .h2_field_if("is_recv", &recv.is_recv)
+            .h2_field_some("recv_task", &recv.recv_task.as_ref().map(|_| ()))
+            .h2_field_some("push_task", &recv.push_task.as_ref().map(|_| ()))
+            .h2_field_if_then(
+                "pending_push_promises",
+                !recv.pending_push_promises.is_empty(),
+                &recv.pending_push_promises,
+            )
+            .field("content_length", &inner.content_length)
+            .finish()
+    }
+}
+
+impl store::Next for NextAccept {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_pending_accept
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_pending_accept = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_pending_accept.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.is_pending_accept
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        stream.is_pending_accept = val;
+    }
+}
+
+impl store::Next for NextSend {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_pending_send
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_pending_send = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_pending_send.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.is_pending_send
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        stream.is_pending_send = val;
+    }
+}
+
+impl store::Next for NextSendCapacity {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_pending_send_capacity
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_pending_send_capacity = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_pending_send_capacity.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.is_pending_send_capacity
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        stream.is_pending_send_capacity = val;
+    }
+}
+
+impl store::Next for NextWindowUpdate {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_window_update
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_window_update = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_window_update.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.is_pending_window_update
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        stream.is_pending_window_update = val;
+    }
+}
+
+impl store::Next for NextOpen {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_open
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_open = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_open.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.is_queued_open
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        stream.is_queued_open = val;
+    }
+}
+
+impl store::Next for NextResetExpire {
+    fn next(stream: &Inner) -> Option<store::Key> {
+        stream.next_reset_expire
+    }
+
+    fn set_next(stream: &mut Inner, key: Option<store::Key>) {
+        stream.next_reset_expire = key;
+    }
+
+    fn take_next(stream: &mut Inner) -> Option<store::Key> {
+        stream.next_reset_expire.take()
+    }
+
+    fn is_queued(stream: &Inner) -> bool {
+        stream.reset_at.is_some()
+    }
+
+    fn set_queued(stream: &mut Inner, val: bool) {
+        if val {
+            stream.reset_at = Some(Instant::now());
+        } else {
+            stream.reset_at = None;
+        }
+    }
+}
+
+// ===== impl ContentLength =====
+
+impl ContentLength {
+    pub fn is_head(&self) -> bool {
+        matches!(*self, Self::Head)
+    }
+}
+
+impl Shared {
+    pub fn new(
+        id: StreamId,
+        init_send_window: WindowSize,
+        init_recv_window: WindowSize,
+    ) -> Arc<Self> {
+        let mut send_flow = FlowControl::new();
+        let mut recv_flow = FlowControl::new();
+
+        recv_flow
+            .inc_window(init_recv_window)
+            .expect("invalid initial receive window");
+        let _res = recv_flow.assign_capacity(init_recv_window);
+        debug_assert!(_res.is_ok());
+
+        send_flow
+            .inc_window(init_send_window)
+            .expect("invalid initial send window size");
+
+        Arc::new(Shared {
+            id,
+            store: AtomicU32::new(u32::MAX),
+            state: Mutex::new(SharedState {
+                state: State::default(),
+                ref_count: 0,
+                pending_operation_count: 0,
+                is_pending_push: false,
+            }),
+            send: Mutex::new(Send {
+                // ===== Fields related to sending =====
+                send_flow,
+                requested_send_capacity: 0,
+                buffered_send_data: 0,
+                send_task: None,
+                pending_send: buffer::Deque::new(),
+                pending_op_data: buffer::Deque::new(),
+                send_capacity_inc: false,
+                is_pending_open: false,
+            }),
+            recv: Mutex::new(Recv {
+                // ===== Fields related to receiving =====
+                recv_flow,
+                in_flight_recv_data: 0,
+                pending_recv: buffer::Deque::new(),
+                is_recv: true,
+                recv_task: None,
+                push_task: None,
+                pending_push_promises: buffer::Deque::new(),
+            }),
+        })
+    }
+
+    pub fn store(&self) -> Option<store::Key> {
+        let idx = self.store.load(Ordering::Relaxed);
+        store::Key::from_parts(self.id, idx)
+    }
+
+    pub fn stored(&self, idx: u32) {
+        self.store.store(idx, Ordering::Relaxed);
+    }
+
+    pub fn state(&self) -> MutexGuard<'_, SharedState> {
+        self.state.lock().unwrap()
+    }
+
+    pub fn send(&self) -> MutexGuard<'_, Send> {
+        self.send.lock().unwrap()
+    }
+
+    pub fn recv(&self) -> MutexGuard<'_, Recv> {
+        self.recv.lock().unwrap()
+    }
+
+    /// Increment the stream's ref count
+    pub fn ref_inc(&self) {
+        let mut shared = self.state();
+        assert!(shared.ref_count < usize::MAX);
+        shared.ref_count += 1;
+    }
+
+    /// Decrements the stream's ref count
+    pub fn ref_dec(&self) {
+        let mut shared = self.state();
+        assert!(shared.ref_count > 0);
+        shared.ref_count -= 1;
+    }
+
+    /// Increment the queued operation count for this stream.
+    pub fn ops_inc(&self) {
+        let mut shared = self.state();
+        assert!(shared.pending_operation_count < usize::MAX);
+        shared.pending_operation_count += 1;
+    }
+
+    /// Decrement the queued operation count for this stream.
+    pub fn ops_dec(&self) {
+        let mut shared = self.state();
+        assert!(shared.pending_operation_count > 0);
+        shared.pending_operation_count -= 1;
+    }
+
+    pub fn notify_send(&self) {
+        self.send().notify_send();
+    }
+
+    pub fn wait_send(&self, cx: &Context) {
+        self.send().wait_send(cx);
+    }
+
+    pub fn notify_recv(&self) {
+        self.recv().notify_recv();
+    }
+
+    pub fn notify_push(&self) {
+        self.recv().notify_push();
+    }
+
+    pub fn set_reset(&self, reason: Reason, initiator: Initiator) {
+        self.state().state.set_reset(self.id, reason, initiator);
+        self.notify_send();
+        self.notify_push();
+        self.notify_recv();
+    }
+
+    pub fn handle_error(&self, err: &proto::Error) {
+        self.state().state.handle_error(err);
+        self.notify_send();
+        self.notify_push();
+        self.notify_recv();
+    }
+
+    pub fn is_pending_open(&self) -> bool {
+        self.send().is_pending_open
+    }
+
+    fn is_closed(&self) -> bool {
+        let state = self.state();
+        let send = self.send();
+        state.state.is_closed()
+            && send.pending_send.is_empty()
+            && send.pending_op_data.is_empty()
+            && send.buffered_send_data == 0
+    }
+
+    fn is_canceled_interest(&self) -> bool {
+        let shared = self.state();
+        shared.ref_count == 0 && !shared.state.is_closed()
+    }
+
+    pub fn capacity(&self, max_buffer_size: usize) -> WindowSize {
+        let shared = self.send();
+        let available = shared.send_flow.available().as_size() as usize;
+        available
+            .min(max_buffer_size)
+            .saturating_sub(shared.buffered_send_data) as WindowSize
+    }
+
+    fn assign_capacity(&self, capacity: WindowSize, max_buffer_size: usize) {
+        let mut shared = self.send();
+        let prev_capacity = shared.capacity(max_buffer_size);
+        debug_assert!(capacity > 0);
+        let _res = shared.send_flow.assign_capacity(capacity);
+        debug_assert!(_res.is_ok());
+
+        tracing::trace!(
+            "  assigned capacity to stream; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
+            shared.send_flow.available(),
+            shared.buffered_send_data,
+            self.id,
+            max_buffer_size,
+            prev_capacity,
+        );
+
+        if prev_capacity < shared.capacity(max_buffer_size) {
+            shared.notify_capacity();
+        }
+    }
+
+    fn send_data(&self, len: WindowSize, max_buffer_size: usize) {
+        let mut shared = self.send();
+        let prev_capacity = shared.capacity(max_buffer_size);
+        let _res = shared.send_flow.send_data(len);
+        debug_assert!(_res.is_ok());
+
+        debug_assert!(shared.buffered_send_data >= len as usize);
+        shared.buffered_send_data -= len as usize;
+        shared.requested_send_capacity -= len;
+
+        tracing::trace!(
+            "  sent stream data; available={}; buffered={}; id={:?}; max_buffer_size={} prev={}",
+            shared.send_flow.available(),
+            shared.buffered_send_data,
+            self.id,
+            max_buffer_size,
+            prev_capacity,
+        );
+
+        if prev_capacity < shared.capacity(max_buffer_size) {
+            shared.notify_capacity();
+        }
+    }
+}
+
+impl Send {
+    pub(super) fn capacity(&self, max_buffer_size: usize) -> WindowSize {
+        let available = self.send_flow.available().as_size() as usize;
+        available
+            .min(max_buffer_size)
+            .saturating_sub(self.buffered_send_data) as WindowSize
+    }
+
+    fn notify_capacity(&mut self) {
         self.send_capacity_inc = true;
         tracing::trace!("  notifying task");
         self.notify_send();
     }
 
-    /// Returns `Err` when the decrement cannot be completed due to overflow.
-    pub fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
+    fn notify_send(&mut self) {
+        if let Some(task) = self.send_task.take() {
+            task.wake();
+        }
+    }
+
+    pub fn wait_send(&mut self, cx: &Context) {
+        self.send_task = Some(cx.waker().clone());
+    }
+}
+
+impl Recv {
+    fn notify_recv(&mut self) {
+        if let Some(task) = self.recv_task.take() {
+            task.wake();
+        }
+    }
+
+    fn notify_push(&mut self) {
+        if let Some(task) = self.push_task.take() {
+            task.wake();
+        }
+    }
+}
+
+impl Inner {
+    fn is_pending_reset_expiration(&self) -> bool {
+        self.reset_at.is_some()
+    }
+
+    fn dec_content_length(&mut self, len: usize) -> Result<(), ()> {
         match self.content_length {
             ContentLength::Remaining(ref mut rem) => match rem.checked_sub(len as u64) {
                 Some(val) => *rem = val,
@@ -352,249 +809,11 @@ impl Stream {
         Ok(())
     }
 
-    pub fn ensure_content_length_zero(&self) -> Result<(), ()> {
+    fn ensure_content_length_zero(&self) -> Result<(), ()> {
         match self.content_length {
             ContentLength::Remaining(0) => Ok(()),
             ContentLength::Remaining(_) => Err(()),
             _ => Ok(()),
         }
-    }
-
-    pub fn notify_send(&mut self) {
-        if let Some(task) = self.send_task.take() {
-            task.wake();
-        }
-    }
-
-    pub fn wait_send(&mut self, cx: &Context) {
-        self.send_task = Some(cx.waker().clone());
-    }
-
-    pub fn notify_recv(&mut self) {
-        if let Some(task) = self.recv_task.take() {
-            task.wake();
-        }
-    }
-
-    pub(super) fn notify_push(&mut self) {
-        if let Some(task) = self.push_task.take() {
-            task.wake();
-        }
-    }
-
-    /// Set the stream's state to `Closed` with the given reason and initiator.
-    /// Notify the send, receive, and push tasks, if they exist.
-    pub(super) fn set_reset(&mut self, reason: Reason, initiator: Initiator) {
-        self.state.set_reset(self.id, reason, initiator);
-        self.notify_send();
-        self.notify_push();
-        self.notify_recv();
-    }
-}
-
-impl fmt::Debug for Stream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Stream")
-            .field("id", &self.id)
-            .field("state", &self.state)
-            .field("is_counted", &self.is_counted)
-            .field("ref_count", &self.ref_count)
-            .h2_field_some("next_pending_send", &self.next_pending_send)
-            .h2_field_if("is_pending_send", &self.is_pending_send)
-            .field("send_flow", &self.send_flow)
-            .field("requested_send_capacity", &self.requested_send_capacity)
-            .field("buffered_send_data", &self.buffered_send_data)
-            .h2_field_some("send_task", &self.send_task.as_ref().map(|_| ()))
-            .h2_field_if_then(
-                "pending_send",
-                !self.pending_send.is_empty(),
-                &self.pending_send,
-            )
-            .h2_field_some(
-                "next_pending_send_capacity",
-                &self.next_pending_send_capacity,
-            )
-            .h2_field_if("is_pending_send_capacity", &self.is_pending_send_capacity)
-            .h2_field_if("send_capacity_inc", &self.send_capacity_inc)
-            .h2_field_some("next_open", &self.next_open)
-            .h2_field_if("is_pending_open", &self.is_pending_open)
-            .h2_field_if("is_pending_push", &self.is_pending_push)
-            .h2_field_some("next_pending_accept", &self.next_pending_accept)
-            .h2_field_if("is_pending_accept", &self.is_pending_accept)
-            .field("recv_flow", &self.recv_flow)
-            .field("in_flight_recv_data", &self.in_flight_recv_data)
-            .h2_field_some("next_window_update", &self.next_window_update)
-            .h2_field_if("is_pending_window_update", &self.is_pending_window_update)
-            .h2_field_some("reset_at", &self.reset_at)
-            .h2_field_some("next_reset_expire", &self.next_reset_expire)
-            .h2_field_if_then(
-                "pending_recv",
-                !self.pending_recv.is_empty(),
-                &self.pending_recv,
-            )
-            .h2_field_if("is_recv", &self.is_recv)
-            .h2_field_some("recv_task", &self.recv_task.as_ref().map(|_| ()))
-            .h2_field_some("push_task", &self.push_task.as_ref().map(|_| ()))
-            .h2_field_if_then(
-                "pending_push_promises",
-                !self.pending_push_promises.is_empty(),
-                &self.pending_push_promises,
-            )
-            .field("content_length", &self.content_length)
-            .finish()
-    }
-}
-
-impl store::Next for NextAccept {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_pending_accept
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_pending_accept = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_pending_accept.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.is_pending_accept
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        stream.is_pending_accept = val;
-    }
-}
-
-impl store::Next for NextSend {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_pending_send
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_pending_send = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_pending_send.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.is_pending_send
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        if val {
-            // ensure that stream is not queued for being opened
-            // if it's being put into queue for sending data
-            debug_assert!(!stream.is_pending_open);
-        }
-        stream.is_pending_send = val;
-    }
-}
-
-impl store::Next for NextSendCapacity {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_pending_send_capacity
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_pending_send_capacity = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_pending_send_capacity.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.is_pending_send_capacity
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        stream.is_pending_send_capacity = val;
-    }
-}
-
-impl store::Next for NextWindowUpdate {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_window_update
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_window_update = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_window_update.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.is_pending_window_update
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        stream.is_pending_window_update = val;
-    }
-}
-
-impl store::Next for NextOpen {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_open
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_open = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_open.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.is_pending_open
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        if val {
-            // ensure that stream is not queued for being sent
-            // if it's being put into queue for opening the stream
-            debug_assert!(!stream.is_pending_send);
-        }
-        stream.is_pending_open = val;
-    }
-}
-
-impl store::Next for NextResetExpire {
-    fn next(stream: &Stream) -> Option<store::Key> {
-        stream.next_reset_expire
-    }
-
-    fn set_next(stream: &mut Stream, key: Option<store::Key>) {
-        stream.next_reset_expire = key;
-    }
-
-    fn take_next(stream: &mut Stream) -> Option<store::Key> {
-        stream.next_reset_expire.take()
-    }
-
-    fn is_queued(stream: &Stream) -> bool {
-        stream.reset_at.is_some()
-    }
-
-    fn set_queued(stream: &mut Stream, val: bool) {
-        if val {
-            stream.reset_at = Some(Instant::now());
-        } else {
-            stream.reset_at = None;
-        }
-    }
-}
-
-// ===== impl ContentLength =====
-
-impl ContentLength {
-    pub fn is_head(&self) -> bool {
-        matches!(*self, Self::Head)
     }
 }

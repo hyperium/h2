@@ -173,7 +173,7 @@ use tracing::Instrument;
 /// [`Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 /// [`Error`]: ../struct.Error.html
 pub struct SendRequest<B: Buf> {
-    inner: proto::Streams<B, Peer>,
+    inner: proto::Injector<B>,
     pending: Option<proto::OpaqueStreamRef>,
 }
 
@@ -515,10 +515,10 @@ where
         end_of_stream: bool,
     ) -> Result<(ResponseFuture, SendStream<B>), crate::Error> {
         self.inner
-            .send_request(request, end_of_stream, self.pending.as_ref())
+            .enqueue_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|(stream, is_full)| {
-                if stream.is_pending_open() && is_full {
+            .map(|stream| {
+                if stream.is_pending_open() {
                     // Only prevent sending another request when the request queue
                     // is not full.
                     self.pending = Some(stream.clone_to_opaque());
@@ -1338,7 +1338,7 @@ where
             },
         );
         let send_request = SendRequest {
-            inner: inner.streams().clone(),
+            inner: inner.injector(),
             pending: None,
         };
 

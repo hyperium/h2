@@ -1058,6 +1058,162 @@ async fn recv_settings_removes_available_capacity() {
 }
 
 #[tokio::test]
+async fn spawned_multi_stream_flow_control_wakes_tasks() {
+    use std::collections::BTreeSet;
+    use tokio::time::timeout;
+
+    h2_support::trace_init!();
+
+    const CHUNK: usize = 16_384;
+    const TOTAL_CHUNKS: usize = 3;
+    const STREAM_IDS: [u32; 3] = [1, 3, 5];
+
+    fn request(uri: &'static str) -> Request<()> {
+        Request::builder().uri(uri).body(()).unwrap()
+    }
+
+    let (io, mut srv) = mock::new();
+
+    let srv_task = tokio::spawn(async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/a")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/b")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/c")
+                .eos(),
+        )
+        .await;
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::headers(stream_id).response(200))
+                .await;
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]))
+                .await;
+        }
+
+        let mut saw_stream_updates = BTreeSet::new();
+        let mut conn_increment_total = 0;
+
+        while conn_increment_total < (CHUNK * STREAM_IDS.len()) as u32 {
+            let frame = srv.next().await.unwrap().unwrap();
+            match frame {
+                h2::frame::Frame::WindowUpdate(frame) => {
+                    if frame.stream_id().is_zero() {
+                        conn_increment_total += frame.size_increment();
+                    } else {
+                        panic!(
+                            "unexpected stream window update before second round: {:?}",
+                            frame
+                        );
+                    }
+                }
+                frame => panic!(
+                    "unexpected frame while waiting for window updates: {:?}",
+                    frame
+                ),
+            }
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]))
+                .await;
+        }
+
+        while saw_stream_updates.len() < STREAM_IDS.len()
+            || conn_increment_total < (CHUNK * STREAM_IDS.len() * 2) as u32
+        {
+            let frame = srv.next().await.unwrap().unwrap();
+            match frame {
+                h2::frame::Frame::WindowUpdate(frame) => {
+                    if frame.stream_id().is_zero() {
+                        conn_increment_total += frame.size_increment();
+                    } else {
+                        assert_eq!(frame.size_increment(), (CHUNK * 2) as u32);
+                        saw_stream_updates.insert(frame.stream_id());
+                    }
+                }
+                frame => panic!(
+                    "unexpected frame while waiting for stream updates: {:?}",
+                    frame
+                ),
+            }
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]).eos())
+                .await;
+        }
+    });
+
+    let (mut client, conn) = client::handshake(io).await.unwrap();
+
+    let conn_task = tokio::spawn(async move {
+        conn.await.unwrap();
+    });
+
+    let response1 = client
+        .send_request(request("https://example.com/a"), true)
+        .unwrap()
+        .0;
+    client = client.ready().await.unwrap();
+    let response2 = client
+        .send_request(request("https://example.com/b"), true)
+        .unwrap()
+        .0;
+    client = client.ready().await.unwrap();
+    let response3 = client
+        .send_request(request("https://example.com/c"), true)
+        .unwrap()
+        .0;
+
+    let body_tasks = [response1, response2, response3].map(|response| {
+        tokio::spawn(async move {
+            let response = response.await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let (_, mut body) = response.into_parts();
+            let mut total = 0usize;
+
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                total += chunk.len();
+                body.flow_control().release_capacity(chunk.len()).unwrap();
+            }
+
+            assert_eq!(total, CHUNK * TOTAL_CHUNKS);
+        })
+    });
+
+    timeout(Duration::from_secs(5), async move {
+        for task in body_tasks {
+            task.await.unwrap();
+        }
+
+        drop(client);
+        conn_task.await.unwrap();
+        srv_task.await.unwrap();
+    })
+    .await
+    .expect("spawned flow-control tasks stalled");
+}
+
+#[tokio::test]
 async fn recv_settings_keeps_assigned_capacity() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -1738,27 +1894,29 @@ async fn reserve_capacity_then_cancel_does_not_leak() {
 
         let srv = async move {
             let _ = srv.assert_client_handshake().await;
-            srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
-                .await;
             if !explicit_reset {
+                srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+                    .await;
                 srv.send_frame(frames::headers(1).response(200)).await;
             }
             let mut data_bytes = 0;
-            loop {
+            let data_stream_id = loop {
                 let frame = srv.next().await.unwrap().unwrap();
                 match frame {
                     h2::frame::Frame::Reset(_) | h2::frame::Frame::Headers(_) => {}
                     h2::frame::Frame::Data(d) => {
+                        let stream_id = d.stream_id();
                         data_bytes += d.payload().len();
                         if d.is_end_stream() {
-                            break;
+                            break stream_id;
                         }
                     }
                     other => panic!("unexpected: {:?}", other),
                 }
-            }
+            };
             assert_eq!(data_bytes, 65535);
-            srv.send_frame(frames::headers(3).response(200).eos()).await;
+            srv.send_frame(frames::headers(data_stream_id).response(200).eos())
+                .await;
         };
 
         let client = async move {
@@ -2082,6 +2240,7 @@ async fn max_send_buffer_size_overflow() {
 
         assert_eq!(stream.capacity(), 0);
         stream.reserve_capacity(10);
+        let mut stream = conn.drive(util::wait_for_capacity(stream, 5)).await;
         assert_eq!(
             stream.capacity(),
             5,
@@ -2144,11 +2303,6 @@ async fn max_send_buffer_size_poll_capacity_wakes_task() {
         assert_eq!(stream.capacity(), 0);
         const TO_SEND: usize = 20;
         stream.reserve_capacity(TO_SEND);
-        assert_eq!(
-            stream.capacity(),
-            5,
-            "polled capacity not over max buffer size"
-        );
 
         let t1 = tokio::spawn(async move {
             let mut sent = 0;

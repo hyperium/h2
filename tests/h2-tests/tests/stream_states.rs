@@ -175,8 +175,7 @@ async fn closed_streams_are_released() {
         let (_, body) = response.into_parts();
         assert!(body.is_end_stream());
         drop(body);
-
-        // The stream state is now free
+        h2.drive(yield_once()).await;
         assert_eq!(0, client.num_wired_streams());
     };
 
@@ -190,6 +189,7 @@ async fn closed_streams_are_released() {
         )
         .await;
         srv.send_frame(frames::headers(1).response(204).eos()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     };
     join(srv, h2).await;
 }
