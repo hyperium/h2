@@ -108,7 +108,8 @@ async fn user_ping_pong() {
 
     let client = async move {
         let (client, mut conn) = client::handshake(io).await.expect("client handshake");
-        // yield once so we can ack server settings
+        // Drive twice so the deferred small-flush wake for the SETTINGS ACK is serviced.
+        conn.drive(util::yield_once()).await;
         conn.drive(util::yield_once()).await;
         // `ping_pong()` method conflict with mock future ext trait.
         let mut ping_pong = client::Connection::ping_pong(&mut conn).expect("taking ping_pong");
@@ -147,7 +148,8 @@ async fn user_notifies_when_connection_closes() {
     #[allow(clippy::async_yields_async)]
     let client = async move {
         let (_client, mut conn) = client::handshake(io).await.expect("client handshake");
-        // yield once so we can ack server settings
+        // Drive twice so the deferred small-flush wake for the SETTINGS ACK is serviced.
+        conn.drive(util::yield_once()).await;
         conn.drive(util::yield_once()).await;
         conn
     };

@@ -13,7 +13,7 @@ mod streams;
 pub(crate) use self::prioritize::Prioritized;
 pub(crate) use self::recv::Open;
 pub(crate) use self::send::PollReset;
-pub(crate) use self::streams::{DynStreams, OpaqueStreamRef, StreamRef, Streams};
+pub(crate) use self::streams::{DynStreams, Injector, OpaqueStreamRef, StreamRef, Streams};
 
 use self::buffer::Buffer;
 use self::counts::Counts;
@@ -94,11 +94,7 @@ trait DebugStructExt<'a, 'b> {
 
 impl<'a, 'b> DebugStructExt<'a, 'b> for std::fmt::DebugStruct<'a, 'b> {
     fn h2_field_if(&mut self, name: &str, val: &bool) -> &mut std::fmt::DebugStruct<'a, 'b> {
-        if *val {
-            self.field(name, val)
-        } else {
-            self
-        }
+        if *val { self.field(name, val) } else { self }
     }
 
     fn h2_field_if_then<T: std::fmt::Debug>(
@@ -107,11 +103,7 @@ impl<'a, 'b> DebugStructExt<'a, 'b> for std::fmt::DebugStruct<'a, 'b> {
         cond: bool,
         val: &T,
     ) -> &mut std::fmt::DebugStruct<'a, 'b> {
-        if cond {
-            self.field(name, val)
-        } else {
-            self
-        }
+        if cond { self.field(name, val) } else { self }
     }
 
     fn h2_field_some<T: std::fmt::Debug>(

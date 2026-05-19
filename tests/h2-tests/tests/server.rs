@@ -7,6 +7,43 @@ use tokio::io::AsyncWriteExt;
 const SETTINGS: &[u8] = &[0, 0, 0, 4, 0, 0, 0, 0, 0];
 const SETTINGS_ACK: &[u8] = &[0, 0, 0, 4, 1, 0, 0, 0, 0];
 
+async fn recv_frames(client: &mut mock::Handle, count: usize) -> Vec<h2::frame::Frame> {
+    let mut frames = Vec::with_capacity(count);
+    for _ in 0..count {
+        frames.push(client.next().await.unwrap().unwrap());
+    }
+    frames
+}
+
+fn frame_position<F: Into<h2::frame::Frame>>(frames: &[h2::frame::Frame], expected: F) -> usize {
+    let expected = expected.into();
+    frames
+        .iter()
+        .position(|actual| *actual == expected)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected frame not received; expected={:?}; actual={:?}",
+                expected, frames
+            )
+        })
+}
+
+fn assert_frame_before<F1, F2>(frames: &[h2::frame::Frame], first: F1, second: F2)
+where
+    F1: Into<h2::frame::Frame>,
+    F2: Into<h2::frame::Frame>,
+{
+    let first = frame_position(frames, first);
+    let second = frame_position(frames, second);
+    assert!(
+        first < second,
+        "expected frame {} before {}; frames={:?}",
+        first,
+        second,
+        frames
+    );
+}
+
 #[tokio::test]
 async fn read_preface_in_multiple_frames() {
     h2_support::trace_init!();
@@ -23,6 +60,75 @@ async fn read_preface_in_multiple_frames() {
     let mut h2 = server::handshake(mock).await.unwrap();
 
     assert!(h2.next().await.is_none());
+}
+
+#[tokio::test]
+async fn send_response_wakes_connection_parked_in_poll_complete() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client_setup = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .send_frame(
+                frames::headers(3)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+    };
+
+    let server_setup = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (_req1, stream1) = srv.next().await.unwrap().unwrap();
+        let (_req2, stream2) = srv.next().await.unwrap().unwrap();
+        (srv, stream1, stream2)
+    };
+
+    let (mut client, (mut srv, mut stream1, mut stream2)) =
+        join(client_setup, server_setup).await;
+
+    // While poll_complete is blocked on write backpressure, user handles can
+    // still enqueue more deferred stream operations. Those operations must not
+    // lose their connection wake before transport readiness arrives.
+    client.set_write_capacity(0);
+    stream1
+        .send_response(Response::new(()), true)
+        .expect("send first response");
+
+    let mut conn = task::spawn(poll_fn(move |cx| srv.poll_closed(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should park on write backpressure"
+    );
+    if conn.is_woken() {
+        assert!(
+            conn.poll().is_pending(),
+            "connection should still park on write backpressure"
+        );
+    }
+    assert!(
+        !conn.is_woken(),
+        "connection should remain parked until write capacity or app work wakes it"
+    );
+
+    stream2
+        .send_response(Response::new(()), true)
+        .expect("send second response");
+
+    assert!(
+        conn.is_woken(),
+        "send_response must wake connection parked on write backpressure"
+    );
 }
 
 #[tokio::test]
@@ -411,15 +517,32 @@ async fn push_request_with_data() {
                     .eos(),
             )
             .await;
-        client.recv_frame(frames::headers(1).response(200)).await;
-        client
-            .recv_frame(
-                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
-            )
-            .await;
-        client.recv_frame(frames::headers(2).response(200)).await;
-        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
-        client.recv_frame(frames::data(2, &b"\x00"[..]).eos()).await;
+        let frames = recv_frames(&mut client, 5).await;
+
+        frame_position(&frames, frames::headers(1).response(200));
+        frame_position(
+            &frames,
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        );
+        frame_position(&frames, frames::headers(2).response(200));
+        frame_position(&frames, frames::data(1, &b""[..]).eos());
+        frame_position(&frames, frames::data(2, &b"\x00"[..]).eos());
+
+        assert_frame_before(
+            &frames,
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            frames::headers(2).response(200),
+        );
+        assert_frame_before(
+            &frames,
+            frames::headers(1).response(200),
+            frames::data(1, &b""[..]).eos(),
+        );
+        assert_frame_before(
+            &frames,
+            frames::headers(2).response(200),
+            frames::data(2, &b"\x00"[..]).eos(),
+        );
     };
 
     let srv = async move {
@@ -477,17 +600,32 @@ async fn push_request_between_data() {
                     .eos(),
             )
             .await;
-        client.recv_frame(frames::headers(1).response(200)).await;
-        client.recv_frame(frames::data(1, &b""[..])).await;
-        client
-            .recv_frame(
-                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
-            )
-            .await;
-        client
-            .recv_frame(frames::headers(2).response(200).eos())
-            .await;
-        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        let frames = recv_frames(&mut client, 5).await;
+
+        frame_position(&frames, frames::headers(1).response(200));
+        frame_position(&frames, frames::data(1, &b""[..]));
+        frame_position(
+            &frames,
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        );
+        frame_position(&frames, frames::headers(2).response(200).eos());
+        frame_position(&frames, frames::data(1, &b""[..]).eos());
+
+        assert_frame_before(
+            &frames,
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            frames::headers(2).response(200).eos(),
+        );
+        assert_frame_before(
+            &frames,
+            frames::headers(1).response(200),
+            frames::data(1, &b""[..]),
+        );
+        assert_frame_before(
+            &frames,
+            frames::data(1, &b""[..]),
+            frames::data(1, &b""[..]).eos(),
+        );
     };
 
     let srv = async move {
