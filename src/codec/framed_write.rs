@@ -203,7 +203,7 @@ where
 
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
         // Ensure that we have enough capacity to accept the write.
-        assert!(self.has_vec_capacity());
+        assert!(self.has_capacity());
         let span = tracing::trace_span!("FramedWrite::buffer", frame = ?item);
         let _e = span.enter();
 
@@ -211,13 +211,17 @@ where
 
         match item {
             Frame::Data(mut v) => {
+                assert!(self.has_vec_capacity());
+
                 // Ensure that the payload is not greater than the max frame.
                 let len = v.payload().remaining();
 
                 if len > self.max_frame_size() {
                     return Err(PayloadTooBig);
                 }
+
                 let mut buf_len_to_push = 0;
+
                 if len >= self.chain_threshold {
                     let head = v.head();
 
