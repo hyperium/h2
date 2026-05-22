@@ -147,7 +147,7 @@ where
 
     #[inline]
     fn flush_inner(&mut self, cx: &mut Context, flush_all: bool) -> Poll<io::Result<()>> {
-        let span = tracing::trace_span!("FramedWrite::flush", %flush_all);
+        let span = tracing::trace_span!("FramedWrite::flush", all = %flush_all);
         let _e = span.enter();
 
         loop {
@@ -164,7 +164,9 @@ where
                 assert_eq!(self.encoder.buf.position(), 0);
                 assert_eq!(self.encoder.buf.remaining(), 0);
             }
-            self.encoder.reclaim_buffer();
+            let capacity_before = self.encoder.buf_capacity();
+            let _ = self.encoder.try_reclaim_buf();
+            tracing::trace!(%capacity_before, capacity_after = %self.encoder.buf_capacity(), "try reclaim buffer");
 
             if let Some(frame) = self.encoder.next_continuation.take() {
                 let mut buf = limited_write_buf!(self.encoder);
@@ -196,9 +198,15 @@ where
     B: Buf,
 {
     #[inline]
-    fn reclaim_buffer(&mut self) {
-        let buf = self.buf.get_mut();
-        let _ = buf.try_reclaim(buf.capacity() + buf.len() + 1);
+    fn buf_capacity(&self) -> usize {
+        self.buf.get_ref().capacity() - self.buf.get_ref().len()
+    }
+
+    #[inline]
+    fn try_reclaim_buf(&mut self) -> bool {
+        // Use the minimum value that can reclaim all of the buffer's original capacity.
+        let rem = self.buf_capacity();
+        self.buf.get_mut().try_reclaim(rem + 1)
     }
 
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
@@ -291,16 +299,13 @@ where
     }
 
     fn has_capacity(&self) -> bool {
-        self.next_continuation.is_none()
-            && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
-                >= self.min_buffer_capacity)
+        self.next_continuation.is_none() && self.buf_capacity() >= self.min_buffer_capacity
     }
 
     fn has_vec_capacity(&self) -> bool {
         self.next_continuation.is_none()
             && self.next_vec.len() < self.next_vec.capacity()
-            && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
-                >= self.min_buffer_capacity)
+            && self.buf_capacity() >= self.min_buffer_capacity
     }
 }
 
