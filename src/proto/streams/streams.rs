@@ -330,6 +330,10 @@ where
         let me = self.inner.lock().unwrap();
         me.counts.max_recv_streams()
     }
+
+    pub(crate) fn custom_setting(&self, id: u16) -> Option<u32> {
+        self.inner.lock().unwrap().actions.send.custom_setting(id)
+    }
 }
 
 impl<B> DynStreams<'_, B> {
