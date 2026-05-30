@@ -888,16 +888,25 @@ impl HeaderBlock {
             match header {
                 Field { name, value } => {
                     // Connection level header fields are not supported and must
-                    // result in a protocol error.
+                    // result in a protocol error. However in reality there are
+                    // servers setting these headers. Some of these headers are
+                    // purely informational and can be simply ignored without
+                    // affecting the integrity of the stream.
 
-                    if name == header::CONNECTION
-                        || name == header::TRANSFER_ENCODING
+                    if name == header::TRANSFER_ENCODING {
+                        tracing::trace!("load_hpack; connection level header");
+                        malformed = true;
+                    } else if name == header::CONNECTION
                         || name == header::UPGRADE
                         || name == "keep-alive"
                         || name == "proxy-connection"
                     {
-                        tracing::trace!("load_hpack; connection level header");
-                        malformed = true;
+                        if cfg!(feature = "ignore_connection_header") {
+                            tracing::trace!("load_hpack; connection level header ignored");
+                        } else {
+                            tracing::trace!("load_hpack; connection level header");
+                            malformed = true;
+                        }
                     } else if name == header::TE && value != "trailers" {
                         tracing::trace!(
                             "load_hpack; TE header not set to trailers; val={:?}",
