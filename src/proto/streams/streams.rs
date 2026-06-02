@@ -116,7 +116,7 @@ struct Shared {
     conn_error: RwLock<Option<Error>>,
 
     queued_request_headers: AtomicUsize,
-    pending_ops: Mutex<PendingOps>,
+    pending_ops: Mutex<PendingConnOps>,
 
     /// Task that drives connection-level processing.
     conn_task: ConnWaker,
@@ -129,55 +129,17 @@ struct SendBuffer<B> {
 }
 
 #[derive(Debug)]
-struct PendingOps {
-    buffer: Buffer<QueuedOp>,
+struct PendingConnOps {
+    buffer: Buffer<QueuedStream>,
     queue: buffer::Deque,
 }
 
 #[derive(Debug)]
-enum ConnOp {
-    RequestHeaders {
-        frame: frame::Headers,
-    },
-    ReleaseCapacity {
-        capacity: WindowSize,
-    },
-    PushPromise {
-        frame: frame::PushPromise,
-        promised: Arc<stream::Shared>,
-    },
-    Data {
-        prepared: PreparedSendData,
-        // NOTE: we don't store the frame::Data in here, because of the generic
-        // It's stashed in the send buffer, linked in a separate queue on the
-        // stream itself.
-    },
-    DropStreamRef,
-    ReserveCapacity {
-        prepared: PreparedReserveCapacity,
-    },
-    Trailers {
-        frame: frame::Headers,
-    },
-    Reset {
-        reason: Reason,
-        prepared: PreparedSendReset,
-    },
-    InformationalHeaders {
-        frame: frame::Headers,
-    },
-    ResponseHeaders {
-        frame: frame::Headers,
-    },
-}
-
-#[derive(Debug)]
-struct QueuedOp {
+struct QueuedStream {
     stream: Arc<stream::Shared>,
-    op: ConnOp,
 }
 
-impl PendingOps {
+impl PendingConnOps {
     fn new() -> Self {
         Self {
             buffer: Buffer::new(),
@@ -189,11 +151,11 @@ impl PendingOps {
         self.buffer.is_empty()
     }
 
-    fn push_back(&mut self, op: QueuedOp) {
-        self.queue.push_back(&mut self.buffer, op);
+    fn push_back_stream(&mut self, stream: QueuedStream) {
+        self.queue.push_back(&mut self.buffer, stream);
     }
 
-    fn pop_front(&mut self) -> Option<QueuedOp> {
+    fn pop_front_stream(&mut self) -> Option<QueuedStream> {
         self.queue.pop_front(&mut self.buffer)
     }
 
@@ -201,31 +163,9 @@ impl PendingOps {
     where
         F: FnMut(&Arc<stream::Shared>),
     {
-        for queued_op in self.queue.iter(&self.buffer) {
-            f(&queued_op.stream);
+        for queued_stream in self.queue.iter(&self.buffer) {
+            f(&queued_stream.stream);
         }
-    }
-
-    fn has_queued_request_headers_for(&self, id: StreamId) -> bool {
-        self.queue.iter(&self.buffer).any(|queued_op| {
-            queued_op.stream.id == id && matches!(queued_op.op, ConnOp::RequestHeaders { .. })
-        })
-    }
-
-    fn has_queued_frame_for(&self, id: StreamId) -> bool {
-        self.queue.iter(&self.buffer).any(|queued_op| {
-            queued_op.stream.id == id
-                && matches!(
-                    queued_op.op,
-                    ConnOp::RequestHeaders { .. }
-                        | ConnOp::PushPromise { .. }
-                        | ConnOp::Data { .. }
-                        | ConnOp::Trailers { .. }
-                        | ConnOp::Reset { .. }
-                        | ConnOp::InformationalHeaders { .. }
-                        | ConnOp::ResponseHeaders { .. }
-                )
-        })
     }
 }
 
@@ -263,7 +203,7 @@ where
                 send: send_shared,
                 conn_error: RwLock::new(None),
                 queued_request_headers: AtomicUsize::new(0),
-                pending_ops: Mutex::new(PendingOps::new()),
+                pending_ops: Mutex::new(PendingConnOps::new()),
                 conn_task: ConnWaker::new(),
             }),
             _p: ::std::marker::PhantomData,
@@ -777,8 +717,8 @@ impl Inner {
 
         self.counts
             .transition(&shared.counts, stream, |counts, stream| {
-                let has_queued_frame =
-                    stream.inner().is_pending_send || shared.has_queued_frame_for(stream.id);
+                let has_queued_frame = stream.inner().is_pending_send
+                    || stream.shared_ref().pending_ops().has_queued_frame();
                 actions
                     .recv
                     .recv_reset(frame, stream, counts, has_queued_frame)?;
@@ -1137,276 +1077,428 @@ impl Inner {
     where
         B: Buf,
     {
-        let actions = &mut self.actions;
-        let counts = &mut self.counts;
-
-        while let Some(queued_op) = {
+        loop {
             let mut pending_ops = shared.pending_ops.lock().unwrap();
-            pending_ops.pop_front()
-        } {
-            let QueuedOp { stream, op } = queued_op;
-            if matches!(&op, ConnOp::RequestHeaders { .. }) {
-                let prev = shared.queued_request_headers.fetch_sub(1, Ordering::Relaxed);
-                debug_assert!(prev > 0, "queued_request_headers must stay in sync");
-            }
-            match op {
-                ConnOp::DropStreamRef => {
-                    stream.ops_dec();
-                    release_queued_send_ref(
-                        actions,
-                        counts,
-                        shared,
-                        &shared.counts,
-                        &mut self.store,
-                        &stream,
-                    );
-                }
-                ConnOp::Reset { reason, prepared } => {
-                    stream.ops_dec();
-                    let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream)
-                    else {
-                        continue;
-                    };
-                    let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                    let send_frames = &mut *send_frames_guard;
-
-                    actions.send.send_prepared_reset(
-                        reason,
-                        prepared,
-                        send_frames,
-                        &mut stream_ptr,
-                        &shared.counts,
-                        counts,
-                        &shared.conn_task,
-                    );
-                    drop(stream_ptr);
-                    if prepared.send_explicit_reset {
-                    } else {
-                        release_queued_send_ref(
-                            actions,
-                            counts,
-                            shared,
-                            &shared.counts,
-                            &mut self.store,
-                            &stream,
-                        );
-                    }
-                }
-                other => {
-                    stream.ops_dec();
-                    match &other {
-                        ConnOp::RequestHeaders { frame } => {
-                            if self.store.find_mut_even_if_unlinked(&stream).is_none() {
-                                let (
-                                    is_unreferenced,
-                                    is_closed_without_reset,
-                                    is_ignored_by_go_away,
-                                ) = {
-                                    let shared_state = stream.state();
-                                    (
-                                        shared_state.ref_count == 0,
-                                        shared_state.state.is_closed()
-                                            && !shared_state.state.is_local_reset(),
-                                        counts.peer().is_local_init(stream.id)
-                                            && actions.send.is_ignored_by_go_away(stream.id),
-                                    )
-                                };
-
-                                if is_ignored_by_go_away {
-                                    if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
-                                        stream.handle_error(err);
-                                    }
-                                }
-
-                                if is_unreferenced
-                                    || is_closed_without_reset
-                                    || is_ignored_by_go_away
-                                {
-                                    continue;
-                                }
-
-                                let mut stream = Stream::new_with_shared(stream.clone());
-                                reconcile_deferred_send_window(
-                                    &mut stream,
-                                    shared.send.init_window_sz(),
-                                );
-                                reconcile_deferred_recv_window(
-                                    &mut stream,
-                                    shared.recv.init_window_sz(),
-                                );
-                                if frame.pseudo().method == Some(http::Method::HEAD) {
-                                    stream.inner_mut().content_length = stream::ContentLength::Head;
-                                }
-                                self.store.insert(stream.id, stream);
-                                shared.counts.inc_num_wired_streams();
-                            }
-                        }
-                        ConnOp::PushPromise { promised, .. } => {
-                            if self.store.find_mut_even_if_unlinked(&promised).is_none() {
-                                let mut stream = Stream::new_with_shared(promised.clone());
-                                reconcile_deferred_send_window(
-                                    &mut stream,
-                                    shared.send.init_window_sz(),
-                                );
-                                reconcile_deferred_recv_window(
-                                    &mut stream,
-                                    shared.recv.init_window_sz(),
-                                );
-                                self.store.insert(stream.id, stream);
-                                shared.counts.inc_num_wired_streams();
-                            }
-                        }
-                        _ => {}
-                    }
-                    let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream)
-                    else {
-                        continue;
-                    };
-
-                    let drop_if_stream_reset = matches!(
-                        &other,
-                        ConnOp::Data { .. }
-                            | ConnOp::Trailers { .. }
-                            | ConnOp::InformationalHeaders { .. }
-                            | ConnOp::ResponseHeaders { .. }
-                    );
-                    let stream_is_reset = {
-                        let shared_state = stream_ptr.shared();
-                        shared_state.state.is_reset()
-                    };
-                    if drop_if_stream_reset && stream_is_reset {
-                        if let ConnOp::Data { .. } = other {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
-                            debug_assert!(
-                                matches!(frame, None | Some(Frame::Data(_))),
-                                "pending_op_data must only contain DATA frames"
-                            );
-                        }
-
-                        let is_pending_reset = stream_ptr.is_pending_reset_expiration();
-                        counts.transition_after(&shared.counts, stream_ptr, is_pending_reset);
-                        continue;
-                    }
-
-                    match other {
-                        ConnOp::RequestHeaders { frame } => {
-                            let is_pending_reset = stream_ptr.is_pending_reset_expiration();
-                            let should_send = {
-                                stream_ptr.notify_send();
-                                let shared = stream_ptr.shared();
-                                !shared.state.is_closed() || shared.state.is_local_reset()
-                            };
-                            if !should_send {
-                                counts.transition_after(
-                                    &shared.counts,
-                                    stream_ptr,
-                                    is_pending_reset,
-                                );
-                                continue;
-                            }
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            actions.send.send_headers_after_prepare(
-                                &shared.send,
-                                frame,
-                                send_frames,
-                                &mut stream_ptr,
-                                counts,
-                                &shared.conn_task,
-                            );
-                        }
-                        ConnOp::ReleaseCapacity { capacity } => {
-                            actions
-                                .recv
-                                .release_connection_capacity(capacity, &shared.conn_task);
-                            actions
-                                .recv
-                                .schedule_stream_window_update(&mut stream_ptr, &shared.conn_task);
-                        }
-                        ConnOp::Data { prepared } => {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
-                            match frame {
-                                Some(Frame::Data(frame)) => {
-                                    actions.send.send_prepared_data(
-                                        frame,
-                                        prepared,
-                                        send_frames,
-                                        &mut stream_ptr,
-                                        &shared.counts,
-                                        counts,
-                                        &shared.conn_task,
-                                    );
-                                }
-                                Some(frame) => {
-                                    unreachable!(
-                                        "pending_op_data must only contain DATA frames: {frame:?}"
-                                    )
-                                }
-                                None => {}
-                            }
-                        }
-                        ConnOp::ReserveCapacity { prepared } => {
-                            actions.send.apply_reserve_capacity(
-                                prepared,
-                                &mut stream_ptr,
-                                &shared.counts,
-                                counts,
-                            );
-                        }
-                        ConnOp::PushPromise { frame, promised: _ } => {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            actions.send.send_push_promise_frame(
-                                &shared.send,
-                                frame,
-                                send_frames,
-                                &mut stream_ptr,
-                                &shared.conn_task,
-                            );
-                        }
-                        ConnOp::Trailers { frame } => {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            actions.send.send_trailers_frame(
-                                frame,
-                                send_frames,
-                                &mut stream_ptr,
-                                &shared.counts,
-                                counts,
-                                &shared.conn_task,
-                            );
-                        }
-                        ConnOp::InformationalHeaders { frame } => {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            actions.send.send_interim_informational_headers_frame(
-                                frame,
-                                send_frames,
-                                &mut stream_ptr,
-                                &shared.conn_task,
-                            );
-                        }
-                        ConnOp::ResponseHeaders { frame } => {
-                            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
-                            let send_frames = &mut *send_frames_guard;
-                            actions.send.send_headers_frame(
-                                &shared.send,
-                                frame,
-                                send_frames,
-                                &mut stream_ptr,
-                                &shared.conn_task,
-                            );
-                        }
-                        ConnOp::DropStreamRef | ConnOp::Reset { .. } => unreachable!(),
-                    }
-                }
+            if let Some(queued_stream) = pending_ops.pop_front_stream() {
+                drop(pending_ops);
+                self.process_pending_stream_ops(send_buffer, shared, queued_stream);
+            } else {
+                return;
             }
         }
     }
+
+    fn process_pending_stream_ops<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        queued_stream: QueuedStream,
+    ) where
+        B: Buf,
+    {
+        let QueuedStream { stream } = queued_stream;
+        stream.clear_pending_conn_ops();
+        let mut ops = stream.pending_ops().take();
+
+        if let Some(frame) = ops.request_headers.take() {
+            stream.ops_dec();
+            self.process_op_req_headers(send_buffer, shared, stream.clone(), frame);
+        }
+
+        for (frame, promised) in ops.push_promises {
+            stream.ops_dec();
+            self.process_op_push_promise(send_buffer, shared, stream.clone(), frame, promised);
+        }
+
+        for frame in ops.informational_headers {
+            stream.ops_dec();
+            self.process_op_informational_headers(send_buffer, shared, stream.clone(), frame);
+        }
+
+        if let Some(frame) = ops.response_headers {
+            stream.ops_dec();
+            self.process_op_response_headers(send_buffer, shared, stream.clone(), frame);
+        }
+
+        for prepared in ops.data {
+            stream.ops_dec();
+            self.process_op_data(send_buffer, shared, stream.clone(), prepared);
+        }
+
+        for prepared in ops.reserve_capacity {
+            stream.ops_dec();
+            self.process_op_reserve_cap(shared, stream.clone(), prepared);
+        }
+
+        if ops.release_capacity_count > 0 {
+            for _ in 0..ops.release_capacity_count {
+                stream.ops_dec();
+            }
+            self.process_op_release_cap(shared, stream.clone(), ops.release_capacity);
+        }
+
+        if let Some(frame) = ops.trailers {
+            stream.ops_dec();
+            self.process_op_trailers(send_buffer, shared, stream.clone(), frame);
+        }
+
+        if let Some(reset) = ops.reset {
+            stream.ops_dec();
+            self.process_op_reset(
+                send_buffer,
+                shared,
+                stream.clone(),
+                reset.reason,
+                reset.prepared,
+            );
+        }
+
+        for _ in 0..ops.drop_count {
+            stream.ops_dec();
+            release_queued_send_ref(
+                &mut self.actions,
+                &mut self.counts,
+                shared,
+                &shared.counts,
+                &mut self.store,
+                &stream,
+            );
+        }
+    }
+
+    fn process_op_req_headers<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        frame: frame::Headers,
+    ) where
+        B: Buf,
+    {
+        shared
+            .queued_request_headers
+            .fetch_sub(1, Ordering::Relaxed);
+        if self.store.find_mut_even_if_unlinked(&stream).is_none() {
+            let (is_unreferenced, is_closed_without_reset, is_ignored_by_go_away) = {
+                let shared_state = stream.state();
+                (
+                    shared_state.ref_count == 0,
+                    shared_state.state.is_closed() && !shared_state.state.is_local_reset(),
+                    self.counts.peer().is_local_init(stream.id)
+                        && self.actions.send.is_ignored_by_go_away(stream.id),
+                )
+            };
+
+            if is_ignored_by_go_away {
+                if let Some(err) = shared.conn_error.read().unwrap().as_ref() {
+                    stream.handle_error(err);
+                }
+            }
+
+            if is_unreferenced || is_closed_without_reset || is_ignored_by_go_away {
+                return;
+            }
+
+            let mut stream = Stream::new_with_shared(stream.clone());
+            reconcile_deferred_send_window(&mut stream, shared.send.init_window_sz());
+            reconcile_deferred_recv_window(&mut stream, shared.recv.init_window_sz());
+            if frame.pseudo().method == Some(http::Method::HEAD) {
+                stream.inner_mut().content_length = stream::ContentLength::Head;
+            }
+            self.store.insert(stream.id, stream);
+            shared.counts.inc_num_wired_streams();
+        }
+
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+
+        let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+
+        let should_send = {
+            stream_ptr.notify_send();
+            let shared = stream_ptr.shared();
+            !shared.state.is_closed() || shared.state.is_local_reset()
+        };
+        if !should_send {
+            self.counts
+                .transition_after(&shared.counts, stream_ptr, is_pending_reset);
+            return;
+        }
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        self.actions.send.send_headers_after_prepare(
+            &shared.send,
+            frame,
+            send_frames,
+            &mut stream_ptr,
+            &mut self.counts,
+            &shared.conn_task,
+        );
+    }
+
+    fn process_op_data<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        prepared: PreparedSendData,
+    ) where
+        B: Buf,
+    {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+
+        let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+        let stream_is_reset = {
+            let shared_state = stream_ptr.shared();
+            shared_state.state.is_reset()
+        };
+        //if stream_ptr.shared().state.is_reset() {
+        if stream_is_reset {
+            let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+            let send_frames = &mut *send_frames_guard;
+            let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
+            debug_assert!(
+                matches!(frame, None | Some(Frame::Data(_))),
+                "pending_op_data must only contain DATA frames"
+            );
+            self.counts
+                .transition_after(&shared.counts, stream_ptr, is_pending_reset);
+            return;
+        }
+
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        let frame = stream_ptr.send().pending_op_data.pop_front(send_frames);
+        match frame {
+            Some(Frame::Data(frame)) => {
+                self.actions.send.send_prepared_data(
+                    frame,
+                    prepared,
+                    send_frames,
+                    &mut stream_ptr,
+                    &shared.counts,
+                    &mut self.counts,
+                    &shared.conn_task,
+                );
+            }
+            Some(frame) => {
+                unreachable!("pending_op_data must only contain DATA frames: {frame:?}")
+            }
+            None => {}
+        }
+    }
+
+    fn process_op_reserve_cap(
+        &mut self,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        prepared: PreparedReserveCapacity,
+    ) {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+
+        self.actions.send.apply_reserve_capacity(
+            prepared,
+            &mut stream_ptr,
+            &shared.counts,
+            &mut self.counts,
+        );
+    }
+
+    fn process_op_release_cap(
+        &mut self,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        capacity: WindowSize,
+    ) {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+        self.actions
+            .recv
+            .release_connection_capacity(capacity, &shared.conn_task);
+        self.actions
+            .recv
+            .schedule_stream_window_update(&mut stream_ptr, &shared.conn_task);
+    }
+
+    fn process_op_push_promise<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        frame: frame::PushPromise,
+        promised: Arc<stream::Shared>,
+    ) where
+        B: Buf,
+    {
+        if self.store.find_mut_even_if_unlinked(&promised).is_none() {
+            let mut stream = Stream::new_with_shared(promised.clone());
+            reconcile_deferred_send_window(&mut stream, shared.send.init_window_sz());
+            reconcile_deferred_recv_window(&mut stream, shared.recv.init_window_sz());
+            self.store.insert(stream.id, stream);
+            shared.counts.inc_num_wired_streams();
+        }
+
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        self.actions.send.send_push_promise_frame(
+            &shared.send,
+            frame,
+            send_frames,
+            &mut stream_ptr,
+            &shared.conn_task,
+        );
+    }
+
+    fn process_op_trailers<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        frame: frame::Headers,
+    ) where
+        B: Buf,
+    {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+        let stream_is_reset = {
+            let shared_state = stream_ptr.shared();
+            shared_state.state.is_reset()
+        };
+        if stream_is_reset {
+            let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+            self.counts
+                .transition_after(&shared.counts, stream_ptr, is_pending_reset);
+            return;
+        }
+
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        self.actions.send.send_trailers_frame(
+            frame,
+            send_frames,
+            &mut stream_ptr,
+            &shared.counts,
+            &mut self.counts,
+            &shared.conn_task,
+        );
+    }
+
+    fn process_op_informational_headers<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        frame: frame::Headers,
+    ) where
+        B: Buf,
+    {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+        let stream_is_reset = {
+            let shared_state = stream_ptr.shared();
+            shared_state.state.is_reset()
+        };
+        if stream_is_reset {
+            let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+            self.counts
+                .transition_after(&shared.counts, stream_ptr, is_pending_reset);
+            return;
+        }
+
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        self.actions.send.send_interim_informational_headers_frame(
+            frame,
+            send_frames,
+            &mut stream_ptr,
+            &shared.conn_task,
+        );
+    }
+
+    fn process_op_response_headers<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        frame: frame::Headers,
+    ) where
+        B: Buf,
+    {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+        let stream_is_reset = {
+            let shared_state = stream_ptr.shared();
+            shared_state.state.is_reset()
+        };
+        if stream_is_reset {
+            let is_pending_reset = stream_ptr.is_pending_reset_expiration();
+            self.counts
+                .transition_after(&shared.counts, stream_ptr, is_pending_reset);
+            return;
+        }
+
+        let mut send_frames_guard = send_buffer.inner.lock().unwrap();
+        let send_frames = &mut *send_frames_guard;
+        self.actions.send.send_headers_frame(
+            &shared.send,
+            frame,
+            send_frames,
+            &mut stream_ptr,
+            &shared.conn_task,
+        );
+    }
+
+    fn process_op_reset<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        shared: &Shared,
+        stream: Arc<stream::Shared>,
+        reason: Reason,
+        prepared: PreparedSendReset,
+    ) where
+        B: Buf,
+    {
+        let Some(mut stream_ptr) = self.store.find_mut_even_if_unlinked(&stream) else {
+            return;
+        };
+
+        self.actions.send.send_prepared_reset(
+            reason,
+            prepared,
+            &mut *send_buffer.inner.lock().unwrap(),
+            &mut stream_ptr,
+            &shared.counts,
+            &mut self.counts,
+            &shared.conn_task,
+        );
+        drop(stream_ptr);
+        if prepared.send_explicit_reset {
+        } else {
+            release_queued_send_ref(
+                &mut self.actions,
+                &mut self.counts,
+                shared,
+                &shared.counts,
+                &mut self.store,
+                &stream,
+            );
+        }
+    }
+
+    // ===== send_* fns =====
 
     fn send_reset<B>(
         &mut self,
@@ -1620,8 +1712,7 @@ where
             send_buffer: self.send_buffer.clone(),
         };
 
-        self.shared
-            .push_op(ConnOp::RequestHeaders { frame: headers }, stream);
+        self.shared.push_request_headers(headers, stream);
 
         Ok(stream_ref)
     }
@@ -1678,7 +1769,7 @@ impl<B> StreamRef<B> {
 
         self.opaque
             .shared
-            .push_op(ConnOp::Data { prepared }, self.opaque.stream.clone());
+            .push_pending_op(self.opaque.stream.clone(), |ops| ops.push_data(prepared));
 
         Ok(())
     }
@@ -1692,16 +1783,13 @@ impl<B> StreamRef<B> {
 
         self.opaque
             .shared
-            .push_op(ConnOp::Trailers { frame }, self.opaque.stream.clone());
+            .push_pending_op(self.opaque.stream.clone(), |ops| ops.set_trailers(frame));
 
         Ok(())
     }
 
     pub fn send_reset(&mut self, reason: Reason) {
-        let has_queued_request_headers = self
-            .opaque
-            .shared
-            .has_queued_request_headers_for(self.opaque.stream.id);
+        let has_queued_request_headers = self.opaque.stream.pending_ops().has_request_headers();
         let prepared = Send::prepare_reset(
             &self.opaque.stream,
             self.is_pending_open() || has_queued_request_headers,
@@ -1710,10 +1798,11 @@ impl<B> StreamRef<B> {
         );
 
         if let Some(prepared) = prepared {
-            self.opaque.shared.push_op(
-                ConnOp::Reset { reason, prepared },
-                self.opaque.stream.clone(),
-            );
+            self.opaque
+                .shared
+                .push_pending_op(self.opaque.stream.clone(), |ops| {
+                    ops.set_reset(reason, prepared)
+                });
         }
     }
 
@@ -1729,10 +1818,11 @@ impl<B> StreamRef<B> {
 
         Send::check_headers(frame.fields())?;
 
-        self.opaque.shared.push_op(
-            ConnOp::InformationalHeaders { frame },
-            self.opaque.stream.clone(),
-        );
+        self.opaque
+            .shared
+            .push_pending_op(self.opaque.stream.clone(), |ops| {
+                ops.push_informational_headers(frame)
+            });
 
         Ok(())
     }
@@ -1749,10 +1839,11 @@ impl<B> StreamRef<B> {
         Send::check_headers(frame.fields())?;
         self.opaque.stream.state().state.send_open(end_of_stream)?;
 
-        self.opaque.shared.push_op(
-            ConnOp::ResponseHeaders { frame },
-            self.opaque.stream.clone(),
-        );
+        self.opaque
+            .shared
+            .push_pending_op(self.opaque.stream.clone(), |ops| {
+                ops.set_response_headers(frame)
+            });
 
         Ok(())
     }
@@ -1783,13 +1874,11 @@ impl<B> StreamRef<B> {
             child_stream.state().is_pending_push = true;
         }
 
-        self.opaque.shared.push_op(
-            ConnOp::PushPromise {
-                frame,
-                promised: child_stream.clone(),
-            },
-            self.opaque.stream.clone(),
-        );
+        self.opaque
+            .shared
+            .push_pending_op(self.opaque.stream.clone(), |ops| {
+                ops.push_push_promise(frame, child_stream.clone())
+            });
 
         let opaque = OpaqueStreamRef::from_shared(self.opaque.shared.clone(), child_stream);
 
@@ -1820,10 +1909,11 @@ impl<B> StreamRef<B> {
         let prepared = send::prepare_reserve_capacity(capacity, &self.opaque.stream);
 
         if let Some(prepared) = prepared {
-            self.opaque.shared.push_op(
-                ConnOp::ReserveCapacity { prepared },
-                self.opaque.stream.clone(),
-            );
+            self.opaque
+                .shared
+                .push_pending_op(self.opaque.stream.clone(), |ops| {
+                    ops.push_reserve_capacity(prepared)
+                });
         }
     }
 
@@ -1927,7 +2017,7 @@ impl OpaqueStreamRef {
         super::recv::release_capacity_local(capacity, &self.stream)?;
 
         self.shared
-            .push_op(ConnOp::ReleaseCapacity { capacity }, self.stream.clone());
+            .push_pending_op(self.stream.clone(), |ops| ops.release_capacity(capacity));
 
         Ok(())
     }
@@ -1980,7 +2070,8 @@ fn drop_stream_ref(shared: &Shared, stream: &Arc<stream::Shared>) {
     // decrement the stream's ref count by 1.
     stream.ref_dec();
 
-    shared.enqueue_op(ConnOp::DropStreamRef, stream.clone());
+    stream.pending_ops().inc_drop_count();
+    shared.push_stream_pending_ops(stream.clone());
 }
 
 fn release_queued_send_ref(
@@ -2077,34 +2168,33 @@ impl<B> SendBuffer<B> {
 }
 
 impl Shared {
-    fn push_op(&self, op: ConnOp, stream: Arc<stream::Shared>) {
-        stream.ops_inc();
-        self.enqueue_op(op, stream);
+    fn push_request_headers(&self, frame: frame::Headers, stream: Arc<stream::Shared>) {
+        self.queued_request_headers.fetch_add(1, Ordering::Relaxed);
+        self.push_pending_op(stream, |ops| ops.set_request_headers(frame));
     }
 
-    fn enqueue_op(&self, op: ConnOp, stream: Arc<stream::Shared>) {
-        if matches!(&op, ConnOp::RequestHeaders { .. }) {
-            self.queued_request_headers.fetch_add(1, Ordering::Relaxed);
+    fn push_pending_op<F>(&self, stream: Arc<stream::Shared>, f: F)
+    where
+        F: FnOnce(&mut stream::PendingOps),
+    {
+        stream.ops_inc();
+        f(&mut stream.pending_ops());
+        self.push_stream_pending_ops(stream);
+    }
+
+    fn push_stream_pending_ops(&self, stream: Arc<stream::Shared>) {
+        if !stream.mark_pending_conn_ops() {
+            return;
         }
+
         let mut pending_ops = self.pending_ops.lock().unwrap();
-        pending_ops.push_back(QueuedOp { stream, op });
+        pending_ops.push_back_stream(QueuedStream { stream });
 
         self.conn_task.wake();
     }
 
     fn pending_request_headers_count(&self) -> usize {
         self.queued_request_headers.load(Ordering::Relaxed)
-    }
-
-    fn has_queued_request_headers_for(&self, id: StreamId) -> bool {
-        self.pending_ops
-            .lock()
-            .unwrap()
-            .has_queued_request_headers_for(id)
-    }
-
-    fn has_queued_frame_for(&self, id: StreamId) -> bool {
-        self.pending_ops.lock().unwrap().has_queued_frame_for(id)
     }
 
     fn ensure_no_conn_error(&self) -> Result<(), proto::Error> {

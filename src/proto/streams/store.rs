@@ -115,10 +115,7 @@ impl Store {
         };
         self[key].shared_ref().stored(index.0);
 
-        Ptr {
-            key,
-            store: self,
-        }
+        Ptr { key, store: self }
     }
 
     pub fn find_entry(&mut self, id: StreamId) -> Entry<'_> {

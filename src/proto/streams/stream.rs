@@ -1,11 +1,12 @@
 use crate::proto;
 use crate::Reason;
 
+use super::send::{PreparedReserveCapacity, PreparedSendData, PreparedSendReset};
 use super::*;
 
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Waker};
 use std::time::Instant;
 
@@ -36,6 +37,7 @@ pub(super) struct Shared {
     state: Mutex<SharedState>,
     send: Mutex<Send>,
     recv: Mutex<Recv>,
+    pending_ops: Mutex<PendingOps>,
 }
 
 #[derive(Debug)]
@@ -48,6 +50,9 @@ pub(super) struct SharedState {
 
     /// Number of queued send operations waiting to be applied.
     pub pending_operation_count: usize,
+
+    /// Set to true when this stream is queued for connection-level ops.
+    pub is_pending_conn_ops: bool,
 
     /// Set to true when a push is pending for this stream
     pub is_pending_push: bool,
@@ -79,6 +84,95 @@ pub(super) struct Send {
 
     /// Set to true when the stream is pending to be opened.
     pub is_pending_open: bool,
+}
+
+/// These are all pending operations for the stream to be applied to connection.
+///
+/// The connection task will `take` this out of the shared stream state when
+/// processing the op queue, and apply all pending ops to the connection state.
+#[derive(Debug, Default)]
+pub(super) struct PendingOps {
+    pub(super) request_headers: Option<frame::Headers>,
+    // TODO: Option?
+    pub(super) push_promises: Vec<(frame::PushPromise, Arc<Shared>)>,
+    // TODO: Option?
+    pub(super) informational_headers: Vec<frame::Headers>,
+    pub(super) response_headers: Option<frame::Headers>,
+    pub(super) data: Vec<PreparedSendData>,
+    // TODO: should be able to be just WindowSize with some refactoring
+    pub(super) reserve_capacity: Vec<PreparedReserveCapacity>,
+    pub(super) release_capacity: WindowSize,
+    pub(super) release_capacity_count: usize,
+    pub(super) trailers: Option<frame::Headers>,
+    pub(super) reset: Option<PendingReset>,
+    pub(super) drop_count: usize, // could be a u8?
+}
+
+#[derive(Debug)]
+pub(super) struct PendingReset {
+    pub reason: Reason,
+    pub prepared: PreparedSendReset,
+}
+
+impl PendingOps {
+    pub(super) fn take(&mut self) -> Self {
+        std::mem::take(self)
+    }
+
+    pub(super) fn set_request_headers(&mut self, frame: frame::Headers) {
+        self.request_headers = Some(frame);
+    }
+
+    pub(super) fn push_push_promise(&mut self, frame: frame::PushPromise, promised: Arc<Shared>) {
+        self.push_promises.push((frame, promised));
+    }
+
+    pub(super) fn push_informational_headers(&mut self, frame: frame::Headers) {
+        self.informational_headers.push(frame);
+    }
+
+    pub(super) fn set_response_headers(&mut self, frame: frame::Headers) {
+        self.response_headers = Some(frame);
+    }
+
+    pub(super) fn push_data(&mut self, prepared: PreparedSendData) {
+        self.data.push(prepared);
+    }
+
+    pub(super) fn push_reserve_capacity(&mut self, prepared: PreparedReserveCapacity) {
+        self.reserve_capacity.push(prepared);
+    }
+
+    pub(super) fn release_capacity(&mut self, capacity: WindowSize) {
+        self.release_capacity += capacity;
+        self.release_capacity_count += 1;
+    }
+
+    pub(super) fn set_trailers(&mut self, frame: frame::Headers) {
+        self.trailers = Some(frame);
+    }
+
+    pub(super) fn set_reset(&mut self, reason: Reason, prepared: PreparedSendReset) {
+        self.reset = Some(PendingReset { reason, prepared });
+    }
+
+    pub(super) fn inc_drop_count(&mut self) {
+        self.drop_count += 1;
+    }
+
+    pub(super) fn has_request_headers(&self) -> bool {
+        self.request_headers.is_some()
+    }
+
+    pub(super) fn has_queued_frame(&self) -> bool {
+        self.request_headers.is_some()
+            || !self.push_promises.is_empty()
+            || !self.data.is_empty()
+            || self.trailers.is_some()
+            || self.reset.is_some()
+            || !self.informational_headers.is_empty()
+            || self.response_headers.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -571,6 +665,7 @@ impl Shared {
                 state: State::default(),
                 ref_count: 0,
                 pending_operation_count: 0,
+                is_pending_conn_ops: false,
                 is_pending_push: false,
             }),
             send: Mutex::new(Send {
@@ -594,6 +689,7 @@ impl Shared {
                 push_task: None,
                 pending_push_promises: buffer::Deque::new(),
             }),
+            pending_ops: Mutex::new(PendingOps::default()),
         })
     }
 
@@ -616,6 +712,10 @@ impl Shared {
 
     pub fn recv(&self) -> MutexGuard<'_, Recv> {
         self.recv.lock().unwrap()
+    }
+
+    pub fn pending_ops(&self) -> MutexGuard<'_, PendingOps> {
+        self.pending_ops.lock().unwrap()
     }
 
     /// Increment the stream's ref count
@@ -644,6 +744,17 @@ impl Shared {
         let mut shared = self.state();
         assert!(shared.pending_operation_count > 0);
         shared.pending_operation_count -= 1;
+    }
+
+    pub fn mark_pending_conn_ops(&self) -> bool {
+        let mut shared = self.state();
+        let was_pending = shared.is_pending_conn_ops;
+        shared.is_pending_conn_ops = true;
+        !was_pending
+    }
+
+    pub fn clear_pending_conn_ops(&self) {
+        self.state().is_pending_conn_ops = false;
     }
 
     pub fn notify_send(&self) {
