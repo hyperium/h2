@@ -343,7 +343,7 @@ async fn errors_if_recv_frame_exceeds_max_frame_size() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: frame with invalid size"
+                "connection error detected: frame size incorrect"
             );
         };
 
@@ -352,7 +352,7 @@ async fn errors_if_recv_frame_exceeds_max_frame_size() {
             let err = h2.await.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: frame with invalid size"
+                "connection error detected: frame size incorrect"
             );
         };
         join(conn, req).await;
@@ -463,7 +463,7 @@ async fn recv_goaway_finishes_processed_streams() {
             let err = client.get("https://example.com/").await.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error received: not a result of an error"
+                "connection error received: graceful shutdown"
             );
         };
 

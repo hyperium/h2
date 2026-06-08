@@ -295,7 +295,7 @@ async fn recv_data_overflows_connection_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: flow-control protocol violated"
+                "connection error detected: flow-control limits exceeded"
             );
         };
 
@@ -305,7 +305,7 @@ async fn recv_data_overflows_connection_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: flow-control protocol violated"
+                "connection error detected: flow-control limits exceeded"
             );
         };
         join(conn, req).await;
@@ -356,7 +356,7 @@ async fn recv_data_overflows_stream_window() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "stream error detected: flow-control protocol violated"
+                "stream error detected: flow-control limits exceeded"
             );
         };
 
@@ -436,7 +436,7 @@ async fn stream_error_release_connection_capacity() {
                 .expect_err("body");
             assert_eq!(
                 err.to_string(),
-                "stream error detected: unspecific protocol error detected"
+                "stream error detected: protocol error detected"
             );
             cap.release_capacity(to_release).expect("release_capacity");
         };

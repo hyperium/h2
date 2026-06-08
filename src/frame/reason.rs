@@ -62,23 +62,20 @@ impl Reason {
     /// Get a string description of the error code.
     pub fn description(&self) -> &str {
         match self.0 {
-            0 => "not a result of an error",
-            1 => "unspecific protocol error detected",
-            2 => "unexpected internal error encountered",
-            3 => "flow-control protocol violated",
-            4 => "settings ACK not received in timely manner",
-            5 => "received frame when stream half-closed",
-            6 => "frame with invalid size",
-            7 => "refused stream before processing any application logic",
-            8 => "stream no longer needed",
-            9 => "unable to maintain the header compression context",
-            10 => {
-                "connection established in response to a CONNECT request was reset or abnormally \
-                 closed"
-            }
-            11 => "detected excessive load generating behavior",
-            12 => "security properties do not meet minimum requirements",
-            13 => "endpoint requires HTTP/1.1",
+            0 => "graceful shutdown",
+            1 => "protocol error detected",
+            2 => "implementation fault",
+            3 => "flow-control limits exceeded",
+            4 => "settings not acknowledged",
+            5 => "frame received for closed stream",
+            6 => "frame size incorrect",
+            7 => "stream not processed",
+            8 => "stream cancelled",
+            9 => "compression state not updated",
+            10 => "TCP connection error for CONNECT method",
+            11 => "processing capacity exceeded",
+            12 => "negotiated TLS parameters not acceptable",
+            13 => "use HTTP/1.1 for the request",
             _ => "unknown reason",
         }
     }
@@ -129,6 +126,9 @@ impl fmt::Debug for Hex {
 
 impl fmt::Display for Reason {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.description())
+        match self.0 {
+            0..=13 => write!(fmt, "{}", self.description()),
+            _ => write!(fmt, "unknown error code {}", self.0),
+        }
     }
 }
