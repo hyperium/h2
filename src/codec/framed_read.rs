@@ -160,7 +160,7 @@ fn decode_frame(
                 },
                 Err(e) => {
                     proto_err!(conn: "failed to load frame; err={:?}", e);
-                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(e.reason()));
                 }
             };
 
@@ -177,7 +177,7 @@ fn decode_frame(
                 },
                 Err(e) => {
                     proto_err!(conn: "failed HPACK decoding; err={:?}", e);
-                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(e.reason()));
                 }
             }
 
@@ -203,7 +203,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -212,7 +212,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load PING frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -221,7 +221,7 @@ fn decode_frame(
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -232,7 +232,7 @@ fn decode_frame(
             // TODO: Should this always be connection level? Probably not...
             res.map_err(|e| {
                 proto_err!(conn: "failed to load DATA frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -241,7 +241,7 @@ fn decode_frame(
             let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load RESET frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -249,7 +249,7 @@ fn decode_frame(
             let res = frame::GoAway::load(&bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(e.reason())
             })?
             .into()
         }
@@ -273,7 +273,7 @@ fn decode_frame(
                 }
                 Err(e) => {
                     proto_err!(conn: "failed to load PRIORITY frame; err={:?};", e);
-                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(e.reason()));
                 }
             }
         }
@@ -349,7 +349,7 @@ fn decode_frame(
                 }
                 Err(e) => {
                     proto_err!(conn: "failed HPACK decoding; err={:?}", e);
-                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                    return Err(Error::library_go_away(e.reason()));
                 }
             }
 
