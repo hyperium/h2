@@ -911,7 +911,12 @@ impl HeaderBlock {
                         if headers_size < max_header_list_size {
                             self.field_size +=
                                 decoded_header_size(name.as_str().len(), value.len());
-                            self.fields.append(name, value);
+                            if let Err(_) = self.fields.try_append(name, value) {
+                                // HeaderMap capacity exceeded — treat as over-size
+                                // so the stream is rejected downstream (RST_STREAM / 431)
+                                // instead of panicking on the 24,577th unique header.
+                                self.is_over_size = true;
+                            }
                         } else if !self.is_over_size {
                             tracing::trace!("load_hpack; header list size over max");
                             self.is_over_size = true;
@@ -1167,6 +1172,90 @@ mod test {
                 path: BytesStr::from_static("*").into(),
                 ..Default::default()
             }
+        );
+    }
+
+    #[test]
+    fn test_try_append_prevents_panic_on_max_size_reached() {
+        // Verify that decoding >24,577 unique headers sets `is_over_size`
+        // instead of panicking via HeaderMap::append().
+        //
+        // HeaderMap::MAX_SIZE = 32,768. With 75% load factor, max entries = 24,576.
+        // try_append returns Err(MaxSizeReached) at entry 24,577.
+        // Before the fix (using append), this panicked.
+        //
+        // We manually construct HPACK bytes for 25,000 unique headers because
+        // creating a HeaderMap with that many entries also panics on construction.
+
+        // Build HPACK-encoded block:
+        // Pseudo-headers (indexed refs to static table):
+        //   :method GET         → 0x82 (static index 2)
+        //   :scheme http        → 0x86 (static index 6)
+        //   :path /             → 0x84 (static index 4)
+        //   :authority "localhost" → literal with indexing (name index 0)
+        //
+        // Then 25,000 unique headers: "literal without indexing, new name"
+        //   0x00 → literal without indexing, name index 0
+        //   <name_len> <name_bytes>
+        //   <value_len> <value_bytes>
+
+        let num_headers = 25_000;
+
+        // Build the HPACK block
+        let mut hpack = Vec::new();
+
+        // Pseudo-headers
+        hpack.push(0x82u8); // :method GET (static index 2)
+        hpack.push(0x86); // :scheme http (static index 6)
+        hpack.push(0x84); // :path / (static index 4)
+
+        // :authority "localhost" — literal with incremental indexing
+        hpack.push(0x41); // literal with indexing, name index 1 (= ":authority")
+        hpack.push(0x09); // value length 9
+        hpack.extend_from_slice(b"localhost");
+
+        // 25,000 unique headers: "literal without indexing, new name"
+        // Format: 0x00 + name_len + name + value_len + value
+        for i in 0..num_headers {
+            let name = format!("x-h-{i}");
+            hpack.push(0x00u8); // literal without indexing, name index 0
+            hpack.push(name.len() as u8);
+            hpack.extend_from_slice(name.as_bytes());
+            hpack.push(1u8); // value length 1
+            hpack.push(b'v');
+        }
+
+        // Build the HTTP/2 HEADERS frame: 9-byte header + HPACK payload
+        let payload_len = hpack.len();
+        let mut frame = BytesMut::with_capacity(9 + payload_len);
+
+        // Frame header: 3 bytes length, 1 byte type (0x01=HEADERS), 1 byte flags, 4 bytes stream_id
+        frame.put_u8(((payload_len >> 16) & 0xFF) as u8);
+        frame.put_u8(((payload_len >> 8) & 0xFF) as u8);
+        frame.put_u8((payload_len & 0xFF) as u8);
+        frame.put_u8(0x01); // type: HEADERS
+        frame.put_u8(0x04); // flags: END_HEADERS
+        frame.put_u32(1); // stream_id: 1
+
+        frame.extend_from_slice(&hpack);
+
+        // Parse the HEADERS frame
+        let head = Head::parse(&frame[..9]);
+        let payload = BytesMut::from(&frame[9..]);
+        let (mut headers, mut hpack_data) = Headers::load(head, payload).unwrap();
+        // hpack_data contains the HPACK payload (no padding/priority in our frame)
+
+        // Decode the HPACK block — this should NOT panic
+        let mut decoder = hpack::Decoder::new(4096);
+        const DEFAULT_MAX_HEADER_LIST_SIZE: usize = 16 << 20; // 16 MB
+        headers
+            .load_hpack(&mut hpack_data, DEFAULT_MAX_HEADER_LIST_SIZE, &mut decoder)
+            .expect("load_hpack should return Ok");
+
+        // Verify that is_over_size was set (try_append returned Err)
+        assert!(
+            headers.is_over_size(),
+            "is_over_size should be true when HeaderMap capacity is exceeded"
         );
     }
 
