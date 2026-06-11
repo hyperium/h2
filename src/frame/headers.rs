@@ -930,6 +930,7 @@ impl HeaderBlock {
                 Protocol(v) => set_pseudo!(protocol, v),
                 Status(v) => set_pseudo!(status, v),
             }
+            self.is_over_size
         });
 
         if let Err(e) = res {

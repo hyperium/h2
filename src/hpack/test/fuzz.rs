@@ -170,6 +170,7 @@ impl FuzzHpack {
                 .decode(&mut Cursor::new(&mut buf), |h| {
                     let e = expect.remove(0);
                     assert_eq!(h, e);
+                    false
                 })
                 .expect("full decode");
         }
