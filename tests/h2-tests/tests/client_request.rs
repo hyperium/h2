@@ -827,7 +827,7 @@ async fn recv_too_big_headers() {
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(40));
         srv.recv_frame(
             frames::headers(1)
                 .request("GET", "https://http2.akamai.com/")
@@ -850,7 +850,7 @@ async fn recv_too_big_headers() {
 
     let client = async move {
         let (mut client, mut conn) = client::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(40)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");

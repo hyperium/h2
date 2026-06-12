@@ -976,7 +976,7 @@ async fn too_big_headers_sends_431() {
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
         client
             .send_frame(
                 frames::headers(1)
@@ -993,7 +993,7 @@ async fn too_big_headers_sends_431() {
 
     let srv = async move {
         let mut srv = server::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(64)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
@@ -1012,7 +1012,7 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
         client
             .send_frame(
                 frames::headers(1)
@@ -1028,13 +1028,50 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
     let srv = async move {
         let mut srv = server::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(64)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
 
         let req = srv.next().await;
         assert!(req.is_none(), "req is {:?}", req);
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn abusive_headers_send_goaway() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("x-abuse", "a".repeat(200))
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::go_away(0).calm().data("header_list_way_too_large"))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_header_list_size(64)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
     };
 
     join(client, srv).await;

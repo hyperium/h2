@@ -10,8 +10,11 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use std::fmt;
 use std::io::Cursor;
+use std::ops::ControlFlow;
 
 type EncodeBuf<'a> = bytes::buf::Limit<&'a mut BytesMut>;
+
+const MAX_HEADER_LIST_ABUSE_MULTIPLIER: usize = 4;
 
 /// Header frame
 ///
@@ -852,7 +855,26 @@ impl HeaderBlock {
     ) -> Result<(), Error> {
         let mut reg = !self.fields.is_empty();
         let mut malformed = false;
+        let mut header_list_way_too_large = false;
         let mut headers_size = self.calculate_header_list_size();
+        let max_header_list_abuse_size =
+            max_header_list_size.saturating_mul(MAX_HEADER_LIST_ABUSE_MULTIPLIER);
+
+        macro_rules! check_size {
+            () => {{
+                if headers_size > max_header_list_abuse_size {
+                    tracing::trace!("load_hpack; header list size over abuse max");
+                    header_list_way_too_large = true;
+                    ControlFlow::Break(())
+                } else {
+                    if headers_size >= max_header_list_size && !self.is_over_size {
+                        tracing::trace!("load_hpack; header list size over max");
+                        self.is_over_size = true;
+                    }
+                    ControlFlow::Continue(())
+                }
+            }};
+        }
 
         macro_rules! set_pseudo {
             ($field:ident, $val:expr) => {{
@@ -866,11 +888,11 @@ impl HeaderBlock {
                     let __val = $val;
                     headers_size +=
                         decoded_header_size(stringify!($field).len() + 1, __val.as_str().len());
-                    if headers_size < max_header_list_size {
+                    if check_size!().is_break() {
+                        return ControlFlow::Break(());
+                    }
+                    if !self.is_over_size {
                         self.pseudo.$field = Some(__val);
-                    } else if !self.is_over_size {
-                        tracing::trace!("load_hpack; header list size over max");
-                        self.is_over_size = true;
                     }
                 }
             }};
@@ -907,19 +929,19 @@ impl HeaderBlock {
                     } else {
                         reg = true;
 
-                        headers_size += decoded_header_size(name.as_str().len(), value.len());
-                        if headers_size < max_header_list_size {
-                            self.field_size +=
-                                decoded_header_size(name.as_str().len(), value.len());
+                        let header_size = decoded_header_size(name.as_str().len(), value.len());
+                        headers_size += header_size;
+                        if check_size!().is_break() {
+                            return ControlFlow::Break(());
+                        }
+                        if !self.is_over_size {
+                            self.field_size += header_size;
                             if let Err(_) = self.fields.try_append(name, value) {
                                 // HeaderMap capacity exceeded — treat as over-size
                                 // so the stream is rejected downstream (RST_STREAM / 431)
                                 // instead of panicking on the 24,577th unique header.
                                 self.is_over_size = true;
                             }
-                        } else if !self.is_over_size {
-                            tracing::trace!("load_hpack; header list size over max");
-                            self.is_over_size = true;
                         }
                     }
                 }
@@ -930,11 +952,21 @@ impl HeaderBlock {
                 Protocol(v) => set_pseudo!(protocol, v),
                 Status(v) => set_pseudo!(status, v),
             }
+
+            ControlFlow::Continue(())
         });
 
-        if let Err(e) = res {
-            tracing::trace!("hpack decoding error; err={:?}", e);
-            return Err(e.into());
+        match res {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::trace!("hpack decoding error; err={:?}", e);
+                return Err(e.into());
+            }
+        }
+
+        if header_list_way_too_large {
+            tracing::trace!("header list way too large; aborting connection");
+            return Err(Error::HeaderListWayTooLarge);
         }
 
         if malformed {
