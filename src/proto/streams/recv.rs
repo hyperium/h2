@@ -736,14 +736,16 @@ impl Recv {
         // Track the data as in-flight
         stream.in_flight_recv_data += sz;
 
-        // We auto-release the padded length, since the user cannot.
-        if let Some(padded_len) = frame.padded_len() {
+        // Auto-release padding overhead (pad_len field + padding bytes),
+        // since the user only sees the data payload via `payload()`.
+        let padding = (frame.flow_controlled_len() - frame.payload().len()) as WindowSize;
+        if padding > 0 {
             tracing::trace!(
-                "recv_data; auto-releasing padded length of {:?} for {:?}",
-                padded_len,
+                "recv_data; auto-releasing padding of {:?} for {:?}",
+                padding,
                 stream.id,
             );
-            let _res = self.release_capacity(padded_len.into(), stream, &mut None);
+            let _res = self.release_capacity(padding, stream, &mut None);
             // cannot fail, we JUST added more in_flight data above.
             debug_assert!(_res.is_ok());
         }
