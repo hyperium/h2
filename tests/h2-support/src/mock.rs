@@ -117,6 +117,10 @@ impl Handle {
             p
         })
         .await?;
+
+        // Take the frame back from the codec
+        self.codec.take_used_data_frames().next();
+
         Ok(())
     }
 

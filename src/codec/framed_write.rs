@@ -4,12 +4,13 @@ use crate::frame::{self, Frame, FrameSize};
 use crate::hpack;
 
 use bytes::{Buf, BufMut, BytesMut};
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_util::io::poll_write_buf;
 
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, IoSlice};
+use std::ops::ControlFlow;
 
 // A macro to get around a method needing to borrow &mut self
 macro_rules! limited_write_buf {
@@ -38,11 +39,11 @@ struct Encoder<B> {
     /// TODO: Should this be a ring buffer?
     buf: Cursor<BytesMut>,
 
-    /// Next frame to encode
-    next: Option<Next<B>>,
+    /// Vector of buffer data and data frames to send next
+    next_vec: VecDeque<BufElement<B>>,
 
-    /// Last data frame
-    last_data_frame: Option<frame::Data<B>>,
+    /// Next continuation frame to encode
+    next_continuation: Option<frame::Continuation>,
 
     /// Max frame size, this is specified by the peer
     max_frame_size: FrameSize,
@@ -55,9 +56,11 @@ struct Encoder<B> {
 }
 
 #[derive(Debug)]
-enum Next<B> {
-    Data(frame::Data<B>),
-    Continuation(frame::Continuation),
+struct BufElement<B> {
+    /// Number of bytes in the buffer that should be written before the next data frame payload.
+    buf_len: usize,
+    /// Data frame of the payload that should be written as part of this buffer element.
+    data_frame: frame::Data<B>,
 }
 
 /// Initialize the connection with this amount of write buffer.
@@ -76,6 +79,8 @@ const CHAIN_THRESHOLD: usize = 256;
 /// fragmented data being sent, and hereby improve the throughput.
 const CHAIN_THRESHOLD_WITHOUT_VECTORED_IO: usize = 1024;
 
+const MAX_VECTORED_IO_COUNT: usize = 1024;
+
 // TODO: Make generic
 impl<T, B> FramedWrite<T, B>
 where
@@ -83,10 +88,10 @@ where
     B: Buf,
 {
     pub fn new(inner: T) -> FramedWrite<T, B> {
-        let chain_threshold = if inner.is_write_vectored() {
-            CHAIN_THRESHOLD
+        let (chain_threshold, next_vec_capacity) = if inner.is_write_vectored() {
+            (CHAIN_THRESHOLD, MAX_VECTORED_IO_COUNT / 2)
         } else {
-            CHAIN_THRESHOLD_WITHOUT_VECTORED_IO
+            (CHAIN_THRESHOLD_WITHOUT_VECTORED_IO, 1)
         };
         FramedWrite {
             inner,
@@ -94,8 +99,8 @@ where
             encoder: Encoder {
                 hpack: hpack::Encoder::default(),
                 buf: Cursor::new(BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY)),
-                next: None,
-                last_data_frame: None,
+                next_vec: VecDeque::with_capacity(next_vec_capacity),
+                next_continuation: None,
                 max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
                 chain_threshold,
                 min_buffer_capacity: chain_threshold + frame::HEADER_LEN,
@@ -108,16 +113,23 @@ where
     /// Calling this function may result in the current contents of the buffer
     /// to be flushed to `T`.
     pub fn poll_ready(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        if !self.encoder.has_capacity() {
-            // Try flushing
-            ready!(self.flush(cx))?;
+        if !self.encoder.has_vec_capacity() {
+            self.poll_ready_inner(cx)
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
 
-            if !self.encoder.has_capacity() {
-                return Poll::Pending;
+    #[cold]
+    fn poll_ready_inner(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        loop {
+            // Try flushing
+            ready!(self.flush_inner(cx, /* flush_all: */ false))?;
+
+            if self.encoder.has_capacity() {
+                return Poll::Ready(Ok(()));
             }
         }
-
-        Poll::Ready(Ok(()))
     }
 
     /// Buffer a frame.
@@ -130,31 +142,37 @@ where
 
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        let span = tracing::trace_span!("FramedWrite::flush");
+        self.flush_inner(cx, /* flush_all: */ true)
+    }
+
+    #[inline]
+    fn flush_inner(&mut self, cx: &mut Context, flush_all: bool) -> Poll<io::Result<()>> {
+        let span = tracing::trace_span!("FramedWrite::flush", all = %flush_all);
         let _e = span.enter();
 
         loop {
-            while !self.encoder.is_empty() {
-                match self.encoder.next {
-                    Some(Next::Data(ref mut frame)) => {
-                        tracing::trace!(queued_data_frame = true);
-                        let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
-                        ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut buf))?
-                    }
-                    _ => {
-                        tracing::trace!(queued_data_frame = false);
-                        ready!(poll_write_buf(
-                            Pin::new(&mut self.inner),
-                            cx,
-                            &mut self.encoder.buf
-                        ))?
-                    }
-                };
-            }
+            while ready!(poll_write_buf(
+                Pin::new(&mut self.inner),
+                cx,
+                &mut self.encoder
+            ))?
+            .is_continue()
+                && (flush_all || !self.encoder.has_capacity())
+            {}
 
-            match self.encoder.unset_frame() {
-                ControlFlow::Continue => (),
-                ControlFlow::Break => break,
+            if flush_all {
+                assert_eq!(self.encoder.buf.position(), 0);
+                assert_eq!(self.encoder.buf.remaining(), 0);
+            }
+            let capacity_before = self.encoder.buf_capacity();
+            let _ = self.encoder.try_reclaim_buf();
+            tracing::trace!(%capacity_before, capacity_after = %self.encoder.buf_capacity(), "try reclaim buffer");
+
+            if let Some(frame) = self.encoder.next_continuation.take() {
+                let mut buf = limited_write_buf!(self.encoder);
+                self.encoder.next_continuation = frame.encode(&mut buf);
+            } else {
+                break;
             }
         }
 
@@ -175,38 +193,20 @@ where
     }
 }
 
-#[must_use]
-enum ControlFlow {
-    Continue,
-    Break,
-}
-
 impl<B> Encoder<B>
 where
     B: Buf,
 {
-    fn unset_frame(&mut self) -> ControlFlow {
-        // Clear internal buffer
-        self.buf.set_position(0);
-        self.buf.get_mut().clear();
+    #[inline]
+    fn buf_capacity(&self) -> usize {
+        self.buf.get_ref().capacity() - self.buf.get_ref().len()
+    }
 
-        // The data frame has been written, so unset it
-        match self.next.take() {
-            Some(Next::Data(frame)) => {
-                self.last_data_frame = Some(frame);
-                debug_assert!(self.is_empty());
-                ControlFlow::Break
-            }
-            Some(Next::Continuation(frame)) => {
-                // Buffer the continuation frame, then try to write again
-                let mut buf = limited_write_buf!(self);
-                if let Some(continuation) = frame.encode(&mut buf) {
-                    self.next = Some(Next::Continuation(continuation));
-                }
-                ControlFlow::Continue
-            }
-            None => ControlFlow::Break,
-        }
+    #[inline]
+    fn try_reclaim_buf(&mut self) -> bool {
+        // Use the minimum value that can reclaim all of the buffer's original capacity.
+        let rem = self.buf_capacity();
+        self.buf.get_mut().try_reclaim(rem + 1)
     }
 
     fn buffer(&mut self, item: Frame<B>) -> Result<(), UserError> {
@@ -219,12 +219,16 @@ where
 
         match item {
             Frame::Data(mut v) => {
+                assert!(self.has_vec_capacity());
+
                 // Ensure that the payload is not greater than the max frame.
                 let len = v.payload().remaining();
 
                 if len > self.max_frame_size() {
                     return Err(PayloadTooBig);
                 }
+
+                let mut buf_len_to_push = 0;
 
                 if len >= self.chain_threshold {
                     let head = v.head();
@@ -237,30 +241,29 @@ where
                         self.buf.get_mut().put(v.payload_mut().take(extra_bytes));
                     }
 
-                    // Save the data frame
-                    self.next = Some(Next::Data(v));
+                    buf_len_to_push = self.buf.remaining();
+                    self.buf.advance(buf_len_to_push);
                 } else {
                     v.encode_chunk(self.buf.get_mut());
 
                     // The chunk has been fully encoded, so there is no need to
                     // keep it around
                     assert_eq!(v.payload().remaining(), 0, "chunk not fully encoded");
-
-                    // Save off the last frame...
-                    self.last_data_frame = Some(v);
                 }
+
+                // Push the most recent data frame...
+                self.next_vec.push_back(BufElement {
+                    buf_len: buf_len_to_push,
+                    data_frame: v,
+                });
             }
             Frame::Headers(v) => {
                 let mut buf = limited_write_buf!(self);
-                if let Some(continuation) = v.encode(&mut self.hpack, &mut buf) {
-                    self.next = Some(Next::Continuation(continuation));
-                }
+                self.next_continuation = v.encode(&mut self.hpack, &mut buf);
             }
             Frame::PushPromise(v) => {
                 let mut buf = limited_write_buf!(self);
-                if let Some(continuation) = v.encode(&mut self.hpack, &mut buf) {
-                    self.next = Some(Next::Continuation(continuation));
-                }
+                self.next_continuation = v.encode(&mut self.hpack, &mut buf);
             }
             Frame::Settings(v) => {
                 v.encode(self.buf.get_mut());
@@ -296,22 +299,123 @@ where
     }
 
     fn has_capacity(&self) -> bool {
-        self.next.is_none()
-            && (self.buf.get_ref().capacity() - self.buf.get_ref().len()
-                >= self.min_buffer_capacity)
+        self.next_continuation.is_none() && self.buf_capacity() >= self.min_buffer_capacity
     }
 
-    fn is_empty(&self) -> bool {
-        match self.next {
-            Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
-            _ => !self.buf.has_remaining(),
-        }
+    fn has_vec_capacity(&self) -> bool {
+        self.next_continuation.is_none()
+            && self.next_vec.len() < self.next_vec.capacity()
+            && self.buf_capacity() >= self.min_buffer_capacity
     }
 }
 
 impl<B> Encoder<B> {
     fn max_frame_size(&self) -> usize {
         self.max_frame_size as usize
+    }
+}
+
+impl<B: Buf> Buf for Encoder<B> {
+    fn remaining(&self) -> usize {
+        let mut n = self.buf.get_ref().len();
+        for next in self.next_vec.iter() {
+            n = n.saturating_add(next.data_frame.payload().remaining());
+        }
+        n
+    }
+
+    fn chunk(&self) -> &[u8] {
+        for next in self.next_vec.iter() {
+            if next.buf_len > 0 {
+                return &self.buf.get_ref()[..next.buf_len];
+            }
+            let slice = next.data_frame.payload().chunk();
+            if !slice.is_empty() {
+                return slice;
+            }
+        }
+        self.buf.get_ref()
+    }
+
+    fn advance(&mut self, mut n: usize) {
+        for next in self.next_vec.iter_mut() {
+            if next.buf_len > 0 {
+                let i = n.min(next.buf_len);
+                self.buf.get_mut().advance(i);
+                self.buf
+                    .set_position(self.buf.position().checked_sub(i as u64).unwrap());
+                n -= i;
+                next.buf_len -= i;
+                if next.buf_len > 0 {
+                    return;
+                }
+            }
+            let rem = next.data_frame.payload().remaining();
+            if rem > 0 {
+                let i = n.min(rem);
+                n -= i;
+                next.data_frame.payload_mut().advance(i);
+                if i < rem {
+                    return;
+                }
+            }
+        }
+        if n > 0 {
+            self.buf.get_mut().advance(n);
+        }
+    }
+
+    fn chunks_vectored<'a>(&'a self, dst: &mut [IoSlice<'a>]) -> usize {
+        let mut n = 0;
+        let mut buf_index = 0;
+        let mut vec_iter = self.next_vec.iter();
+        while n < dst.len() {
+            if let Some(next) = vec_iter.next() {
+                if next.buf_len > 0 {
+                    let buf_end = buf_index + next.buf_len;
+                    dst[n] = IoSlice::new(&self.buf.get_ref()[buf_index..buf_end]);
+                    buf_index = buf_end;
+                    n += 1;
+                    if n == dst.len() {
+                        break;
+                    }
+                }
+                let mut rem = next.data_frame.payload().remaining();
+                if rem > 0 {
+                    let n0 = n;
+                    n = n.wrapping_add(next.data_frame.payload().chunks_vectored(&mut dst[n..]));
+                    assert!(n0 <= n && n <= dst.len());
+                    if rem < usize::MAX {
+                        for s in &dst[n0..n] {
+                            rem = rem.saturating_sub(s.len());
+                        }
+                    }
+                    if rem > 0 {
+                        break;
+                    }
+                }
+                assert!(n <= dst.len());
+            } else {
+                if self.buf.get_ref().len() > buf_index {
+                    dst[n] = IoSlice::new(&self.buf.get_ref()[buf_index..]);
+                    n += 1;
+                }
+                break;
+            }
+        }
+        n
+    }
+
+    fn has_remaining(&self) -> bool {
+        if !self.buf.get_ref().is_empty() {
+            return true;
+        }
+        for next in self.next_vec.iter() {
+            if next.data_frame.payload().has_remaining() {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -332,13 +436,18 @@ impl<T, B> FramedWrite<T, B> {
         self.encoder.hpack.update_max_size(val);
     }
 
-    /// Retrieve the last data frame that has been sent
-    pub fn take_last_data_frame(&mut self) -> Option<frame::Data<B>> {
-        self.encoder.last_data_frame.take()
-    }
-
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.inner
+    }
+}
+
+impl<T, B: Buf> FramedWrite<T, B> {
+    /// Take back data frames that have been buffered and/or fully written.
+    pub fn take_used_data_frames(&mut self) -> impl Iterator<Item = frame::Data<B>> + '_ {
+        UsedDataFrameTaker {
+            vec: &mut self.encoder.next_vec,
+            index: 0,
+        }
     }
 }
 
@@ -363,5 +472,55 @@ mod unstable {
         pub fn get_ref(&self) -> &T {
             &self.inner
         }
+    }
+}
+
+fn poll_write_buf<T: AsyncWrite + ?Sized, B: Buf>(
+    io: Pin<&mut T>,
+    cx: &mut Context<'_>,
+    buf: &mut B,
+) -> Poll<io::Result<ControlFlow<usize, usize>>> {
+    let n = if io.is_write_vectored() {
+        let mut slices = [IoSlice::new(&[]); MAX_VECTORED_IO_COUNT];
+        let cnt = buf.chunks_vectored(&mut slices);
+        if cnt == 0 {
+            return Poll::Ready(Ok(ControlFlow::Break(0)));
+        }
+        ready!(io.poll_write_vectored(cx, &slices[..cnt]))?
+    } else {
+        let slice = buf.chunk();
+        if slice.is_empty() {
+            return Poll::Ready(Ok(ControlFlow::Break(0)));
+        }
+        ready!(io.poll_write(cx, slice))?
+    };
+
+    buf.advance(n);
+
+    Poll::Ready(Ok(ControlFlow::Continue(n)))
+}
+
+struct UsedDataFrameTaker<'a, B> {
+    vec: &'a mut VecDeque<BufElement<B>>,
+    index: usize,
+}
+
+impl<'a, B: Buf> Iterator for UsedDataFrameTaker<'a, B> {
+    type Item = frame::Data<B>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(item) = self.vec.get(self.index) {
+            if item.buf_len == 0 && !item.data_frame.payload().has_remaining() {
+                return self.vec.remove(self.index).map(|x| x.data_frame);
+            }
+            self.index += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.vec.len()))
     }
 }
