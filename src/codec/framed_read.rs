@@ -11,19 +11,20 @@ use futures_core::Stream;
 use bytes::{Buf, BytesMut};
 
 use std::io;
-
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+
 use tokio::io::AsyncRead;
 use tokio_util::codec::FramedRead as InnerFramedRead;
-use tokio_util::codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
+use tokio_util::codec::{Decoder, LengthDelimitedCodec, LengthDelimitedCodecError};
 
 // 16 MB "sane default" taken from golang http2
 const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
 
 #[derive(Debug)]
 pub struct FramedRead<T> {
-    inner: InnerFramedRead<T, LengthDelimitedCodec>,
+    inner: InnerFramedRead<T, BufferManager<LengthDelimitedCodec>>,
 
     // hpack decoder state
     hpack: hpack::Decoder,
@@ -33,6 +34,19 @@ pub struct FramedRead<T> {
     max_continuation_frames: usize,
 
     partial: Option<Partial>,
+}
+
+/// Enables more efficient frame decoder buffering
+#[derive(Debug)]
+struct BufferManager<T> {
+    inner: T,
+
+    /// Secondary buffer which gets used when the primary buffer's capacity falls below min_buf_capacity.
+    ///
+    /// This buffer has a higher likelihood of being able to reclaim its original buffer space.
+    alt_buf: BytesMut,
+
+    min_buf_capacity: usize,
 }
 
 /// Partially loaded headers frame
@@ -58,8 +72,9 @@ impl<T> FramedRead<T> {
         let max_header_list_size = DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE;
         let max_continuation_frames =
             calc_max_continuation_frames(max_header_list_size, inner.decoder().max_frame_length());
+        let min_buf_capacity = inner.read_buffer().capacity() / 2;
         FramedRead {
-            inner,
+            inner: inner.map_decoder(|d| BufferManager::with_min_buf_capacity(d, min_buf_capacity)),
             hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
             max_header_list_size,
             max_continuation_frames,
@@ -431,6 +446,65 @@ fn map_err(err: io::Error) -> Error {
         }
     }
     err.into()
+}
+
+// ===== impl BufferManager =====
+
+impl<T> BufferManager<T> {
+    pub fn with_min_buf_capacity(inner: T, min_buf_capacity: usize) -> Self {
+        BufferManager {
+            inner,
+            alt_buf: BytesMut::new(),
+            min_buf_capacity,
+        }
+    }
+}
+
+impl<T> Deref for BufferManager<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for BufferManager<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T: Decoder> Decoder for BufferManager<T> {
+    type Item = T::Item;
+    type Error = T::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let r = self.inner.decode(src);
+        // If we can't decode any more frames at the moment,
+        // and buffer capacity has fallen below the desired minimum.
+        if matches!(r, Ok(None)) && src.capacity() < self.min_buf_capacity {
+            // Empty the secondary buffer (it hasn't been used in a while anyways).
+            self.alt_buf.clear();
+
+            // Ensure that the secondary buffer has at least 2 times the minimum desired capacity.
+            // It's much more likely for the secondary buffer to no longer be referenced externally at this point,
+            // increasing the likelihood of this reservation simply reclaiming its original buffer space.
+            self.alt_buf.reserve(self.min_buf_capacity * 2);
+
+            // Copy the primary buffer to the secondary buffer.
+            // The primary buffer is highly likely to be empty or almost empty within this block.
+            self.alt_buf.extend_from_slice(src);
+
+            tracing::trace!(
+                capacity_before = %src.capacity(),
+                capacity_after = %self.alt_buf.capacity(),
+                len = %src.len(),
+                "replacing read buffer",
+            );
+
+            std::mem::swap(src, &mut self.alt_buf);
+        }
+        r
+    }
 }
 
 // ===== impl Continuable =====

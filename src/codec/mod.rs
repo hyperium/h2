@@ -8,7 +8,7 @@ use self::framed_read::FramedRead;
 use self::framed_write::FramedWrite;
 
 use crate::frame::{self, Data, Frame};
-use crate::proto::Error;
+use crate::proto::{self, Error};
 
 use bytes::Buf;
 use futures_core::Stream;
@@ -17,6 +17,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::length_delimited;
+use tokio_util::codec::FramedRead as InnerFramedRead;
 
 use std::io;
 
@@ -33,21 +34,48 @@ where
     /// Returns a new `Codec` with the default max frame size
     #[inline]
     pub fn new(io: T) -> Self {
-        Self::with_max_recv_frame_size(io, frame::DEFAULT_MAX_FRAME_SIZE as usize)
+        Self::with_recv_buffer_size(io, proto::DEFAULT_RECV_BUFFER_SIZE)
+    }
+
+    /// Returns a new `Codec` with the given read buffer size
+    pub fn with_recv_buffer_size(io: T, recv_buffer_size: usize) -> Self {
+        Self::with_max_recv_frame_size_and_recv_buffer_size(
+            io,
+            frame::DEFAULT_MAX_FRAME_SIZE as usize,
+            recv_buffer_size,
+        )
     }
 
     /// Returns a new `Codec` with the given maximum frame size
+    #[allow(dead_code)]
     pub fn with_max_recv_frame_size(io: T, max_frame_size: usize) -> Self {
+        Self::with_max_recv_frame_size_and_recv_buffer_size(
+            io,
+            max_frame_size,
+            proto::DEFAULT_RECV_BUFFER_SIZE,
+        )
+    }
+
+    /// Returns a new `Codec` with the given maximum frame size and read buffer size
+    pub fn with_max_recv_frame_size_and_recv_buffer_size(
+        io: T,
+        max_frame_size: usize,
+        recv_buffer_size: usize,
+    ) -> Self {
         // Wrap with writer
         let framed_write = FramedWrite::new(io);
 
         // Delimit the frames
-        let delimited = length_delimited::Builder::new()
-            .big_endian()
-            .length_field_length(3)
-            .length_adjustment(9)
-            .num_skip(0) // Don't skip the header
-            .new_read(framed_write);
+        let delimited = InnerFramedRead::with_capacity(
+            framed_write,
+            length_delimited::Builder::new()
+                .big_endian()
+                .length_field_length(3)
+                .length_adjustment(9)
+                .num_skip(0) // Don't skip the header
+                .new_codec(),
+            recv_buffer_size,
+        );
 
         let mut inner = FramedRead::new(delimited);
 

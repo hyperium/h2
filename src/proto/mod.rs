@@ -40,3 +40,4 @@ pub const DEFAULT_RESET_STREAM_MAX: usize = 50;
 // reasonable guess of the average here.
 pub const DEFAULT_RESET_STREAM_SECS: u64 = 1;
 pub const DEFAULT_MAX_SEND_BUFFER_SIZE: usize = 1024 * 400;
+pub const DEFAULT_RECV_BUFFER_SIZE: usize = 1024 * 8;
