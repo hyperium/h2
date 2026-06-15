@@ -1,3 +1,13 @@
+# 0.4.15 (June 15, 2026)
+
+* Fix closing a connection when header size is "way too large" (currently x4 configured limit).
+* Fix overflow calculating padding length if a DATA frame had 255 bytes of padding.
+* Fix ignoring library-initiated resets in the connection state loop.
+* Fix decoding panic with an absurd amount of headers and no limit to now use `try_append()`.
+* Fix rejecting frames on streams whose HEADERS have not been sent.
+* Fix `poll_capacity()` to not return `Some(Ok(0))`.
+* Fix discarding of buffered DATA frames when a reset is scheduled.
+
 # 0.4.14 (May 5, 2026)
 
 * Add `header_table_size()` option to server builder.
