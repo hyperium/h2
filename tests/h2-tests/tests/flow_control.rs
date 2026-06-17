@@ -1,6 +1,7 @@
 use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
+use tokio::sync::oneshot;
 
 // In this case, the stream & connection both have capacity, but capacity is not
 // explicitly requested.
@@ -441,6 +442,148 @@ async fn stream_error_release_connection_capacity() {
         };
         conn.drive(req).await;
         conn.await.expect("client");
+    };
+
+    join(srv, client).await;
+}
+
+// Regression test for TODO
+#[tokio::test]
+async fn padded_data_stream_error_releases_connection_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    // Padded EOS frame: 1 byte pad_len + 8 bytes data + 1 byte padding.
+    // flow_controlled_len = 10, payload (data only) = 8.
+    let mut padded_eos = vec![0u8; 10];
+    padded_eos[0] = 1;
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        // Wrong content-length triggers a stream error on the padded EOS frame.
+        srv.send_frame(
+            frames::headers(1)
+                .response(200)
+                .field("content-length", &*(16_384 * 3).to_string()),
+        )
+        .await;
+        srv.send_frame(frames::data(1, vec![0; 16_384])).await;
+        srv.send_frame(frames::data(1, vec![0; 16_384])).await;
+        srv.send_frame(frames::data(1, &padded_eos[..]).padded().eos())
+            .await;
+        srv.recv_frame(frames::reset(1).protocol_error()).await;
+        // Released capacity must include the padded frame's full
+        // flow_controlled_len (10), not just its payload (8).
+        srv.recv_frame(frames::window_update(0, 16_384 * 2 + 10))
+            .await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async {
+            let resp = client
+                .send_request(request, true)
+                .unwrap()
+                .0
+                .await
+                .expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            let mut body = resp.into_parts().1;
+            let mut cap = body.flow_control().clone();
+            let to_release = 16_384 * 2;
+            let mut should_recv_bytes = to_release;
+            let mut should_recv_frames = 2usize;
+
+            let err = body
+                .try_for_each(|bytes| async move {
+                    should_recv_bytes -= bytes.len();
+                    should_recv_frames -= 1;
+                    if should_recv_bytes == 0 {
+                        assert_eq!(should_recv_frames, 0);
+                    }
+                    Ok(())
+                })
+                .await
+                .expect_err("body");
+            assert_eq!(
+                err.to_string(),
+                "stream error detected: unspecific protocol error detected"
+            );
+            cap.release_capacity(to_release).expect("release_capacity");
+        };
+        conn.drive(req).await;
+        conn.await.expect("client");
+    };
+
+    join(srv, client).await;
+}
+
+// Regression test for TODO
+#[tokio::test]
+async fn padded_data_on_forgotten_stream_releases_connection_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    // Padded frame: 1 byte pad_len + 16378 bytes data + 5 bytes padding.
+    // flow_controlled_len = 16384, payload (data only) = 16378.
+    let mut padded = vec![0u8; 16_384];
+    padded[0] = 5;
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![0; 16_384])).await;
+        srv.recv_frame(frames::reset(1).cancel()).await;
+        // Wait for the reset to expire so the stream is forgotten.
+        idle_ms(50).await;
+        srv.ping_pong([1; 8]).await;
+        // Stream 1 has been evicted. Send a padded DATA frame for it.
+        srv.send_frame(frames::data(1, &padded[..]).padded().eos())
+            .await;
+        // Released capacity must cover both frames using their full
+        // flow_controlled_len. There used to be a bug where the padded
+        // frame would release only 16378 (payload) instead of 16384.
+        srv.recv_frame(frames::window_update(0, 16_384 * 2)).await;
+        srv.recv_frame(frames::reset(1).stream_closed()).await;
+    };
+
+    let client = async move {
+        let (mut client, conn) = client::Builder::new()
+            .reset_stream_duration(Duration::from_millis(10))
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let req = async {
+            let resp = client.get("https://example.com/").await.expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            // This drop sends RST_STREAM(CANCEL)
+            drop(resp);
+        };
+
+        let mut conn = Box::pin(async move { conn.await.expect("client") });
+        conn.drive(req).await;
+        conn.await;
+        drop(client);
     };
 
     join(srv, client).await;
@@ -1587,6 +1730,169 @@ async fn reset_stream_waiting_for_capacity() {
     join(srv, client).await;
 }
 
+// Regression test for https://github.com/hyperium/h2/pull/893
+#[tokio::test]
+async fn reserve_capacity_then_cancel_does_not_leak() {
+    for explicit_reset in [true, false] {
+        let (io, mut srv) = mock::new();
+
+        let srv = async move {
+            let _ = srv.assert_client_handshake().await;
+            srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+                .await;
+            if !explicit_reset {
+                srv.send_frame(frames::headers(1).response(200)).await;
+            }
+            let mut data_bytes = 0;
+            loop {
+                let frame = srv.next().await.unwrap().unwrap();
+                match frame {
+                    h2::frame::Frame::Reset(_) | h2::frame::Frame::Headers(_) => {}
+                    h2::frame::Frame::Data(d) => {
+                        data_bytes += d.payload().len();
+                        if d.is_end_stream() {
+                            break;
+                        }
+                    }
+                    other => panic!("unexpected: {:?}", other),
+                }
+            }
+            assert_eq!(data_bytes, 65535);
+            srv.send_frame(frames::headers(3).response(200).eos()).await;
+        };
+
+        let client = async move {
+            let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let (response, mut stream) = client.send_request(request, false).unwrap();
+            stream.reserve_capacity(10);
+
+            if explicit_reset {
+                stream.send_reset(Reason::CANCEL);
+                drop(stream);
+                let err = response.await.unwrap_err();
+                assert_eq!(err.reason(), Some(Reason::CANCEL));
+            } else {
+                let resp = conn.drive(response).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+                drop(stream);
+                drop(resp);
+            }
+
+            // Open a second stream and send a full window of data. If capacity
+            // leaked, this would stall.
+            let request2 = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let (response2, mut stream2) = client.send_request(request2, false).unwrap();
+            stream2.send_data(vec![0; 65535].into(), true).unwrap();
+            join(async move { conn.await.expect("conn") }, async move {
+                let resp = response2.await.expect("resp");
+                assert_eq!(resp.status(), StatusCode::OK);
+                drop(client);
+            })
+            .await;
+        };
+
+        join(srv, client).await;
+    }
+}
+
+#[tokio::test]
+async fn scheduled_reset_with_buffered_data_sends_rst() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(0))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            srv.recv_frame(frames::reset(1).cancel()),
+        )
+        .await
+        .expect("RST_STREAM not received within 5s");
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Buffer data that can never be sent (zero stream window).
+        stream.send_data(vec![0u8; 10].into(), false).unwrap();
+        // Drop both handles to schedule a CANCEL reset.
+        drop(stream);
+        drop(resp);
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn scheduled_reset_with_excess_buffered_data_is_cleaned_up() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16384])).await;
+        srv.recv_frame(frames::data(1, vec![0; 16383])).await;
+        srv.send_frame(frames::window_update(0, 65535)).await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::reset(1).cancel()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        // Buffer the full window plus excess. The first 65535 bytes
+        // are sent, and the remaining 1000 are stuck.
+        stream
+            .send_data(vec![0u8; 65535 + 1000].into(), false)
+            .unwrap();
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        drop(stream);
+        drop(resp);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(5), conn)
+            .await
+            .expect("connection did not shut down within 5s")
+            .unwrap();
+    };
+
+    join(srv, client).await;
+}
+
 #[tokio::test]
 async fn data_padding() {
     h2_support::trace_init!();
@@ -2104,7 +2410,7 @@ async fn capacity_not_assigned_to_unopened_streams() {
 
         let (response1, mut stream1) = client.send_request(request.clone(), false).unwrap();
         stream1.send_data("hello".into(), false).unwrap();
-        let (_, mut stream2) = client.send_request(request.clone(), false).unwrap();
+        let (_, mut stream2) = client.send_request(request, false).unwrap();
         stream2.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
         stream1.send_data("world".into(), true).unwrap();
         h2.drive(response1).await.unwrap();
@@ -2163,7 +2469,7 @@ async fn new_initial_window_size_capacity_not_assigned_to_unopened_streams() {
 
         let (response1, mut stream1) = client.send_request(request.clone(), false).unwrap();
         stream1.send_data("hello".into(), false).unwrap();
-        let (_, mut stream2) = client.send_request(request.clone(), false).unwrap();
+        let (_, mut stream2) = client.send_request(request, false).unwrap();
         stream2.reserve_capacity(frame::DEFAULT_INITIAL_WINDOW_SIZE as usize);
         h2.drive(response1).await.unwrap();
         stream1.send_data("world".into(), true).unwrap();
@@ -2236,4 +2542,275 @@ async fn too_many_window_update_resets_causes_go_away() {
     };
 
     join(srv, client).await;
+}
+
+#[tokio::test]
+async fn goaway_ignores_data_but_returns_connection_capacity() {
+    h2_support::trace_init!();
+
+    for padded in [false, true] {
+        let (io, mut client) = mock::new();
+
+        // Test both with and without padding
+        let data = if padded {
+            let mut frame = vec![0u8; 16_384];
+            frame[0] = 5; // 5 bytes of padding
+            frame
+        } else {
+            vec![0u8; 16_384]
+        };
+
+        let client = async move {
+            let _ = client.assert_server_handshake().await;
+
+            client
+                .send_frame(
+                    frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+
+            // Receive GOAWAY(MAX) + PING from graceful shutdown.
+            client.recv_frame(frames::go_away(2147483647)).await;
+            client.recv_frame(frames::ping(frame::Ping::SHUTDOWN)).await;
+
+            client
+                .recv_frame(frames::headers(1).response(200).eos())
+                .await;
+
+            // Stream 3 arrives "in flight" before client processes GOAWAY.
+            client
+                .send_frame(frames::headers(3).request("POST", "https://example.com/"))
+                .await;
+
+            // Complete the graceful shutdown handshake.
+            client
+                .send_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
+                .await;
+
+            // Final GOAWAY(3): streams 1 and 3 are accepted, everything above is rejected.
+            client.recv_frame(frames::go_away(3)).await;
+
+            // Stream 5 is above last_stream_id=3; DATA will be ignored,
+            // but connection window must still be replenished.
+            client
+                .send_frame(frames::headers(5).request("POST", "https://example.com/"))
+                .await;
+            client
+                .send_frame(if padded {
+                    frames::data(5, &data[..]).padded()
+                } else {
+                    frames::data(5, &data[..])
+                })
+                .await;
+            client
+                .send_frame(if padded {
+                    frames::data(5, &data[..]).padded()
+                } else {
+                    frames::data(5, &data[..])
+                })
+                .await;
+
+            client
+                .recv_frame(frames::window_update(0, 16_384 * 2))
+                .await;
+
+            client.send_frame(frames::data(3, "").eos()).await;
+
+            client
+                .recv_frame(frames::headers(3).response(200).eos())
+                .await;
+
+            client.recv_eof().await;
+        };
+
+        let srv = async move {
+            let mut srv = server::handshake(io).await.expect("handshake");
+
+            let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+            srv.graceful_shutdown();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+
+            let (req, mut stream) = srv.next().await.unwrap().unwrap();
+            let body = req.into_parts().1;
+
+            let body = async move {
+                let buf = util::concat(body).await.unwrap();
+                assert!(buf.is_empty());
+                let rsp = http::Response::builder().status(200).body(()).unwrap();
+                stream.send_response(rsp, true).unwrap();
+            };
+
+            let mut srv = Box::pin(async move {
+                assert!(srv.next().await.is_none(), "unexpected stream after GOAWAY");
+            });
+            srv.drive(body).await;
+            srv.await;
+        };
+
+        join(client, srv).await;
+    }
+}
+
+/// When the library sends RST_STREAM (e.g., due to a WINDOW_UPDATE
+/// overflow), `poll_capacity` and `poll_reset` must be notified.
+/// Regression test for https://github.com/hyperium/h2/pull/897
+#[tokio::test]
+async fn poll_capacity_woken_on_library_reset() {
+    h2_support::trace_init!();
+
+    for polling_capacity in [true, false] {
+        let (io, mut srv) = mock::new();
+        let (client_done_tx, client_done_rx) = oneshot::channel::<()>();
+
+        let srv = async move {
+            let settings = srv.assert_client_handshake().await;
+            assert_default_settings!(settings);
+
+            srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+                .await;
+
+            // 2. Receive the 65535-byte initial window (4 DATA frames at default MAX_FRAME_SIZE).
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_383])).await;
+
+            // 3. Grow stream window to 2^31-1, to set up for overflow later.
+            srv.send_frame(frames::window_update(0, 65535)).await;
+            srv.send_frame(frames::window_update(1, 2_147_483_647))
+                .await;
+
+            // 5. Receive the next 65535 bytes (connection-limited).
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+            srv.recv_frame(frames::data(1, vec![0u8; 16_383])).await;
+
+            // 6. Overflow: stream window 2147418112 + 65536 = 2^31 > 2^31-1.
+            srv.send_frame(frames::window_update(1, 65536)).await;
+
+            // 8. Receive the RST_STREAM(FLOW_CONTROL_ERROR) sent by the library.
+            srv.recv_frame(frames::reset(1).flow_control()).await;
+
+            // Wait for the client to finish. Otherwise Recv::recv_eof hides
+            // the missing waker.
+            let _ = client_done_rx.await;
+        };
+
+        let client = async move {
+            let (mut client, conn) = client::handshake(io).await.unwrap();
+            tokio::spawn(async move {
+                // Separate task so the polled method won't resolve unless notify_send wakes it.
+                let _ = conn.await;
+            });
+
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("https://example.com/")
+                .body(())
+                .unwrap();
+            let (_resp, mut stream) = client.send_request(request, false).unwrap();
+
+            // 1. Exhaust the initial 65535-byte window.
+            stream.reserve_capacity(65535);
+            let cap = poll_fn(|cx| stream.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(cap, 65535);
+            stream.send_data(vec![0u8; cap].into(), false).unwrap();
+
+            // 4. poll_capacity blocks until 3. replenishes windows, then send again.
+            stream.reserve_capacity(65535);
+            let cap = poll_fn(|cx| stream.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(cap, 65535);
+            stream.send_data(vec![0u8; cap].into(), false).unwrap();
+
+            // 7. The polled method must be woken by the reset from 6.
+            if polling_capacity {
+                stream.reserve_capacity(65535);
+                let result = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    poll_fn(|cx| stream.poll_capacity(cx)).wakened(),
+                )
+                .await
+                .expect("poll_capacity was not woken");
+                assert!(result.is_none());
+            } else {
+                let reason = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    poll_fn(|cx| stream.poll_reset(cx)).wakened(),
+                )
+                .await
+                .expect("poll_reset was not woken")
+                .unwrap();
+                assert_eq!(reason, Reason::FLOW_CONTROL_ERROR);
+            }
+
+            let _ = client_done_tx.send(());
+        };
+
+        join(srv, client).await;
+    }
+}
+
+/// A WINDOW_UPDATE followed by a SETTINGS decrease can cancel each other out, resulting
+/// in zero capacity. `poll_capacity` must return `Pending` (not `Ready(Ok(0))`) in that case.
+#[tokio::test]
+async fn poll_capacity_window_update_settings_race() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_initial_window_size(Some(0));
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake_with_settings(settings).await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        idle_ms(50).await;
+
+        // Give stream capacity then immediately take it back
+        srv.send_frame(frames::window_update(1, 1024)).await;
+        srv.send_frame(frames::settings().initial_window_size(0))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+
+        // Now give real, usable capacity
+        srv.send_frame(frames::window_update(0, 11)).await;
+        srv.send_frame(frames::window_update(1, 11)).await;
+        srv.recv_frame(frames::data(1, "hello world").eos()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        stream.reserve_capacity(11);
+
+        // `wait_for_capacity` panics if `poll_capacity` ever returns `Ok(0)`
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 11)).await;
+        stream.send_data("hello world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
 }

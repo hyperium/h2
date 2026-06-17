@@ -442,14 +442,10 @@ impl Prioritize {
             return;
         }
 
-        // If the stream has requested capacity, then it must be in the
-        // streaming state (more data could be sent) or there is buffered data
-        // waiting to be sent.
-        debug_assert!(
-            stream.state.is_send_streaming() || stream.buffered_send_data > 0,
-            "state={:?}",
-            stream.state
-        );
+        // The stream may have been reset or closed since capacity was requested.
+        if !stream.state.is_send_streaming() && stream.buffered_send_data == 0 {
+            return;
+        }
 
         // The amount of currently available capacity on the connection
         let conn_available = self.flow.available().as_size();
@@ -731,6 +727,23 @@ impl Prioritize {
 
                     let frame = match stream.pending_send.pop_front(buffer) {
                         Some(Frame::Data(mut frame)) => {
+                            if let Some(reason) = stream.state.get_scheduled_reset() {
+                                // If a reset is scheduled due to cancellation or
+                                // an error, discard buffered DATA and let the `None`
+                                // arm emit the RST_STREAM on the next iteration.
+                                //
+                                // NO_ERROR is excluded. Per RFC 9113 §8.1, a NO_ERROR
+                                // stream reset may only be sent after a complete
+                                // response, which requires sending all queued DATA.
+                                if reason != Reason::NO_ERROR {
+                                    stream.pending_send.push_front(buffer, frame.into());
+                                    self.clear_queue(buffer, &mut stream);
+                                    self.reclaim_all_capacity(&mut stream, counts);
+                                    self.pending_send.push(&mut stream);
+                                    continue;
+                                }
+                            }
+
                             // Get the amount of capacity remaining for stream's
                             // window.
                             let stream_capacity = stream.send_flow.available();

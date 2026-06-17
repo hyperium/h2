@@ -234,6 +234,80 @@ async fn invalid_informational_status_returns_error() {
 }
 
 #[tokio::test]
+async fn client_poll_informational_responses_none() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let (sync_sender, sync_receiver) = tokio::sync::oneshot::channel::<()>();
+
+    let srv = async move {
+        let recv_settings = srv.assert_client_handshake().await;
+        assert_default_settings!(recv_settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        // Send final response directly
+        srv.send_frame(frames::headers(1).response(StatusCode::OK))
+            .await;
+
+        // The server may not close the stream immediately.
+        // Let's simulate this by waiting from client.
+        // Continue after the client received the response headers
+        tokio::time::timeout(Duration::from_secs(4), sync_receiver)
+            .await
+            .expect("Client blocked on informational headers")
+            .unwrap();
+        srv.send_frame(frames::data(1, b"request body").eos()).await;
+    };
+
+    let client = async move {
+        let (client, connection) = client::handshake(io).await.expect("handshake");
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let (mut response_future, _) = client
+            .ready()
+            .await
+            .unwrap()
+            .send_request(request, true)
+            .unwrap();
+
+        tokio::spawn(async move {
+            connection.await.expect("connection error");
+        });
+
+        // Poll for informational responses
+        loop {
+            match poll_fn(|cx| response_future.poll_informational(cx)).await {
+                Some(Ok(rsp)) => panic!("Unexpected informational response {:?}", rsp),
+                Some(Err(e)) => panic!("Error polling informational: {:?}", e),
+                None => break,
+            }
+        }
+        // Let the server continue sending responses
+        sync_sender.send(()).unwrap();
+
+        // Get the final response
+        let response = response_future.await.expect("response error");
+        assert_eq!(response.status(), StatusCode::OK);
+        let (_hdr, mut recv_stream) = response.into_parts();
+        let data = recv_stream.data().await.unwrap().unwrap();
+        assert_eq!("request body", data);
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn client_poll_informational_responses() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();

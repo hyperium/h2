@@ -70,6 +70,51 @@ async fn server_builder_set_max_concurrent_streams() {
 }
 
 #[tokio::test]
+async fn server_builder_header_table_size() {
+    h2_support::trace_init!();
+
+    for size in [0, 10000] {
+        let (io, mut client) = mock::new();
+
+        let mut expected = frame::Settings::default();
+        expected.set_header_table_size(Some(size));
+
+        let client = async move {
+            let recv_settings = client.assert_server_handshake().await;
+            assert_frame_eq(recv_settings, expected);
+            client
+                .send_frame(
+                    frames::headers(1)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            client
+                .recv_frame(frames::headers(1).response(200).eos())
+                .await;
+        };
+
+        let mut builder = server::Builder::new();
+        builder.header_table_size(size);
+
+        let h2 = async move {
+            let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+            let (req, mut stream) = srv.next().await.unwrap().unwrap();
+            assert_eq!(req.method(), &http::Method::GET);
+            stream
+                .send_response(
+                    http::Response::builder().status(200).body(()).unwrap(),
+                    true,
+                )
+                .unwrap();
+            assert!(srv.next().await.is_none());
+        };
+
+        join(client, h2).await;
+    }
+}
+
+#[tokio::test]
 async fn serve_request() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
@@ -590,6 +635,55 @@ async fn sends_reset_no_error_when_req_body_is_dropped() {
 }
 
 #[tokio::test]
+async fn no_error_response_body_delivered_before_rst() {
+    // When a server sends a large response body and drops the request
+    // body without reading it, NO_ERROR is scheduled. The response DATA
+    // must still be delivered.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16383])).await;
+        // These window updates allow the full response to be delivered.
+        client.send_frame(frames::window_update(0, 65535)).await;
+        client.send_frame(frames::window_update(1, 65535)).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 16384])).await;
+        client.recv_frame(frames::data(1, vec![0; 1]).eos()).await;
+        client
+            .recv_frame(frames::reset(1).reason(Reason::NO_ERROR))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        {
+            let (req, mut stream) = srv.next().await.unwrap().unwrap();
+            assert_eq!(req.method(), &http::Method::POST);
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            // Response body larger than the stream window. The first 65535 bytes
+            // are sent immediately, and the remaining bytes wait for the client's
+            // WINDOW_UPDATE.
+            tx.send_data(vec![0; 16384 * 6].into(), true).unwrap();
+        }
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn abrupt_shutdown() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
@@ -758,6 +852,69 @@ async fn goaway_even_if_client_sent_goaway() {
 }
 
 #[tokio::test]
+async fn client_goaway_does_not_kill_remote_initiated_streams() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        // Client sends a request on stream 1
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // Receive response headers (no END_STREAM)
+        client.recv_frame(frames::headers(1).response(200)).await;
+        // Client sends GOAWAY(0)
+        client.send_frame(frames::go_away(0)).await;
+        // Server should still be able to send the response body
+        client
+            .recv_frame(frames::data(1, "the response body").eos())
+            .await;
+        // Server sends its own GOAWAY and closes
+        client.recv_frame(frames::go_away(1)).await;
+        client.recv_eof().await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Send response headers without END_STREAM
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        let mut tx = stream.send_response(rsp, false).unwrap();
+
+        // Drive the connection while sending the body.
+        // The yields ensure the connection processes the client's GOAWAY
+        // before we attempt to send data.
+        let send_body = async {
+            // First yield: connection flushes headers. Client receives them
+            // and sends GOAWAY(0).
+            tokio::task::yield_now().await;
+            // Second yield: connection reads and processes GOAWAY(0).
+            // Before the fix, stream 1 was killed here.
+            tokio::task::yield_now().await;
+            // Send response body. Before the fix, this failed because
+            // stream 1 was incorrectly closed by recv_go_away.
+            tx.send_data("the response body".into(), true).unwrap();
+        };
+
+        let mut srv = Box::pin(async move {
+            assert!(srv.next().await.is_none(), "unexpected request");
+        });
+        srv.drive(send_body).await;
+        srv.await;
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn sends_reset_cancel_when_res_body_is_dropped() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
@@ -782,7 +939,8 @@ async fn sends_reset_cancel_when_res_body_is_dropped() {
             )
             .await;
         client.recv_frame(frames::headers(3).response(200)).await;
-        client.recv_frame(frames::data(3, vec![0; 10])).await;
+        // CANCEL means "stream is no longer needed" (RFC 9113 §7). Buffered DATA
+        // is discarded and RST_STREAM is sent immediately.
         client.recv_frame(frames::reset(3).cancel()).await;
     };
 
@@ -818,7 +976,7 @@ async fn too_big_headers_sends_431() {
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
         client
             .send_frame(
                 frames::headers(1)
@@ -835,7 +993,7 @@ async fn too_big_headers_sends_431() {
 
     let srv = async move {
         let mut srv = server::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(64)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
@@ -854,7 +1012,7 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
     let client = async move {
         let settings = client.assert_server_handshake().await;
-        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
         client
             .send_frame(
                 frames::headers(1)
@@ -870,13 +1028,50 @@ async fn too_big_headers_sends_reset_after_431_if_not_eos() {
 
     let srv = async move {
         let mut srv = server::Builder::new()
-            .max_header_list_size(10)
+            .max_header_list_size(64)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
 
         let req = srv.next().await;
         assert!(req.is_none(), "req is {:?}", req);
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn abusive_headers_send_goaway() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(64));
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("x-abuse", "a".repeat(200))
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::go_away(0).calm().data("header_list_way_too_large"))
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_header_list_size(64)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let err = srv.next().await.unwrap().expect_err("server");
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
     };
 
     join(client, srv).await;
@@ -1793,4 +1988,53 @@ async fn push_promise_host_authority_invalid_keeps_uri() {
     };
 
     join(client, srv).await;
+}
+
+#[tokio::test]
+async fn remote_reset_does_not_panic_connection_driver() {
+    h2_support::trace_init!();
+
+    const ADVERSARIAL_WIRE: &[u8] = &[
+        // Client connection preface.
+        0x50, 0x52, 0x49, 0x20, 0x2a, 0x20, 0x48, 0x54, 0x54, 0x50, 0x2f, 0x32, 0x2e, 0x30, 0x0d,
+        0x0a, 0x0d, 0x0a, 0x53, 0x4d, 0x0d, 0x0a, 0x0d, 0x0a,
+        // SETTINGS len=0, flags=0, stream=0.
+        0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // Unknown frame type 0x87, len=5, flags=0xc1, stream=257.
+        0x00, 0x00, 0x05, 0x87, 0xc1, 0x00, 0x00, 0x01, 0x01, 0x05, 0x94, 0x05, 0x01, 0x00,
+        // Unknown frame type 0xc1, len=0, flags=0x94, stream=1281.
+        0x00, 0x00, 0x00, 0xc1, 0x94, 0x00, 0x00, 0x05, 0x01,
+        // HEADERS len=4, flags=END_STREAM | END_HEADERS, stream=4353.
+        0x00, 0x00, 0x04, 0x01, 0x05, 0x00, 0x00, 0x11, 0x01, 0x83, 0x87, 0x01, 0x00,
+        // RST_STREAM len=4, flags=0x05, stream=4353.
+        0x00, 0x00, 0x04, 0x03, 0x05, 0x00, 0x00, 0x11, 0x01, 0x83, 0x87, 0x01, 0x00,
+        // HEADERS len=5, flags=0xf6, stream=4353.
+        0x00, 0x00, 0x05, 0x01, 0xf6, 0x00, 0x00, 0x11, 0x01, 0x01, 0x94, 0x00, 0x3d, 0x01,
+        // PUSH_PROMISE len=5, flags=0xf6, stream=4353.
+        0x00, 0x00, 0x05, 0x05, 0xf6, 0x00, 0x00, 0x11, 0x01, 0x3d, 0x94, 0x81, 0x00, 0x95,
+        // HEADERS len=0, flags=END_STREAM | END_HEADERS, stream=4353.
+        0x00, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x11, 0x01,
+    ];
+
+    let (mut client_io, server_io) = tokio::io::duplex(256 * 1024);
+    let server_task = tokio::spawn(async move {
+        let Ok(mut server) = server::handshake(server_io).await else {
+            return;
+        };
+
+        while let Some(result) = server.next().await {
+            let _ = result;
+        }
+    });
+
+    client_io
+        .write_all(ADVERSARIAL_WIRE)
+        .await
+        .expect("write adversarial wire");
+    drop(client_io);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), server_task)
+        .await
+        .expect("server task timed out")
+        .expect("server task panicked");
 }
