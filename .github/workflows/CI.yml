@@ -61,6 +61,95 @@ jobs:
         run: ./ci/h2spec.sh
         if: matrix.rust == 'stable'
 
+  ztunnel-temporary:
+    name: Temporary ztunnel tests
+    needs: [style]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: full
+      RUST_TEST_THREADS: 4
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo -E
+    steps:
+      - name: Checkout h2
+        uses: actions/checkout@v6
+        with:
+          path: h2
+
+      - name: Checkout ztunnel master
+        uses: actions/checkout@v6
+        with:
+          repository: istio/ztunnel
+          ref: master
+          path: ztunnel
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install diagnostics
+        run: sudo apt-get update && sudo apt-get install -y gdb libssl-dev pkg-config protobuf-compiler
+
+      - name: Print runner details
+        run: |
+          nproc
+          lscpu
+          rustc -vV
+          cargo -vV
+
+      - name: Patch ztunnel to use this h2 checkout
+        working-directory: ztunnel
+        run: |
+          cat >> Cargo.toml <<'EOF'
+
+          [patch.crates-io]
+          h2 = { path = "../h2" }
+          EOF
+          cargo update -p h2
+          cargo tree -i h2
+
+      - name: Run ztunnel test suite with diagnostics
+        working-directory: ztunnel
+        run: |
+          set -Eeuo pipefail
+
+          sudo sysctl kernel.yama.ptrace_scope=0 || true
+
+          dump_state() {
+            echo "::group::process table"
+            date -u
+            ps -eT -o pid,ppid,pgid,lwp,stat,pcpu,pmem,wchan:32,comm,args || true
+            echo "::endgroup::"
+
+            echo "::group::ztunnel test process backtraces"
+            pgrep -af 'out/rust/debug/deps|out/rust/debug/ztunnel|target/debug/deps' || true
+            for pid in $(pgrep -f 'out/rust/debug/deps|out/rust/debug/ztunnel|target/debug/deps' || true); do
+              echo "===== gdb thread backtraces for pid ${pid} ====="
+              sudo gdb -q -batch \
+                -ex 'set pagination off' \
+                -ex 'thread apply all bt' \
+                -p "${pid}" || true
+            done
+            echo "::endgroup::"
+          }
+
+          setsid cargo test --benches --tests --bins &
+          cargo_pid=$!
+          deadline=$((SECONDS + 25 * 60))
+
+          while kill -0 "${cargo_pid}" 2>/dev/null; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::ztunnel cargo test timed out after 25 minutes"
+              dump_state
+              kill -TERM "-${cargo_pid}" 2>/dev/null || true
+              sleep 5
+              kill -KILL "-${cargo_pid}" 2>/dev/null || true
+              exit 124
+            fi
+            sleep 10
+          done
+
+          wait "${cargo_pid}"
+
   #clippy_check:
   #  runs-on: ubuntu-latest
   #  steps:
