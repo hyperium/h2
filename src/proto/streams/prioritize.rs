@@ -543,6 +543,12 @@ impl Prioritize {
                         self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
                     }
                     dst.buffer(frame).expect("invalid frame");
+
+                    // Small DATA frames can be fully encoded by `buffer`,
+                    // which records completion in a single codec slot. Reclaim
+                    // before accepting another frame so that slot is not
+                    // overwritten.
+                    self.reclaim_frame(buffer, store, dst);
                 }
                 None => {
                     return Ok(true);
