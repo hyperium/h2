@@ -837,6 +837,43 @@ async fn recv_window_update_on_stream_closed_by_data_frame() {
 }
 
 #[tokio::test]
+async fn small_data_frames_reclaimed_before_buffering_next() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        stream.send_data("hello".into(), false).unwrap();
+        stream.send_data("world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
 async fn reserved_capacity_assigned_in_multi_window_updates() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
