@@ -334,20 +334,30 @@ impl Send {
         Ok(())
     }
 
-    pub fn poll_complete<T, B>(
+    pub fn buffer_pending<T, B>(
         &mut self,
-        cx: &mut Context,
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
-        self.prioritize
-            .poll_complete(cx, buffer, store, counts, dst)
+        self.prioritize.buffer_pending(buffer, store, counts, dst)
+    }
+
+    pub fn reclaim_written_frame<T, B>(
+        &mut self,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> bool
+    where
+        B: Buf,
+    {
+        self.prioritize.reclaim_written_frame(buffer, store, dst)
     }
 
     /// Request capacity to send data

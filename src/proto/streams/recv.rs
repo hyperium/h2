@@ -1005,15 +1005,16 @@ impl Recv {
     /// Send any pending refusals.
     pub fn send_pending_refusal<T, B>(
         &mut self,
-        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
         if let Some(stream_id) = self.refused {
-            ready!(dst.poll_ready(cx))?;
+            if !dst.has_send_capacity() {
+                return Ok(false);
+            }
 
             // Create the RST_STREAM frame
             let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
@@ -1024,7 +1025,7 @@ impl Recv {
 
         self.refused = None;
 
-        Poll::Ready(Ok(()))
+        Ok(true)
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -1078,32 +1079,34 @@ impl Recv {
         }
     }
 
-    pub fn poll_complete<T, B>(
+    pub fn buffer_pending<T, B>(
         &mut self,
-        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
         // Send any pending connection level window updates
-        ready!(self.send_connection_window_update(cx, dst))?;
+        if !self.send_connection_window_update(dst)? {
+            return Ok(false);
+        }
 
         // Send any pending stream level window updates
-        ready!(self.send_stream_window_updates(cx, store, counts, dst))?;
+        if !self.send_stream_window_updates(store, counts, dst)? {
+            return Ok(false);
+        }
 
-        Poll::Ready(Ok(()))
+        Ok(true)
     }
 
     /// Send connection level window update
     fn send_connection_window_update<T, B>(
         &mut self,
-        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -1112,7 +1115,9 @@ impl Recv {
             let frame = frame::WindowUpdate::new(StreamId::zero(), incr);
 
             // Ensure the codec has capacity
-            ready!(dst.poll_ready(cx))?;
+            if !dst.has_send_capacity() {
+                return Ok(false);
+            }
 
             // Buffer the WINDOW_UPDATE frame
             dst.buffer(frame.into())
@@ -1124,29 +1129,30 @@ impl Recv {
                 .expect("unexpected flow control state");
         }
 
-        Poll::Ready(Ok(()))
+        Ok(true)
     }
 
     /// Send stream level window update
     pub fn send_stream_window_updates<T, B>(
         &mut self,
-        cx: &mut Context,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
         loop {
             // Ensure the codec has capacity
-            ready!(dst.poll_ready(cx))?;
+            if !dst.has_send_capacity() {
+                return Ok(false);
+            }
 
             // Get the next stream
             let stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
-                None => return Poll::Ready(Ok(())),
+                None => return Ok(true),
             };
 
             counts.transition(stream, |_, stream| {

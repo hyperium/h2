@@ -10,7 +10,7 @@ use bytes::buf::Take;
 use std::{
     cmp::{self, Ordering},
     fmt, io, mem,
-    task::{Context, Poll, Waker},
+    task::Waker,
 };
 
 /// # Warning
@@ -505,30 +505,30 @@ impl Prioritize {
         }
     }
 
-    pub fn poll_complete<T, B>(
+    pub fn buffer_pending<T, B>(
         &mut self,
-        cx: &mut Context,
         buffer: &mut Buffer<Frame<B>>,
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<bool>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
-        // Ensure codec is ready
-        ready!(dst.poll_ready(cx))?;
-
         // Reclaim any frame that has previously been written
         self.reclaim_frame(buffer, store, dst);
 
         // The max frame length
         let max_frame_len = dst.max_send_frame_size();
 
-        tracing::trace!("poll_complete");
+        tracing::trace!("buffer_pending");
 
         loop {
+            if !dst.has_send_capacity() {
+                return Ok(false);
+            }
+
             if let Some(mut stream) = self.pop_pending_open(store, counts) {
                 self.pending_send.push_front(&mut stream);
                 self.try_assign_capacity(&mut stream);
@@ -543,27 +543,24 @@ impl Prioritize {
                         self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
                     }
                     dst.buffer(frame).expect("invalid frame");
-
-                    // Ensure the codec is ready to try the loop again.
-                    ready!(dst.poll_ready(cx))?;
-
-                    // Because, always try to reclaim...
-                    self.reclaim_frame(buffer, store, dst);
                 }
                 None => {
-                    // Try to flush the codec.
-                    ready!(dst.flush(cx))?;
-
-                    // This might release a data frame...
-                    if !self.reclaim_frame(buffer, store, dst) {
-                        return Poll::Ready(Ok(()));
-                    }
-
-                    // No need to poll ready as poll_complete() does this for
-                    // us...
+                    return Ok(true);
                 }
             }
         }
+    }
+
+    pub fn reclaim_written_frame<T, B>(
+        &mut self,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> bool
+    where
+        B: Buf,
+    {
+        self.reclaim_frame(buffer, store, dst)
     }
 
     /// Tries to reclaim a pending data frame from the codec.
