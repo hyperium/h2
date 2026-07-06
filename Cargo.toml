@@ -78,3 +78,7 @@ features = ["stream"]
 [[bench]]
 name = "main"
 harness = false
+
+[[bench]]
+name = "flow_control_repro"
+harness = false
