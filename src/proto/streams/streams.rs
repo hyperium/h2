@@ -1037,11 +1037,6 @@ impl Inner {
         T: AsyncWrite + Unpin,
         B: Buf,
     {
-        // Register before processing deferred stream operations. If flushing
-        // those operations returns `Pending`, user handles may still queue more
-        // work before the transport wakes this task again.
-        shared.conn_task.register(cx.waker());
-
         self.process_pending_conn_ops(send_buffer, shared);
 
         // Send WINDOW_UPDATE frames first
@@ -1049,28 +1044,49 @@ impl Inner {
         // TODO: It would probably be better to interleave updates w/ data
         // frames.
         {
-            ready!(self.actions.recv.poll_complete(
+            match self.actions.recv.poll_complete(
                 cx,
                 &mut self.store,
                 &shared.counts,
                 &mut self.counts,
-                dst
-            ))?;
+                dst,
+            ) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {
+                    shared.conn_task.register(cx.waker());
+                    return Poll::Pending;
+                }
+            }
         }
 
         // Send any other pending frames
         {
             let mut send_buffer = send_buffer.inner.lock().unwrap();
             let send_buffer = &mut *send_buffer;
-            ready!(self.actions.send.poll_complete(
+            match self.actions.send.poll_complete(
                 cx,
                 send_buffer,
                 &mut self.store,
                 &shared.counts,
                 &mut self.counts,
-                dst
-            ))?;
+                dst,
+            ) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {
+                    shared.conn_task.register(cx.waker());
+                    return Poll::Pending;
+                }
+            }
         }
+
+        // Arm the connection task after this poll has drained the currently
+        // pending work. Stream handles that enqueue more work before we return
+        // will either be observed by the check below or wake this registered
+        // task. This also preserves the old single-waker batching boundary for
+        // receive capacity releases.
+        shared.conn_task.register(cx.waker());
 
         if !shared.pending_ops.lock().unwrap().is_empty() {
             shared.conn_task.wake();
