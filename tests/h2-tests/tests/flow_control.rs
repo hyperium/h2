@@ -1,4 +1,4 @@
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
 use tokio::sync::oneshot;
@@ -116,6 +116,89 @@ async fn release_capacity_sends_window_update() {
         .await
     };
     join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn release_capacity_coalesces_connection_task_wake_while_write_blocked() {
+    h2_support::trace_init!();
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+
+    let (io, mut srv) = mock::new();
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let response = client.send_request(request, true).unwrap().0;
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        for _ in 0..3 {
+            let buf = conn.drive(body.data()).await.unwrap().unwrap();
+            assert_eq!(buf.len(), payload_len);
+        }
+
+        (conn, body)
+    };
+
+    let (mut srv, (mut conn, mut body)) = join(srv_setup, client_setup).await;
+
+    // Releasing enough capacity schedules connection and stream WINDOW_UPDATEs.
+    // The connection poll below is forced to park on write backpressure. If the
+    // connection task is registered while draining the release-capacity op, that
+    // op self-wakes the task and defeats the intended batching boundary.
+    srv.set_write_capacity(0);
+    body.flow_control()
+        .release_capacity(payload_len * 2)
+        .unwrap();
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should park on write backpressure"
+    );
+    assert!(
+        !conn.is_woken(),
+        "release-capacity processing should not self-wake the parked connection"
+    );
+
+    srv.unbounded_bytes().await;
+    assert!(
+        conn.is_woken(),
+        "write readiness should wake the parked connection"
+    );
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+
+    srv.recv_frame(frames::window_update(0, (payload_len * 2) as u32))
+        .await;
+    srv.recv_frame(frames::window_update(1, (payload_len * 2) as u32))
+        .await;
 }
 
 #[tokio::test]
@@ -3020,4 +3103,151 @@ async fn poll_capacity_window_update_settings_race() {
     };
 
     join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn release_capacity_queued_during_blocked_write_wakes_connection() {
+    use std::io;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+
+    struct OnPendingWrite<T, F> {
+        inner: T,
+        on_pending: Option<F>,
+    }
+
+    impl<T, F> AsyncRead for OnPendingWrite<T, F>
+    where
+        T: AsyncRead + Unpin,
+        F: Unpin,
+    {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut tokio_io::ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+        }
+    }
+
+    impl<T, F> AsyncWrite for OnPendingWrite<T, F>
+    where
+        T: AsyncWrite + Unpin,
+        F: FnOnce() + Unpin,
+    {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let poll = Pin::new(&mut self.inner).poll_write(cx, buf);
+            if poll.is_pending() {
+                if let Some(on_pending) = self.on_pending.take() {
+                    on_pending();
+                }
+            }
+            poll
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let poll = Pin::new(&mut self.inner).poll_flush(cx);
+            if poll.is_pending() {
+                if let Some(on_pending) = self.on_pending.take() {
+                    on_pending();
+                }
+            }
+            poll
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
+    h2_support::trace_init!();
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+
+    let delayed_release = Arc::new(Mutex::new(None::<h2::FlowControl>));
+    let delayed_release_for_io = delayed_release.clone();
+    let (io, mut srv) = mock::new();
+    let io = OnPendingWrite {
+        inner: io,
+        on_pending: Some(move || {
+            let mut flow = delayed_release_for_io
+                .lock()
+                .unwrap()
+                .take()
+                .expect("delayed flow-control release");
+            flow.release_capacity(1).unwrap();
+        }),
+    };
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let response = client.send_request(request, true).unwrap().0;
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        for _ in 0..3 {
+            let buf = conn.drive(body.data()).await.unwrap().unwrap();
+            assert_eq!(buf.len(), payload_len);
+        }
+
+        (conn, body)
+    };
+
+    let (mut srv, (mut conn, mut body)) = join(srv_setup, client_setup).await;
+
+    srv.set_write_capacity(0);
+    *delayed_release.lock().unwrap() = Some(body.flow_control().clone());
+    body.flow_control()
+        .release_capacity(payload_len * 2)
+        .unwrap();
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should park on write backpressure"
+    );
+    assert!(
+        conn.is_woken(),
+        "release_capacity queued during blocked write must wake the parked connection"
+    );
+
+    srv.unbounded_bytes().await;
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+
+    srv.recv_frame(frames::window_update(0, (payload_len * 2) as u32))
+        .await;
+    srv.recv_frame(frames::window_update(1, (payload_len * 2) as u32))
+        .await;
 }

@@ -1039,6 +1039,12 @@ impl Inner {
     {
         self.process_pending_conn_ops(send_buffer, shared);
 
+        shared.conn_task.register(cx.waker());
+
+        if !shared.pending_ops.lock().unwrap().is_empty() {
+            shared.conn_task.wake();
+        }
+
         // Send WINDOW_UPDATE frames first
         //
         // TODO: It would probably be better to interleave updates w/ data
@@ -1079,17 +1085,6 @@ impl Inner {
                     return Poll::Pending;
                 }
             }
-        }
-
-        // Arm the connection task after this poll has drained the currently
-        // pending work. Stream handles that enqueue more work before we return
-        // will either be observed by the check below or wake this registered
-        // task. This also preserves the old single-waker batching boundary for
-        // receive capacity releases.
-        shared.conn_task.register(cx.waker());
-
-        if !shared.pending_ops.lock().unwrap().is_empty() {
-            shared.conn_task.wake();
         }
 
         Poll::Ready(Ok(()))
