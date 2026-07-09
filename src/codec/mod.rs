@@ -146,6 +146,11 @@ where
         self.framed_write().buffer(item)
     }
 
+    /// Returns the number of bytes currently buffered for writing.
+    pub fn buffered_len(&mut self) -> usize {
+        self.framed_write().buffered_len()
+    }
+
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.framed_write().flush(cx)

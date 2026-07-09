@@ -1037,13 +1037,10 @@ impl Inner {
         T: AsyncWrite + Unpin,
         B: Buf,
     {
-        self.process_pending_conn_ops(send_buffer, shared);
-
+        // Register early to prevent missed wakes while we are anywhere within the poll
         shared.conn_task.register(cx.waker());
 
-        if !shared.pending_ops.lock().unwrap().is_empty() {
-            shared.conn_task.wake();
-        }
+        self.process_pending_conn_ops(send_buffer, shared);
 
         // Send WINDOW_UPDATE frames first
         //

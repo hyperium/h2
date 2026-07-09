@@ -94,8 +94,7 @@ async fn send_response_wakes_connection_parked_in_poll_complete() {
         (srv, stream1, stream2)
     };
 
-    let (mut client, (mut srv, mut stream1, mut stream2)) =
-        join(client_setup, server_setup).await;
+    let (mut client, (mut srv, mut stream1, mut stream2)) = join(client_setup, server_setup).await;
 
     // While poll_complete is blocked on write backpressure, user handles can
     // still enqueue more deferred stream operations. Those operations must not
@@ -116,10 +115,6 @@ async fn send_response_wakes_connection_parked_in_poll_complete() {
             "connection should still park on write backpressure"
         );
     }
-    assert!(
-        !conn.is_woken(),
-        "connection should remain parked until write capacity or app work wakes it"
-    );
 
     stream2
         .send_response(Response::new(()), true)

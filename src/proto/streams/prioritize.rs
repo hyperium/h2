@@ -12,6 +12,8 @@ use std::{
     task::{Context, Poll},
 };
 
+const MIN_FLUSH_BATCH_SIZE: usize = 1024;
+
 /// # Warning
 ///
 /// Queued streams are ordered by stream ID, as we need to ensure that
@@ -55,6 +57,15 @@ pub(super) struct Prioritize {
 
     /// The maximum amount of bytes a stream should buffer.
     max_buffer_size: usize,
+
+    /// Whether the previous small buffered write was deferred by self-waking
+    /// instead of flushing immediately.
+    ///
+    /// This gives other stream tasks one scheduler turn to add more frames to
+    /// a tiny batch before it is written, similar to grpc-go's loopy writer
+    /// yielding once before flushing a small batch. The flag forces the next
+    /// small flush attempt to proceed so the connection cannot keep yielding.
+    deferred_small_flush: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -100,6 +111,7 @@ impl Prioritize {
             last_opened_id: StreamId::ZERO,
             in_flight_data_frame: InFlightData::Nothing,
             max_buffer_size: config.local_max_buffer_size,
+            deferred_small_flush: false,
         }
     }
 
@@ -524,6 +536,7 @@ impl Prioritize {
 
         // The max frame length
         let max_frame_len = dst.max_send_frame_size();
+        let mut buffered_send_frame = false;
 
         tracing::trace!("poll_complete");
 
@@ -536,6 +549,7 @@ impl Prioritize {
             match self.pop_frame(buffer, store, max_frame_len, counts_shared, counts) {
                 Some(frame) => {
                     tracing::trace!(?frame, "writing");
+                    buffered_send_frame = true;
 
                     debug_assert_eq!(self.in_flight_data_frame, InFlightData::Nothing);
                     if let Frame::Data(ref frame) = frame {
@@ -551,6 +565,16 @@ impl Prioritize {
                 }
                 None => {
                     // Try to flush the codec.
+                    if !buffered_send_frame && !self.deferred_small_flush {
+                        let buffered_len = dst.buffered_len();
+                        if buffered_len > 0 && buffered_len < MIN_FLUSH_BATCH_SIZE {
+                            self.deferred_small_flush = true;
+                            cx.waker().wake_by_ref();
+                            return Poll::Pending;
+                        }
+                    }
+
+                    self.deferred_small_flush = false;
                     ready!(dst.flush(cx))?;
 
                     // This might release a data frame...

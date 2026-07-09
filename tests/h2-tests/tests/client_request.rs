@@ -292,6 +292,8 @@ async fn request_over_max_concurrent_streams_errors() {
 async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
+    let (requests_queued_tx, requests_queued_rx) = tokio::sync::oneshot::channel();
+    let (settings_sent_tx, settings_sent_rx) = tokio::sync::oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -304,11 +306,12 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
 
-        srv.ping_pong([0; 8]).await;
+        requests_queued_rx.await.unwrap();
 
         // limit this server later in life
         srv.send_frame(frames::settings().max_concurrent_streams(1))
             .await;
+        settings_sent_tx.send(()).unwrap();
         srv.recv_frame(frames::settings_ack()).await;
         srv.recv_frame(
             frames::headers(3)
@@ -349,7 +352,6 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
 
         // first request is allowed
         let (resp1, _) = client.send_request(request, true).unwrap();
-        client = h2.drive(client.ready()).await.unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -359,6 +361,8 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
 
         // second request is put into pending_open
         let (resp2, _) = client.send_request(request, true).unwrap();
+        requests_queued_tx.send(()).unwrap();
+        settings_sent_rx.await.unwrap();
 
         h2.drive(async move {
             resp1.await.expect("req");
