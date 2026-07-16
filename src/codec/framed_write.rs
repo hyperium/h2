@@ -135,7 +135,7 @@ where
 
         loop {
             while !self.encoder.is_empty() {
-                match self.encoder.next {
+                let n = match self.encoder.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
                         let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
@@ -150,6 +150,11 @@ where
                         ))?
                     }
                 };
+                if n == 0 {
+                    // No progress is possible; retrying would busy-loop.
+                    tracing::trace!("write returned zero, but non-zero bytes remaining");
+                    return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                }
             }
 
             match self.encoder.unset_frame() {

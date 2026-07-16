@@ -1,4 +1,10 @@
 use h2_support::prelude::*;
+use std::io;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::ReadBuf;
 
 #[tokio::test]
 async fn write_continuation_frames() {
@@ -136,4 +142,111 @@ async fn server_settings_header_table_size() {
     stream.send_response(rsp, true).unwrap();
 
     assert!(srv.accept().await.is_none());
+}
+
+/// An IO wrapper whose `poll_write` returns `Ready(Ok(0))` once the flag is set.
+struct ZeroWriteIo<T> {
+    inner: T,
+    zero_writes: Arc<AtomicBool>,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for ZeroWriteIo<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for ZeroWriteIo<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if self.zero_writes.load(Ordering::SeqCst) {
+            return Poll::Ready(Ok(0));
+        }
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn write_zero_returns_write_zero_err() {
+    use tokio::sync::oneshot;
+
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let zero_writes = Arc::new(AtomicBool::new(false));
+    let io = ZeroWriteIo {
+        inner: io,
+        zero_writes: zero_writes.clone(),
+    };
+
+    let (done_tx, done_rx) = oneshot::channel();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        // 2. Receive the request and respond.
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        // 6. The client's write side is dead; it can send nothing further.
+        // Wait for it to observe the connection error before dropping the
+        // mock, which would close the read side too.
+        let _ = done_rx.await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+
+        // 1. Send a request while the transport still accepts writes.
+        let request = Request::builder()
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+
+        // 3. Complete the round trip
+        let response = conn.drive(response).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 4. The transport's write side dies: every write from now on
+        // returns Ok(0).
+        zero_writes.store(true, Ordering::SeqCst);
+
+        // 5. Queue a second request; driving the connection must fail with
+        // WriteZero rather than re-polling the zero-length write forever.
+        let request = Request::builder()
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (_response, _) = client.send_request(request, true).unwrap();
+        let err = conn
+            .await
+            .expect_err("connection must error on zero-length write");
+        assert_eq!(err.get_io().unwrap().kind(), io::ErrorKind::WriteZero);
+
+        done_tx.send(()).unwrap();
+    };
+
+    join(srv, client).await;
 }
