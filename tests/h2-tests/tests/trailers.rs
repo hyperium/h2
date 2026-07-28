@@ -109,3 +109,69 @@ async fn send_trailers_immediately() {
 fn recv_trailers_without_eos() {
     // This should be a protocol error?
 }
+
+#[tokio::test]
+async fn send_trailers_rejects_connection_specific_headers() {
+    // RFC 9113 §8.2.2: endpoints MUST NOT *generate* an HTTP/2 message containing
+    // connection-specific header fields. That obligation applies to trailer HEADERS
+    // blocks just as it does to the main header block. `send_headers` already rejects
+    // these; this test pins the same behavior for `send_trailers` (previously the only
+    // send path that let them through onto the wire).
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        // The client opens the stream, then locally rejects every bad trailer (nothing
+        // hits the wire for those), and finally sends a *valid* trailer to close cleanly.
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.recv_frame(frames::headers(1).field("x-trailer", "ok").eos())
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+        let request = Request::builder()
+            .method("POST")
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        // Every connection-specific header must be rejected in a trailer block.
+        for name in [
+            "connection",
+            "keep-alive",
+            "proxy-connection",
+            "transfer-encoding",
+            "upgrade",
+        ] {
+            let mut trailers = HeaderMap::new();
+            trailers.insert(name, "x".parse().unwrap());
+            let err = stream.send_trailers(trailers).expect_err(name);
+            assert_eq!(err.to_string(), "user error: malformed headers");
+        }
+        // TE is connection-specific unless it is exactly `TE: trailers`.
+        let mut te_bad = HeaderMap::new();
+        te_bad.insert("te", "chunked".parse().unwrap());
+        let err = stream.send_trailers(te_bad).expect_err("te: chunked");
+        assert_eq!(err.to_string(), "user error: malformed headers");
+
+        // The rejections above must not have corrupted stream state: a clean trailer
+        // still sends and the exchange completes normally.
+        let mut good = HeaderMap::new();
+        good.insert("x-trailer", "ok".parse().unwrap());
+        stream
+            .send_trailers(good)
+            .expect("valid trailer should send");
+
+        let response = conn.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
