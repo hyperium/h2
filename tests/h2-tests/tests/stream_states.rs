@@ -878,6 +878,15 @@ fn exceed_max_streams() {
 
 #[tokio::test]
 async fn recv_end_stream_survives_reset() {
+    assert_recv_end_stream_survives_reset(Reason::NO_ERROR).await;
+}
+
+#[tokio::test]
+async fn recv_end_stream_preserves_reset_reason() {
+    assert_recv_end_stream_survives_reset(Reason::INTERNAL_ERROR).await;
+}
+
+async fn assert_recv_end_stream_survives_reset(reset_reason: Reason) {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -887,8 +896,7 @@ async fn recv_end_stream_survives_reset() {
         srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
             .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
-        srv.send_frame(frames::reset(1).reason(Reason::NO_ERROR))
-            .await;
+        srv.send_frame(frames::reset(1).reason(reset_reason)).await;
     };
 
     let client = async move {
@@ -905,7 +913,7 @@ async fn recv_end_stream_survives_reset() {
             .drive(poll_fn(move |cx| send_stream.poll_reset(cx)))
             .await
             .unwrap();
-        assert_eq!(reason, Reason::NO_ERROR);
+        assert_eq!(reason, reset_reason);
 
         let response = response.await.unwrap();
         assert!(response.body().is_end_stream());
