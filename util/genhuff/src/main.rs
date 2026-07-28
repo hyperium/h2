@@ -1,197 +1,5 @@
-use std::cell::RefCell;
-
-struct Node {
-    id: Option<usize>,
-    left: Option<Box<Node>>,
-    right: Option<Box<Node>>,
-    terminal: Option<usize>,
-    maybe_eos: bool,
-    transitions: RefCell<Vec<Transition>>,
-}
-
-#[derive(Debug, Default, Copy, Clone)]
-struct Transition {
-    target: Option<usize>,
-    byte: Option<usize>,
-    maybe_eos: bool,
-}
-
-impl Node {
-    fn new(byte: usize, code: &[bool]) -> Box<Node> {
-        let mut node = Box::new(Node {
-            id: None,
-            left: None,
-            right: None,
-            terminal: None,
-            maybe_eos: false,
-            transitions: Default::default(),
-        });
-
-        node.insert(byte, code);
-        node
-    }
-
-    fn insert(&mut self, byte: usize, code: &[bool]) {
-        if code.is_empty() {
-            self.terminal = Some(byte);
-            return;
-        }
-
-        let (head, rest) = code.split_at(1);
-
-        if !head[0] {
-            match self.left {
-                Some(ref mut node) => {
-                    node.insert(byte, rest);
-                }
-                None => {
-                    self.left = Some(Node::new(byte, rest));
-                }
-            }
-        } else {
-            match self.right {
-                Some(ref mut node) => {
-                    node.insert(byte, rest);
-                }
-                None => {
-                    self.right = Some(Node::new(byte, rest));
-                }
-            }
-        }
-    }
-
-    fn set_id(&mut self, next_id: &mut usize, prefix: &mut Vec<bool>) {
-        if self.terminal.is_some() {
-            return;
-        }
-
-        if prefix.len() <= 7 && prefix.iter().all(|i| *i) {
-            self.maybe_eos = true;
-        }
-
-        let id = *next_id;
-        *next_id = id + 1;
-        self.id = Some(id);
-
-        if let Some(ref mut node) = self.left {
-            prefix.push(false);
-            node.set_id(next_id, prefix);
-            prefix.pop();
-        }
-
-        if let Some(ref mut node) = self.right {
-            prefix.push(true);
-            node.set_id(next_id, prefix);
-            prefix.pop();
-        }
-    }
-
-    fn compute_transitions(&self, root: &Node) {
-        self.compute_transition(None, self, root, 4);
-
-        if let Some(ref node) = self.left {
-            node.compute_transitions(root);
-        }
-
-        if let Some(ref node) = self.right {
-            node.compute_transitions(root);
-        }
-    }
-
-    fn compute_transition(
-        &self,
-        byte: Option<usize>,
-        start: &Node,
-        root: &Node,
-        steps_remaining: usize,
-    ) {
-        if steps_remaining == 0 {
-            let (byte, target) = match byte {
-                Some(256) => (None, None),
-                _ => (byte, Some(self.id.unwrap_or(0))),
-            };
-
-            start.transitions.borrow_mut().push(Transition {
-                target,
-                byte,
-                maybe_eos: self.maybe_eos,
-            });
-
-            return;
-        }
-
-        let mut next = self;
-
-        if self.terminal.is_some() {
-            next = root;
-        }
-
-        assert!(next.left.is_some());
-        assert!(next.right.is_some());
-
-        for node in &[next.left.as_ref().unwrap(), next.right.as_ref().unwrap()] {
-            let byte = match node.terminal {
-                Some(b) => {
-                    assert!(byte.is_none());
-                    Some(b)
-                }
-                None => byte,
-            };
-
-            node.compute_transition(byte, start, root, steps_remaining - 1);
-        }
-    }
-
-    fn print(&self) {
-        const MAYBE_EOS: u8 = 1;
-        const DECODED: u8 = 2;
-        const ERROR: u8 = 4;
-
-        if self.terminal.is_some() {
-            return;
-        }
-
-        println!("    // {}", self.id.unwrap());
-        println!("    [");
-
-        for transition in self.transitions.borrow().iter() {
-            let mut flags = 0;
-            let mut out = 0;
-
-            let target = match transition.target {
-                Some(target) => target,
-                None => {
-                    flags |= ERROR;
-                    0
-                }
-            };
-
-            if let Some(byte) = transition.byte {
-                out = byte;
-                flags |= DECODED;
-
-                // TODO: Add other flags
-            }
-
-            if transition.maybe_eos {
-                flags |= MAYBE_EOS;
-            }
-
-            println!("        ({}, {}, 0x{:02x}),", target, out, flags);
-        }
-
-        println!("    ],");
-
-        self.left.as_ref().unwrap().print();
-        self.right.as_ref().unwrap().print();
-    }
-}
-
-/// Returns root of tree
-fn load_table() -> (Vec<(usize, String)>, Box<Node>) {
+fn load_table() -> Vec<(usize, String)> {
     let mut lines = TABLE.lines();
-    let mut root: Option<Box<Node>> = None;
-
     let mut encode = vec![];
 
     // Skip the first line, which is empty
@@ -213,47 +21,102 @@ fn load_table() -> (Vec<(usize, String)>, Box<Node>) {
 
         encode.push((bits.len(), hex.to_string()));
 
-        match root {
-            Some(ref mut node) => {
-                node.insert(i, &bits);
+        assert_eq!(i, encode.len() - 1);
+    }
+
+    encode
+}
+
+// Build a trie whose edges consume up to eight Huffman bits at a time. Each
+// node is a 256-entry table indexed by the next byte of encoded input. Entries
+// are packed into a u16: leaves contain the decoded octet and the exact number
+// of bits it consumes, while branches contain the index of another table.
+//
+// Codes shorter than eight bits are copied into every entry sharing that code
+// as a prefix. This lets the decoder use the next eight buffered bits even
+// when a symbol consumes fewer of them; the remaining bits stay buffered for
+// the next lookup. Longer codes allocate and descend through additional tables
+// until their final eight-or-fewer bits can be represented by a leaf.
+fn decoding_tables(encode: &[(usize, String)]) -> Vec<u16> {
+    const BRANCH: u16 = 0x8000;
+    const ERROR: u16 = 0x80ff;
+
+    let mut tables = vec![0; 256];
+
+    for (octet, &(bit_len, ref code)) in encode.iter().enumerate() {
+        let code = u32::from_str_radix(code, 16).unwrap() << (32 - bit_len);
+        let mut code = code;
+        let mut bits_left = bit_len;
+        let mut table = 0;
+
+        while bits_left > 0 {
+            let index = (code >> 24) as usize;
+            let slot = table * 256 + index;
+
+            if bits_left <= 8 {
+                let value = if octet == 256 {
+                    ERROR
+                } else {
+                    ((bits_left as u16) << 8) | octet as u16
+                };
+
+                for suffix in 0..1 << (8 - bits_left) {
+                    let entry = &mut tables[slot | suffix];
+                    assert!(*entry == 0 || *entry == value);
+                    *entry = value;
+                }
+            } else if tables[slot] == 0 {
+                let next = tables.len() / 256;
+                assert!(next < 128);
+                tables[slot] = BRANCH | ((next as u16) << 8);
+                tables.extend_from_slice(&[0; 256]);
+                table = next;
+            } else {
+                table = ((tables[slot] & 0x7f00) >> 8) as usize;
             }
-            None => {
-                root = Some(Node::new(i, &bits));
-            }
+
+            bits_left = bits_left.saturating_sub(8);
+            code <<= 8;
         }
     }
 
-    // Assign IDs to all state transition nodes
-    let mut root = root.unwrap();
-    let mut id = 0;
-    root.set_id(&mut id, &mut vec![]);
-
-    // Compute transitions for each node
-    root.compute_transitions(&root);
-
-    (encode, root)
+    assert_eq!(tables.len(), 15 * 256);
+    assert!(tables.iter().all(|&entry| entry != 0));
+    tables
 }
 
 pub fn main() {
-    let (encode, decode) = load_table();
+    let encode = load_table();
+    let decode = decoding_tables(&encode);
 
     println!("// !!! DO NOT EDIT !!! Generated by util/genhuff/src/main.rs");
     println!();
 
     println!("// (num-bits, bits)");
     println!("pub const ENCODE_TABLE: [(usize, u64); 257] = [");
-    for (nbits, val) in encode {
+    for (nbits, val) in &encode {
         println!("    ({}, 0x{}),", nbits, val);
     }
     println!("];");
 
     println!();
-    println!("// (next-state, byte, flags)");
-    println!("pub const DECODE_TABLE: [[(u8, u8, u8); 16]; 256] = [");
-
-    decode.print();
+    println!("// A branch has bit 15 set and its table index in bits 8..=14.");
+    println!("// A leaf stores the number of consumed bits in its high byte and the decoded byte in its low byte.");
+    println!("pub const DECODE_TABLE: [u16; 15 * 256] = [");
+    for row in decode.chunks(12) {
+        print!("    ");
+        for (i, entry) in row.iter().enumerate() {
+            print!("0x{:04x},", entry);
+            if i + 1 != row.len() {
+                print!(" ");
+            }
+        }
+        println!();
+    }
 
     println!("];");
+    println!();
+    println!("const _: [(); 7680] = [(); std::mem::size_of::<[u16; 15 * 256]>()];");
 }
 
 const TABLE: &str = r##"
