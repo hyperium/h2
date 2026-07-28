@@ -164,7 +164,9 @@ async fn send_trailers_rejects_connection_specific_headers() {
         // still sends and the exchange completes normally.
         let mut good = HeaderMap::new();
         good.insert("x-trailer", "ok".parse().unwrap());
-        stream.send_trailers(good).expect("valid trailer should send");
+        stream
+            .send_trailers(good)
+            .expect("valid trailer should send");
 
         let response = conn.drive(response).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
