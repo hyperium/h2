@@ -16,8 +16,8 @@ readme = "README.md"
 keywords = ["http", "async", "non-blocking"]
 categories = ["asynchronous", "web-programming", "network-programming"]
 exclude = ["fixtures/**", "ci/**"]
-edition = "2021"
-rust-version = "1.63"
+edition = "2024"
+rust-version = "1.85"
 
 [features]
 # Enables `futures::Stream` implementations for various types.

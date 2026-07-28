@@ -128,6 +128,11 @@ where
         self.encoder.buffer(item)
     }
 
+    /// Returns the number of bytes currently buffered for writing.
+    pub fn buffered_len(&self) -> usize {
+        self.encoder.buffered_len()
+    }
+
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         let span = tracing::trace_span!("FramedWrite::flush");
@@ -311,6 +316,16 @@ where
             Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
             _ => !self.buf.has_remaining(),
         }
+    }
+
+    fn buffered_len(&self) -> usize {
+        let mut len = self.buf.remaining();
+
+        if let Some(Next::Data(ref frame)) = self.next {
+            len += frame.payload().remaining();
+        }
+
+        len
     }
 }
 

@@ -2,6 +2,7 @@ use futures::future::{ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
+use h2_support::util::yield_once;
 use std::pin::Pin;
 use std::task::Context;
 use std::{io, panic};
@@ -291,6 +292,8 @@ async fn request_over_max_concurrent_streams_errors() {
 async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
+    let (requests_queued_tx, requests_queued_rx) = tokio::sync::oneshot::channel();
+    let (settings_sent_tx, settings_sent_rx) = tokio::sync::oneshot::channel();
 
     let srv = async move {
         let settings = srv.assert_client_handshake().await;
@@ -303,11 +306,12 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
 
-        srv.ping_pong([0; 8]).await;
+        requests_queued_rx.await.unwrap();
 
         // limit this server later in life
         srv.send_frame(frames::settings().max_concurrent_streams(1))
             .await;
+        settings_sent_tx.send(()).unwrap();
         srv.recv_frame(frames::settings_ack()).await;
         srv.recv_frame(
             frames::headers(3)
@@ -357,6 +361,8 @@ async fn recv_decrement_max_concurrent_streams_when_requests_queued() {
 
         // second request is put into pending_open
         let (resp2, _) = client.send_request(request, true).unwrap();
+        requests_queued_tx.send(()).unwrap();
+        settings_sent_rx.await.unwrap();
 
         h2.drive(async move {
             resp1.await.expect("req");
@@ -759,6 +765,34 @@ async fn connection_close_notifies_client_poll_ready() {
 }
 
 #[tokio::test]
+async fn drop_last_send_request_wakes_idle_connection() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::go_away(0).no_error()).await;
+    };
+
+    let h2 = async move {
+        let (client, conn) = client::handshake(io).await.unwrap();
+        let conn = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(1), conn)
+                .await
+                .expect("connection was not woken after SendRequest drop")
+                .expect("connection")
+        });
+
+        yield_once().await;
+        drop(client);
+        conn.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
 async fn sending_request_on_closed_connection() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -861,6 +895,7 @@ async fn recv_too_big_headers() {
             .unwrap();
 
         let req1 = client.send_request(request, true);
+        client = conn.drive(client.ready()).await.unwrap();
         // Spawn tasks to ensure that the error wakes up tasks that are blocked
         // waiting for a response.
         let req1 = async move {
@@ -955,6 +990,65 @@ async fn pending_send_request_gets_reset_by_peer_properly() {
     };
 
     join(srv, client).await;
+}
+
+#[tokio::test]
+async fn peer_reset_with_queued_send_data_frees_max_concurrent_slot() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new_with_write_capacity(73);
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::reset(1).cancel()).await;
+
+        srv.unbounded_bytes().await;
+        loop {
+            match srv.next().await.unwrap().unwrap() {
+                frame::Frame::Data(data) if data.stream_id() == StreamId::from(1) => {}
+                frame::Frame::Headers(headers) if headers.stream_id() == StreamId::from(3) => {
+                    break;
+                }
+                frame => panic!("unexpected frame: {:?}", frame),
+            }
+        }
+        srv.send_frame(frames::headers(3).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        let body = Bytes::from(vec![0; 2 * frame::DEFAULT_INITIAL_WINDOW_SIZE as usize]);
+        stream.send_data(body, true).unwrap();
+
+        let err = conn.drive(response).await.expect_err("response reset");
+        assert_eq!(err.reason(), Some(Reason::CANCEL));
+
+        poll_fn(|cx| client.poll_ready(cx)).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = conn.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    };
+
+    join(srv, h2).await;
 }
 
 #[tokio::test]
@@ -1253,10 +1347,26 @@ async fn malformed_response_headers_dont_unlink_stream() {
 
         srv.recv_frame(frames::headers(1).request("GET", "http://example.com/"))
             .await;
-        srv.recv_frame(frames::headers(3).request("GET", "http://example.com/"))
-            .await;
-        srv.recv_frame(frames::headers(5).request("GET", "http://example.com/"))
-            .await;
+        loop {
+            match srv.next().await.unwrap().unwrap() {
+                frame::Frame::Data(d) if d.stream_id() == StreamId::from(1) => {}
+                frame::Frame::Headers(h) => {
+                    assert_frame_eq(h, frames::headers(3).request("GET", "http://example.com/"));
+                    break;
+                }
+                other => panic!("unexpected frame before stream 3 headers: {:?}", other),
+            }
+        }
+        loop {
+            match srv.next().await.unwrap().unwrap() {
+                frame::Frame::Data(d) if d.stream_id() == StreamId::from(1) => {}
+                frame::Frame::Headers(h) => {
+                    assert_frame_eq(h, frames::headers(5).request("GET", "http://example.com/"));
+                    break;
+                }
+                other => panic!("unexpected frame before stream 5 headers: {:?}", other),
+            }
+        }
         drop_tx.send(()).unwrap();
         queued_rx.await.unwrap();
         srv.send_bytes(&[
@@ -1280,7 +1390,7 @@ async fn malformed_response_headers_dont_unlink_stream() {
     }
 
     let client = async move {
-        let (mut client, conn) = client::Builder::new()
+        let (mut client, mut conn) = client::Builder::new()
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
@@ -1288,7 +1398,9 @@ async fn malformed_response_headers_dont_unlink_stream() {
         let (_req1, mut send1) = client.send_request(request(), false).unwrap();
         // Use up most of the connection window.
         send1.send_data(vec![0; 65534].into(), true).unwrap();
+        client = conn.drive(client.ready()).await.unwrap();
         let (req2, mut send2) = client.send_request(request(), false).unwrap();
+        client = conn.drive(client.ready()).await.unwrap();
         let (req3, mut send3) = client.send_request(request(), false).unwrap();
 
         let f = async move {

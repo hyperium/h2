@@ -5,8 +5,8 @@ use hex::FromHex;
 use serde_json::Value;
 
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::Cursor;
+use std::io::prelude::*;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::str;

@@ -29,6 +29,7 @@ pub use super::assert::assert_frame_eq;
 
 // Re-export useful crates
 pub use tokio_test::io as mock_io;
+pub use tokio_test::task;
 pub use {bytes, futures, http, tokio::io as tokio_io, tracing, tracing_subscriber};
 
 // Re-export primary future types

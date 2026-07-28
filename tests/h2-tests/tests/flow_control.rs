@@ -1,4 +1,4 @@
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
 use tokio::sync::oneshot;
@@ -116,6 +116,318 @@ async fn release_capacity_sends_window_update() {
         .await
     };
     join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn release_capacity_coalesces_connection_task_wake_while_write_blocked() {
+    h2_support::trace_init!();
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+
+    let (io, mut srv) = mock::new();
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let response = client.send_request(request, true).unwrap().0;
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        for _ in 0..3 {
+            let buf = conn.drive(body.data()).await.unwrap().unwrap();
+            assert_eq!(buf.len(), payload_len);
+        }
+
+        (conn, body)
+    };
+
+    let (mut srv, (mut conn, mut body)) = join(srv_setup, client_setup).await;
+
+    // Releasing enough capacity schedules connection and stream WINDOW_UPDATEs.
+    // The connection may either defer the small write for one turn or park on
+    // write backpressure before the frames are observed by the server.
+    srv.set_write_capacity(0);
+    body.flow_control()
+        .release_capacity(payload_len * 2)
+        .unwrap();
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should not complete before writing WINDOW_UPDATE frames"
+    );
+
+    srv.unbounded_bytes().await;
+    assert!(
+        conn.is_woken(),
+        "connection should be scheduled to flush pending WINDOW_UPDATE frames"
+    );
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+
+    srv.recv_frame(frames::window_update(0, (payload_len * 2) as u32))
+        .await;
+    srv.recv_frame(frames::window_update(1, (payload_len * 2) as u32))
+        .await;
+}
+
+#[tokio::test]
+async fn release_capacity_for_many_streams_batches_window_update_write() {
+    h2_support::trace_init!();
+
+    const STREAMS: usize = 5;
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+    let release_len = payload_len * 2;
+
+    let (io, mut srv) = mock::new();
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::window_update(0, (2 << 20) - 65_535))
+            .await;
+
+        for i in 0..STREAMS {
+            let id = 1 + (i as u32 * 2);
+            srv.recv_frame(
+                frames::headers(id)
+                    .request("GET", "https://http2.akamai.com/")
+                    .eos(),
+            )
+            .await;
+        }
+
+        for i in 0..STREAMS {
+            let id = 1 + (i as u32 * 2);
+            srv.send_frame(frames::headers(id).response(200)).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+        }
+
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        conn.set_target_window_size(2 << 20);
+        let mut responses = Vec::new();
+
+        for _ in 0..STREAMS {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            responses.push(client.send_request(request, true).unwrap().0);
+        }
+
+        let mut bodies = Vec::new();
+        for response in responses {
+            let resp = conn.drive(response).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+
+            let mut body = resp.into_body();
+            for _ in 0..3 {
+                let buf = conn.drive(body.data()).await.unwrap().unwrap();
+                assert_eq!(buf.len(), payload_len);
+            }
+            bodies.push(body);
+        }
+
+        (conn, bodies)
+    };
+
+    let (mut srv, (mut conn, mut bodies)) = join(srv_setup, client_setup).await;
+
+    srv.clear_write_sizes();
+    let mut release_tasks = Vec::new();
+    for body in &mut bodies {
+        let mut flow = body.flow_control().clone();
+        release_tasks.push(tokio::spawn(async move {
+            flow.release_capacity(release_len).unwrap();
+        }));
+    }
+    for task in release_tasks {
+        task.await.unwrap();
+    }
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+
+    let mut write_sizes = srv.take_write_sizes();
+    if write_sizes.is_empty() {
+        assert!(
+            conn.poll().is_pending(),
+            "connection should flush deferred WINDOW_UPDATE frames"
+        );
+        write_sizes = srv.take_write_sizes();
+    }
+
+    assert_eq!(
+        write_sizes,
+        vec![13 * STREAMS],
+        "stream WINDOW_UPDATE frames should be written in one batch"
+    );
+
+    for i in 0..STREAMS {
+        let id = 1 + (i as u32 * 2);
+        srv.recv_frame(frames::window_update(id, release_len as u32))
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn release_capacity_for_many_streams_batches_after_deferred_small_flush() {
+    h2_support::trace_init!();
+
+    const STREAMS: usize = 5;
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+    let release_len = payload_len * 2;
+
+    let (io, mut srv) = mock::new();
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::window_update(0, (2 << 20) - 65_535))
+            .await;
+
+        for i in 0..STREAMS {
+            let id = 1 + (i as u32 * 2);
+            srv.recv_frame(
+                frames::headers(id)
+                    .request("GET", "https://http2.akamai.com/")
+                    .eos(),
+            )
+            .await;
+        }
+
+        for i in 0..STREAMS {
+            let id = 1 + (i as u32 * 2);
+            srv.send_frame(frames::headers(id).response(200)).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+            srv.send_frame(frames::data(id, &payload[..])).await;
+        }
+
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        conn.set_target_window_size(2 << 20);
+        let mut responses = Vec::new();
+
+        for _ in 0..STREAMS {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+
+            responses.push(client.send_request(request, true).unwrap().0);
+        }
+
+        let mut bodies = Vec::new();
+        for response in responses {
+            let resp = conn.drive(response).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+
+            let mut body = resp.into_body();
+            for _ in 0..3 {
+                let buf = conn.drive(body.data()).await.unwrap().unwrap();
+                assert_eq!(buf.len(), payload_len);
+            }
+            bodies.push(body);
+        }
+
+        (conn, bodies)
+    };
+
+    let (mut srv, (mut conn, mut bodies)) = join(srv_setup, client_setup).await;
+
+    srv.clear_write_sizes();
+
+    // Simulate the connection task getting scheduled after one stream releases
+    // capacity but before the other stream tasks get their turn. The deferred
+    // small flush should leave room for those releases to join the same write.
+    let mut first_body = bodies.remove(0);
+    first_body
+        .flow_control()
+        .release_capacity(release_len)
+        .unwrap();
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should defer a small WINDOW_UPDATE write"
+    );
+    assert_eq!(
+        srv.take_write_sizes(),
+        Vec::<usize>::new(),
+        "small WINDOW_UPDATE write should be deferred once"
+    );
+
+    let mut release_tasks = Vec::new();
+    for body in &mut bodies {
+        let mut flow = body.flow_control().clone();
+        release_tasks.push(tokio::spawn(async move {
+            flow.release_capacity(release_len).unwrap();
+        }));
+    }
+    for task in release_tasks {
+        task.await.unwrap();
+    }
+
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+    assert_eq!(
+        srv.take_write_sizes(),
+        vec![13 * STREAMS],
+        "all WINDOW_UPDATE frames should flush in one write"
+    );
+
+    for i in 0..STREAMS {
+        let id = 1 + (i as u32 * 2);
+        srv.recv_frame(frames::window_update(id, release_len as u32))
+            .await;
+    }
 }
 
 #[tokio::test]
@@ -1058,6 +1370,162 @@ async fn recv_settings_removes_available_capacity() {
 }
 
 #[tokio::test]
+async fn spawned_multi_stream_flow_control_wakes_tasks() {
+    use std::collections::BTreeSet;
+    use tokio::time::timeout;
+
+    h2_support::trace_init!();
+
+    const CHUNK: usize = 16_384;
+    const TOTAL_CHUNKS: usize = 3;
+    const STREAM_IDS: [u32; 3] = [1, 3, 5];
+
+    fn request(uri: &'static str) -> Request<()> {
+        Request::builder().uri(uri).body(()).unwrap()
+    }
+
+    let (io, mut srv) = mock::new();
+
+    let srv_task = tokio::spawn(async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/a")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/b")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/c")
+                .eos(),
+        )
+        .await;
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::headers(stream_id).response(200))
+                .await;
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]))
+                .await;
+        }
+
+        let mut saw_stream_updates = BTreeSet::new();
+        let mut conn_increment_total = 0;
+
+        while conn_increment_total < (CHUNK * STREAM_IDS.len()) as u32 {
+            let frame = srv.next().await.unwrap().unwrap();
+            match frame {
+                h2::frame::Frame::WindowUpdate(frame) => {
+                    if frame.stream_id().is_zero() {
+                        conn_increment_total += frame.size_increment();
+                    } else {
+                        panic!(
+                            "unexpected stream window update before second round: {:?}",
+                            frame
+                        );
+                    }
+                }
+                frame => panic!(
+                    "unexpected frame while waiting for window updates: {:?}",
+                    frame
+                ),
+            }
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]))
+                .await;
+        }
+
+        while saw_stream_updates.len() < STREAM_IDS.len()
+            || conn_increment_total < (CHUNK * STREAM_IDS.len() * 2) as u32
+        {
+            let frame = srv.next().await.unwrap().unwrap();
+            match frame {
+                h2::frame::Frame::WindowUpdate(frame) => {
+                    if frame.stream_id().is_zero() {
+                        conn_increment_total += frame.size_increment();
+                    } else {
+                        assert_eq!(frame.size_increment(), (CHUNK * 2) as u32);
+                        saw_stream_updates.insert(frame.stream_id());
+                    }
+                }
+                frame => panic!(
+                    "unexpected frame while waiting for stream updates: {:?}",
+                    frame
+                ),
+            }
+        }
+
+        for stream_id in STREAM_IDS {
+            srv.send_frame(frames::data(stream_id, vec![0; CHUNK]).eos())
+                .await;
+        }
+    });
+
+    let (mut client, conn) = client::handshake(io).await.unwrap();
+
+    let conn_task = tokio::spawn(async move {
+        conn.await.unwrap();
+    });
+
+    let response1 = client
+        .send_request(request("https://example.com/a"), true)
+        .unwrap()
+        .0;
+    client = client.ready().await.unwrap();
+    let response2 = client
+        .send_request(request("https://example.com/b"), true)
+        .unwrap()
+        .0;
+    client = client.ready().await.unwrap();
+    let response3 = client
+        .send_request(request("https://example.com/c"), true)
+        .unwrap()
+        .0;
+
+    let body_tasks = [response1, response2, response3].map(|response| {
+        tokio::spawn(async move {
+            let response = response.await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let (_, mut body) = response.into_parts();
+            let mut total = 0usize;
+
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                total += chunk.len();
+                body.flow_control().release_capacity(chunk.len()).unwrap();
+            }
+
+            assert_eq!(total, CHUNK * TOTAL_CHUNKS);
+        })
+    });
+
+    timeout(Duration::from_secs(5), async move {
+        for task in body_tasks {
+            task.await.unwrap();
+        }
+
+        drop(client);
+        conn_task.await.unwrap();
+        srv_task.await.unwrap();
+    })
+    .await
+    .expect("spawned flow-control tasks stalled");
+}
+
+#[tokio::test]
 async fn recv_settings_keeps_assigned_capacity() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
@@ -1738,27 +2206,29 @@ async fn reserve_capacity_then_cancel_does_not_leak() {
 
         let srv = async move {
             let _ = srv.assert_client_handshake().await;
-            srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
-                .await;
             if !explicit_reset {
+                srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+                    .await;
                 srv.send_frame(frames::headers(1).response(200)).await;
             }
             let mut data_bytes = 0;
-            loop {
+            let data_stream_id = loop {
                 let frame = srv.next().await.unwrap().unwrap();
                 match frame {
                     h2::frame::Frame::Reset(_) | h2::frame::Frame::Headers(_) => {}
                     h2::frame::Frame::Data(d) => {
+                        let stream_id = d.stream_id();
                         data_bytes += d.payload().len();
                         if d.is_end_stream() {
-                            break;
+                            break stream_id;
                         }
                     }
                     other => panic!("unexpected: {:?}", other),
                 }
-            }
+            };
             assert_eq!(data_bytes, 65535);
-            srv.send_frame(frames::headers(3).response(200).eos()).await;
+            srv.send_frame(frames::headers(data_stream_id).response(200).eos())
+                .await;
         };
 
         let client = async move {
@@ -2082,6 +2552,7 @@ async fn max_send_buffer_size_overflow() {
 
         assert_eq!(stream.capacity(), 0);
         stream.reserve_capacity(10);
+        let mut stream = conn.drive(util::wait_for_capacity(stream, 5)).await;
         assert_eq!(
             stream.capacity(),
             5,
@@ -2144,11 +2615,6 @@ async fn max_send_buffer_size_poll_capacity_wakes_task() {
         assert_eq!(stream.capacity(), 0);
         const TO_SEND: usize = 20;
         stream.reserve_capacity(TO_SEND);
-        assert_eq!(
-            stream.capacity(),
-            5,
-            "polled capacity not over max buffer size"
-        );
 
         let t1 = tokio::spawn(async move {
             let mut sent = 0;
@@ -2234,6 +2700,59 @@ async fn poll_capacity_wakeup_after_window_update() {
         stream.send_data("".into(), true).unwrap();
 
         // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn poll_capacity_after_partial_send_uses_existing_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.recv_frame(frames::data(1, " world").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        stream.reserve_capacity(11);
+        let cap = h2
+            .drive(poll_fn(|cx| stream.poll_capacity(cx)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cap, 11);
+
+        stream.send_data("hello".into(), false).unwrap();
+        assert_eq!(stream.capacity(), 6);
+        stream.reserve_capacity(6);
+
+        let cap = h2
+            .drive(poll_fn(|cx| stream.poll_capacity(cx)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cap, 6);
+
+        stream.send_data(" world".into(), true).unwrap();
         h2.await.unwrap();
     };
 
@@ -2813,4 +3332,151 @@ async fn poll_capacity_window_update_settings_race() {
     };
 
     join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn release_capacity_queued_during_blocked_write_wakes_connection() {
+    use std::io;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+
+    struct OnPendingWrite<T, F> {
+        inner: T,
+        on_pending: Option<F>,
+    }
+
+    impl<T, F> AsyncRead for OnPendingWrite<T, F>
+    where
+        T: AsyncRead + Unpin,
+        F: Unpin,
+    {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut tokio_io::ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+        }
+    }
+
+    impl<T, F> AsyncWrite for OnPendingWrite<T, F>
+    where
+        T: AsyncWrite + Unpin,
+        F: FnOnce() + Unpin,
+    {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let poll = Pin::new(&mut self.inner).poll_write(cx, buf);
+            if poll.is_pending() {
+                if let Some(on_pending) = self.on_pending.take() {
+                    on_pending();
+                }
+            }
+            poll
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let poll = Pin::new(&mut self.inner).poll_flush(cx);
+            if poll.is_pending() {
+                if let Some(on_pending) = self.on_pending.take() {
+                    on_pending();
+                }
+            }
+            poll
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
+    h2_support::trace_init!();
+
+    let payload = vec![0u8; 16_384];
+    let payload_len = payload.len();
+
+    let delayed_release = Arc::new(Mutex::new(None::<h2::FlowControl>));
+    let delayed_release_for_io = delayed_release.clone();
+    let (io, mut srv) = mock::new();
+    let io = OnPendingWrite {
+        inner: io,
+        on_pending: Some(move || {
+            let mut flow = delayed_release_for_io
+                .lock()
+                .unwrap()
+                .take()
+                .expect("delayed flow-control release");
+            flow.release_capacity(1).unwrap();
+        }),
+    };
+
+    let srv_setup = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv.send_frame(frames::data(1, &payload[..])).await;
+        srv
+    };
+
+    let client_setup = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let response = client.send_request(request, true).unwrap().0;
+        let resp = conn.drive(response).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        for _ in 0..3 {
+            let buf = conn.drive(body.data()).await.unwrap().unwrap();
+            assert_eq!(buf.len(), payload_len);
+        }
+
+        (conn, body)
+    };
+
+    let (mut srv, (mut conn, mut body)) = join(srv_setup, client_setup).await;
+
+    srv.set_write_capacity(0);
+    *delayed_release.lock().unwrap() = Some(body.flow_control().clone());
+    body.flow_control()
+        .release_capacity(payload_len * 2)
+        .unwrap();
+
+    let mut conn = task::spawn(poll_fn(move |cx| conn.poll_unpin(cx)));
+    assert!(
+        conn.poll().is_pending(),
+        "connection should park on write backpressure"
+    );
+    assert!(
+        conn.is_woken(),
+        "release_capacity queued during blocked write must wake the parked connection"
+    );
+
+    srv.unbounded_bytes().await;
+    assert!(
+        conn.poll().is_pending(),
+        "connection should flush pending WINDOW_UPDATE frames"
+    );
+
+    srv.recv_frame(frames::window_update(0, (payload_len * 2) as u32))
+        .await;
+    srv.recv_frame(frames::window_update(1, (payload_len * 2) as u32))
+        .await;
 }

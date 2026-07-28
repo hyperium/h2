@@ -2,7 +2,6 @@ use futures::{pin_mut, FutureExt, StreamExt};
 
 use h2_support::prelude::*;
 use h2_support::DEFAULT_WINDOW_SIZE;
-use std::task::Context;
 
 #[tokio::test]
 async fn single_stream_send_large_body() {
@@ -29,16 +28,8 @@ async fn single_stream_send_large_body() {
 
     let (mut client, mut h2) = client::handshake(mock).await.unwrap();
 
-    let waker = futures::task::noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    // Poll h2 once to get notifications
-    loop {
-        // Run the connection until all work is done, this handles processing
-        // the handshake.
-        if !h2.poll_unpin(&mut cx).is_ready() {
-            break;
-        }
-    }
+    h2.drive(util::yield_once()).await;
+    h2.drive(util::yield_once()).await;
 
     let request = Request::builder()
         .method(Method::POST)
@@ -161,16 +152,8 @@ async fn single_stream_send_extra_large_body_multi_frames_one_buffer() {
 
     let (mut client, mut h2) = client::handshake(mock).await.unwrap();
 
-    let waker = futures::task::noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    // Poll h2 once to get notifications
-    loop {
-        // Run the connection until all work is done, this handles processing
-        // the handshake.
-        if !h2.poll_unpin(&mut cx).is_ready() {
-            break;
-        }
-    }
+    h2.drive(util::yield_once()).await;
+    h2.drive(util::yield_once()).await;
 
     let request = Request::builder()
         .method(Method::POST)
@@ -245,16 +228,8 @@ async fn single_stream_send_body_greater_than_default_window() {
 
     let (mut client, mut h2) = client::handshake(mock).await.unwrap();
 
-    let waker = futures::task::noop_waker();
-    let mut cx = Context::from_waker(&waker);
-    // Poll h2 once to get notifications
-    loop {
-        // Run the connection until all work is done, this handles processing
-        // the handshake.
-        if !h2.poll_unpin(&mut cx).is_ready() {
-            break;
-        }
-    }
+    h2.drive(util::yield_once()).await;
+    h2.drive(util::yield_once()).await;
 
     let request = Request::builder()
         .method(Method::POST)
@@ -264,14 +239,8 @@ async fn single_stream_send_body_greater_than_default_window() {
 
     let (response, mut stream) = client.send_request(request, false).unwrap();
 
-    // Flush request head
-    loop {
-        // Run the connection until all work is done, this handles processing
-        // the handshake.
-        if !h2.poll_unpin(&mut cx).is_ready() {
-            break;
-        }
-    }
+    h2.drive(util::yield_once()).await;
+    h2.drive(util::yield_once()).await;
 
     // Send the data
     stream.send_data(payload.into(), true).unwrap();

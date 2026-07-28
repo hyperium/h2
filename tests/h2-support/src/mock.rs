@@ -43,6 +43,9 @@ struct Inner {
     /// Data written by the `h2` library to be read by the test case.
     tx: Vec<u8>,
 
+    /// Sizes of writes by the `h2` library to be read by the test case.
+    tx_write_sizes: Vec<usize>,
+
     /// Notify when data is written. This notifies the test case waiters.
     tx_task: Option<Waker>,
 
@@ -72,6 +75,7 @@ pub fn new_with_write_capacity(cap: usize) -> (Mock, Handle) {
         rx: vec![],
         rx_task: None,
         tx: vec![],
+        tx_write_sizes: vec![],
         tx_task: None,
         tx_rem: cap,
         tx_rem_task: None,
@@ -253,6 +257,16 @@ impl Handle {
         self.recv_frame(crate::frames::ping(payload).pong()).await;
     }
 
+    pub fn clear_write_sizes(&mut self) {
+        let mut i = self.codec.get_mut().inner.lock().unwrap();
+        i.tx_write_sizes.clear();
+    }
+
+    pub fn take_write_sizes(&mut self) -> Vec<usize> {
+        let mut i = self.codec.get_mut().inner.lock().unwrap();
+        std::mem::take(&mut i.tx_write_sizes)
+    }
+
     pub async fn buffer_bytes(&mut self, num: usize) {
         // Set tx_rem to num
         {
@@ -274,6 +288,11 @@ impl Handle {
             Poll::Ready(())
         })
         .await;
+    }
+
+    pub fn set_write_capacity(&mut self, num: usize) {
+        let mut i = self.codec.get_mut().inner.lock().unwrap();
+        i.tx_rem = num;
     }
 
     pub async fn unbounded_bytes(&mut self) {
@@ -403,6 +422,7 @@ impl AsyncWrite for Mock {
         }
 
         me.tx.extend(buf);
+        me.tx_write_sizes.push(buf.len());
         me.tx_rem -= buf.len();
 
         if let Some(task) = me.tx_task.take() {

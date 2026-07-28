@@ -163,13 +163,13 @@ impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let debug_data = match self.kind {
             Kind::Reset(_, reason, Initiator::User) => {
-                return write!(fmt, "stream error sent by user: {}", reason)
+                return write!(fmt, "stream error sent by user: {}", reason);
             }
             Kind::Reset(_, reason, Initiator::Library) => {
-                return write!(fmt, "stream error detected: {}", reason)
+                return write!(fmt, "stream error detected: {}", reason);
             }
             Kind::Reset(_, reason, Initiator::Remote) => {
-                return write!(fmt, "stream error received: {}", reason)
+                return write!(fmt, "stream error received: {}", reason);
             }
             Kind::GoAway(ref debug_data, reason, Initiator::User) => {
                 write!(fmt, "connection error sent by user: {}", reason)?;
