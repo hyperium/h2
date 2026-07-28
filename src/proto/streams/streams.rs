@@ -638,7 +638,14 @@ impl Inner {
 
         self.counts.transition(stream, |counts, stream| {
             let sz = frame.flow_controlled_len();
-            let res = actions.recv.recv_data(frame, stream);
+            let payload_len = frame.payload().len();
+            let mut res = actions.recv.recv_data(frame, stream);
+            if res.is_ok() {
+                res = counts.record_data_frame(payload_len).map_err(|_| {
+                    tracing::debug!("too many small DATA frames");
+                    Error::library_go_away_data(Reason::ENHANCE_YOUR_CALM, "too_many_data_frames")
+                });
+            }
 
             // Any stream error after receiving a DATA frame means
             // we won't give the data to the user, and so they can't
@@ -1503,7 +1510,11 @@ impl OpaqueStreamRef {
 
         let mut stream = me.store.resolve(self.key);
 
-        me.actions.recv.poll_data(cx, &mut stream)
+        let poll = me.actions.recv.poll_data(cx, &mut stream);
+        if let Poll::Ready(Some(Ok(ref payload))) = poll {
+            me.counts.release_data_frame(payload.len());
+        }
+        poll
     }
 
     pub fn poll_trailers(&mut self, cx: &Context) -> Poll<Option<Result<HeaderMap, proto::Error>>> {
