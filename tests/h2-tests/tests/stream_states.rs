@@ -877,6 +877,56 @@ fn exceed_max_streams() {
 */
 
 #[tokio::test]
+async fn recv_end_stream_survives_reset() {
+    assert_recv_end_stream_survives_reset(Reason::NO_ERROR).await;
+}
+
+#[tokio::test]
+async fn recv_end_stream_preserves_reset_reason() {
+    assert_recv_end_stream_survives_reset(Reason::INTERNAL_ERROR).await;
+}
+
+async fn assert_recv_end_stream_survives_reset(reset_reason: Reason) {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::reset(1).reason(reset_reason)).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut send_stream) = client.send_request(request, false).unwrap();
+
+        // Process the reset before polling the response future.
+        let reason = conn
+            .drive(poll_fn(move |cx| send_stream.poll_reset(cx)))
+            .await
+            .unwrap();
+        assert_eq!(reason, reset_reason);
+
+        let response = response.await.unwrap();
+        assert!(response.body().is_end_stream());
+
+        let mut body = response.into_body();
+        assert!(body.data().await.is_none());
+        assert!(body.trailers().await.unwrap().is_none());
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn rst_while_closing() {
     // Test to reproduce panic in issue #246 --- receipt of a RST_STREAM frame
     // on a stream in the Half Closed (remote) state with a queued EOS causes
