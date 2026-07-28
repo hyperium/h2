@@ -197,3 +197,53 @@ mod test {
         }
     }
 }
+
+/*
+// uncomment to run benchmarks
+#[cfg(test)]
+mod bench {
+    extern crate test;
+
+    use self::test::{black_box, Bencher};
+    use super::*;
+
+    fn decode_input(b: &mut Bencher, input: &[u8]) {
+        let mut encoded = BytesMut::new();
+        encode(input, &mut encoded);
+
+        let mut scratch = BytesMut::with_capacity(input.len() * 2);
+        b.bytes = encoded.len() as u64;
+        b.iter(|| {
+            let decoded = decode(black_box(encoded.as_ref()), &mut scratch).unwrap();
+            black_box(decoded);
+        });
+    }
+
+    #[bench]
+    fn decode_short_ascii(b: &mut Bencher) {
+        decode_input(b, b"www.example.com");
+    }
+
+    #[bench]
+    fn decode_header_value(b: &mut Bencher) {
+        decode_input(
+            b,
+            b"text/html,application/xhtml+xml,application/xml;q=0.9;q=0.8",
+        );
+    }
+
+    #[bench]
+    fn decode_long_ascii(b: &mut Bencher) {
+        decode_input(
+            b,
+            b"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:16.0) Gecko/20100101 Firefox/16.0",
+        );
+    }
+
+    #[bench]
+    fn decode_all_octets(b: &mut Bencher) {
+        let input: Vec<_> = (0..=u8::MAX).collect();
+        decode_input(b, &input);
+    }
+}
+*/
