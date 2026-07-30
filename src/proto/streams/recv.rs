@@ -1006,14 +1006,14 @@ impl Recv {
     pub fn send_pending_refusal<T, B>(
         &mut self,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
         if let Some(stream_id) = self.refused {
             if !dst.has_send_capacity() {
-                return Ok(false);
+                return Ok(BufferStatus::CodecFull);
             }
 
             // Create the RST_STREAM frame
@@ -1025,7 +1025,7 @@ impl Recv {
 
         self.refused = None;
 
-        Ok(true)
+        Ok(BufferStatus::Complete)
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -1084,29 +1084,29 @@ impl Recv {
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
     {
         // Send any pending connection level window updates
-        if !self.send_connection_window_update(dst)? {
-            return Ok(false);
+        if self.send_connection_window_update(dst)? == BufferStatus::CodecFull {
+            return Ok(BufferStatus::CodecFull);
         }
 
         // Send any pending stream level window updates
-        if !self.send_stream_window_updates(store, counts, dst)? {
-            return Ok(false);
+        if self.send_stream_window_updates(store, counts, dst)? == BufferStatus::CodecFull {
+            return Ok(BufferStatus::CodecFull);
         }
 
-        Ok(true)
+        Ok(BufferStatus::Complete)
     }
 
     /// Send connection level window update
     fn send_connection_window_update<T, B>(
         &mut self,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -1116,7 +1116,7 @@ impl Recv {
 
             // Ensure the codec has capacity
             if !dst.has_send_capacity() {
-                return Ok(false);
+                return Ok(BufferStatus::CodecFull);
             }
 
             // Buffer the WINDOW_UPDATE frame
@@ -1129,7 +1129,7 @@ impl Recv {
                 .expect("unexpected flow control state");
         }
 
-        Ok(true)
+        Ok(BufferStatus::Complete)
     }
 
     /// Send stream level window update
@@ -1138,7 +1138,7 @@ impl Recv {
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -1146,13 +1146,13 @@ impl Recv {
         loop {
             // Ensure the codec has capacity
             if !dst.has_send_capacity() {
-                return Ok(false);
+                return Ok(BufferStatus::CodecFull);
             }
 
             // Get the next stream
             let stream = match self.pending_window_updates.pop(store) {
                 Some(stream) => stream,
-                None => return Ok(true),
+                None => return Ok(BufferStatus::Complete),
             };
 
             counts.transition(stream, |_, stream| {

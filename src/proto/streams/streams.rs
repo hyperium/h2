@@ -1,6 +1,6 @@
 use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
-use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
+use super::{Buffer, BufferStatus, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{self, Frame, Reason};
@@ -165,10 +165,9 @@ where
 
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
-        if me.actions.recv.send_pending_refusal(dst)? {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Pending
+        match me.actions.recv.send_pending_refusal(dst)? {
+            BufferStatus::Complete => Poll::Ready(Ok(())),
+            BufferStatus::CodecFull => Poll::Pending,
         }
     }
 
@@ -192,13 +191,14 @@ where
             // Make any required socket progress before taking stream locks.
             ready!(dst.poll_ready(cx))?;
 
-            let drained = {
+            let status = {
                 let mut me = self.inner.lock().unwrap();
                 me.buffer_pending(&self.send_buffer, dst)?
             };
 
-            if !drained {
-                continue;
+            match status {
+                BufferStatus::Complete => {}
+                BufferStatus::CodecFull => continue,
             }
 
             // Flush any frames staged by `buffer_pending` without holding the
@@ -940,7 +940,7 @@ impl Inner {
         &mut self,
         send_buffer: &SendBuffer<B>,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -952,24 +952,26 @@ impl Inner {
         //
         // TODO: It would probably be better to interleave updates w/ data
         // frames.
-        if !self
+        if self
             .actions
             .recv
             .buffer_pending(&mut self.store, &mut self.counts, dst)?
+            == BufferStatus::CodecFull
         {
-            return Ok(false);
+            return Ok(BufferStatus::CodecFull);
         }
 
         // Send any other pending frames
-        if !self
+        if self
             .actions
             .send
             .buffer_pending(send_buffer, &mut self.store, &mut self.counts, dst)?
+            == BufferStatus::CodecFull
         {
-            return Ok(false);
+            return Ok(BufferStatus::CodecFull);
         }
 
-        Ok(true)
+        Ok(BufferStatus::Complete)
     }
 
     fn reclaim_written_frame<T, B>(

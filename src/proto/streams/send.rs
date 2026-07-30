@@ -1,6 +1,6 @@
 use super::{
-    store, Buffer, Codec, Config, Counts, Frame, Prioritize, Prioritized, Store, Stream, StreamId,
-    StreamIdOverflow, WindowSize,
+    store, Buffer, BufferStatus, Codec, Config, Counts, Frame, Prioritize, Prioritized, Store,
+    Stream, StreamId, StreamIdOverflow, WindowSize,
 };
 use crate::codec::UserError;
 use crate::frame::{self, Reason};
@@ -340,7 +340,7 @@ impl Send {
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,

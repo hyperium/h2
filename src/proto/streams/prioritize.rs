@@ -511,7 +511,7 @@ impl Prioritize {
         store: &mut Store,
         counts: &mut Counts,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<bool>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -526,7 +526,7 @@ impl Prioritize {
 
         loop {
             if !dst.has_send_capacity() {
-                return Ok(false);
+                return Ok(BufferStatus::CodecFull);
             }
 
             if let Some(mut stream) = self.pop_pending_open(store, counts) {
@@ -551,7 +551,7 @@ impl Prioritize {
                     self.reclaim_frame(buffer, store, dst);
                 }
                 None => {
-                    return Ok(true);
+                    return Ok(BufferStatus::Complete);
                 }
             }
         }
