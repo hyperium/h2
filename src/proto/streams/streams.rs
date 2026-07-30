@@ -161,13 +161,17 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        ready!(dst.poll_ready(cx))?;
+        loop {
+            let status = {
+                let mut me = self.inner.lock().unwrap();
+                let me = &mut *me;
+                me.actions.recv.send_pending_refusal(dst)?
+            };
 
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        match me.actions.recv.send_pending_refusal(dst)? {
-            BufferStatus::Complete => Poll::Ready(Ok(())),
-            BufferStatus::CodecFull => Poll::Pending,
+            match status {
+                BufferStatus::Complete => return Poll::Ready(Ok(())),
+                BufferStatus::CodecFull => ready!(dst.poll_ready(cx))?,
+            }
         }
     }
 
