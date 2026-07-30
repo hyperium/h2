@@ -120,10 +120,9 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
     'outer: loop {
         // Refill the bit buffer, seven bytes at a time when possible.
         if pos + 8 <= len {
-            // SAFETY: pos + 8 <= len, so the 8-byte read is in bounds.
-            let word = u64::from_be_bytes(unsafe {
-                src.as_ptr().add(pos).cast::<[u8; 8]>().read_unaligned()
-            });
+            // The bounds check is elided: the compiler proves it from the
+            // `pos + 8 <= len` branch above.
+            let word = u64::from_be_bytes(src[pos..pos + 8].try_into().unwrap());
             acc |= word >> bits;
             pos += (63 - bits) >> 3;
             bits |= 56;
