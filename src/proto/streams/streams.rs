@@ -197,7 +197,17 @@ where
 
             let status = {
                 let mut me = self.inner.lock().unwrap();
-                me.buffer_pending(&self.send_buffer, dst)?
+                let status = me.buffer_pending(&self.send_buffer, dst)?;
+
+                // Register the task while holding the same lock used to
+                // observe that all pending frames have been buffered. A
+                // producer that queues another frame while the codec is being
+                // flushed will then take and wake this task.
+                if status == BufferStatus::Complete {
+                    me.actions.task = Some(cx.waker().clone());
+                }
+
+                status
             };
 
             match status {
@@ -211,11 +221,7 @@ where
 
             let reclaimed = {
                 let mut me = self.inner.lock().unwrap();
-                let reclaimed = me.reclaim_written_frame(&self.send_buffer, dst);
-                if !reclaimed {
-                    me.actions.task = Some(cx.waker().clone());
-                }
-                reclaimed
+                me.reclaim_written_frame(&self.send_buffer, dst)
             };
 
             if !reclaimed {
