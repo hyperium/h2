@@ -93,29 +93,22 @@ const fn build_fast_table() -> [u32; 1 << FAST_BITS] {
 // control characters and non-ASCII octets) and complete by walking the
 // byte-wide tables in DECODE_TABLE, exactly like the previous decoder.
 pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> {
-    if src.is_empty() {
-        return Ok(buf.split());
-    }
-
-    // The shortest code is five bits, so the decoded output is at most
-    // src.len() * 8 / 5 bytes. The hot loop below speculatively writes two
-    // bytes per emitted symbol pair, touching at most one byte past the
-    // decoded length. floor(len * 8 / 5) + 1 <= len * 2 holds for len >= 1,
-    // so reserving twice the input length covers both.
-    buf.reserve(src.len() << 1);
-
     let len = src.len();
     let base_len = buf.len();
+
+    // The shortest code is five bits, so the decoded output is at most
+    // len * 8 / 5 bytes. The hot loop below speculatively writes two bytes
+    // per emitted symbol pair, touching at most one byte past the decoded
+    // length; floor(len * 8 / 5) + 1 <= len * 2 holds for len >= 1. Zero-fill
+    // up to the worst case now so the output can be written through a plain
+    // slice, then truncate to the decoded length at the end.
+    buf.resize(base_len + (len << 1), 0);
+    let dst = &mut buf[base_len..];
+    let mut o = 0usize;
 
     let mut acc: u64 = 0;
     let mut bits: usize = 0;
     let mut pos: usize = 0;
-
-    // The spare capacity reserved above, as a raw pointer. `chunk_mut` only
-    // reallocates when the buffer is full, which the reservation of at least
-    // two bytes for a non-empty input rules out.
-    let out_start = buf.chunk_mut().as_mut_ptr();
-    let mut out = out_start;
 
     'outer: loop {
         // Refill the bit buffer, seven bytes at a time when possible.
@@ -152,12 +145,8 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
                         if used > bits {
                             return Err(DecoderError::InvalidHuffmanCode);
                         }
-                        // SAFETY: the store is within the capacity reserved
-                        // above; see the analysis at the top of the function.
-                        unsafe {
-                            out.write(e as u8);
-                            out = out.add(1);
-                        }
+                        dst[o] = e as u8;
+                        o += 1;
                         acc <<= used;
                         bits -= used;
                         break;
@@ -176,14 +165,9 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
             }
 
             let consumed = (entry >> 24) as usize;
-            // SAFETY: speculative 2-byte store within the capacity reserved
-            // above, which includes one byte of slack past the maximum
-            // decoded length; see the analysis at the top of the function.
-            unsafe {
-                out.write(entry as u8);
-                out.add(1).write((entry >> 8) as u8);
-                out = out.add(count as usize);
-            }
+            dst[o] = entry as u8;
+            dst[o + 1] = (entry >> 8) as u8;
+            o += count as usize;
             acc <<= consumed;
             bits -= consumed;
         }
@@ -214,12 +198,8 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
                 if used > bits {
                     return Err(DecoderError::InvalidHuffmanCode);
                 }
-                // SAFETY: the store is within the capacity reserved above;
-                // see the analysis at the top of the function.
-                unsafe {
-                    out.write(e as u8);
-                    out = out.add(1);
-                }
+                dst[o] = e as u8;
+                o += 1;
                 acc <<= used;
                 bits -= used;
                 break;
@@ -236,13 +216,7 @@ pub fn decode(src: &[u8], buf: &mut BytesMut) -> Result<BytesMut, DecoderError> 
         }
     }
 
-    // SAFETY: `out` only ever advances from `out_start` within the same
-    // reserved allocation.
-    let written = unsafe { out.offset_from(out_start) } as usize;
-    // SAFETY: `written` bytes were initialized in the spare capacity above.
-    unsafe {
-        buf.set_len(base_len + written);
-    }
+    buf.truncate(base_len + o);
     Ok(buf.split())
 }
 
