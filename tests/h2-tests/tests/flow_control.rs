@@ -1,7 +1,104 @@
 use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 use h2_support::util::yield_once;
+use std::pin::Pin;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc, Barrier,
+};
+use std::task::{Context, Poll};
 use tokio::sync::oneshot;
+
+const LOST_WAKE_FIRST_DATA: &[u8] = b"lost-wakeup-first-data";
+const LOST_WAKE_SECOND_DATA: &[u8] = b"lost-wakeup-second-data";
+
+#[derive(Clone)]
+struct FlushInterleave {
+    state: Arc<AtomicU8>,
+    entered: Arc<Barrier>,
+    resume: Arc<Barrier>,
+}
+
+impl FlushInterleave {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(AtomicU8::new(0)),
+            entered: Arc::new(Barrier::new(2)),
+            resume: Arc::new(Barrier::new(2)),
+        }
+    }
+
+    fn arm(&self) {
+        assert_eq!(self.state.swap(1, Ordering::SeqCst), 0);
+    }
+
+    fn observe_write(&self, buf: &[u8]) {
+        if buf
+            .windows(LOST_WAKE_FIRST_DATA.len())
+            .any(|window| window == LOST_WAKE_FIRST_DATA)
+        {
+            let _ = self
+                .state
+                .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    }
+
+    fn block_flush(&self) {
+        if self
+            .state
+            .compare_exchange(2, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.entered.wait();
+            self.resume.wait();
+        }
+    }
+
+    fn wait_for_flush(&self) {
+        self.entered.wait();
+    }
+
+    fn resume_flush(&self) {
+        self.resume.wait();
+    }
+}
+
+struct FlushInterleaveIo {
+    inner: mock::Mock,
+    interleave: FlushInterleave,
+}
+
+impl AsyncRead for FlushInterleaveIo {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio_io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for FlushInterleaveIo {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        this.interleave.observe_write(buf);
+        Pin::new(&mut this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        this.interleave.block_flush();
+        Pin::new(&mut this.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
 
 // In this case, the stream & connection both have capacity, but capacity is not
 // explicitly requested.
@@ -833,6 +930,112 @@ async fn recv_window_update_on_stream_closed_by_data_frame() {
         srv.recv_frame(frames::data(1, "hello").eos()).await;
         srv.send_frame(frames::window_update(1, 5)).await;
     };
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn small_data_frames_reclaimed_before_buffering_next() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        stream.send_data("hello".into(), false).unwrap();
+        stream.send_data("world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn send_enqueued_during_unlocked_flush_wakes_connection() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+    let interleave = FlushInterleave::new();
+    let io = FlushInterleaveIo {
+        inner: io,
+        interleave: interleave.clone(),
+    };
+    let (headers_received_tx, headers_received_rx) = oneshot::channel();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        // Ensure the connection has finished flushing HEADERS and registered
+        // its stream waker before the first DATA frame consumes that waker.
+        h2.drive(headers_received_rx).await.unwrap();
+
+        interleave.arm();
+        stream
+            .send_data(LOST_WAKE_FIRST_DATA.into(), false)
+            .unwrap();
+
+        let producer_interleave = interleave.clone();
+        let producer = thread::spawn(move || {
+            producer_interleave.wait_for_flush();
+            let result = stream.send_data(LOST_WAKE_SECOND_DATA.into(), true);
+            producer_interleave.resume_flush();
+            result.unwrap();
+        });
+
+        let response = {
+            // Suppress unrelated/spurious connection polls so only a wake
+            // registered during the critical flush interval can make progress.
+            let mut woken_h2 = (&mut h2).wakened();
+            tokio::time::timeout(Duration::from_secs(5), woken_h2.drive(response))
+                .await
+                .expect("connection was not woken for DATA queued during flush")
+                .unwrap()
+        };
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        producer.join().unwrap();
+        drop(client);
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        headers_received_tx.send(()).unwrap();
+        srv.recv_frame(frames::data(1, LOST_WAKE_FIRST_DATA)).await;
+        srv.recv_frame(frames::data(1, LOST_WAKE_SECOND_DATA).eos())
+            .await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
+
     join(srv, h2).await;
 }
 

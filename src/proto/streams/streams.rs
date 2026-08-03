@@ -1,6 +1,6 @@
 use super::recv::RecvHeaderBlockError;
 use super::store::{self, Entry, Resolve, Store};
-use super::{Buffer, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
+use super::{Buffer, BufferStatus, Config, Counts, Prioritized, Recv, Send, Stream, StreamId};
 use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{self, Frame, Reason};
@@ -161,9 +161,18 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions.recv.send_pending_refusal(cx, dst)
+        loop {
+            let status = {
+                let mut me = self.inner.lock().unwrap();
+                let me = &mut *me;
+                me.actions.recv.send_pending_refusal(dst)?
+            };
+
+            match status {
+                BufferStatus::Complete => return Poll::Ready(Ok(())),
+                BufferStatus::CodecFull => ready!(dst.poll_ready(cx))?,
+            }
+        }
     }
 
     pub fn clear_expired_reset_streams(&mut self) {
@@ -182,8 +191,43 @@ where
     where
         T: AsyncWrite + Unpin,
     {
-        let mut me = self.inner.lock().unwrap();
-        me.poll_complete(&self.send_buffer, cx, dst)
+        loop {
+            // Make any required socket progress before taking stream locks.
+            ready!(dst.poll_ready(cx))?;
+
+            let status = {
+                let mut me = self.inner.lock().unwrap();
+                let status = me.buffer_pending(&self.send_buffer, dst)?;
+
+                // Register the task while holding the same lock used to
+                // observe that all pending frames have been buffered. A
+                // producer that queues another frame while the codec is being
+                // flushed will then take and wake this task.
+                if status == BufferStatus::Complete {
+                    me.actions.task = Some(cx.waker().clone());
+                }
+
+                status
+            };
+
+            match status {
+                BufferStatus::Complete => {}
+                BufferStatus::CodecFull => continue,
+            }
+
+            // Flush any frames staged by `buffer_pending` without holding the
+            // stream-state or send-buffer mutexes.
+            ready!(dst.flush(cx))?;
+
+            let reclaimed = {
+                let mut me = self.inner.lock().unwrap();
+                me.reclaim_written_frame(&self.send_buffer, dst)
+            };
+
+            if !reclaimed {
+                return Poll::Ready(Ok(()));
+            }
+        }
     }
 
     pub fn apply_remote_settings(
@@ -902,12 +946,11 @@ impl Inner {
         Ok(())
     }
 
-    fn poll_complete<T, B>(
+    fn buffer_pending<T, B>(
         &mut self,
         send_buffer: &SendBuffer<B>,
-        cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> io::Result<BufferStatus>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -919,24 +962,42 @@ impl Inner {
         //
         // TODO: It would probably be better to interleave updates w/ data
         // frames.
-        ready!(self
+        if self
             .actions
             .recv
-            .poll_complete(cx, &mut self.store, &mut self.counts, dst))?;
+            .buffer_pending(&mut self.store, &mut self.counts, dst)?
+            == BufferStatus::CodecFull
+        {
+            return Ok(BufferStatus::CodecFull);
+        }
 
         // Send any other pending frames
-        ready!(self.actions.send.poll_complete(
-            cx,
-            send_buffer,
-            &mut self.store,
-            &mut self.counts,
-            dst
-        ))?;
+        if self
+            .actions
+            .send
+            .buffer_pending(send_buffer, &mut self.store, &mut self.counts, dst)?
+            == BufferStatus::CodecFull
+        {
+            return Ok(BufferStatus::CodecFull);
+        }
 
-        // Nothing else to do, track the task
-        self.actions.task = Some(cx.waker().clone());
+        Ok(BufferStatus::Complete)
+    }
 
-        Poll::Ready(Ok(()))
+    fn reclaim_written_frame<T, B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        dst: &mut Codec<T, Prioritized<B>>,
+    ) -> bool
+    where
+        B: Buf,
+    {
+        let mut send_buffer = send_buffer.inner.lock().unwrap();
+        let send_buffer = &mut *send_buffer;
+
+        self.actions
+            .send
+            .reclaim_written_frame(send_buffer, &mut self.store, dst)
     }
 
     fn send_reset<B>(

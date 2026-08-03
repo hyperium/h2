@@ -120,6 +120,12 @@ where
         Poll::Ready(Ok(()))
     }
 
+    /// Returns whether a frame can be buffered without first flushing the
+    /// underlying I/O object.
+    pub(crate) fn has_capacity(&self) -> bool {
+        self.encoder.has_capacity()
+    }
+
     /// Buffer a frame.
     ///
     /// `poll_ready` must be called first to ensure that a frame may be
