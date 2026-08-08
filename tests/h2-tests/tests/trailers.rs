@@ -1,5 +1,7 @@
 use futures::StreamExt;
 use h2_support::prelude::*;
+use std::task::Poll;
+use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn recv_trailers_only() {
@@ -108,6 +110,91 @@ async fn send_trailers_immediately() {
 #[ignore]
 fn recv_trailers_without_eos() {
     // This should be a protocol error?
+}
+
+#[tokio::test]
+async fn poll_trailers_before_data_is_consumed() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+    let (frames_ready_tx, frames_ready_rx) = oneshot::channel();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        // 2. Receive the request.
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        // 3. Send response HEADERS followed by DATA and trailers.
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, "hello")).await;
+        srv.send_frame(frames::headers(1).field("trailer-key", "trailer-val").eos())
+            .await;
+
+        // 4. Ensure all preceding frames have been processed by the client.
+        srv.ping_pong([1; 8]).await;
+        frames_ready_tx.send(()).unwrap();
+    };
+
+    let client = async move {
+        let (mut client, conn) = client::handshake(io).await.expect("handshake");
+        let conn = tokio::spawn(async move {
+            conn.await.expect("client");
+        });
+
+        // 1. Send the request and wait for response HEADERS.
+        let resp = client.get("https://example.com/").await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        frames_ready_rx.await.unwrap();
+        let mut first_poll = true;
+
+        let trailers = tokio::time::timeout(
+            Duration::from_secs(1),
+            poll_fn(|cx| {
+                if first_poll {
+                    // 5. Poll trailers while DATA is at the front of pending_recv.
+                    // This returns Pending and registers this future's waker.
+                    first_poll = false;
+                    assert!(
+                        matches!(body.poll_trailers(cx), Poll::Pending),
+                        "poll_trailers should be Pending when DATA is buffered"
+                    );
+
+                    // 6. Consume the DATA frame. The next poll reaches the
+                    // queued trailers and wakes the waker registered in 5.
+                    match body.poll_data(cx) {
+                        Poll::Ready(Some(Ok(data))) => assert_eq!(data, "hello"),
+                        other => panic!("expected DATA, got {:?}", other),
+                    }
+                    assert!(matches!(body.poll_data(cx), Poll::Ready(None)));
+
+                    Poll::Pending
+                } else {
+                    // 7. This future must only be polled again after
+                    // poll_data's notify_recv wakes it.
+                    body.poll_trailers(cx)
+                }
+            })
+            .wakened(),
+        )
+        .await
+        .expect("poll_trailers was not woken")
+        .expect("trailers result")
+        .expect("should have trailers");
+
+        assert_eq!(trailers["trailer-key"], "trailer-val");
+
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
 }
 
 #[tokio::test]
