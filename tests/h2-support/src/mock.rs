@@ -14,7 +14,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
-use std::{cmp, io, usize};
+use std::{cmp, io};
 
 /// A mock I/O
 #[derive(Debug)]
