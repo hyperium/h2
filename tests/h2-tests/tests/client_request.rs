@@ -102,7 +102,7 @@ async fn request_stream_id_overflows() {
 
     let h2 = async move {
         let (mut client, mut h2) = client::Builder::new()
-            .initial_stream_id(::std::u32::MAX >> 1)
+            .initial_stream_id(u32::MAX >> 1)
             .handshake::<_, Bytes>(io)
             .await
             .unwrap();
@@ -135,12 +135,12 @@ async fn request_stream_id_overflows() {
         let settings = srv.assert_client_handshake().await;
         assert_default_settings!(settings);
         srv.recv_frame(
-            frames::headers(::std::u32::MAX >> 1)
+            frames::headers(u32::MAX >> 1)
                 .request("GET", "https://example.com/")
                 .eos(),
         )
         .await;
-        srv.send_frame(frames::headers(::std::u32::MAX >> 1).response(200).eos())
+        srv.send_frame(frames::headers(u32::MAX >> 1).response(200).eos())
             .await;
         idle_ms(10).await;
     };
