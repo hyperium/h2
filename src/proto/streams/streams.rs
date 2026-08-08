@@ -1551,7 +1551,9 @@ impl OpaqueStreamRef {
 
         let mut stream = me.store.resolve(self.key);
         stream.is_recv = false;
-        me.actions.recv.clear_recv_buffer(&mut stream);
+        me.actions
+            .recv
+            .clear_recv_buffer(&mut stream, &mut me.actions.task);
     }
 
     pub fn stream_id(&self) -> StreamId {

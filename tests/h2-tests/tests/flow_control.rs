@@ -544,6 +544,61 @@ async fn stream_error_release_connection_capacity() {
     join(srv, client).await;
 }
 
+#[tokio::test]
+async fn recv_stream_drop_releases_only_buffered_connection_capacity() {
+    h2_support::trace_init!();
+
+    const FRAME_LEN: usize = 16_384;
+    const TOTAL_LEN: usize = FRAME_LEN * 2;
+
+    // Exercise all relationships between buffered and in-flight capacity:
+    // equal, buffered > in-flight, and buffered < in-flight.
+    for read_frames in 0usize..=1 {
+        for released_frames in 0usize..=1 {
+            let expected_used = read_frames.saturating_sub(released_frames) * FRAME_LEN;
+            let (io, mut peer) = mock::new();
+
+            let peer = async move {
+                let _ = peer.assert_server_handshake().await;
+                peer.send_frame(frames::headers(1).request("POST", "https://example.com/"))
+                    .await;
+                for _ in 0..2 {
+                    peer.send_frame(frames::data(1, vec![0; FRAME_LEN])).await;
+                }
+
+                peer.recv_frame(frames::window_update(0, (TOTAL_LEN - expected_used) as u32))
+                    .await;
+                if released_frames > 0 {
+                    peer.recv_frame(frames::window_update(1, FRAME_LEN as u32))
+                        .await;
+                }
+            };
+
+            let server = async move {
+                let mut server = server::handshake(io).await.unwrap();
+                let (request, _respond) = server.next().await.unwrap().unwrap();
+                let mut body = request.into_body();
+
+                for _ in 0..read_frames {
+                    assert_eq!(body.data().await.unwrap().unwrap().len(), FRAME_LEN);
+                }
+
+                let mut flow = body.flow_control().clone();
+                for _ in 0..released_frames {
+                    flow.release_capacity(FRAME_LEN).unwrap();
+                }
+                drop(body);
+
+                assert_eq!(flow.used_capacity(), expected_used);
+
+                let _ = server.next().await;
+            };
+
+            join(peer, server).await;
+        }
+    }
+}
+
 // Regression test for TODO
 #[tokio::test]
 async fn padded_data_stream_error_releases_connection_capacity() {
