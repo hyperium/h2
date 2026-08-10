@@ -1230,7 +1230,7 @@ impl Recv {
             Some(event) => {
                 // Frame is not trailers.. not ready to poll trailers yet.
                 stream.pending_recv.push_front(&mut self.buffer, event);
-
+                stream.recv_task = Some(cx.waker().clone());
                 Poll::Pending
             }
             None => self.schedule_recv(cx, stream),
