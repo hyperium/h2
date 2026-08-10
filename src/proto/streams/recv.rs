@@ -506,7 +506,7 @@ impl Recv {
         self.release_connection_capacity(stream.in_flight_recv_data, task);
         stream.in_flight_recv_data = 0;
 
-        self.clear_recv_buffer(stream);
+        self.clear_recv_buffer(stream, task);
     }
 
     /// Set the "target" connection window size.
@@ -933,9 +933,22 @@ impl Recv {
         stream.notify_push();
     }
 
-    pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream) {
-        while stream.pending_recv.pop_front(&mut self.buffer).is_some() {
-            // drop it
+    pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream, task: &mut Option<Waker>) {
+        let mut to_release: WindowSize = 0;
+        while let Some(event) = stream.pending_recv.pop_front(&mut self.buffer) {
+            if let Event::Data(data) = &event {
+                to_release = to_release
+                    .saturating_add(data.len() as WindowSize)
+                    .min(stream.in_flight_recv_data);
+            }
+        }
+        // Release flow control capacity. Cases:
+        // * User read data but hasn't released: buf=0, in_flight>0 -> release 0
+        // * User released without reading: buf>0, in_flight=0 -> release 0
+        // * Normal drop without reading: buf=in_flight -> full release
+        if to_release > 0 {
+            stream.in_flight_recv_data -= to_release;
+            self.release_connection_capacity(to_release, task);
         }
     }
 
@@ -1250,6 +1263,52 @@ impl Recv {
             // No more frames will be received
             Poll::Ready(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_recv_buffer_caps_capacity_before_overflow() {
+        const FRAME_LEN: usize = 1 << 20;
+        const FRAME_COUNT: usize = (u32::MAX as usize / FRAME_LEN) + 1;
+
+        let config = Config {
+            initial_max_send_streams: 0,
+            local_max_buffer_size: 0,
+            local_next_stream_id: 2.into(),
+            local_push_enabled: false,
+            extended_connect_protocol_enabled: false,
+            local_reset_duration: Duration::ZERO,
+            local_reset_max: 0,
+            remote_reset_max: 0,
+            remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            remote_max_initiated: None,
+            local_max_error_reset_streams: None,
+        };
+        let mut recv = Recv::new(peer::Dyn::Server, &config);
+        let mut store = Store::new();
+        let mut stream = store.insert(
+            StreamId::from(1),
+            Stream::new(StreamId::from(1), 0, DEFAULT_INITIAL_WINDOW_SIZE),
+        );
+        let data = Bytes::from(vec![0; FRAME_LEN]);
+
+        for _ in 0..FRAME_COUNT {
+            stream
+                .pending_recv
+                .push_back(&mut recv.buffer, Event::Data(data.clone()));
+        }
+        stream.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
+        recv.in_flight_data = DEFAULT_INITIAL_WINDOW_SIZE;
+
+        recv.clear_recv_buffer(&mut stream, &mut None);
+
+        assert!(stream.pending_recv.is_empty());
+        assert_eq!(stream.in_flight_recv_data, 0);
+        assert_eq!(recv.in_flight_data, 0);
     }
 }
 
