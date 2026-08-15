@@ -3,6 +3,7 @@
 use futures::{future::poll_fn, StreamExt};
 use h2_support::prelude::*;
 use http::{Response, StatusCode};
+use std::{pin::Pin, task::Poll};
 
 #[tokio::test]
 async fn send_100_continue() {
@@ -297,8 +298,14 @@ async fn client_poll_informational_responses_none() {
         sync_sender.send(()).unwrap();
 
         // Get the final response
-        let response = response_future.await.expect("response error");
+        let response = poll_fn(|cx| Pin::new(&mut response_future).poll(cx))
+            .await
+            .expect("response error");
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(matches!(
+            poll_fn(|cx| Poll::Ready(response_future.poll_informational(cx))).await,
+            Poll::Pending
+        ));
         let (_hdr, mut recv_stream) = response.into_parts();
         let data = recv_stream.data().await.unwrap().unwrap();
         assert_eq!("request body", data);

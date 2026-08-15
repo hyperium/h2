@@ -373,10 +373,6 @@ impl<B: Buf> SendStream<B> {
     }
 
     /// Returns the stream ID of this `SendStream`.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> StreamId {
         StreamId::from_internal(self.inner.stream_id())
     }
@@ -451,10 +447,6 @@ impl RecvStream {
     }
 
     /// Returns the stream ID of this stream.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> StreamId {
         self.inner.stream_id()
     }

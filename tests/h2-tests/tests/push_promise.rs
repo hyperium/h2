@@ -1,5 +1,6 @@
-use futures::{StreamExt, TryStreamExt};
+use futures::{future::poll_fn, StreamExt, TryStreamExt};
 use h2_support::prelude::*;
+use std::pin::Pin;
 
 #[tokio::test]
 async fn recv_push_works() {
@@ -32,27 +33,29 @@ async fn recv_push_works() {
             .body(())
             .unwrap();
         let (mut resp, _) = client.send_request(request, true).unwrap();
-        let pushed = resp.push_promises();
-        let check_resp_status = async move {
-            let resp = resp.await.unwrap();
-            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        };
-        let check_pushed_response = async move {
+        let check_responses = async move {
+            let response = poll_fn(|cx| Pin::new(&mut resp).poll(cx)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+            let pushed = resp.push_promises();
             let p = pushed.and_then(|headers| async move {
-                let (request, response) = headers.into_parts();
+                let (request, mut response) = headers.into_parts();
                 assert_eq!(request.into_parts().0.method, Method::GET);
-                let resp = response.await.unwrap();
+                let stream_id = response.stream_id();
+                let resp = poll_fn(|cx| Pin::new(&mut response).poll(cx))
+                    .await
+                    .unwrap();
+                assert_eq!(response.stream_id(), stream_id);
                 assert_eq!(resp.status(), StatusCode::OK);
                 let b = util::concat(resp.into_body()).await.unwrap();
                 assert_eq!(b, "promised_data");
                 Ok(())
             });
             let ps: Vec<_> = p.collect().await;
-            assert_eq!(1, ps.len())
+            assert_eq!(1, ps.len());
         };
 
-        h2.drive(join(check_resp_status, check_pushed_response))
-            .await;
+        h2.drive(check_responses).await;
     };
 
     join(mock, h2).await;

@@ -1297,10 +1297,6 @@ impl<B: Buf> SendResponse<B> {
     }
 
     /// Returns the stream ID of the response stream.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         crate::StreamId::from_internal(self.inner.stream_id())
     }
@@ -1369,10 +1365,6 @@ impl<B: Buf> SendPushedResponse<B> {
     }
 
     /// Returns the stream ID of the response stream.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }

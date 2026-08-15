@@ -1,4 +1,4 @@
-use futures::future::{ready, Either};
+use futures::future::{poll_fn, ready, Either};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use h2_support::prelude::*;
@@ -47,12 +47,12 @@ async fn client_other_thread() {
                 .uri("https://http2.akamai.com/")
                 .body(())
                 .unwrap();
-            let _res = client
-                .send_request(request, true)
-                .unwrap()
-                .0
+            let mut response = client.send_request(request, true).unwrap().0;
+            let stream_id = response.stream_id();
+            let _res = poll_fn(|cx| Pin::new(&mut response).poll(cx))
                 .await
                 .expect("request");
+            assert_eq!(response.stream_id(), stream_id);
         });
         h2.await.expect("h2");
     };

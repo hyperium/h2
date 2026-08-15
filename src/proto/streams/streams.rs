@@ -264,7 +264,7 @@ where
         mut request: Request<()>,
         end_of_stream: bool,
         pending: Option<&OpaqueStreamRef>,
-    ) -> Result<(StreamRef<B>, bool), SendError> {
+    ) -> Result<(StreamRef<B>, OpaqueStreamRef, OpaqueStreamRef, bool), SendError> {
         use super::stream::ContentLength;
         use http::Method;
 
@@ -344,14 +344,18 @@ where
 
         // TODO: ideally, OpaqueStreamRefs::new would do this, but we're holding
         // the lock, so it can't.
-        me.refs += 1;
+        me.refs += 3;
 
         let is_full = me.counts.next_send_stream_will_reach_capacity();
+        let response = OpaqueStreamRef::new(self.inner.clone(), &mut stream);
+        let body = OpaqueStreamRef::new(self.inner.clone(), &mut stream);
         Ok((
             StreamRef {
                 opaque: OpaqueStreamRef::new(self.inner.clone(), &mut stream),
                 send_buffer: self.send_buffer.clone(),
             },
+            response,
+            body,
             is_full,
         ))
     }
@@ -1472,7 +1476,7 @@ impl OpaqueStreamRef {
     pub fn poll_pushed(
         &mut self,
         cx: &Context,
-    ) -> Poll<Option<Result<(Request<()>, OpaqueStreamRef), proto::Error>>> {
+    ) -> Poll<Option<Result<(Request<()>, OpaqueStreamRef, OpaqueStreamRef), proto::Error>>> {
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
@@ -1481,10 +1485,11 @@ impl OpaqueStreamRef {
             .recv
             .poll_pushed(cx, &mut stream)
             .map_ok(|(h, key)| {
-                me.refs += 1;
-                let opaque_ref =
-                    OpaqueStreamRef::new(self.inner.clone(), &mut me.store.resolve(key));
-                (h, opaque_ref)
+                me.refs += 2;
+                let stream = &mut me.store.resolve(key);
+                let response = OpaqueStreamRef::new(self.inner.clone(), stream);
+                let body = OpaqueStreamRef::new(self.inner.clone(), stream);
+                (h, response, body)
             })
     }
 
@@ -1557,7 +1562,7 @@ impl OpaqueStreamRef {
     }
 
     pub fn stream_id(&self) -> StreamId {
-        self.inner.lock().unwrap().store[self.key].id
+        self.key.stream_id()
     }
 }
 

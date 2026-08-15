@@ -237,6 +237,7 @@ pub struct Connection<T, B: Buf = Bytes> {
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: proto::OpaqueStreamRef,
+    body: Option<proto::OpaqueStreamRef>,
     push_promise_consumed: bool,
 }
 
@@ -517,7 +518,7 @@ where
         self.inner
             .send_request(request, end_of_stream, self.pending.as_ref())
             .map_err(Into::into)
-            .map(|(stream, is_full)| {
+            .map(|(stream, response, body, is_full)| {
                 if stream.is_pending_open() && is_full {
                     // Only prevent sending another request when the request queue
                     // is not full.
@@ -525,7 +526,8 @@ where
                 }
 
                 let response = ResponseFuture {
-                    inner: stream.clone_to_opaque(),
+                    inner: response,
+                    body: Some(body),
                     push_promise_consumed: false,
                 };
 
@@ -1470,7 +1472,11 @@ impl Future for ResponseFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (parts, _) = ready!(self.inner.poll_response(cx))?.into_parts();
-        let body = RecvStream::new(FlowControl::new(self.inner.clone()));
+        let body = RecvStream::new(FlowControl::new(
+            self.body
+                .take()
+                .expect("ResponseFuture polled after completion"),
+        ));
 
         Poll::Ready(Ok(Response::from_parts(parts, body)))
     }
@@ -1478,10 +1484,6 @@ impl Future for ResponseFuture {
 
 impl ResponseFuture {
     /// Returns the stream ID of the response stream.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         crate::StreamId::from_internal(self.inner.stream_id())
     }
@@ -1532,10 +1534,11 @@ impl PushPromises {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<PushPromise, crate::Error>>> {
         match self.inner.poll_pushed(cx) {
-            Poll::Ready(Some(Ok((request, response)))) => {
+            Poll::Ready(Some(Ok((request, response, body)))) => {
                 let response = PushedResponseFuture {
                     inner: ResponseFuture {
                         inner: response,
+                        body: Some(body),
                         push_promise_consumed: false,
                     },
                 };
@@ -1589,10 +1592,6 @@ impl Future for PushedResponseFuture {
 
 impl PushedResponseFuture {
     /// Returns the stream ID of the response stream.
-    ///
-    /// # Panics
-    ///
-    /// If the lock on the stream store has been poisoned.
     pub fn stream_id(&self) -> crate::StreamId {
         self.inner.stream_id()
     }

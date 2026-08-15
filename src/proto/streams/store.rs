@@ -29,6 +29,12 @@ pub(crate) struct Key {
     stream_id: StreamId,
 }
 
+impl Key {
+    pub(crate) fn stream_id(self) -> StreamId {
+        self.stream_id
+    }
+}
+
 // We can never have more than `StreamId::MAX` streams in the store,
 // so we can save a smaller index (u32 vs usize).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
