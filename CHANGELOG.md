@@ -1,3 +1,15 @@
+# 0.4.16 (August 17, 2026)
+
+* Fix limiting excessive amount of small DATA frames.
+* Fix double counting pushed streams when receiving 1xx responses.
+* Fix releasing of flow control capacity earlier, when `RecvStream` is dropped.
+* Fix missed wakeup in `poll_trailers`.
+* Fix extra memory retained when copying `HeaderValues`.
+* Fix resets received after END_OF_STREAM to allow the data to still be received.
+* Fix busy-looping when IO write returns 0 to mean connection closed.
+* Optimize HPACK decoding tables from 4-bit states to 1-byte states.
+* Optimize IO writing contention by not holding lock while flushing.
+
 # 0.4.15 (June 15, 2026)
 
 * Fix closing a connection when header size is "way too large" (currently x4 configured limit).
