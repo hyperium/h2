@@ -162,7 +162,10 @@ impl Recv {
         tracing::trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(&frame)?;
 
-        if is_initial {
+        // Informational responses do not transition a remotely reserved stream
+        // out of `ReservedRemote`. As a result, `recv_open` reports each of them
+        // as initial. Only account for the stream once.
+        if is_initial && !stream.is_counted {
             // TODO: be smarter about this logic
             if frame.stream_id() > self.last_processed_id {
                 self.last_processed_id = frame.stream_id();

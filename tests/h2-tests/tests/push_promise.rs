@@ -59,6 +59,54 @@ async fn recv_push_works() {
 }
 
 #[tokio::test]
+async fn multiple_informational_responses_on_pushed_stream() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::push_promise(1, 2).request("GET", "https://example.com/push"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(2).response(StatusCode::EARLY_HINTS))
+            .await;
+        srv.send_frame(frames::headers(2).response(StatusCode::CONTINUE))
+            .await;
+        srv.send_frame(frames::headers(2).response(StatusCode::OK).eos())
+            .await;
+    };
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (mut resp, _) = client.send_request(request, true).unwrap();
+        let mut pushed = resp.push_promises();
+
+        let check = async move {
+            assert_eq!(resp.await.unwrap().status(), StatusCode::OK);
+            let pushed = pushed.next().await.unwrap().unwrap();
+            let (_, response) = pushed.into_parts();
+            assert_eq!(response.await.unwrap().status(), StatusCode::OK);
+        };
+
+        h2.drive(check).await;
+        h2.await.expect("client");
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn pushed_streams_arent_dropped_too_early() {
     // tests that by default, received push promises work
     h2_support::trace_init!();
