@@ -493,18 +493,16 @@ impl Recv {
     pub fn release_closed_capacity(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
         debug_assert_eq!(stream.ref_count, 0);
 
-        if stream.in_flight_recv_data == 0 {
-            return;
+        if stream.in_flight_recv_data != 0 {
+            tracing::trace!(
+                "auto-release closed stream ({:?}) capacity: {:?}",
+                stream.id,
+                stream.in_flight_recv_data,
+            );
+
+            self.release_connection_capacity(stream.in_flight_recv_data, task);
+            stream.in_flight_recv_data = 0;
         }
-
-        tracing::trace!(
-            "auto-release closed stream ({:?}) capacity: {:?}",
-            stream.id,
-            stream.in_flight_recv_data,
-        );
-
-        self.release_connection_capacity(stream.in_flight_recv_data, task);
-        stream.in_flight_recv_data = 0;
 
         self.clear_recv_buffer(stream, task);
     }
@@ -748,6 +746,13 @@ impl Recv {
             let _res = self.release_capacity(padding, stream, &mut None);
             // cannot fail, we JUST added more in_flight data above.
             debug_assert!(_res.is_ok());
+        }
+
+        // An empty DATA frame without END_STREAM has no effect on the HTTP
+        // message. Padding has already been accounted for and released above,
+        // so there is no event to pass to the user.
+        if frame.payload().is_empty() && !frame.is_end_stream() {
+            return Ok(());
         }
 
         let event = Event::Data(frame.into_payload());
