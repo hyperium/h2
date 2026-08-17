@@ -828,9 +828,10 @@ impl Builder {
     /// 0. If `max` is set to 0, then the remote will not be permitted to
     /// initiate streams.
     ///
-    /// Note that streams in the reserved state, i.e., push promises that have
-    /// been reserved but the stream has not started, do not count against this
-    /// setting.
+    /// Although the HTTP/2 specification excludes streams in the reserved state
+    /// from this limit, `h2` counts reserved push streams against this setting
+    /// to protect resources. This includes push promises whose response streams
+    /// have not yet started.
     ///
     /// Also note that if the remote *does* exceed the value set here, it is not
     /// a protocol level error. Instead, the `h2` library will immediately reset

@@ -861,10 +861,6 @@ impl Inner {
             }
         };
 
-        // TODO: Streams in the reserved states do not count towards the concurrency
-        // limit. However, it seems like there should be a cap otherwise this
-        // could grow in memory indefinitely.
-
         // Ensure that we can reserve streams
         self.actions.recv.ensure_can_reserve()?;
 
@@ -896,6 +892,12 @@ impl Inner {
             let actions = &mut self.actions;
 
             self.counts.transition(stream, |counts, stream| {
+                // RFC 9113 excludes reserved streams from the concurrent stream
+                // count. Still, account reserved remote streams against the local
+                // receive limit so a peer cannot create an unbounded number of
+                // them by withholding the response HEADERS. `recv_headers` will
+                // see `is_counted` and avoid counting the stream a second time.
+                counts.inc_num_recv_streams(stream);
                 let stream_valid = actions.recv.recv_push_promise(frame, stream);
 
                 match stream_valid {
