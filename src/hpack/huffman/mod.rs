@@ -46,11 +46,8 @@ mod test {
 
         for s in DATA {
             let mut dst = BytesMut::with_capacity(s.len());
-
             encode(s.as_bytes(), &mut dst);
-
             let decoded = decode(&dst);
-
             assert_eq!(&decoded[..], s.as_bytes());
         }
     }
@@ -61,11 +58,8 @@ mod test {
 
         for s in DATA {
             let mut dst = BytesMut::with_capacity(s.len());
-
             encode(s, &mut dst);
-
             let decoded = decode(&dst);
-
             assert_eq!(&decoded[..], &s[..]);
         }
     }
