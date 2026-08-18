@@ -1,4 +1,4 @@
-use crate::hpack::huffman::table::ENCODE_TABLE;
+use crate::hpack::huffman::table::{ENCODE_CODES, ENCODE_CODE_LENGTHS};
 
 use bytes::{BufMut, BytesMut};
 
@@ -7,7 +7,8 @@ pub fn encode(src: &[u8], dst: &mut BytesMut) {
     let mut bits_len = 0;
 
     for &b in src {
-        let (nbits, code) = ENCODE_TABLE[b as usize];
+        let nbits = ENCODE_CODE_LENGTHS[b as usize] as usize;
+        let code = ENCODE_CODES[b as usize] as u64;
 
         bits = (bits << nbits) | code;
         bits_len += nbits;

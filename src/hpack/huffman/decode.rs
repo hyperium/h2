@@ -12,7 +12,7 @@
 //!
 //! These are decoded by walking the generated `DECODE_TABLE` one input byte at a time.
 
-use crate::hpack::huffman::table::{DECODE_TABLE, ENCODE_TABLE};
+use crate::hpack::huffman::table::{DECODE_TABLE, ENCODE_CODES, ENCODE_CODE_LENGTHS};
 use crate::hpack::DecoderError;
 
 use bytes::BytesMut;
@@ -44,7 +44,8 @@ const fn build_fast_table() -> [u32; 1 << FAST_BITS] {
     // First fill in every index that starts with one whole code
     let mut a = 0;
     while a < 256 {
-        let (len1, code1) = ENCODE_TABLE[a];
+        let len1 = ENCODE_CODE_LENGTHS[a] as usize;
+        let code1 = ENCODE_CODES[a] as u64;
         if len1 <= FAST_BITS {
             let rem = FAST_BITS - len1;
             let base = (code1 as usize) << rem;
@@ -61,13 +62,15 @@ const fn build_fast_table() -> [u32; 1 << FAST_BITS] {
     // Overwrite the indices where a second whole code fit right after the first
     let mut a = 0;
     while a < 256 {
-        let (len1, code1) = ENCODE_TABLE[a];
+        let len1 = ENCODE_CODE_LENGTHS[a] as usize;
+        let code1 = ENCODE_CODES[a] as u64;
         // A second code needs at least 5 more bits (the shortest code)
         if len1 + 5 <= FAST_BITS {
             let rem = FAST_BITS - len1;
             let mut b = 0;
             while b < 256 {
-                let (len2, code2) = ENCODE_TABLE[b];
+                let len2 = ENCODE_CODE_LENGTHS[b] as usize;
+                let code2 = ENCODE_CODES[b] as u64;
                 if len2 <= rem {
                     let rem2 = rem - len2;
                     let base = ((code1 as usize) << rem) | ((code2 as usize) << rem2);
@@ -222,9 +225,10 @@ mod test {
     // out on purpose: encoded EOS is an error per RFC 7541 §5.2.
     fn reference_decode(src: &[u8]) -> Result<BytesMut, DecoderError> {
         // Each symbol's code as a string of '0' and '1', e.g. "11111000".
-        let codes: Vec<String> = ENCODE_TABLE[..256]
+        let codes: Vec<String> = ENCODE_CODES
             .iter()
-            .map(|&(len, code)| format!("{code:0len$b}"))
+            .zip(ENCODE_CODE_LENGTHS.iter())
+            .map(|(&code, &len)| format!("{code:0len$b}", len = len as usize))
             .collect();
         let bits: String = src.iter().map(|byte| format!("{byte:08b}")).collect();
 
