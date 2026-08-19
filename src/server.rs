@@ -253,6 +253,9 @@ pub struct Builder {
     /// Maximum amount of bytes to "buffer" for writing per stream.
     max_send_buffer_size: usize,
 
+    /// Maximum number of bytes to read at a time (for the entire connection).
+    recv_buffer_size: usize,
+
     /// Maximum number of locally reset streams due to protocol error across
     /// the lifetime of the connection.
     ///
@@ -381,7 +384,7 @@ where
         let entered = span.enter();
 
         // Create the codec.
-        let mut codec = Codec::new(io);
+        let mut codec = Codec::with_recv_buffer_size(io, builder.recv_buffer_size);
 
         if let Some(max) = builder.settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
@@ -655,6 +658,7 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
+            recv_buffer_size: proto::DEFAULT_RECV_BUFFER_SIZE,
 
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
         }
@@ -982,6 +986,19 @@ impl Builder {
     pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
         assert!(max <= u32::MAX as usize);
         self.max_send_buffer_size = max;
+        self
+    }
+
+    /// Sets the read buffer size for the entire connection.
+    /// Determines the maximum number of bytes that can be read at a time.
+    /// The default is currently 8KB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `n` is larger than `i32::MAX`.
+    pub fn recv_buffer_size(&mut self, n: usize) -> &mut Self {
+        assert!(n <= i32::MAX as usize);
+        self.recv_buffer_size = n;
         self
     }
 
