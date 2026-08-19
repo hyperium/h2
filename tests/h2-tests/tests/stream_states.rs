@@ -285,6 +285,129 @@ async fn too_many_small_data_frames_sends_goaway() {
 }
 
 #[tokio::test]
+async fn many_small_final_data_frames_do_not_exhaust_budget() {
+    h2_support::trace_init!();
+
+    const NUM_STREAMS: u32 = 200;
+
+    let (io, mut srv) = mock::new();
+    let (done_tx, done_rx) = oneshot::channel();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        for i in 0..NUM_STREAMS {
+            let stream_id = 1 + i * 2;
+            srv.recv_frame(
+                frames::headers(stream_id)
+                    .request("GET", "https://http2.akamai.com/")
+                    .eos(),
+            )
+            .await;
+        }
+
+        for i in 0..NUM_STREAMS {
+            let stream_id = 1 + i * 2;
+            srv.send_frame(frames::headers(stream_id).response(200))
+                .await;
+            srv.send_frame(frames::data(stream_id, "a").eos()).await;
+        }
+
+        done_rx.await.unwrap();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+
+        let requests = async move {
+            let mut responses = Vec::new();
+            for _ in 0..NUM_STREAMS {
+                poll_fn(|cx| client.poll_ready(cx)).await.unwrap();
+                let request = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .body(())
+                    .unwrap();
+                responses.push(client.send_request(request, true).unwrap().0);
+            }
+
+            // Wait for every response without polling any response body. This
+            // ensures all final DATA frames can be buffered concurrently.
+            let mut received = Vec::new();
+            for response in responses {
+                received.push(response.await.unwrap());
+            }
+            assert_eq!(received.len(), NUM_STREAMS as usize);
+            done_tx.send(()).unwrap();
+        };
+
+        tokio::spawn(requests);
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn dropping_buffered_data_frames_releases_budget() {
+    h2_support::trace_init!();
+
+    const NUM_STREAMS: u32 = 200;
+
+    let (io, mut srv) = mock::new();
+    let (done_tx, done_rx) = oneshot::channel();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        for i in 0..NUM_STREAMS {
+            let stream_id = 1 + i * 2;
+            srv.recv_frame(
+                frames::headers(stream_id)
+                    .request("GET", "https://http2.akamai.com/")
+                    .eos(),
+            )
+            .await;
+            srv.send_frame(frames::headers(stream_id).response(409))
+                .await;
+            srv.send_frame(frames::data(stream_id, "a")).await;
+            srv.send_frame(frames::data(stream_id, "b").eos()).await;
+        }
+
+        done_rx.await.unwrap();
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+
+        let requests = async move {
+            for _ in 0..NUM_STREAMS {
+                poll_fn(|cx| client.poll_ready(cx)).await.unwrap();
+                let request = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .body(())
+                    .unwrap();
+                let response = client.send_request(request, true).unwrap().0.await.unwrap();
+                assert_eq!(response.status(), StatusCode::CONFLICT);
+
+                let mut body = response.into_body();
+                while body.flow_control().used_capacity() < 2 {
+                    tokio::task::yield_now().await;
+                }
+                drop(body);
+            }
+            done_tx.send(()).unwrap();
+        };
+
+        tokio::spawn(requests);
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn send_headers_recv_data_single_frame() {
     h2_support::trace_init!();
 
