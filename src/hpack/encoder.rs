@@ -4,9 +4,12 @@ use super::{huffman, Header};
 use bytes::{BufMut, BytesMut};
 use http::header::{HeaderName, HeaderValue};
 
+const DEFAULT_MAX_ALLOWED_SIZE: usize = 4 * 1024;
+
 #[derive(Debug)]
 pub struct Encoder {
     table: Table,
+    max_allowed_size: usize,
     size_update: Option<SizeUpdate>,
     /// Reusable buffer for the encoded header block of a single frame.
     ///
@@ -25,10 +28,22 @@ enum SizeUpdate {
 
 impl Encoder {
     pub fn new(max_size: usize, capacity: usize) -> Encoder {
+        let max_size = max_size.min(DEFAULT_MAX_ALLOWED_SIZE);
+
         Encoder {
             table: Table::new(max_size, capacity),
+            max_allowed_size: DEFAULT_MAX_ALLOWED_SIZE,
             size_update: None,
             scratch: BytesMut::new(),
+        }
+    }
+
+    #[cfg(test)]
+    fn set_max_allowed_size(&mut self, max: usize) {
+        self.max_allowed_size = max;
+
+        if self.table.max_size() > max {
+            self.update_max_size(max);
         }
     }
 
@@ -51,6 +66,8 @@ impl Encoder {
     ///
     /// The next call to `encode` will include a dynamic size update frame.
     pub fn update_max_size(&mut self, val: usize) {
+        let val = val.min(self.max_allowed_size);
+
         match self.size_update {
             Some(SizeUpdate::One(old)) => {
                 if val > old {
@@ -614,6 +631,7 @@ mod test {
         assert_eq!(Some(SizeUpdate::Two(0, 100)), encoder.size_update);
 
         let mut encoder = Encoder::default();
+        encoder.set_max_allowed_size(8000);
         encoder.update_max_size(8000);
         assert_eq!(Some(SizeUpdate::One(8000)), encoder.size_update);
 
@@ -701,6 +719,7 @@ mod test {
     #[test]
     fn test_large_size_update() {
         let mut encoder = Encoder::default();
+        encoder.set_max_allowed_size(usize::MAX);
 
         encoder.update_max_size(1912930560);
         assert_eq!(Some(SizeUpdate::One(1912930560)), encoder.size_update);
@@ -708,6 +727,22 @@ mod test {
         let mut dst = BytesMut::with_capacity(6);
         encoder.encode_size_updates(&mut dst);
         assert_eq!([63, 225, 129, 148, 144, 7], &dst[..]);
+    }
+
+    #[test]
+    fn test_large_size_update_is_capped() {
+        let mut encoder = Encoder::new(0, 0);
+
+        encoder.update_max_size(1912930560);
+        assert_eq!(
+            Some(SizeUpdate::One(DEFAULT_MAX_ALLOWED_SIZE)),
+            encoder.size_update
+        );
+
+        let mut dst = BytesMut::with_capacity(3);
+        encoder.encode_size_updates(&mut dst);
+        assert_eq!([63, 225, 31], &dst[..]);
+        assert_eq!(DEFAULT_MAX_ALLOWED_SIZE, encoder.table.max_size());
     }
 
     #[test]
