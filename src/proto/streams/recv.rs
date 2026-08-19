@@ -64,9 +64,15 @@ pub(super) struct Recv {
 #[derive(Debug)]
 pub(super) enum Event {
     Headers(peer::PollMessage),
-    Data(Bytes),
+    Data(DataEvent),
     Trailers(HeaderMap),
     InformationalHeaders(peer::PollMessage),
+}
+
+#[derive(Debug)]
+pub(super) struct DataEvent {
+    pub(super) payload: Bytes,
+    pub(super) is_budgeted: bool,
 }
 
 #[derive(Debug)]
@@ -493,7 +499,12 @@ impl Recv {
     }
 
     /// Release any unclaimed capacity for a closed stream.
-    pub fn release_closed_capacity(&mut self, stream: &mut store::Ptr, task: &mut Option<Waker>) {
+    pub fn release_closed_capacity(
+        &mut self,
+        stream: &mut store::Ptr,
+        task: &mut Option<Waker>,
+        counts: &mut Counts,
+    ) {
         debug_assert_eq!(stream.ref_count, 0);
 
         if stream.in_flight_recv_data != 0 {
@@ -507,7 +518,7 @@ impl Recv {
             stream.in_flight_recv_data = 0;
         }
 
-        self.clear_recv_buffer(stream, task);
+        self.clear_recv_buffer(stream, task, counts);
     }
 
     /// Set the "target" connection window size.
@@ -758,7 +769,11 @@ impl Recv {
             return Ok(());
         }
 
-        let event = Event::Data(frame.into_payload());
+        let is_budgeted = !frame.is_end_stream();
+        let event = Event::Data(DataEvent {
+            payload: frame.into_payload(),
+            is_budgeted,
+        });
 
         // Push the frame onto the recv buffer
         stream.pending_recv.push_back(&mut self.buffer, event);
@@ -941,12 +956,20 @@ impl Recv {
         stream.notify_push();
     }
 
-    pub(super) fn clear_recv_buffer(&mut self, stream: &mut Stream, task: &mut Option<Waker>) {
+    pub(super) fn clear_recv_buffer(
+        &mut self,
+        stream: &mut Stream,
+        task: &mut Option<Waker>,
+        counts: &mut Counts,
+    ) {
         let mut to_release: WindowSize = 0;
         while let Some(event) = stream.pending_recv.pop_front(&mut self.buffer) {
             if let Event::Data(data) = &event {
+                if data.is_budgeted {
+                    counts.release_data_frame(data.payload.len());
+                }
                 to_release = to_release
-                    .saturating_add(data.len() as WindowSize)
+                    .saturating_add(data.payload.len() as WindowSize)
                     .min(stream.in_flight_recv_data);
             }
         }
@@ -1217,9 +1240,9 @@ impl Recv {
         &mut self,
         cx: &Context,
         stream: &mut Stream,
-    ) -> Poll<Option<Result<Bytes, proto::Error>>> {
+    ) -> Poll<Option<Result<DataEvent, proto::Error>>> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Data(payload)) => Poll::Ready(Some(Ok(payload))),
+            Some(Event::Data(data)) => Poll::Ready(Some(Ok(data))),
             Some(event) => {
                 // Frame is trailer
                 stream.pending_recv.push_front(&mut self.buffer, event);
@@ -1305,14 +1328,19 @@ mod tests {
         let data = Bytes::from(vec![0; FRAME_LEN]);
 
         for _ in 0..FRAME_COUNT {
-            stream
-                .pending_recv
-                .push_back(&mut recv.buffer, Event::Data(data.clone()));
+            stream.pending_recv.push_back(
+                &mut recv.buffer,
+                Event::Data(DataEvent {
+                    payload: data.clone(),
+                    is_budgeted: true,
+                }),
+            );
         }
         stream.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
         recv.in_flight_data = DEFAULT_INITIAL_WINDOW_SIZE;
 
-        recv.clear_recv_buffer(&mut stream, &mut None);
+        let mut counts = Counts::new(peer::Dyn::Server, &config);
+        recv.clear_recv_buffer(&mut stream, &mut None, &mut counts);
 
         assert!(stream.pending_recv.is_empty());
         assert_eq!(stream.in_flight_recv_data, 0);
