@@ -1,3 +1,8 @@
+# 0.4.17 (August 19, 2026)
+
+* Fix limiting of excessive small DATA frames to ignore EOS frames.
+* Fix HPACK encoding table to cap the max size to 4kb.
+
 # 0.4.16 (August 17, 2026)
 
 * Fix limiting excessive amount of small DATA frames.
