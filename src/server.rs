@@ -1045,21 +1045,21 @@ impl Builder {
         self
     }
 
-    /// HTTP/2 flow control limits DATA payload bytes, but it does not limit the number of frames carrying those bytes.
-    /// A peer could fragment data into many tiny frames, causing disproportionate memory usage from queued events and
-    /// slab entries while remaining within the flow-control windows.
+    /// Sets a connection-level budget for limiting memory overhead from
+    /// received small DATA frames.
     ///
-    /// This set a connection-level budget for DATA framing overhead. Small frames consume budget according
-    /// to the difference between their payload length and the approximate cost of a buffered event.
-    /// Larger frames replenish the budget, up to its original limit. When the application consumes a queued small frame,
-    /// its buffering charge is also returned.
+    /// HTTP/2 flow control accounts for DATA payload bytes, but not the
+    /// additional memory required to buffer each DATA frame. An excessive
+    /// number of small frames may therefore consume disproportionate memory.
     ///
-    /// Non-final DATA frames with an empty decoded payload are discarded after their flow-control accounting is handled.
-    /// Because they are never exposed to the application, their budget is not returned.
+    /// Small DATA frames consume this budget. The budget is restored when
+    /// buffered frames are consumed by the application, while sufficiently
+    /// large frames may also restore budget.
     ///
-    /// Exhausting the budget closes the connection with ENHANCE_YOUR_CALM.
+    /// When this budget is exhausted, the connection is closed with
+    /// `ENHANCE_YOUR_CALM`.
     ///
-    /// Default 25600 bytes
+    /// The default is currently 25,600 bytes, but is subject to change.
     pub fn data_frame_budget(&mut self, budget: usize) -> &mut Self {
         self.data_frame_budget = budget;
         self
