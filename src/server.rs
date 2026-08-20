@@ -258,6 +258,11 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// connection-level budget for DATA framing overhead.
+    ///
+    /// When this gets exhausted, we issue a GOAWAY with `ENHANCE_YOUR_CALM`.
+    data_frame_budget: usize,
 }
 
 /// Send a response back to the client
@@ -655,8 +660,8 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
-
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            data_frame_budget: proto::DEFAULT_DATA_FRAME_BUDGET,
         }
     }
 
@@ -1037,6 +1042,26 @@ impl Builder {
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
     pub fn enable_connect_protocol(&mut self) -> &mut Self {
         self.settings.set_enable_connect_protocol(Some(1));
+        self
+    }
+
+    /// HTTP/2 flow control limits DATA payload bytes, but it does not limit the number of frames carrying those bytes.
+    /// A peer could fragment data into many tiny frames, causing disproportionate memory usage from queued events and
+    /// slab entries while remaining within the flow-control windows.
+    ///
+    /// This set a connection-level budget for DATA framing overhead. Small frames consume budget according
+    /// to the difference between their payload length and the approximate cost of a buffered event.
+    /// Larger frames replenish the budget, up to its original limit. When the application consumes a queued small frame,
+    /// its buffering charge is also returned.
+    ///
+    /// Non-final DATA frames with an empty decoded payload are discarded after their flow-control accounting is handled.
+    /// Because they are never exposed to the application, their budget is not returned.
+    ///
+    /// Exhausting the budget closes the connection with ENHANCE_YOUR_CALM.
+    ///
+    /// Default 25600 bytes
+    pub fn data_frame_budget(&mut self, budget: usize) -> &mut Self {
+        self.data_frame_budget = budget;
         self
     }
 
@@ -1505,6 +1530,7 @@ where
                                 .builder
                                 .local_max_error_reset_streams,
                             settings: self.builder.settings.clone(),
+                            data_frame_budget: self.builder.data_frame_budget,
                         },
                     );
 
