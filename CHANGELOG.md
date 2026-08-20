@@ -1,3 +1,7 @@
+# 0.4.18 (August 20, 2026)
+
+* Add `data_frame_budget(n)` methods to client and server builders.
+
 # 0.4.17 (August 19, 2026)
 
 * Fix limiting of excessive small DATA frames to ignore EOS frames.
