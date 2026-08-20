@@ -343,6 +343,11 @@ pub struct Builder {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     local_max_error_reset_streams: Option<usize>,
+
+    /// connection-level budget for DATA framing overhead.
+    ///
+    /// When this gets exhausted, we issue a GOAWAY with `ENHANCE_YOUR_CALM`.
+    data_frame_budget: usize,
 }
 
 #[derive(Debug)]
@@ -663,6 +668,7 @@ impl Builder {
             settings: Default::default(),
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
+            data_frame_budget: proto::DEFAULT_DATA_FRAME_BUDGET,
         }
     }
 
@@ -1145,6 +1151,26 @@ impl Builder {
         self
     }
 
+    /// HTTP/2 flow control limits DATA payload bytes, but it does not limit the number of frames carrying those bytes.
+    /// A peer could fragment data into many tiny frames, causing disproportionate memory usage from queued events and
+    /// slab entries while remaining within the flow-control windows.
+    ///
+    /// This set a connection-level budget for DATA framing overhead. Small frames consume budget according
+    /// to the difference between their payload length and the approximate cost of a buffered event.
+    /// Larger frames replenish the budget, up to its original limit. When the application consumes a queued small frame,
+    /// its buffering charge is also returned.
+    ///
+    /// Non-final DATA frames with an empty decoded payload are discarded after their flow-control accounting is handled.
+    /// Because they are never exposed to the application, their budget is not returned.
+    ///
+    /// Exhausting the budget closes the connection with ENHANCE_YOUR_CALM.
+    ///
+    /// Default 25600 bytes
+    pub fn data_frame_budget(&mut self, budget: usize) -> &mut Self {
+        self.data_frame_budget = budget;
+        self
+    }
+
     /// Sets the first stream ID to something other than 1.
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
@@ -1335,6 +1361,7 @@ where
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings,
+                data_frame_budget: builder.data_frame_budget,
             },
         );
         let send_request = SendRequest {

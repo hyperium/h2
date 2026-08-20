@@ -67,7 +67,7 @@ pub(super) struct Counts {
     /// lifetime of the connection.
     num_local_error_reset_streams: usize,
 
-    /// Credit for receiving DATA frames without excessive framing overhead.
+    /// connection-level budget for DATA framing overhead.
     data_frame_budget: Budget,
 }
 
@@ -86,7 +86,7 @@ impl Counts {
             num_remote_reset_streams: 0,
             max_local_error_reset_streams: config.local_max_error_reset_streams,
             num_local_error_reset_streams: 0,
-            data_frame_budget: Budget::new(DEFAULT_DATA_FRAME_BUDGET),
+            data_frame_budget: Budget::new(config.data_frame_budget),
         }
     }
 
@@ -356,6 +356,7 @@ mod tests {
                 remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
                 remote_max_initiated: None,
                 local_max_error_reset_streams: None,
+                data_frame_budget: DEFAULT_DATA_FRAME_BUDGET,
             },
         )
     }
