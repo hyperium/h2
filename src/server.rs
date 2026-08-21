@@ -1054,7 +1054,8 @@ impl Builder {
     ///
     /// Small DATA frames consume this budget. The budget is restored when
     /// buffered frames are consumed by the application, while sufficiently
-    /// large frames may also restore budget.
+    /// large frames may also restore budget. Empty DATA frames are limited
+    /// separately and do not consume this budget.
     ///
     /// When this budget is exhausted, the connection is closed with
     /// `ENHANCE_YOUR_CALM`.
