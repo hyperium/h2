@@ -6,7 +6,7 @@ mod ping_pong;
 mod settings;
 mod streams;
 
-pub(crate) use self::connection::{Config, Connection};
+pub(crate) use self::connection::{Config, Connection, DataFrameBudget};
 pub use self::error::{Error, Initiator};
 pub(crate) use self::peer::{Dyn as DynPeer, Peer};
 pub(crate) use self::ping_pong::UserPings;
