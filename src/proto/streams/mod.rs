@@ -75,4 +75,9 @@ pub struct Config {
     ///
     /// When this gets exceeded, we issue GOAWAYs.
     pub local_max_error_reset_streams: Option<usize>,
+
+    /// connection-level budget (in bytes) for DATA framing overhead.
+    ///
+    /// Default 25600 bytes
+    pub data_frame_budget: usize,
 }

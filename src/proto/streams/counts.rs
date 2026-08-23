@@ -1,6 +1,31 @@
 use super::*;
 
-use std::usize;
+#[derive(Debug)]
+struct Budget {
+    available: usize,
+    max: usize,
+}
+
+#[derive(Debug)]
+pub(super) struct BudgetExhausted;
+
+impl Budget {
+    fn new(max: usize) -> Self {
+        Budget {
+            available: max,
+            max,
+        }
+    }
+
+    fn consume(&mut self, amount: usize) -> Result<(), BudgetExhausted> {
+        self.available = self.available.checked_sub(amount).ok_or(BudgetExhausted)?;
+        Ok(())
+    }
+
+    fn replenish(&mut self, amount: usize) {
+        self.available = self.available.saturating_add(amount).min(self.max);
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct Counts {
@@ -41,6 +66,13 @@ pub(super) struct Counts {
     /// Total number of locally reset streams due to protocol error across the
     /// lifetime of the connection.
     num_local_error_reset_streams: usize,
+
+    /// connection-level budget for DATA framing overhead.
+    data_frame_budget: Budget,
+
+    /// Number of empty, non-final DATA frames received over the lifetime of
+    /// the connection.
+    num_recv_empty_data_frames: usize,
 }
 
 impl Counts {
@@ -58,6 +90,38 @@ impl Counts {
             num_remote_reset_streams: 0,
             max_local_error_reset_streams: config.local_max_error_reset_streams,
             num_local_error_reset_streams: 0,
+            data_frame_budget: Budget::new(config.data_frame_budget),
+            num_recv_empty_data_frames: 0,
+        }
+    }
+
+    /// Records the framing overhead of a DATA frame.
+    pub fn record_data_frame(&mut self, payload_len: usize) -> Result<(), BudgetExhausted> {
+        if payload_len == 0 {
+            self.num_recv_empty_data_frames = self
+                .num_recv_empty_data_frames
+                .checked_add(1)
+                .ok_or(BudgetExhausted)?;
+            if self.num_recv_empty_data_frames > MAX_RECV_EMPTY_DATA_FRAMES {
+                return Err(BudgetExhausted);
+            }
+            Ok(())
+        } else if payload_len < DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+            self.data_frame_budget
+                .consume(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - payload_len)
+        } else {
+            self.data_frame_budget
+                .replenish(payload_len - DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD);
+            Ok(())
+        }
+    }
+
+    /// Releases the framing overhead of a DATA frame that is no longer
+    /// buffered internally.
+    pub fn release_data_frame(&mut self, payload_len: usize) {
+        if payload_len != 0 && payload_len < DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+            self.data_frame_budget
+                .replenish(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - payload_len);
         }
     }
 
@@ -281,5 +345,99 @@ impl Drop for Counts {
         if !thread::panicking() {
             debug_assert!(!self.has_streams());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
+
+    fn counts() -> Counts {
+        Counts::new(
+            peer::Dyn::Server,
+            &Config {
+                local_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+                initial_max_send_streams: 0,
+                local_max_buffer_size: 0,
+                local_next_stream_id: 2.into(),
+                local_push_enabled: false,
+                extended_connect_protocol_enabled: false,
+                local_reset_duration: Duration::ZERO,
+                local_reset_max: 0,
+                remote_reset_max: 0,
+                remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+                remote_max_initiated: None,
+                local_max_error_reset_streams: None,
+                data_frame_budget: DEFAULT_DATA_FRAME_BUDGET,
+            },
+        )
+    }
+
+    #[test]
+    fn budget_is_bounded() {
+        let mut budget = Budget::new(10);
+
+        budget.consume(4).unwrap();
+        budget.replenish(20);
+        assert_eq!(budget.available, 10);
+    }
+
+    #[test]
+    fn budget_reports_exhaustion_without_underflowing() {
+        let mut budget = Budget::new(10);
+
+        budget.consume(10).unwrap();
+        assert!(budget.consume(1).is_err());
+        assert_eq!(budget.available, 0);
+    }
+
+    #[test]
+    fn good_sized_data_frames_do_not_exhaust_budget() {
+        let mut counts = counts();
+
+        for _ in 0..1_000_000 {
+            counts
+                .record_data_frame(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn consumed_small_data_frames_do_not_exhaust_budget() {
+        let mut counts = counts();
+
+        for _ in 0..1_000_000 {
+            counts.record_data_frame(1).unwrap();
+            counts.release_data_frame(1);
+        }
+    }
+
+    #[test]
+    fn empty_data_frames_do_not_consume_data_frame_budget() {
+        let mut counts = counts();
+        counts.data_frame_budget = Budget::new(0);
+
+        for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES {
+            counts.record_data_frame(0).unwrap();
+        }
+
+        // Empty frames have their own limit, while a non-empty small frame
+        // still consumes the independently configured DATA frame budget.
+        assert!(counts.record_data_frame(0).is_err());
+        assert!(counts.record_data_frame(1).is_err());
+    }
+
+    #[test]
+    fn large_data_frames_do_not_replenish_empty_data_frame_limit() {
+        let mut counts = counts();
+
+        for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES {
+            counts.record_data_frame(0).unwrap();
+            counts
+                .record_data_frame(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD * 2)
+                .unwrap();
+        }
+        assert!(counts.record_data_frame(0).is_err());
     }
 }
