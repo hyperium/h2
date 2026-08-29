@@ -1319,6 +1319,7 @@ mod tests {
             remote_max_initiated: None,
             local_max_error_reset_streams: None,
             data_frame_budget: DEFAULT_DATA_FRAME_BUDGET,
+            data_frame_overhead_threshold: DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD,
         };
         let mut recv = Recv::new(peer::Dyn::Server, &config);
         let mut store = Store::new();

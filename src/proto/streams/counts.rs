@@ -70,6 +70,10 @@ pub(super) struct Counts {
     /// connection-level budget for DATA framing overhead.
     data_frame_budget: Budget,
 
+    /// payload length below which a received DATA frame is charged framing
+    /// overhead against `data_frame_budget`.
+    data_frame_overhead_threshold: usize,
+
     /// Number of empty, non-final DATA frames received over the lifetime of
     /// the connection.
     num_recv_empty_data_frames: usize,
@@ -91,6 +95,7 @@ impl Counts {
             max_local_error_reset_streams: config.local_max_error_reset_streams,
             num_local_error_reset_streams: 0,
             data_frame_budget: Budget::new(config.data_frame_budget),
+            data_frame_overhead_threshold: config.data_frame_overhead_threshold,
             num_recv_empty_data_frames: 0,
         }
     }
@@ -106,12 +111,12 @@ impl Counts {
                 return Err(BudgetExhausted);
             }
             Ok(())
-        } else if payload_len < DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+        } else if payload_len < self.data_frame_overhead_threshold {
             self.data_frame_budget
-                .consume(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - payload_len)
+                .consume(self.data_frame_overhead_threshold - payload_len)
         } else {
             self.data_frame_budget
-                .replenish(payload_len - DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD);
+                .replenish(payload_len - self.data_frame_overhead_threshold);
             Ok(())
         }
     }
@@ -119,9 +124,9 @@ impl Counts {
     /// Releases the framing overhead of a DATA frame that is no longer
     /// buffered internally.
     pub fn release_data_frame(&mut self, payload_len: usize) {
-        if payload_len != 0 && payload_len < DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+        if payload_len != 0 && payload_len < self.data_frame_overhead_threshold {
             self.data_frame_budget
-                .replenish(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - payload_len);
+                .replenish(self.data_frame_overhead_threshold - payload_len);
         }
     }
 
@@ -356,6 +361,10 @@ mod tests {
     use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 
     fn counts() -> Counts {
+        counts_with_threshold(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD)
+    }
+
+    fn counts_with_threshold(threshold: usize) -> Counts {
         Counts::new(
             peer::Dyn::Server,
             &Config {
@@ -370,7 +379,8 @@ mod tests {
                 remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
                 remote_max_initiated: None,
                 local_max_error_reset_streams: None,
-                data_frame_budget: DEFAULT_DATA_FRAME_BUDGET,
+                data_frame_budget: threshold * 100,
+                data_frame_overhead_threshold: threshold,
             },
         )
     }
@@ -440,5 +450,70 @@ mod tests {
                 .unwrap();
         }
         assert!(counts.record_data_frame(0).is_err());
+    }
+
+    #[test]
+    fn a_lowered_threshold_stops_charging_frames_at_or_above_it() {
+        let threshold = 16;
+        let mut counts = counts_with_threshold(threshold);
+
+        // At or above the threshold nothing is charged, so an unlimited number
+        // of such frames may stay buffered unread. This is the point of making
+        // the threshold configurable: a peer that knows the smallest payload it
+        // legitimately receives can put the threshold at or below it.
+        for _ in 0..1_000_000 {
+            counts.record_data_frame(threshold).unwrap();
+        }
+        assert_eq!(counts.data_frame_budget.available, threshold * 100);
+    }
+
+    #[test]
+    fn a_lowered_threshold_still_charges_frames_below_it() {
+        let threshold = 16;
+        let mut counts = counts_with_threshold(threshold);
+
+        // The other direction: shortening the charged range must not turn the
+        // charge off for the payload sizes that remain inside it.
+        let mut sent = 0;
+        while counts.record_data_frame(1).is_ok() {
+            sent += 1;
+            assert!(
+                sent < 10_000,
+                "budget never ran out for sub-threshold frames"
+            );
+        }
+        assert_eq!(sent, (threshold * 100) / (threshold - 1));
+    }
+
+    #[test]
+    fn the_threshold_does_not_change_the_empty_data_frame_limit() {
+        // Empty frames are limited by count, not by budget, so the number a
+        // peer may send must be identical for every threshold. Without this,
+        // lowering the threshold to admit small legitimate frames could be
+        // read as weakening the empty-frame limit.
+        for threshold in [1, 16, DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD, 1024] {
+            let mut counts = counts_with_threshold(threshold);
+            for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES {
+                counts.record_data_frame(0).unwrap();
+            }
+            assert!(
+                counts.record_data_frame(0).is_err(),
+                "threshold {threshold} changed the empty DATA frame limit"
+            );
+        }
+    }
+
+    #[test]
+    fn released_frames_replenish_at_the_configured_threshold() {
+        let threshold = 16;
+        let mut counts = counts_with_threshold(threshold);
+
+        // Record and release must use the same threshold, or the budget drifts
+        // in one direction over the life of the connection.
+        for _ in 0..1_000_000 {
+            counts.record_data_frame(1).unwrap();
+            counts.release_data_frame(1);
+        }
+        assert_eq!(counts.data_frame_budget.available, threshold * 100);
     }
 }

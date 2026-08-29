@@ -348,6 +348,7 @@ pub struct Builder {
     ///
     /// When this gets exhausted, we issue a GOAWAY with `ENHANCE_YOUR_CALM`.
     data_frame_budget: proto::DataFrameBudget,
+    data_frame_overhead_threshold: usize,
 }
 
 #[derive(Debug)]
@@ -669,6 +670,7 @@ impl Builder {
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
             data_frame_budget: proto::DataFrameBudget::Auto,
+            data_frame_overhead_threshold: proto::DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD,
         }
     }
 
@@ -1174,6 +1176,46 @@ impl Builder {
         self
     }
 
+    /// Sets the payload length below which a received DATA frame is charged
+    /// framing overhead against the connection's DATA frame budget.
+    ///
+    /// A received DATA frame whose payload is shorter than this threshold
+    /// consumes `threshold - payload_len` of the budget until the application
+    /// reads it; a frame at or above the threshold consumes nothing, and one
+    /// that exceeds it restores budget. Lowering the threshold therefore
+    /// narrows the range of payload sizes that can be charged at all, without
+    /// changing how the budget itself is accounted.
+    ///
+    /// This is useful for a peer that legitimately receives many small DATA
+    /// frames — for example a server-sent event stream whose events are tens
+    /// to low hundreds of bytes each. With the default threshold, such a
+    /// stream is charged on every frame, and whether it survives depends on
+    /// both the frame size and the connection window, since the number of
+    /// frames that can be buffered unread is bounded by the window. Setting
+    /// the threshold at or below the smallest legitimate frame size removes
+    /// that dependency entirely: those frames stop being charged, so the
+    /// stream is unaffected by later changes to the window.
+    ///
+    /// Empty DATA frames are limited separately and are not affected by this
+    /// setting, so lowering the threshold does not change how many empty
+    /// frames a peer may send.
+    ///
+    /// The default is 256 bytes, which is the behaviour when this is not
+    /// called.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `threshold` is 0, which would disable the
+    /// charge for every payload size.
+    pub fn data_frame_overhead_threshold(&mut self, threshold: usize) -> &mut Self {
+        assert!(
+            threshold > 0,
+            "data_frame_overhead_threshold must be greater than 0"
+        );
+        self.data_frame_overhead_threshold = threshold;
+        self
+    }
+
     /// Sets the first stream ID to something other than 1.
     #[cfg(feature = "unstable")]
     pub fn initial_stream_id(&mut self, stream_id: u32) -> &mut Self {
@@ -1367,6 +1409,7 @@ where
                 data_frame_budget: builder
                     .data_frame_budget
                     .resolve(builder.initial_target_connection_window_size),
+                data_frame_overhead_threshold: builder.data_frame_overhead_threshold,
             },
         );
         let send_request = SendRequest {
