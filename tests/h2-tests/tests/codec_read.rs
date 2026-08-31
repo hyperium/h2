@@ -239,3 +239,19 @@ async fn read_goaway_with_debug_data() {
 
     assert_closed!(codec);
 }
+
+#[tokio::test]
+async fn read_goaway_stream_id_not_zero() {
+    let mut codec = raw_codec! {
+        read => [
+            // head, stream id 1
+            0, 0, 8, 7, 0, 0, 0, 0, 1,
+            // last_stream_id
+            0, 0, 0, 0,
+            // error_code
+            0, 0, 0, 0,
+        ];
+    };
+
+    poll_err!(codec);
+}
