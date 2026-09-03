@@ -8,6 +8,17 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  ci-pass:
+    name: CI is green
+    runs-on: ubuntu-latest
+    needs:
+      - style
+      - test
+      - msrv
+      - minimal-versions
+    steps:
+      - run: exit 0
+
   style:
     name: Check Style
     runs-on: ubuntu-latest
