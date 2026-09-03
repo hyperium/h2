@@ -948,7 +948,7 @@ impl HeaderBlock {
                         }
                         if !self.is_over_size {
                             self.field_size += header_size;
-                            if let Err(_) = self.fields.try_append(name, value) {
+                            if self.fields.try_append(name, value).is_err() {
                                 // HeaderMap capacity exceeded — treat as over-size
                                 // so the stream is rejected downstream (RST_STREAM / 431)
                                 // instead of panicking on the 24,577th unique header.

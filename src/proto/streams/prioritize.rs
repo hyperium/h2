@@ -714,195 +714,189 @@ impl Prioritize {
         let _e = span.enter();
 
         loop {
-            match self.pending_send.pop(store) {
-                Some(mut stream) => {
-                    let span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
-                    let _e = span.enter();
+            let mut stream = self.pending_send.pop(store)?;
+            let span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
+            let _e = span.enter();
 
-                    // It's possible that this stream, besides having data to send,
-                    // is also queued to send a reset, and thus is already in the queue
-                    // to wait for "some time" after a reset.
-                    //
-                    // To be safe, we just always ask the stream.
-                    let is_pending_reset = stream.is_pending_reset_expiration();
+            // It's possible that this stream, besides having data to send,
+            // is also queued to send a reset, and thus is already in the queue
+            // to wait for "some time" after a reset.
+            //
+            // To be safe, we just always ask the stream.
+            let is_pending_reset = stream.is_pending_reset_expiration();
 
-                    tracing::trace!(is_pending_reset);
+            tracing::trace!(is_pending_reset);
 
-                    let frame = match stream.pending_send.pop_front(buffer) {
-                        Some(Frame::Data(mut frame)) => {
-                            if let Some(reason) = stream.state.get_scheduled_reset() {
-                                // If a reset is scheduled due to cancellation or
-                                // an error, discard buffered DATA and let the `None`
-                                // arm emit the RST_STREAM on the next iteration.
-                                //
-                                // NO_ERROR is excluded. Per RFC 9113 §8.1, a NO_ERROR
-                                // stream reset may only be sent after a complete
-                                // response, which requires sending all queued DATA.
-                                if reason != Reason::NO_ERROR {
-                                    stream.pending_send.push_front(buffer, frame.into());
-                                    self.clear_queue(buffer, &mut stream);
-                                    self.reclaim_all_capacity(&mut stream, counts);
-                                    self.pending_send.push(&mut stream);
-                                    continue;
-                                }
-                            }
-
-                            // Get the amount of capacity remaining for stream's
-                            // window.
-                            let stream_capacity = stream.send_flow.available();
-                            let sz = frame.payload().remaining();
-
-                            tracing::trace!(
-                                sz,
-                                eos = frame.is_end_stream(),
-                                window = %stream_capacity,
-                                available = %stream.send_flow.available(),
-                                requested = stream.requested_send_capacity,
-                                buffered = stream.buffered_send_data,
-                                "data frame"
-                            );
-
-                            // Zero length data frames always have capacity to
-                            // be sent.
-                            if sz > 0 && stream_capacity == 0 {
-                                tracing::trace!("stream capacity is 0");
-
-                                // Ensure that the stream is waiting for
-                                // connection level capacity
-                                //
-                                // TODO: uncomment
-                                // debug_assert!(stream.is_pending_send_capacity);
-
-                                // The stream has no more capacity, this can
-                                // happen if the remote reduced the stream
-                                // window. In this case, we need to buffer the
-                                // frame and wait for a window update...
-                                stream.pending_send.push_front(buffer, frame.into());
-
-                                continue;
-                            }
-
-                            // Only send up to the max frame length
-                            let len = cmp::min(sz, max_len);
-
-                            // Only send up to the stream's window capacity
-                            let len =
-                                cmp::min(len, stream_capacity.as_size() as usize) as WindowSize;
-
-                            // There *must* be be enough connection level
-                            // capacity at this point.
-                            debug_assert!(len <= self.flow.window_size());
-
-                            // Check if the stream level window the peer knows is available. In some
-                            // scenarios, maybe the window we know is available but the window which
-                            // peer knows is not.
-                            if len > 0 && len > stream.send_flow.window_size() {
-                                stream.pending_send.push_front(buffer, frame.into());
-                                continue;
-                            }
-
-                            tracing::trace!(len, "sending data frame");
-
-                            // Update the flow control
-                            tracing::trace_span!("updating stream flow").in_scope(|| {
-                                stream.send_data(len, self.max_buffer_size);
-
-                                // Assign the capacity back to the connection that
-                                // was just consumed from the stream in the previous
-                                // line.
-                                // TODO: proper error handling
-                                let _res = self.flow.assign_capacity(len);
-                                debug_assert!(_res.is_ok());
-                            });
-
-                            let (eos, len) = tracing::trace_span!("updating connection flow")
-                                .in_scope(|| {
-                                    // TODO: proper error handling
-                                    let _res = self.flow.send_data(len);
-                                    debug_assert!(_res.is_ok());
-
-                                    // Wrap the frame's data payload to ensure that the
-                                    // correct amount of data gets written.
-
-                                    let eos = frame.is_end_stream();
-                                    let len = len as usize;
-
-                                    if frame.payload().remaining() > len {
-                                        frame.set_end_stream(false);
-                                    }
-                                    (eos, len)
-                                });
-
-                            Frame::Data(frame.map(|buf| Prioritized {
-                                inner: buf.take(len),
-                                end_of_stream: eos,
-                                stream: stream.key(),
-                            }))
+            let frame = match stream.pending_send.pop_front(buffer) {
+                Some(Frame::Data(mut frame)) => {
+                    if let Some(reason) = stream.state.get_scheduled_reset() {
+                        // If a reset is scheduled due to cancellation or
+                        // an error, discard buffered DATA and let the `None`
+                        // arm emit the RST_STREAM on the next iteration.
+                        //
+                        // NO_ERROR is excluded. Per RFC 9113 §8.1, a NO_ERROR
+                        // stream reset may only be sent after a complete
+                        // response, which requires sending all queued DATA.
+                        if reason != Reason::NO_ERROR {
+                            stream.pending_send.push_front(buffer, frame.into());
+                            self.clear_queue(buffer, &mut stream);
+                            self.reclaim_all_capacity(&mut stream, counts);
+                            self.pending_send.push(&mut stream);
+                            continue;
                         }
-                        Some(Frame::PushPromise(pp)) => {
-                            let mut pushed =
-                                stream.store_mut().find_mut(&pp.promised_id()).unwrap();
-                            pushed.is_pending_push = false;
-                            // Transition stream from pending_push to pending_open
-                            // if possible
-                            if !pushed.pending_send.is_empty() {
-                                if counts.can_inc_num_send_streams() {
-                                    counts.inc_num_send_streams(&mut pushed);
-                                    self.pending_send.push(&mut pushed);
-                                } else {
-                                    self.queue_open(&mut pushed);
-                                }
-                            }
-                            Frame::PushPromise(pp)
-                        }
-                        Some(frame) => frame.map(|_| {
-                            unreachable!(
-                                "Frame::map closure will only be called \
-                                 on DATA frames."
-                            )
-                        }),
-                        None => {
-                            if let Some(reason) = stream.state.get_scheduled_reset() {
-                                stream.set_reset(reason, Initiator::Library);
-
-                                let frame = frame::Reset::new(stream.id, reason);
-                                Frame::Reset(frame)
-                            } else {
-                                // If the stream receives a RESET from the peer, it may have
-                                // had data buffered to be sent, but all the frames are cleared
-                                // in clear_queue(). Instead of doing O(N) traversal through queue
-                                // to remove, lets just ignore the stream here.
-                                tracing::trace!("removing dangling stream from pending_send");
-                                // Since this should only happen as a consequence of `clear_queue`,
-                                // we must be in a closed state of some kind.
-                                debug_assert!(stream.state.is_closed());
-                                counts.transition_after(stream, is_pending_reset);
-                                continue;
-                            }
-                        }
-                    };
-
-                    tracing::trace!("pop_frame; frame={:?}", frame);
-
-                    if cfg!(debug_assertions) && stream.state.is_idle() {
-                        debug_assert!(stream.id > self.last_opened_id);
-                        self.last_opened_id = stream.id;
                     }
 
-                    if !stream.pending_send.is_empty() || stream.state.is_scheduled_reset() {
-                        // TODO: Only requeue the sender IF it is ready to send
-                        // the next frame. i.e. don't requeue it if the next
-                        // frame is a data frame and the stream does not have
-                        // any more capacity.
-                        self.pending_send.push(&mut stream);
+                    // Get the amount of capacity remaining for stream's
+                    // window.
+                    let stream_capacity = stream.send_flow.available();
+                    let sz = frame.payload().remaining();
+
+                    tracing::trace!(
+                        sz,
+                        eos = frame.is_end_stream(),
+                        window = %stream_capacity,
+                        available = %stream.send_flow.available(),
+                        requested = stream.requested_send_capacity,
+                        buffered = stream.buffered_send_data,
+                        "data frame"
+                    );
+
+                    // Zero length data frames always have capacity to
+                    // be sent.
+                    if sz > 0 && stream_capacity == 0 {
+                        tracing::trace!("stream capacity is 0");
+
+                        // Ensure that the stream is waiting for
+                        // connection level capacity
+                        //
+                        // TODO: uncomment
+                        // debug_assert!(stream.is_pending_send_capacity);
+
+                        // The stream has no more capacity, this can
+                        // happen if the remote reduced the stream
+                        // window. In this case, we need to buffer the
+                        // frame and wait for a window update...
+                        stream.pending_send.push_front(buffer, frame.into());
+
+                        continue;
                     }
 
-                    counts.transition_after(stream, is_pending_reset);
+                    // Only send up to the max frame length
+                    let len = cmp::min(sz, max_len);
 
-                    return Some(frame);
+                    // Only send up to the stream's window capacity
+                    let len = cmp::min(len, stream_capacity.as_size() as usize) as WindowSize;
+
+                    // There *must* be be enough connection level
+                    // capacity at this point.
+                    debug_assert!(len <= self.flow.window_size());
+
+                    // Check if the stream level window the peer knows is available. In some
+                    // scenarios, maybe the window we know is available but the window which
+                    // peer knows is not.
+                    if len > 0 && len > stream.send_flow.window_size() {
+                        stream.pending_send.push_front(buffer, frame.into());
+                        continue;
+                    }
+
+                    tracing::trace!(len, "sending data frame");
+
+                    // Update the flow control
+                    tracing::trace_span!("updating stream flow").in_scope(|| {
+                        stream.send_data(len, self.max_buffer_size);
+
+                        // Assign the capacity back to the connection that
+                        // was just consumed from the stream in the previous
+                        // line.
+                        // TODO: proper error handling
+                        let _res = self.flow.assign_capacity(len);
+                        debug_assert!(_res.is_ok());
+                    });
+
+                    let (eos, len) =
+                        tracing::trace_span!("updating connection flow").in_scope(|| {
+                            // TODO: proper error handling
+                            let _res = self.flow.send_data(len);
+                            debug_assert!(_res.is_ok());
+
+                            // Wrap the frame's data payload to ensure that the
+                            // correct amount of data gets written.
+
+                            let eos = frame.is_end_stream();
+                            let len = len as usize;
+
+                            if frame.payload().remaining() > len {
+                                frame.set_end_stream(false);
+                            }
+                            (eos, len)
+                        });
+
+                    Frame::Data(frame.map(|buf| Prioritized {
+                        inner: buf.take(len),
+                        end_of_stream: eos,
+                        stream: stream.key(),
+                    }))
                 }
-                None => return None,
+                Some(Frame::PushPromise(pp)) => {
+                    let mut pushed = stream.store_mut().find_mut(&pp.promised_id()).unwrap();
+                    pushed.is_pending_push = false;
+                    // Transition stream from pending_push to pending_open
+                    // if possible
+                    if !pushed.pending_send.is_empty() {
+                        if counts.can_inc_num_send_streams() {
+                            counts.inc_num_send_streams(&mut pushed);
+                            self.pending_send.push(&mut pushed);
+                        } else {
+                            self.queue_open(&mut pushed);
+                        }
+                    }
+                    Frame::PushPromise(pp)
+                }
+                Some(frame) => frame.map(|_| {
+                    unreachable!(
+                        "Frame::map closure will only be called \
+                             on DATA frames."
+                    )
+                }),
+                None => {
+                    if let Some(reason) = stream.state.get_scheduled_reset() {
+                        stream.set_reset(reason, Initiator::Library);
+
+                        let frame = frame::Reset::new(stream.id, reason);
+                        Frame::Reset(frame)
+                    } else {
+                        // If the stream receives a RESET from the peer, it may have
+                        // had data buffered to be sent, but all the frames are cleared
+                        // in clear_queue(). Instead of doing O(N) traversal through queue
+                        // to remove, lets just ignore the stream here.
+                        tracing::trace!("removing dangling stream from pending_send");
+                        // Since this should only happen as a consequence of `clear_queue`,
+                        // we must be in a closed state of some kind.
+                        debug_assert!(stream.state.is_closed());
+                        counts.transition_after(stream, is_pending_reset);
+                        continue;
+                    }
+                }
+            };
+
+            tracing::trace!("pop_frame; frame={:?}", frame);
+
+            if cfg!(debug_assertions) && stream.state.is_idle() {
+                debug_assert!(stream.id > self.last_opened_id);
+                self.last_opened_id = stream.id;
             }
+
+            if !stream.pending_send.is_empty() || stream.state.is_scheduled_reset() {
+                // TODO: Only requeue the sender IF it is ready to send
+                // the next frame. i.e. don't requeue it if the next
+                // frame is a data frame and the stream does not have
+                // any more capacity.
+                self.pending_send.push(&mut stream);
+            }
+
+            counts.transition_after(stream, is_pending_reset);
+
+            return Some(frame);
         }
     }
 
