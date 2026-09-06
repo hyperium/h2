@@ -547,8 +547,16 @@ impl Inner {
             let res = if stream.state.is_recv_headers() {
                 match actions.recv.recv_headers(frame, stream, counts) {
                     Ok(()) => Ok(()),
-                    Err(RecvHeaderBlockError::Oversize(resp)) => {
-                        if let Some(resp) = resp {
+                    Err(RecvHeaderBlockError::Oversize) => {
+                        if peer.is_server() {
+                            let mut resp = frame::Headers::new(
+                                stream.id,
+                                frame::Pseudo::response(
+                                    ::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+                                ),
+                                HeaderMap::new(),
+                            );
+                            resp.set_end_stream();
                             let mut send_buffer = send_buffer.inner.lock().unwrap();
                             let sent = actions.send.send_headers(
                                 resp, &mut send_buffer, stream, counts, &mut actions.task);
