@@ -51,9 +51,6 @@ pub(super) struct Recv {
     /// Holds frames that are waiting to be read
     buffer: Buffer<Event>,
 
-    /// Refused StreamId, this represents a frame that must be sent out.
-    refused: Option<StreamId>,
-
     /// If push promises are allowed to be received.
     is_push_enabled: bool,
 
@@ -111,7 +108,6 @@ impl Recv {
             pending_reset_expired: store::Queue::new(),
             reset_duration: config.local_reset_duration,
             buffer: Buffer::new(),
-            refused: None,
             is_push_enabled: config.local_push_enabled,
             is_extended_connect_protocol_enabled: config.extended_connect_protocol_enabled,
         }
@@ -136,8 +132,6 @@ impl Recv {
         mode: Open,
         counts: &mut Counts,
     ) -> Result<Option<StreamId>, Error> {
-        assert!(self.refused.is_none());
-
         counts.peer().ensure_can_open(id, mode)?;
 
         let next_id = self.next_stream_id()?;
@@ -149,7 +143,6 @@ impl Recv {
         self.next_stream_id = id.next_id();
 
         if !counts.can_inc_num_recv_streams() {
-            self.refused = Some(id);
             return Ok(None);
         }
 
@@ -1048,41 +1041,6 @@ impl Recv {
                 stream.id
             );
         }
-    }
-
-    /// Send any pending refusals.
-    pub fn send_pending_refusal<T, B>(
-        &mut self,
-        dst: &mut Codec<T, Prioritized<B>>,
-        counts: &mut Counts,
-    ) -> Result<BufferStatus, Error>
-    where
-        T: AsyncWrite + Unpin,
-        B: Buf,
-    {
-        if let Some(stream_id) = self.refused {
-            if !dst.has_send_capacity() {
-                return Ok(BufferStatus::CodecFull);
-            }
-
-            if !counts.can_inc_num_local_error_resets() {
-                return Err(Error::library_go_away_data(
-                    Reason::ENHANCE_YOUR_CALM,
-                    "too_many_internal_resets",
-                ));
-            }
-
-            // Create the RST_STREAM frame
-            let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
-
-            // Buffer the frame
-            dst.buffer(frame.into()).expect("invalid RST_STREAM frame");
-            counts.inc_num_local_error_resets();
-        }
-
-        self.refused = None;
-
-        Ok(BufferStatus::Complete)
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {

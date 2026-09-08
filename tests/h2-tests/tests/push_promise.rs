@@ -51,6 +51,43 @@ async fn refused_push_promises_count_toward_local_reset_limit() {
 }
 
 #[tokio::test]
+async fn recv_push_over_concurrency_limit_refuses_promised_streams() {
+    let (io, mut srv) = mock::new();
+    let peer = async move {
+        srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        for id in [2, 4] {
+            srv.send_frame(frames::push_promise(1, id).request("GET", "https://example.com/push"))
+                .await;
+        }
+        for id in [2, 4] {
+            srv.recv_frame(frames::reset(id).refused()).await;
+        }
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+    let h2 = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_concurrent_streams(0)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = conn.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    };
+    join(peer, h2).await;
+}
+
+#[tokio::test]
 async fn recv_push_works() {
     h2_support::trace_init!();
 

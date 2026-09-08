@@ -70,6 +70,64 @@ async fn server_builder_set_max_concurrent_streams() {
 }
 
 #[tokio::test]
+async fn consecutive_refusals_survive_write_backpressure() {
+    // Allow only the initial SETTINGS (15 bytes) and its ACK (9 bytes).
+    let (io, mut client) = mock::new_with_write_capacity(24);
+    let mut builder = server::Builder::new();
+    builder
+        .max_concurrent_streams(0)
+        .max_local_error_reset_streams(None);
+
+    client.write_preface().await;
+    client.send_frame(frame::Settings::default()).await;
+    let mut srv = builder.handshake::<_, Bytes>(io).await.unwrap();
+    poll_fn(|cx| {
+        assert!(srv.poll_accept(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let mut settings = frame::Settings::default();
+    settings.set_max_concurrent_streams(Some(0));
+    client.recv_frame(settings).await;
+    client.recv_frame(frame::Settings::ack()).await;
+    client.send_frame(frame::Settings::ack()).await;
+
+    // Enough RST_STREAM frames to fill the codec's 16 KiB write buffer.
+    const STREAMS: u32 = 2000;
+    for n in 0..STREAMS {
+        client
+            .send_frame(
+                frames::headers(2 * n + 1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+    }
+
+    // Processing the requests fills the codec and stalls on the blocked writer.
+    poll_fn(|cx| {
+        assert!(srv.poll_accept(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+
+    client.unbounded_bytes().await;
+    join(
+        async move {
+            for n in 0..STREAMS {
+                client.recv_frame(frames::reset(2 * n + 1).refused()).await;
+            }
+            // Also detect a duplicated refusal after the expected sequence.
+            client.ping_pong([42; 8]).await;
+        },
+        async move {
+            assert!(srv.next().await.is_none());
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn server_builder_header_table_size() {
     h2_support::trace_init!();
 
