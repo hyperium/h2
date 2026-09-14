@@ -83,6 +83,12 @@ pub struct Config {
     ///
     /// Default 25600 bytes
     pub data_frame_budget: usize,
+
+    /// payload length (in bytes) below which a received DATA frame is charged
+    /// framing overhead against `data_frame_budget`.
+    ///
+    /// Default 256 bytes
+    pub data_frame_overhead_threshold: usize,
 }
 
 trait DebugStructExt<'a, 'b> {
