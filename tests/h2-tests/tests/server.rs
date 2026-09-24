@@ -1475,6 +1475,48 @@ async fn send_reset_explicitly_does_not_affect_local_limit() {
 }
 
 #[tokio::test]
+async fn refused_requests_count_toward_local_reset_limit() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_concurrent_streams(0));
+        for id in [1, 3, 5] {
+            client
+                .send_frame(
+                    frames::headers(id)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            if id < 5 {
+                client.recv_frame(frames::reset(id).refused()).await;
+            } else {
+                client
+                    .recv_frame(frames::go_away(0).calm().data("too_many_internal_resets"))
+                    .await;
+            }
+        }
+    };
+
+    let srv = async move {
+        let mut conn = server::Builder::new()
+            .max_concurrent_streams(0)
+            .max_local_error_reset_streams(Some(2))
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let err = conn.next().await.unwrap().unwrap_err();
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn extended_connect_protocol_disabled_by_default() {
     h2_support::trace_init!();
 

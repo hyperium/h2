@@ -1040,7 +1040,8 @@ impl Recv {
     pub fn send_pending_refusal<T, B>(
         &mut self,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> io::Result<BufferStatus>
+        counts: &mut Counts,
+    ) -> Result<BufferStatus, Error>
     where
         T: AsyncWrite + Unpin,
         B: Buf,
@@ -1050,11 +1051,19 @@ impl Recv {
                 return Ok(BufferStatus::CodecFull);
             }
 
+            if !counts.can_inc_num_local_error_resets() {
+                return Err(Error::library_go_away_data(
+                    Reason::ENHANCE_YOUR_CALM,
+                    "too_many_internal_resets",
+                ));
+            }
+
             // Create the RST_STREAM frame
             let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
 
             // Buffer the frame
             dst.buffer(frame.into()).expect("invalid RST_STREAM frame");
+            counts.inc_num_local_error_resets();
         }
 
         self.refused = None;

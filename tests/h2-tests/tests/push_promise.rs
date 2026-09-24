@@ -2,6 +2,55 @@ use futures::{StreamExt, TryStreamExt};
 use h2_support::prelude::*;
 
 #[tokio::test]
+async fn refused_push_promises_count_toward_local_reset_limit() {
+    h2_support::trace_init!();
+
+    for limit in [0, 2] {
+        let (io, mut srv) = mock::new();
+        let mock = async move {
+            let settings = srv.assert_client_handshake().await;
+            assert_frame_eq(settings, frames::settings().max_concurrent_streams(0));
+            srv.recv_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+
+            for n in 0..=limit {
+                let id = 2 * (n + 1) as u32;
+                srv.send_frame(
+                    frames::push_promise(1, id).request("GET", "https://example.com/pushed"),
+                )
+                .await;
+                if n < limit {
+                    srv.recv_frame(frames::reset(id).refused()).await;
+                } else {
+                    srv.recv_frame(frames::go_away(0).calm().data("too_many_internal_resets"))
+                        .await;
+                }
+            }
+        };
+        let client = async move {
+            let (mut client, conn) = client::Builder::new()
+                .max_concurrent_streams(0)
+                .max_local_error_reset_streams(Some(limit))
+                .handshake::<_, Bytes>(io)
+                .await
+                .unwrap();
+            let request = Request::get("https://example.com/").body(()).unwrap();
+            let (_response, _) = client.send_request(request, true).unwrap();
+            let err = conn.await.unwrap_err();
+            assert!(err.is_go_away());
+            assert!(err.is_library());
+            assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
+        };
+
+        join(mock, client).await;
+    }
+}
+
+#[tokio::test]
 async fn recv_push_works() {
     h2_support::trace_init!();
 
