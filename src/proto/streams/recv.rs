@@ -181,11 +181,12 @@ impl Recv {
             counts.inc_num_recv_streams(stream);
         }
 
-        if !stream.content_length.is_head() {
+        {
             use super::stream::ContentLength;
             use http::header;
 
-            if let Some(content_length) = frame.fields().get(header::CONTENT_LENGTH) {
+            let mut first_content_length = None;
+            for content_length in frame.fields().get_all(header::CONTENT_LENGTH) {
                 let content_length = match frame::parse_u64(content_length.as_bytes()) {
                     Ok(v) => v,
                     Err(_) => {
@@ -194,6 +195,19 @@ impl Recv {
                     }
                 };
 
+                if let Some(first) = first_content_length {
+                    if content_length != first {
+                        proto_err!(stream: "conflicting content-length headers; stream={:?}", stream.id);
+                        return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR).into());
+                    }
+                } else {
+                    first_content_length = Some(content_length);
+                }
+            }
+
+            if let Some(content_length) =
+                first_content_length.filter(|_| !stream.content_length.is_head())
+            {
                 stream.content_length = ContentLength::Remaining(content_length);
                 // END_STREAM on headers frame with non-zero content-length is malformed.
                 // https://datatracker.ietf.org/doc/html/rfc9113#section-8.1.1
