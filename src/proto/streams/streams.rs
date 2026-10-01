@@ -536,8 +536,6 @@ impl Inner {
         }
 
         let actions = &mut self.actions;
-        let mut send_buffer = send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
 
         self.counts.transition(stream, |counts, stream| {
             tracing::trace!(
@@ -549,10 +547,19 @@ impl Inner {
             let res = if stream.state.is_recv_headers() {
                 match actions.recv.recv_headers(frame, stream, counts) {
                     Ok(()) => Ok(()),
-                    Err(RecvHeaderBlockError::Oversize(resp)) => {
-                        if let Some(resp) = resp {
+                    Err(RecvHeaderBlockError::Oversize) => {
+                        if peer.is_server() {
+                            let mut resp = frame::Headers::new(
+                                stream.id,
+                                frame::Pseudo::response(
+                                    ::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+                                ),
+                                HeaderMap::new(),
+                            );
+                            resp.set_end_stream();
+                            let mut send_buffer = send_buffer.inner.lock().unwrap();
                             let sent = actions.send.send_headers(
-                                resp, send_buffer, stream, counts, &mut actions.task);
+                                resp, &mut send_buffer, stream, counts, &mut actions.task);
                             debug_assert!(sent.is_ok(), "oversize response should not fail");
 
                             actions.send.schedule_implicit_reset(
@@ -581,7 +588,7 @@ impl Inner {
                 actions.recv.recv_trailers(frame, stream)
             };
 
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
+            actions.reset_on_recv_stream_err_deferred(send_buffer, stream, counts, res)
         })
     }
 
@@ -633,8 +640,6 @@ impl Inner {
         };
 
         let actions = &mut self.actions;
-        let mut send_buffer = send_buffer.inner.lock().unwrap();
-        let send_buffer = &mut *send_buffer;
 
         self.counts.transition(stream, |counts, stream| {
             let sz = frame.flow_controlled_len();
@@ -658,7 +663,7 @@ impl Inner {
                     .recv
                     .release_connection_capacity(sz as WindowSize, &mut None);
             }
-            actions.reset_on_recv_stream_err(send_buffer, stream, counts, res)
+            actions.reset_on_recv_stream_err_deferred(send_buffer, stream, counts, res)
         })
     }
 
@@ -1759,6 +1764,21 @@ impl Actions {
 
             Ok(())
         })
+    }
+
+    fn reset_on_recv_stream_err_deferred<B>(
+        &mut self,
+        send_buffer: &SendBuffer<B>,
+        stream: &mut store::Ptr,
+        counts: &mut Counts,
+        res: Result<(), Error>,
+    ) -> Result<(), Error> {
+        if matches!(res, Err(Error::Reset(..))) {
+            let mut send_buffer = send_buffer.inner.lock().unwrap();
+            self.reset_on_recv_stream_err(&mut send_buffer, stream, counts, res)
+        } else {
+            res
+        }
     }
 
     fn reset_on_recv_stream_err<B>(

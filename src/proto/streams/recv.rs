@@ -76,8 +76,8 @@ pub(super) struct DataEvent {
 }
 
 #[derive(Debug)]
-pub(super) enum RecvHeaderBlockError<T> {
-    Oversize(T),
+pub(super) enum RecvHeaderBlockError {
+    Oversize,
     State(Error),
 }
 
@@ -164,7 +164,7 @@ impl Recv {
         frame: frame::Headers,
         stream: &mut store::Ptr,
         counts: &mut Counts,
-    ) -> Result<(), RecvHeaderBlockError<Option<frame::Headers>>> {
+    ) -> Result<(), RecvHeaderBlockError> {
         tracing::trace!("opening stream; init_window={}", self.init_window_sz);
         let is_initial = stream.state.recv_open(&frame)?;
 
@@ -227,17 +227,7 @@ impl Recv {
                  recv_headers: frame is over size; stream={:?}",
                 stream.id
             );
-            return if counts.peer().is_server() && is_initial {
-                let mut res = frame::Headers::new(
-                    stream.id,
-                    frame::Pseudo::response(::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE),
-                    HeaderMap::new(),
-                );
-                res.set_end_stream();
-                Err(RecvHeaderBlockError::Oversize(Some(res)))
-            } else {
-                Err(RecvHeaderBlockError::Oversize(None))
-            };
+            return Err(RecvHeaderBlockError::Oversize);
         }
 
         let stream_id = frame.stream_id();
@@ -1359,7 +1349,7 @@ impl Open {
 
 // ===== impl RecvHeaderBlockError =====
 
-impl<T> From<Error> for RecvHeaderBlockError<T> {
+impl From<Error> for RecvHeaderBlockError {
     fn from(err: Error) -> Self {
         RecvHeaderBlockError::State(err)
     }

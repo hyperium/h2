@@ -821,6 +821,75 @@ async fn sending_request_on_closed_connection() {
 }
 
 #[tokio::test]
+async fn response_missing_status() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        srv.send_frame(frames::headers(1).eos()).await;
+
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        srv.send_frame(frames::headers(3).response(103)).await;
+        srv.send_frame(frames::headers(3).field("server", "test"))
+            .await;
+
+        srv.recv_frame(frames::reset(3).protocol_error()).await;
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        srv.send_frame(frames::headers(5).response(204).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let err = conn
+            .drive(response)
+            .await
+            .expect_err("stream 1: empty response without :status");
+        assert!(err.is_reset());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let err = conn
+            .drive(response)
+            .await
+            .expect_err("stream 3: final response without :status after 103");
+        assert!(err.is_reset());
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        assert_eq!(conn.drive(response).await.unwrap().status(), 204);
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), join(srv, client))
+        .await
+        .expect("response_missing_status timed out");
+}
+
+#[tokio::test]
 async fn recv_too_big_headers() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();

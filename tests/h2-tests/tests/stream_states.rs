@@ -1482,7 +1482,7 @@ async fn srv_window_update_on_lower_stream_id() {
             frames::push_promise(7, 2).request("GET", "https://http2.akamai.com/style.css"),
         )
         .await;
-        srv.send_frame(frames::headers(7).eos()).await;
+        srv.send_frame(frames::headers(7).response(200).eos()).await;
         srv.recv_frame(frames::reset(2).cancel()).await;
         srv.send_frame(frames::window_update(5, 66666)).await;
     };
