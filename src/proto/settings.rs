@@ -99,6 +99,12 @@ impl Settings {
         }
     }
 
+    /// Returns `true` once the initial SETTINGS frame from the remote peer
+    /// has been received and applied.
+    pub(crate) fn has_received_remote_initial_settings(&self) -> bool {
+        self.has_received_remote_initial_settings
+    }
+
     /// Sets `true` to `self.has_received_remote_initial_settings`.
     /// Returns `true` if this method is called for the first time.
     /// (i.e. it is the initial SETTINGS frame from the remote peer)
