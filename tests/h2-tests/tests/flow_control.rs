@@ -2106,7 +2106,6 @@ async fn scheduled_reset_with_buffered_data_sends_rst() {
     join(srv, client).await;
 }
 
-
 #[tokio::test]
 async fn drop_pending_open_after_reserve_does_not_open_stream() {
     // Regression for https://github.com/hyperium/h2/issues/878:
@@ -2123,13 +2122,21 @@ async fn drop_pending_open_after_reserve_does_not_open_stream() {
             .await;
         assert_default_settings!(settings);
 
-        srv.recv_frame(frames::headers(1).request("GET", "https://example.com/1").eos())
-            .await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/1")
+                .eos(),
+        )
+        .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
 
         // Stream 3 was cancelled while pending_open — it must not appear.
-        srv.recv_frame(frames::headers(5).request("GET", "https://example.com/5").eos())
-            .await;
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/5")
+                .eos(),
+        )
+        .await;
         srv.send_frame(frames::headers(5).response(200).eos()).await;
     };
 
