@@ -124,7 +124,9 @@ where
 
         me.actions
             .recv
-            .set_target_connection_window(size, &mut me.actions.task)
+            .set_target_connection_window(size, &mut me.actions.task)?;
+        me.counts.set_target_connection_window_size(size);
+        Ok(())
     }
 
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {

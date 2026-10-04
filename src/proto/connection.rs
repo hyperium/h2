@@ -83,7 +83,7 @@ pub(crate) struct Config {
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
-    pub data_frame_budget: usize,
+    pub data_frame_budget: DataFrameBudget,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,6 +103,10 @@ impl DataFrameBudget {
                 budget.max(DEFAULT_DATA_FRAME_BUDGET)
             }
         }
+    }
+
+    pub(crate) fn is_auto(self) -> bool {
+        matches!(self, Self::Auto)
     }
 }
 
