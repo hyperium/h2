@@ -409,9 +409,19 @@ async fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
                 .field(http::header::CONTENT_LENGTH, 0),
         )
         .await;
+        let mut fields = HeaderMap::new();
+        fields.append("content-length", "0".parse().unwrap());
+        fields.append("content-length", "1".parse().unwrap());
+        srv.send_frame(
+            frames::push_promise(1, 8)
+                .request("GET", "https://http2.akamai.com/style.css")
+                .fields(fields),
+        )
+        .await;
         srv.send_frame(frames::headers(1).response(404).eos()).await;
         srv.recv_frame(frames::reset(2).protocol_error()).await;
         srv.recv_frame(frames::reset(4).protocol_error()).await;
+        srv.recv_frame(frames::reset(8).protocol_error()).await;
         srv.send_frame(frames::headers(6).response(200).eos()).await;
     };
 
