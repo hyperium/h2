@@ -45,6 +45,9 @@ where
     /// Pending GOAWAY frames to write.
     go_away: GoAway,
 
+    /// A refused stream to reset before receiving another frame.
+    pending_refusal: Option<StreamId>,
+
     /// Ping/pong handler
     ping_pong: PingPong,
 
@@ -160,6 +163,7 @@ where
                 state: State::Open,
                 error: None,
                 go_away: GoAway::new(),
+                pending_refusal: None,
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
@@ -222,7 +226,15 @@ where
             .inner
             .settings
             .poll_send(cx, &mut self.codec, &mut self.inner.streams))?;
-        ready!(self.inner.streams.send_pending_refusal(cx, &mut self.codec))?;
+        if let Some(id) = self.inner.pending_refusal {
+            // Keep the refusal pending if making room requires socket progress.
+            ready!(self.codec.poll_ready(cx))?;
+            self.inner.streams.count_pending_refusal()?;
+            self.codec
+                .buffer(frame::Reset::new(id, Reason::REFUSED_STREAM).into())
+                .expect("invalid RST_STREAM frame");
+            self.inner.pending_refusal = None;
+        }
 
         Poll::Ready(Ok(()))
     }
@@ -383,6 +395,10 @@ where
                         &mut self.codec,
                         &mut self.inner.streams,
                     )?;
+                }
+                ReceivedFrame::Refused(id) => {
+                    debug_assert!(self.inner.pending_refusal.is_none());
+                    self.inner.pending_refusal = Some(id);
                 }
                 ReceivedFrame::Continue => (),
                 ReceivedFrame::Done => {
@@ -546,7 +562,10 @@ where
         match frame {
             Some(Headers(frame)) => {
                 tracing::trace!(?frame, "recv HEADERS");
-                self.streams.recv_headers(frame)?;
+                match self.streams.recv_headers(frame)? {
+                    streams::RecvOutcome::Processed => (),
+                    streams::RecvOutcome::Refused(id) => return Ok(ReceivedFrame::Refused(id)),
+                }
             }
             Some(Data(frame)) => {
                 tracing::trace!(?frame, "recv DATA");
@@ -558,7 +577,10 @@ where
             }
             Some(PushPromise(frame)) => {
                 tracing::trace!(?frame, "recv PUSH_PROMISE");
-                self.streams.recv_push_promise(frame)?;
+                match self.streams.recv_push_promise(frame)? {
+                    streams::RecvOutcome::Processed => (),
+                    streams::RecvOutcome::Refused(id) => return Ok(ReceivedFrame::Refused(id)),
+                }
             }
             Some(Settings(frame)) => {
                 tracing::trace!(?frame, "recv SETTINGS");
@@ -605,6 +627,7 @@ where
 }
 
 enum ReceivedFrame {
+    Refused(StreamId),
     Settings(frame::Settings),
     Continue,
     Done,
