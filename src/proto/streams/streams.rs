@@ -157,7 +157,7 @@ where
         &mut self,
         cx: &mut Context,
         dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
+    ) -> Poll<Result<(), Error>>
     where
         T: AsyncWrite + Unpin,
     {
@@ -165,7 +165,7 @@ where
             let status = {
                 let mut me = self.inner.lock().unwrap();
                 let me = &mut *me;
-                me.actions.recv.send_pending_refusal(dst)?
+                me.actions.recv.send_pending_refusal(dst, &mut me.counts)?
             };
 
             match status {
