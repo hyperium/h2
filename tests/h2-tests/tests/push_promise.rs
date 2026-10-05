@@ -328,6 +328,65 @@ async fn pending_push_promises_reset_when_dropped() {
 }
 
 #[tokio::test]
+async fn reserved_push_promises_respect_max_concurrent_streams() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_concurrent_streams(1));
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::push_promise(1, 2).request("GET", "https://example.com/one"))
+            .await;
+        srv.send_frame(frames::push_promise(1, 4).request("GET", "https://example.com/two"))
+            .await;
+        srv.recv_frame(frames::reset(4).refused()).await;
+
+        // Closing the first reserved stream releases its receive budget, so a
+        // later promise can be accepted.
+        srv.send_frame(frames::reset(2).cancel()).await;
+        srv.send_frame(frames::push_promise(1, 6).request("GET", "https://example.com/three"))
+            .await;
+        srv.send_frame(frames::data(1, "").eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_concurrent_streams(1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+        let request = Request::builder()
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (mut response, _) = client.send_request(request, true).unwrap();
+        let mut pushed = response.push_promises();
+
+        let check = async move {
+            let first = pushed.next().await.unwrap().unwrap();
+            assert_eq!(first.request().uri().path(), "/one");
+            assert!(first.into_parts().1.await.is_err());
+
+            let second = pushed.next().await.unwrap().unwrap();
+            assert_eq!(second.request().uri().path(), "/three");
+            assert_eq!(response.await.unwrap().status(), StatusCode::OK);
+        };
+
+        conn.drive(check).await;
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn recv_push_promise_over_max_header_list_size() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
