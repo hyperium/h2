@@ -1166,9 +1166,9 @@ impl Builder {
     /// When this budget is exhausted, the connection is closed with
     /// `ENHANCE_YOUR_CALM`.
     ///
-    /// By default, the budget is half the initial connection window, with a
-    /// minimum of 25,600 bytes. Increasing the connection window therefore
-    /// also increases the permitted framing overhead.
+    /// By default, the budget is half the target connection window, with a
+    /// minimum of 25,600 bytes. Changing the target window at runtime also
+    /// updates the permitted framing overhead.
     pub fn data_frame_budget(&mut self, budget: usize) -> &mut Self {
         self.data_frame_budget = proto::DataFrameBudget::Configured(budget);
         self
@@ -1364,9 +1364,7 @@ where
                 remote_reset_stream_max: builder.pending_accept_reset_stream_max,
                 local_error_reset_streams_max: builder.local_max_error_reset_streams,
                 settings: builder.settings,
-                data_frame_budget: builder
-                    .data_frame_budget
-                    .resolve(builder.initial_target_connection_window_size),
+                data_frame_budget: builder.data_frame_budget,
             },
         );
         let send_request = SendRequest {
@@ -1393,7 +1391,8 @@ where
     /// [`FlowControl`] instances, no `WINDOW_UPDATE` frames will be sent
     /// out until the number of "in flight" bytes drops below `size`.
     ///
-    /// The default value is 65,535.
+    /// The default value is 65,535. The automatic small-DATA-frame budget is
+    /// updated to match this target.
     ///
     /// See [`FlowControl`] documentation for more details.
     ///
