@@ -80,7 +80,7 @@ pub struct Config {
     pub local_max_error_reset_streams: Option<usize>,
 
     /// Connection-level budget policy for DATA framing overhead.
-    pub data_frame_budget: DataFrameBudget,
+    pub(crate) data_frame_budget: DataFrameBudget,
 }
 
 trait DebugStructExt<'a, 'b> {
