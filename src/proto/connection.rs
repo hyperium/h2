@@ -194,6 +194,12 @@ where
         self.inner.settings.send_settings(settings)
     }
 
+    /// Returns whether the initial SETTINGS frame from the remote peer has
+    /// been received and applied.
+    pub(crate) fn has_received_remote_initial_settings(&self) -> bool {
+        self.inner.settings.has_received_remote_initial_settings()
+    }
+
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by this peer.
     pub(crate) fn max_send_streams(&self) -> usize {
