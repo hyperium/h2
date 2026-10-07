@@ -7,9 +7,123 @@ async fn read_none() {
     assert_closed!(codec);
 }
 
-#[test]
-#[ignore]
-fn read_frame_too_big() {}
+#[tokio::test]
+async fn read_frame_too_big() {
+    use futures::StreamExt;
+
+    // The length field alone is enough to reject the frame
+    let mut codec = raw_codec! {
+        read => [
+            0, 64, 1,
+        ];
+    };
+
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "frame with invalid size"
+    );
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
+async fn read_frame_split_across_reads() {
+    let mut codec = Codec::from(
+        mock_io::Builder::new()
+            .read(&[0, 0])
+            .read(&[5, 0, 0, 0, 0])
+            .read(&[0, 1, b'h', b'e'])
+            .read(b"llo")
+            .build(),
+    );
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
+async fn read_multiple_frames_in_one_read() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            0, 0, 5, 0, 1, 0, 0, 0, 3,
+            "world",
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 3);
+    assert_eq!(data.payload(), &b"world"[..]);
+    assert!(data.is_end_stream());
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
+async fn read_partial_frame_at_eof() {
+    use futures::StreamExt;
+
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hel",
+        ];
+    };
+
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "bytes remaining on stream"
+    );
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
+async fn read_partial_length_field_at_eof() {
+    use futures::StreamExt;
+
+    let mut codec = raw_codec! {
+        read => [
+            0, 0,
+        ];
+    };
+
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "bytes remaining on stream"
+    );
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
+async fn read_io_error_then_none() {
+    use futures::StreamExt;
+
+    let mut codec = Codec::from(
+        mock_io::Builder::new()
+            .read_error(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "reset",
+            ))
+            .build(),
+    );
+
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "reset"
+    );
+
+    assert!(codec.next().await.is_none());
+}
 
 // ===== DATA =====
 
@@ -192,7 +306,6 @@ async fn update_max_frame_len_at_rest() {
     use tokio::io::AsyncReadExt;
 
     h2_support::trace_init!();
-    // TODO: add test for updating max frame length in flight as well?
     let mut codec = raw_codec! {
         read => [
             0, 0, 5, 0, 0, 0, 0, 0, 1,
@@ -215,6 +328,41 @@ async fn update_max_frame_len_at_rest() {
     // drain codec buffer
     let mut buf = Vec::new();
     codec.get_mut().read_to_end(&mut buf).await.unwrap();
+}
+
+#[tokio::test]
+async fn update_max_frame_len_in_flight() {
+    use futures::StreamExt;
+
+    h2_support::trace_init!();
+    let mut codec = Codec::from(
+        mock_io::Builder::new()
+            .read(&[0, 64, 1, 0, 0, 0, 0, 0, 1])
+            .wait(std::time::Duration::from_millis(1))
+            .read(&[0; 16_385])
+            .read(&[0, 64, 1])
+            .build(),
+    );
+
+    codec.set_max_recv_frame_size(16_385);
+
+    // Read the head of the first frame, then wait for its payload
+    let res =
+        futures::future::poll_fn(|cx| std::task::Poll::Ready(codec.poll_next_unpin(cx))).await;
+    assert!(res.is_pending());
+
+    // The frame in flight was accepted under the old setting, so it is still
+    // allowed
+    codec.set_max_recv_frame_size(16_384);
+    assert_eq!(poll_frame!(Data, codec).payload().len(), 16_385);
+
+    // The next frame is checked against the new setting
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "frame with invalid size"
+    );
+
+    assert_closed!(codec);
 }
 
 #[tokio::test]

@@ -7,9 +7,8 @@ use bytes::{Buf, BufMut, BytesMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_util::io::poll_write_buf;
 
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, IoSlice};
 
 // A macro to get around a method needing to borrow &mut self
 macro_rules! limited_write_buf {
@@ -184,6 +183,32 @@ where
         }
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
+}
+
+/// Writes the chunks of `buf` to `io`, vectored if `io` supports it, and
+/// advances `buf` by the number of bytes written.
+fn poll_write_buf<T: AsyncWrite, B: Buf>(
+    io: Pin<&mut T>,
+    cx: &mut Context<'_>,
+    buf: &mut B,
+) -> Poll<io::Result<usize>> {
+    const MAX_BUFS: usize = 64;
+
+    if !buf.has_remaining() {
+        return Poll::Ready(Ok(0));
+    }
+
+    let n = if io.is_write_vectored() {
+        let mut slices = [IoSlice::new(&[]); MAX_BUFS];
+        let cnt = buf.chunks_vectored(&mut slices);
+        ready!(io.poll_write_vectored(cx, &slices[..cnt]))?
+    } else {
+        ready!(io.poll_write(cx, buf.chunk()))?
+    };
+
+    buf.advance(n);
+
+    Poll::Ready(Ok(n))
 }
 
 #[must_use]
