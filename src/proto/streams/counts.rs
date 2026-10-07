@@ -83,9 +83,12 @@ pub(super) struct Counts {
     /// Whether the DATA frame budget follows the target connection window.
     data_frame_budget_is_auto: bool,
 
-    /// Number of empty, non-final DATA frames received over the lifetime of
-    /// the connection.
-    num_recv_empty_data_frames: usize,
+    /// connection-level budget for empty, non-final DATA frames.
+    ///
+    /// Each empty frame is charged the full overhead threshold, while larger
+    /// non-final frames earn back their payload beyond the threshold, so a
+    /// peer can only sustain empty frames by also sending payload.
+    empty_data_frame_budget: Budget,
 }
 
 impl Counts {
@@ -105,7 +108,9 @@ impl Counts {
             num_local_error_reset_streams: 0,
             data_frame_budget: Budget::new(config.data_frame_budget.resolve(None)),
             data_frame_budget_is_auto: config.data_frame_budget.is_auto(),
-            num_recv_empty_data_frames: 0,
+            empty_data_frame_budget: Budget::new(
+                MAX_RECV_EMPTY_DATA_FRAMES * DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD,
+            ),
         }
     }
 
@@ -119,20 +124,15 @@ impl Counts {
     /// Records the framing overhead of a DATA frame.
     pub fn record_data_frame(&mut self, payload_len: usize) -> Result<(), BudgetExhausted> {
         if payload_len == 0 {
-            self.num_recv_empty_data_frames = self
-                .num_recv_empty_data_frames
-                .checked_add(1)
-                .ok_or(BudgetExhausted)?;
-            if self.num_recv_empty_data_frames > MAX_RECV_EMPTY_DATA_FRAMES {
-                return Err(BudgetExhausted);
-            }
-            Ok(())
+            self.empty_data_frame_budget
+                .consume(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD)
         } else if payload_len < DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
             self.data_frame_budget
                 .consume(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - payload_len)
         } else {
-            self.data_frame_budget
-                .replenish(payload_len - DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD);
+            let surplus = payload_len - DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD;
+            self.data_frame_budget.replenish(surplus);
+            self.empty_data_frame_budget.replenish(surplus);
             Ok(())
         }
     }
@@ -442,6 +442,10 @@ mod tests {
         );
         auto.set_target_connection_window_size(1024 * 1024);
         assert_eq!(auto.data_frame_budget.max, 512 * 1024);
+        assert_eq!(
+            auto.empty_data_frame_budget.max,
+            MAX_RECV_EMPTY_DATA_FRAMES * DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD
+        );
         for _ in 0..1_000 {
             auto.record_data_frame(171).unwrap();
         }
@@ -494,13 +498,33 @@ mod tests {
     }
 
     #[test]
-    fn large_data_frames_do_not_replenish_empty_data_frame_limit() {
+    fn large_data_frames_replenish_empty_data_frame_budget() {
+        let mut counts = counts();
+
+        // Each frame earns back twice what one empty frame costs, so an
+        // uncapped refill would build up extra allowance.
+        for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES * 10 {
+            counts.record_data_frame(0).unwrap();
+            counts
+                .record_data_frame(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD * 3)
+                .unwrap();
+        }
+
+        // Replenishment does not accumulate beyond the initial allowance.
+        for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES {
+            counts.record_data_frame(0).unwrap();
+        }
+        assert!(counts.record_data_frame(0).is_err());
+    }
+
+    #[test]
+    fn small_data_frames_do_not_replenish_empty_data_frame_budget() {
         let mut counts = counts();
 
         for _ in 0..MAX_RECV_EMPTY_DATA_FRAMES {
             counts.record_data_frame(0).unwrap();
             counts
-                .record_data_frame(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD * 2)
+                .record_data_frame(DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD - 1)
                 .unwrap();
         }
         assert!(counts.record_data_frame(0).is_err());
