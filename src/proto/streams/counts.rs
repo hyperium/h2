@@ -85,9 +85,8 @@ pub(super) struct Counts {
 
     /// connection-level budget for empty, non-final DATA frames.
     ///
-    /// Each empty frame is charged the full overhead threshold, while larger
-    /// non-final frames earn back their payload beyond the threshold, so a
-    /// peer can only sustain empty frames by also sending payload.
+    /// Closes the connections upon a burst of empty, non-final DATA frames.
+    /// Replenishes the budget when non-empty DATA frames are received.
     empty_data_frame_budget: Budget,
 }
 
