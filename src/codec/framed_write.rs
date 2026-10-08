@@ -83,22 +83,27 @@ where
     B: Buf,
 {
     pub fn new(inner: T) -> FramedWrite<T, B> {
+        Self::with_capacity(inner, DEFAULT_BUFFER_CAPACITY)
+    }
+
+    pub(super) fn with_capacity(inner: T, capacity: usize) -> FramedWrite<T, B> {
         let chain_threshold = if inner.is_write_vectored() {
             CHAIN_THRESHOLD
         } else {
             CHAIN_THRESHOLD_WITHOUT_VECTORED_IO
         };
+        let min_buffer_capacity = chain_threshold + frame::HEADER_LEN;
         FramedWrite {
             inner,
             final_flush_done: false,
             encoder: Encoder {
                 hpack: hpack::Encoder::default(),
-                buf: Cursor::new(BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY)),
+                buf: Cursor::new(BytesMut::with_capacity(capacity.max(min_buffer_capacity))),
                 next: None,
                 last_data_frame: None,
                 max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
                 chain_threshold,
-                min_buffer_capacity: chain_threshold + frame::HEADER_LEN,
+                min_buffer_capacity,
             },
         }
     }
@@ -351,6 +356,11 @@ impl<T, B> FramedWrite<T, B> {
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.inner
     }
+
+    #[cfg(test)]
+    pub(super) fn write_buffer_capacity(&self) -> usize {
+        self.encoder.buf.get_ref().capacity()
+    }
 }
 
 impl<T: AsyncRead + Unpin, B> AsyncRead for FramedWrite<T, B> {
@@ -365,6 +375,60 @@ impl<T: AsyncRead + Unpin, B> AsyncRead for FramedWrite<T, B> {
 
 // We never project the Pin to `B`.
 impl<T: Unpin, B> Unpin for FramedWrite<T, B> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    struct TestWriter {
+        vectored: bool,
+    }
+
+    impl AsyncWrite for TestWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn is_write_vectored(&self) -> bool {
+            self.vectored
+        }
+    }
+
+    #[test]
+    fn default_capacity_is_unchanged() {
+        let framed: FramedWrite<_, Bytes> = FramedWrite::new(TestWriter { vectored: true });
+        assert_eq!(framed.encoder.buf.get_ref().capacity(), DEFAULT_BUFFER_CAPACITY);
+    }
+
+    #[test]
+    fn requested_capacity_is_clamped_to_encoder_minimum() {
+        for (vectored, expected) in [
+            (true, CHAIN_THRESHOLD + frame::HEADER_LEN),
+            (
+                false,
+                CHAIN_THRESHOLD_WITHOUT_VECTORED_IO + frame::HEADER_LEN,
+            ),
+        ] {
+            let framed: FramedWrite<_, Bytes> =
+                FramedWrite::with_capacity(TestWriter { vectored }, 0);
+            assert_eq!(framed.encoder.buf.get_ref().capacity(), expected);
+            assert_eq!(framed.encoder.min_buffer_capacity, expected);
+        }
+    }
+}
 
 #[cfg(feature = "unstable")]
 mod unstable {

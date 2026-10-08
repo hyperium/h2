@@ -17,12 +17,20 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::length_delimited;
+use tokio_util::codec::FramedRead as LengthDelimitedFramedRead;
 
 use std::io;
 
 #[derive(Debug)]
 pub struct Codec<T, B> {
     inner: FramedRead<FramedWrite<T, B>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct InitialBufferCapacities {
+    pub(crate) read: Option<usize>,
+    pub(crate) write: Option<usize>,
+    pub(crate) hpack_decode: Option<usize>,
 }
 
 impl<T, B> Codec<T, B>
@@ -38,23 +46,93 @@ where
 
     /// Returns a new `Codec` with the given maximum frame size
     pub fn with_max_recv_frame_size(io: T, max_frame_size: usize) -> Self {
+        Self::with_max_recv_frame_size_and_initial_buffer_capacities(
+            io,
+            max_frame_size,
+            InitialBufferCapacities::default(),
+        )
+    }
+
+    pub(crate) fn with_initial_buffer_capacities(
+        io: T,
+        capacities: InitialBufferCapacities,
+    ) -> Self {
+        Self::with_max_recv_frame_size_and_initial_buffer_capacities(
+            io,
+            frame::DEFAULT_MAX_FRAME_SIZE as usize,
+            capacities,
+        )
+    }
+
+    fn with_max_recv_frame_size_and_initial_buffer_capacities(
+        io: T,
+        max_frame_size: usize,
+        capacities: InitialBufferCapacities,
+    ) -> Self {
         // Wrap with writer
-        let framed_write = FramedWrite::new(io);
+        let framed_write = match capacities.write {
+            Some(capacity) => FramedWrite::with_capacity(io, capacity),
+            None => FramedWrite::new(io),
+        };
 
         // Delimit the frames
-        let delimited = length_delimited::Builder::new()
+        let mut builder = length_delimited::Builder::new();
+        builder
             .big_endian()
             .length_field_length(3)
             .length_adjustment(9)
-            .num_skip(0) // Don't skip the header
-            .new_read(framed_write);
+            .num_skip(0); // Don't skip the header
+        let delimited = match capacities.read {
+            Some(capacity) => LengthDelimitedFramedRead::with_capacity(
+                framed_write,
+                builder.new_codec(),
+                capacity,
+            ),
+            None => builder.new_read(framed_write),
+        };
 
-        let mut inner = FramedRead::new(delimited);
+        let mut inner = match capacities.hpack_decode {
+            Some(capacity) => FramedRead::with_hpack_buffer_capacity(delimited, capacity),
+            None => FramedRead::new(delimited),
+        };
 
         // Use FramedRead's method since it checks the value is within range.
         inner.set_max_frame_size(max_frame_size);
 
         Codec { inner }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    #[test]
+    fn default_initial_buffer_capacities_are_unchanged() {
+        let (_peer, io) = tokio::io::duplex(64);
+        let codec: Codec<_, Bytes> = Codec::new(io);
+
+        assert_eq!(codec.inner.read_buffer_capacity(), 8 * 1024);
+        assert_eq!(codec.inner.get_ref().write_buffer_capacity(), 16 * 1024);
+        assert_eq!(codec.inner.hpack_buffer_capacity(), 4 * 1024);
+    }
+
+    #[test]
+    fn initial_buffer_capacities_reach_each_codec_layer() {
+        let (_peer, io) = tokio::io::duplex(64);
+        let codec: Codec<_, Bytes> = Codec::with_initial_buffer_capacities(
+            io,
+            InitialBufferCapacities {
+                read: Some(4 * 1024),
+                write: Some(4 * 1024),
+                hpack_decode: Some(0),
+            },
+        );
+
+        assert_eq!(codec.inner.read_buffer_capacity(), 4 * 1024);
+        assert_eq!(codec.inner.get_ref().write_buffer_capacity(), 4 * 1024);
+        assert_eq!(codec.inner.hpack_buffer_capacity(), 0);
     }
 }
 
