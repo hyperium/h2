@@ -2107,6 +2107,80 @@ async fn scheduled_reset_with_buffered_data_sends_rst() {
 }
 
 #[tokio::test]
+async fn drop_pending_open_after_reserve_does_not_open_stream() {
+    // Regression for https://github.com/hyperium/h2/issues/878:
+    // Cancelling a stream that is still in pending_open (with reserved
+    // capacity) must not panic, must not emit HEADERS/RST for that stream
+    // (it was never opened on the wire), and must leave concurrency free
+    // for a subsequent request.
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/1")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+
+        // Stream 3 was cancelled while pending_open — it must not appear.
+        srv.recv_frame(
+            frames::headers(5)
+                .request("GET", "https://example.com/5")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(5).response(200).eos()).await;
+    };
+
+    let client = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let req1 = Request::builder()
+            .uri("https://example.com/1")
+            .body(())
+            .unwrap();
+        let (resp1, _) = client.send_request(req1, true).unwrap();
+
+        // Queue stream 3 behind max_concurrent_streams=1.
+        client = h2.drive(client.ready()).await.unwrap();
+        let req3 = Request::builder()
+            .uri("https://example.com/3")
+            .body(())
+            .unwrap();
+        let (resp3, mut send3) = client.send_request(req3, false).unwrap();
+        send3.reserve_capacity(1);
+        drop(send3);
+        drop(resp3);
+
+        let resp1 = h2.drive(resp1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+        drop(resp1);
+
+        client = h2.drive(client.ready()).await.unwrap();
+        let req5 = Request::builder()
+            .uri("https://example.com/5")
+            .body(())
+            .unwrap();
+        let (resp5, _) = client.send_request(req5, true).unwrap();
+        let resp5 = h2.drive(resp5).await.unwrap();
+        assert_eq!(resp5.status(), StatusCode::OK);
+
+        h2.await.unwrap();
+    };
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), join(srv, client)).await;
+    assert!(result.is_ok(), "timed out reproducing issue #878");
+}
+
+#[tokio::test]
 async fn scheduled_reset_with_excess_buffered_data_is_cleaned_up() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
