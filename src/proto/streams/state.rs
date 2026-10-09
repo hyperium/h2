@@ -76,7 +76,8 @@ enum Peer {
 enum Cause {
     EndStream,
     Error(Error),
-    /// The stream was reset after the receive half had already reached EOS.
+    /// The stream was reset, or the connection failed, after the receive half
+    /// had already reached EOS.
     ErrorAfterEndStream(Error),
 
     /// This indicates to the connection that a reset frame must be sent out
@@ -297,27 +298,36 @@ impl State {
 
     /// Handle a connection-level error.
     pub fn handle_error(&mut self, err: &proto::Error) {
+        let recv_end_stream = self.is_recv_end_stream();
         match self.inner {
             Closed(..) => {}
             _ => {
                 tracing::trace!("handle_error; err={:?}", err);
-                self.inner = Closed(Cause::Error(err.clone()));
+                self.inner = Closed(if recv_end_stream {
+                    Cause::ErrorAfterEndStream(err.clone())
+                } else {
+                    Cause::Error(err.clone())
+                });
             }
         }
     }
 
     pub fn recv_eof(&mut self) {
+        let recv_end_stream = self.is_recv_end_stream();
         match self.inner {
             Closed(..) => {}
             ref state => {
                 tracing::trace!("recv_eof; state={:?}", state);
-                self.inner = Closed(Cause::Error(
-                    io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "stream closed because of a broken pipe",
-                    )
-                    .into(),
-                ));
+                let error = io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stream closed because of a broken pipe",
+                )
+                .into();
+                self.inner = Closed(if recv_end_stream {
+                    Cause::ErrorAfterEndStream(error)
+                } else {
+                    Cause::Error(error)
+                });
             }
         }
     }
@@ -518,5 +528,42 @@ mod tests {
             state.ensure_reason(PollReset::Streaming).unwrap(),
             Some(Reason::NO_ERROR)
         );
+    }
+
+    fn half_closed_remote() -> State {
+        let mut state = State::default();
+        state.send_open(false).unwrap();
+
+        let mut headers =
+            frame::Headers::new(StreamId::from(1), Default::default(), HeaderMap::new());
+        headers.set_end_stream();
+        state.recv_open(&headers).unwrap();
+        assert!(state.is_recv_end_stream());
+        state
+    }
+
+    #[test]
+    fn handle_error_preserves_received_end_stream() {
+        let mut state = half_closed_remote();
+
+        state.handle_error(&Error::library_go_away(Reason::INTERNAL_ERROR));
+
+        assert!(state.is_recv_end_stream());
+        assert_eq!(state.ensure_recv_open().unwrap(), false);
+        assert_eq!(
+            state.ensure_reason(PollReset::Streaming).unwrap(),
+            Some(Reason::INTERNAL_ERROR)
+        );
+    }
+
+    #[test]
+    fn recv_eof_preserves_received_end_stream() {
+        let mut state = half_closed_remote();
+
+        state.recv_eof();
+
+        assert!(state.is_recv_end_stream());
+        assert_eq!(state.ensure_recv_open().unwrap(), false);
+        assert!(state.ensure_reason(PollReset::Streaming).is_err());
     }
 }
