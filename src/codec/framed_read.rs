@@ -401,6 +401,14 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
                 return Ok(None);
             }
         }
+        Kind::Origin => {
+            // An ORIGIN frame on a stream other than 0x0 MUST be ignored.
+            if head.stream_id() != 0 {
+                return Ok(None);
+            }
+
+            frame::Origin::load(head, &bytes[frame::HEADER_LEN..]).into()
+        }
         Kind::Unknown => {
             // Unknown frames are ignored
             return Ok(None);

@@ -39,6 +39,7 @@ mod data;
 mod go_away;
 mod head;
 mod headers;
+mod origin;
 mod ping;
 mod priority;
 mod reason;
@@ -54,6 +55,7 @@ pub use self::head::{Head, Kind};
 pub use self::headers::{
     parse_u64, Continuation, Headers, Pseudo, PushPromise, PushPromiseHeaderError,
 };
+pub use self::origin::Origin;
 pub use self::ping::Ping;
 pub use self::priority::{Priority, StreamDependency};
 pub use self::reason::Reason;
@@ -87,6 +89,7 @@ pub enum Frame<T = Bytes> {
     GoAway(GoAway),
     WindowUpdate(WindowUpdate),
     Reset(Reset),
+    Origin(Origin),
 }
 
 impl<T> Frame<T> {
@@ -106,6 +109,7 @@ impl<T> Frame<T> {
             GoAway(frame) => frame.into(),
             WindowUpdate(frame) => frame.into(),
             Reset(frame) => frame.into(),
+            Origin(frame) => frame.into(),
         }
     }
 }
@@ -124,6 +128,7 @@ impl<T> fmt::Debug for Frame<T> {
             GoAway(ref frame) => fmt::Debug::fmt(frame, fmt),
             WindowUpdate(ref frame) => fmt::Debug::fmt(frame, fmt),
             Reset(ref frame) => fmt::Debug::fmt(frame, fmt),
+            Origin(ref frame) => fmt::Debug::fmt(frame, fmt),
         }
     }
 }
