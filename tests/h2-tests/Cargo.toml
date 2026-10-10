@@ -5,6 +5,9 @@ authors = ["Carl Lerche <me@carllerche.com>"]
 publish = false
 edition = "2018"
 
+[features]
+ignore_connection_header = ["h2-support/ignore_connection_header"]
+
 [dependencies]
 
 [dev-dependencies]
