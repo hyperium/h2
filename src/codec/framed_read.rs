@@ -10,20 +10,37 @@ use futures_core::Stream;
 
 use bytes::{Buf, BytesMut};
 
+use std::future::Future;
 use std::io;
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::AsyncRead;
-use tokio_util::codec::FramedRead as InnerFramedRead;
-use tokio_util::codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 // 16 MB "sane default" taken from golang http2
 const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
 
+/// Initial capacity of the read buffer.
+const INITIAL_READ_CAPACITY: usize = 8 * 1024;
+
+/// Length of the payload length field at the start of the frame header.
+const LENGTH_FIELD_LEN: usize = 3;
+
 #[derive(Debug)]
 pub struct FramedRead<T> {
-    inner: InnerFramedRead<T, LengthDelimitedCodec>,
+    inner: T,
+
+    /// Bytes read from `inner` that have not been split into frames yet
+    buf: BytesMut,
+
+    /// Total length (head and payload) of the frame at the front of `buf`,
+    /// set once its length field has been checked against the max frame size
+    frame_len: Option<usize>,
+
+    /// An error was returned, so the next poll returns `None`
+    has_errored: bool,
+
+    max_frame_size: usize,
 
     decoder: FrameDecoder,
 }
@@ -59,23 +76,30 @@ enum Continuable {
 }
 
 impl<T> FramedRead<T> {
-    pub fn new(inner: InnerFramedRead<T, LengthDelimitedCodec>) -> FramedRead<T> {
-        let decoder = FrameDecoder::new(inner.decoder().max_frame_length());
-        FramedRead { inner, decoder }
+    pub fn new(inner: T) -> FramedRead<T> {
+        let max_frame_size = DEFAULT_MAX_FRAME_SIZE as usize;
+        FramedRead {
+            inner,
+            buf: BytesMut::with_capacity(INITIAL_READ_CAPACITY),
+            frame_len: None,
+            has_errored: false,
+            max_frame_size,
+            decoder: FrameDecoder::new(max_frame_size),
+        }
     }
 
     pub fn get_ref(&self) -> &T {
-        self.inner.get_ref()
+        &self.inner
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        self.inner.get_mut()
+        &mut self.inner
     }
 
     /// Returns the current max frame size setting
     #[inline]
     pub fn max_frame_size(&self) -> usize {
-        self.inner.decoder().max_frame_length()
+        self.max_frame_size
     }
 
     /// Updates the max frame size setting.
@@ -84,7 +108,7 @@ impl<T> FramedRead<T> {
     #[inline]
     pub fn set_max_frame_size(&mut self, val: usize) {
         assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
-        self.inner.decoder_mut().set_max_frame_length(val);
+        self.max_frame_size = val;
         // Update max CONTINUATION frames too, since its based on this
         self.decoder.set_max_frame_size(val);
     }
@@ -410,6 +434,92 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
     Ok(Some(frame))
 }
 
+impl<T> FramedRead<T>
+where
+    T: AsyncRead + Unpin,
+{
+    /// Reads from `inner` until a complete frame, head included, is buffered
+    /// and splits it off.
+    ///
+    /// After returning an error, the next call returns `None`. At EOF, a
+    /// partial frame left in the buffer is an error.
+    fn poll_next_frame(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<BytesMut, Error>>> {
+        if self.has_errored {
+            self.has_errored = false;
+            return Poll::Ready(None);
+        }
+
+        let res = self.poll_next_frame_inner(cx);
+        if let Poll::Ready(Some(Err(_))) = res {
+            self.has_errored = true;
+        }
+        res
+    }
+
+    fn poll_next_frame_inner(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<BytesMut, Error>>> {
+        loop {
+            if let Some(bytes) = self.split_frame()? {
+                return Poll::Ready(Some(Ok(bytes)));
+            }
+
+            // Make sure there is room for at least one byte, so a read of 0
+            // bytes means EOF.
+            self.buf.reserve(1);
+            if ready!(poll_read_buf(&mut self.inner, cx, &mut self.buf))? == 0 {
+                return if self.buf.is_empty() {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Ready(Some(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "bytes remaining on stream",
+                    )
+                    .into())))
+                };
+            }
+        }
+    }
+
+    /// Splits the frame at the front of the buffer off, if it is complete.
+    fn split_frame(&mut self) -> Result<Option<BytesMut>, Error> {
+        let frame_len = match self.frame_len {
+            Some(frame_len) => frame_len,
+            None => {
+                if self.buf.len() < LENGTH_FIELD_LEN {
+                    return Ok(None);
+                }
+
+                let payload_len =
+                    u32::from_be_bytes([0, self.buf[0], self.buf[1], self.buf[2]]) as usize;
+                if payload_len > self.max_frame_size {
+                    proto_err!(conn: "frame size {} over max {}", payload_len, self.max_frame_size);
+                    return Err(Error::library_go_away(Reason::FRAME_SIZE_ERROR));
+                }
+
+                let frame_len = payload_len + frame::HEADER_LEN;
+                self.buf.reserve(frame_len.saturating_sub(self.buf.len()));
+                self.frame_len = Some(frame_len);
+                frame_len
+            }
+        };
+
+        if self.buf.len() < frame_len {
+            return Ok(None);
+        }
+
+        self.frame_len = None;
+        let bytes = self.buf.split_to(frame_len);
+
+        // Make sure there is room to read the next frame head
+        self.buf
+            .reserve(frame::HEADER_LEN.saturating_sub(self.buf.len()));
+
+        Ok(Some(bytes))
+    }
+}
+
 impl<T> Stream for FramedRead<T>
 where
     T: AsyncRead + Unpin,
@@ -421,9 +531,8 @@ where
         let _e = span.enter();
         loop {
             tracing::trace!("poll");
-            let bytes = match ready!(Pin::new(&mut self.inner).poll_next(cx)) {
-                Some(Ok(bytes)) => bytes,
-                Some(Err(e)) => return Poll::Ready(Some(Err(map_err(e)))),
+            let bytes = match ready!(self.poll_next_frame(cx)) {
+                Some(res) => res?,
                 None => return Poll::Ready(None),
             };
 
@@ -436,15 +545,17 @@ where
     }
 }
 
-fn map_err(err: io::Error) -> Error {
-    if let io::ErrorKind::InvalidData = err.kind() {
-        if let Some(custom) = err.get_ref() {
-            if custom.is::<LengthDelimitedCodecError>() {
-                return Error::library_go_away(Reason::FRAME_SIZE_ERROR);
-            }
-        }
-    }
-    err.into()
+/// Reads from `io` into the spare capacity of `buf`.
+fn poll_read_buf<T: AsyncRead + Unpin>(
+    io: &mut T,
+    cx: &mut Context<'_>,
+    buf: &mut BytesMut,
+) -> Poll<io::Result<usize>> {
+    // `read_buf` is cancel safe, so a new future can be polled on every call
+    // and dropped when it returns `Pending`.
+    let read = io.read_buf(buf);
+    tokio::pin!(read);
+    read.poll(cx)
 }
 
 // ===== impl Continuable =====
