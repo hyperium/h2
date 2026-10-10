@@ -196,10 +196,20 @@ impl fmt::Display for Error {
     }
 }
 
-impl error::Error for Error {}
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self.kind {
+            Kind::Io(ref e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+    use std::io;
+
     use super::Error;
     use crate::Reason;
 
@@ -207,5 +217,15 @@ mod tests {
     fn error_from_reason() {
         let err = Error::from(Reason::HTTP_1_1_REQUIRED);
         assert_eq!(err.reason(), Some(Reason::HTTP_1_1_REQUIRED));
+    }
+
+    #[test]
+    fn io_error_source() {
+        let err = Error::from_io(io::Error::new(io::ErrorKind::BrokenPipe, "hi"));
+        let source = err.source().expect("io error should have source");
+        let io_err = source
+            .downcast_ref::<io::Error>()
+            .expect("should be io error");
+        assert_eq!(io_err.kind(), io::ErrorKind::BrokenPipe);
     }
 }
