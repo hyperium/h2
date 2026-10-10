@@ -1232,6 +1232,86 @@ async fn assert_recv_end_stream_survives_reset(reset_reason: Reason) {
 }
 
 #[tokio::test]
+async fn recv_end_stream_survives_go_away() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        // last_stream_id 0 makes the GOAWAY close stream 1.
+        srv.send_frame(frames::go_away(0).reason(Reason::INTERNAL_ERROR))
+            .await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("handshake");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, mut send_stream) = client.send_request(request, false).unwrap();
+
+        // Process the GOAWAY before polling the response future.
+        let reason = conn
+            .drive(poll_fn(move |cx| send_stream.poll_reset(cx)))
+            .await
+            .unwrap();
+        assert_eq!(reason, Reason::INTERNAL_ERROR);
+
+        let response = response.await.unwrap();
+        assert!(response.body().is_end_stream());
+
+        let mut body = response.into_body();
+        assert!(body.data().await.is_none());
+        assert!(body.trailers().await.unwrap().is_none());
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
+async fn recv_end_stream_survives_eof() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        // Dropping the mock closes the connection.
+    };
+
+    let client = async move {
+        let (mut client, conn) = client::handshake(io).await.expect("handshake");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _send_stream) = client.send_request(request, false).unwrap();
+
+        // Run the connection until it sees EOF.
+        conn.await.unwrap();
+
+        let response = response.await.unwrap();
+        assert!(response.body().is_end_stream());
+
+        let mut body = response.into_body();
+        assert!(body.data().await.is_none());
+        assert!(body.trailers().await.unwrap().is_none());
+    };
+
+    join(srv, client).await;
+}
+
+#[tokio::test]
 async fn rst_while_closing() {
     // Test to reproduce panic in issue #246 --- receipt of a RST_STREAM frame
     // on a stream in the Half Closed (remote) state with a queued EOS causes

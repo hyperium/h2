@@ -693,6 +693,64 @@ async fn sends_reset_no_error_when_req_body_is_dropped() {
 }
 
 #[tokio::test]
+async fn early_response_no_error_resets_do_not_affect_local_limit() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        // Leave each request body open so dropping it after the response
+        // schedules an early-response NO_ERROR reset. Exceed the error limit.
+        for id in [1, 3, 5] {
+            client
+                .send_frame(frames::headers(id).request("POST", "https://example.com/"))
+                .await;
+            client.recv_frame(frames::headers(id).response(200)).await;
+            client.recv_frame(frames::data(id, "ok").eos()).await;
+            client
+                .recv_frame(frames::reset(id).reason(Reason::NO_ERROR))
+                .await;
+        }
+
+        // The connection must still accept and complete another request.
+        client
+            .send_frame(
+                frames::headers(7)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(7).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_local_error_reset_streams(Some(1))
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        for _ in 0..3 {
+            let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(Bytes::from_static(b"ok"), true).unwrap();
+        }
+
+        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn no_error_response_body_delivered_before_rst() {
     // When a server sends a large response body and drops the request
     // body without reading it, NO_ERROR is scheduled. The response DATA
