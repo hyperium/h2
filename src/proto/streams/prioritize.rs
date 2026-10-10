@@ -526,6 +526,9 @@ impl Prioritize {
 
         loop {
             if !dst.has_send_capacity() {
+                if self.buffer_headers_after_data(buffer, store, counts, dst, max_frame_len) {
+                    continue;
+                }
                 return Ok(BufferStatus::CodecFull);
             }
 
@@ -554,6 +557,60 @@ impl Prioritize {
                     return Ok(BufferStatus::Complete);
                 }
             }
+        }
+    }
+
+    /// While the codec holds a chained DATA frame, moves a HEADERS frame at
+    /// the head of the send queue into the same write, behind it.
+    ///
+    /// A unary response is HEADERS, DATA, then trailers; without this, the
+    /// trailers wait for the DATA payload to be flushed and cost a second
+    /// write. Only a HEADERS frame already at the head of the queue is taken,
+    /// so frame order and stream scheduling are unchanged, and no DATA frame
+    /// is ever added while one is in flight.
+    fn buffer_headers_after_data<T, B>(
+        &mut self,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
+        counts: &mut Counts,
+        dst: &mut Codec<T, Prioritized<B>>,
+        max_frame_len: usize,
+    ) -> bool
+    where
+        T: AsyncWrite + Unpin,
+        B: Buf,
+    {
+        if !matches!(self.in_flight_data_frame, InFlightData::DataFrame(_))
+            || !dst.can_buffer_headers_after_data()
+        {
+            return false;
+        }
+        let headers_next = match self.pending_send.pop(store) {
+            Some(mut stream) => {
+                let headers_next = match stream.pending_send.pop_front(buffer) {
+                    Some(frame) => {
+                        let is_headers = matches!(frame, Frame::Headers(_));
+                        stream.pending_send.push_front(buffer, frame);
+                        is_headers
+                    }
+                    None => false,
+                };
+                self.pending_send.push_front(&mut stream);
+                headers_next
+            }
+            None => false,
+        };
+        if !headers_next {
+            return false;
+        }
+        match self.pop_frame(buffer, store, max_frame_len, counts) {
+            Some(Frame::Headers(frame)) => {
+                tracing::trace!(?frame, "writing after in-flight data");
+                dst.buffer_headers_after_data(frame);
+                true
+            }
+            Some(_) => unreachable!("the queue head was checked to be a HEADERS frame"),
+            None => false,
         }
     }
 
