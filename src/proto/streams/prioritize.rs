@@ -54,6 +54,11 @@ pub(super) struct Prioritize {
     /// What `DATA` frame is currently being sent in the codec.
     in_flight_data_frame: InFlightData,
 
+    /// Whether the in-flight `DATA` frame carries all of its buffer. When it
+    /// does not, the unsent suffix is only returned to the stream's queue when
+    /// the frame is reclaimed, so nothing queued behind it may be written yet.
+    in_flight_data_is_whole: bool,
+
     /// The maximum amount of bytes a stream should buffer.
     max_buffer_size: usize,
 }
@@ -100,6 +105,7 @@ impl Prioritize {
             flow,
             last_opened_id: StreamId::ZERO,
             in_flight_data_frame: InFlightData::Nothing,
+            in_flight_data_is_whole: false,
             max_buffer_size: config.local_max_buffer_size,
         }
     }
@@ -544,6 +550,9 @@ impl Prioritize {
                     debug_assert_eq!(self.in_flight_data_frame, InFlightData::Nothing);
                     if let Frame::Data(ref frame) = frame {
                         self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
+                        let payload = &frame.payload().inner;
+                        self.in_flight_data_is_whole =
+                            payload.get_ref().remaining() == payload.remaining();
                     }
                     dst.buffer(frame).expect("invalid frame");
 
@@ -580,7 +589,11 @@ impl Prioritize {
         T: AsyncWrite + Unpin,
         B: Buf,
     {
+        // A frame that carries only part of its buffer leaves the rest to be
+        // queued again on reclaim; HEADERS behind it would end the stream
+        // before that remainder is sent.
         if !matches!(self.in_flight_data_frame, InFlightData::DataFrame(_))
+            || !self.in_flight_data_is_whole
             || !dst.can_buffer_headers_after_data()
         {
             return false;

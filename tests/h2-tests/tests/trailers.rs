@@ -303,3 +303,48 @@ async fn server_sends_large_data_then_trailers_in_order() {
 
     join(client, srv).await;
 }
+
+#[tokio::test]
+async fn server_sends_multi_frame_data_then_trailers_without_truncation() {
+    // A DATA payload larger than the maximum frame size is split across
+    // several frames. Trailers queued behind it must follow the last of them,
+    // never the first.
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+    let body = (0..56_263u32).map(|i| i as u8).collect::<Vec<u8>>();
+    let expected = body.clone();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("POST", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        for chunk in expected.chunks(16_384) {
+            client.recv_frame(frames::data(1, chunk.to_vec())).await;
+        }
+        client
+            .recv_frame(frames::headers(1).field("grpc-status", "0").eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        let mut send = stream.send_response(rsp, false).unwrap();
+        send.reserve_capacity(body.len());
+        send.send_data(body.into(), false).unwrap();
+        let mut trailers = HeaderMap::new();
+        trailers.insert("grpc-status", "0".parse().unwrap());
+        send.send_trailers(trailers).unwrap();
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
