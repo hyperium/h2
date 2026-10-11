@@ -529,9 +529,30 @@ impl Prioritize {
                 return Ok(BufferStatus::CodecFull);
             }
 
-            if let Some(mut stream) = self.pop_pending_open(store, counts) {
-                self.pending_send.push_front(&mut stream);
-                self.try_assign_capacity(&mut stream);
+            // Open at most one pending stream per iteration. Streams cancelled
+            // while waiting in `pending_open` were never sent on the wire —
+            // discard their queued frames without emitting HEADERS or
+            // RST_STREAM (RST on an idle stream is a connection error).
+            // See https://github.com/hyperium/h2/issues/878.
+            match self.pop_pending_open(store, counts) {
+                PendingOpen::Cancelled(mut stream) => {
+                    tracing::trace!(
+                        ?stream.id,
+                        "dropping cancelled pending_open stream before open"
+                    );
+                    self.clear_queue(buffer, &mut stream);
+                    if let Some(reason) = stream.state.get_scheduled_reset() {
+                        stream.set_reset(reason, Initiator::Library);
+                    }
+                    let is_pending_reset = stream.is_pending_reset_expiration();
+                    counts.transition_after(stream, is_pending_reset);
+                    continue;
+                }
+                PendingOpen::Ready(mut stream) => {
+                    self.pending_send.push_front(&mut stream);
+                    self.try_assign_capacity(&mut stream);
+                }
+                PendingOpen::Empty => {}
             }
 
             match self.pop_frame(buffer, store, max_frame_len, counts) {
@@ -904,21 +925,36 @@ impl Prioritize {
         &mut self,
         store: &'s mut Store,
         counts: &mut Counts,
-    ) -> Option<store::Ptr<'s>> {
+    ) -> PendingOpen<'s> {
         tracing::trace!("schedule_pending_open");
         // check for any pending open streams
-        if counts.can_inc_num_send_streams() {
-            if let Some(mut stream) = self.pending_open.pop(store) {
-                tracing::trace!("schedule_pending_open; stream={:?}", stream.id);
-
-                counts.inc_num_send_streams(&mut stream);
-                stream.notify_send();
-                return Some(stream);
-            }
+        if !counts.can_inc_num_send_streams() {
+            return PendingOpen::Empty;
         }
 
-        None
+        let Some(mut stream) = self.pending_open.pop(store) else {
+            return PendingOpen::Empty;
+        };
+        tracing::trace!("schedule_pending_open; stream={:?}", stream.id);
+
+        if stream.state.get_scheduled_reset().is_some() {
+            return PendingOpen::Cancelled(stream);
+        }
+
+        counts.inc_num_send_streams(&mut stream);
+        stream.notify_send();
+        PendingOpen::Ready(stream)
     }
+}
+
+/// Result of trying to open a stream from the `pending_open` queue.
+enum PendingOpen<'a> {
+    /// No stream is ready to open.
+    Empty,
+    /// Stream can be opened and counted toward concurrency.
+    Ready(store::Ptr<'a>),
+    /// Stream was cancelled while queued; caller must discard frames.
+    Cancelled(store::Ptr<'a>),
 }
 
 // ===== impl Prioritized =====
