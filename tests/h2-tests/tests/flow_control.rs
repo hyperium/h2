@@ -715,7 +715,8 @@ async fn padded_data_on_forgotten_stream_releases_connection_capacity() {
         // flow_controlled_len. There used to be a bug where the padded
         // frame would release only 16378 (payload) instead of 16384.
         srv.recv_frame(frames::window_update(0, 16_384 * 2)).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        // and the frame is discarded without a reset
+        srv.ping_pong([2; 8]).await;
     };
 
     let client = async move {
