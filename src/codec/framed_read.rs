@@ -64,12 +64,33 @@ impl<T> FramedRead<T> {
         FramedRead { inner, decoder }
     }
 
+    pub(super) fn with_hpack_buffer_capacity(
+        inner: InnerFramedRead<T, LengthDelimitedCodec>,
+        buffer_capacity: usize,
+    ) -> FramedRead<T> {
+        let decoder = FrameDecoder::with_hpack_buffer_capacity(
+            inner.decoder().max_frame_length(),
+            buffer_capacity,
+        );
+        FramedRead { inner, decoder }
+    }
+
     pub fn get_ref(&self) -> &T {
         self.inner.get_ref()
     }
 
     pub fn get_mut(&mut self) -> &mut T {
         self.inner.get_mut()
+    }
+
+    #[cfg(test)]
+    pub(super) fn read_buffer_capacity(&self) -> usize {
+        self.inner.read_buffer().capacity()
+    }
+
+    #[cfg(test)]
+    pub(super) fn hpack_buffer_capacity(&self) -> usize {
+        self.decoder.hpack.buffer_capacity()
     }
 
     /// Returns the current max frame size setting
@@ -114,9 +135,26 @@ fn calc_max_continuation_frames(header_max: usize, frame_max: usize) -> usize {
 
 impl FrameDecoder {
     fn new(max_frame_size: usize) -> Self {
+        Self::with_hpack_decoder(
+            max_frame_size,
+            hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
+        )
+    }
+
+    fn with_hpack_buffer_capacity(max_frame_size: usize, buffer_capacity: usize) -> Self {
+        Self::with_hpack_decoder(
+            max_frame_size,
+            hpack::Decoder::with_buffer_capacity(
+                DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
+                buffer_capacity,
+            ),
+        )
+    }
+
+    fn with_hpack_decoder(max_frame_size: usize, hpack: hpack::Decoder) -> Self {
         let max_header_list_size = DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE;
         FrameDecoder {
-            hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
+            hpack,
             max_header_list_size,
             max_continuation_frames: calc_max_continuation_frames(
                 max_header_list_size,
