@@ -1721,6 +1721,362 @@ async fn invalid_connect_protocol_enabled_setting() {
     join(srv, h2).await;
 }
 
+/// Three identifiers IANA has assigned that h2 does not implement -- the case
+/// this mechanism exists for. h2 defines no meaning for any of them, and the
+/// point of every test below is that it does not need to.
+const NO_RFC7540_PRIORITIES: u16 = 0x9; // RFC 9218
+const TLS_RENEG_PERMITTED: u16 = 0x10; // MS-HTTP2EXT
+const ENABLE_METADATA: u16 = 0x4d44; // draft-beky-httpbis-metadata
+
+#[tokio::test]
+async fn arbitrary_settings_are_advertised_during_the_handshake() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+
+        // Set in descending order below and written in ascending order here:
+        // the frame's bytes are a function of the values, not of the calls.
+        let mut bytes = BytesMut::new();
+        settings.encode(&mut bytes);
+        assert_eq!(
+            &bytes[..],
+            &[
+                0, 0, 18, // payload length: three settings
+                4,  // SETTINGS
+                0,  // no flags
+                0, 0, 0, 0, // stream 0
+                0, 0x09, 0, 0, 0, 1, //
+                0, 0x10, 0, 0, 0x03, 0xe8, //
+                0x4d, 0x44, 0, 0, 0x27, 0x10, //
+            ][..],
+        );
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .setting(ENABLE_METADATA, 10_000)
+            .setting(TLS_RENEG_PERMITTED, 1_000)
+            .setting(NO_RFC7540_PRIORITIES, 1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn arbitrary_settings_the_server_sent_are_read_back() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(
+                frames::settings()
+                    .setting(NO_RFC7540_PRIORITIES, 1)
+                    .setting(TLS_RENEG_PERMITTED, 1_000)
+                    .setting(ENABLE_METADATA, u32::MAX),
+            )
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // A request only to drive the connection far enough that the server's
+        // SETTINGS have been received and acknowledged. No GOAWAY: there is no
+        // value of an identifier h2 does not define that h2 may reject, and
+        // `u32::MAX` is the proof.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), 200);
+
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+        assert_eq!(settings.get(NO_RFC7540_PRIORITIES), Some(1));
+        assert_eq!(settings.get(TLS_RENEG_PERMITTED), Some(1_000));
+        assert_eq!(settings.get(ENABLE_METADATA), Some(u32::MAX));
+        // And one the server said nothing about stays unanswered, rather than
+        // reading as a zero the server never granted.
+        assert_eq!(settings.get(0x4d45), None);
+
+        // The same three, without having to know their identifiers first.
+        assert_eq!(
+            settings.iter().collect::<Vec<_>>(),
+            vec![
+                (NO_RFC7540_PRIORITIES, 1),
+                (TLS_RENEG_PERMITTED, 1_000),
+                (ENABLE_METADATA, u32::MAX)
+            ],
+        );
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn an_identifier_the_server_sent_no_value_for_is_absent() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        // The server's SETTINGS carried none of these, and absence here can
+        // only mean that: a snapshot cannot be taken before the frame lands.
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+        assert_eq!(settings.get(NO_RFC7540_PRIORITIES), None);
+        assert!(settings.is_empty());
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn the_last_value_of_a_repeated_identifier_is_the_one_read_back() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    // RFC 9113 6.5.3. Written as bytes because the frame type this crate
+    // encodes with cannot hold one identifier twice, which is the point --
+    // only a peer can send such a frame.
+    let srv = async move {
+        srv.send_bytes(&[
+            0, 0, 12, // payload length: two settings
+            4,  // SETTINGS
+            0,  // no flags
+            0, 0, 0, 0, // stream 0
+            0, 0x09, 0, 0, 0, 1, //
+            0, 0x09, 0, 0, 0, 2, //
+        ])
+        .await;
+        srv.read_preface().await.unwrap();
+
+        let settings = assert_settings!(srv.next().await.expect("unexpected EOF").unwrap());
+        assert_default_settings!(settings);
+        srv.send(frame::Settings::ack().into()).await.unwrap();
+        assert!(assert_settings!(srv.next().await.unwrap().unwrap()).is_ack());
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+        assert_eq!(settings.get(NO_RFC7540_PRIORITIES), Some(2));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn a_later_settings_frame_replaces_only_what_it_carries() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(
+                frames::settings()
+                    .setting(NO_RFC7540_PRIORITIES, 1)
+                    .setting(TLS_RENEG_PERMITTED, 1_000),
+            )
+            .await;
+        assert_default_settings!(settings);
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::settings().setting(TLS_RENEG_PERMITTED, 2_000))
+            .await;
+        srv.recv_frame(frames::settings_ack()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(async {
+            let _ = response.await;
+        })
+        .await;
+
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+        assert_eq!(settings.get(NO_RFC7540_PRIORITIES), Some(1), "untouched");
+        assert_eq!(settings.get(TLS_RENEG_PERMITTED), Some(2_000), "replaced");
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn an_identifier_h2_defines_is_set_and_read_in_its_own_field() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    // `0x4` is `SETTINGS_INITIAL_WINDOW_SIZE`, which h2 defines. Set through
+    // both doors it is still one setting: the frame carries it once, with the
+    // value set last, and both doors read that value back.
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(frames::settings().initial_window_size(4_000))
+            .await;
+
+        let mut bytes = BytesMut::new();
+        settings.encode(&mut bytes);
+        assert_eq!(
+            &bytes[..],
+            &[
+                0, 0, 6, // payload length: one setting
+                4, // SETTINGS
+                0, // no flags
+                0, 0, 0, 0, // stream 0
+                0, 4, 0, 0, 0x07, 0xd0, // INITIAL_WINDOW_SIZE = 2_000
+            ][..],
+        );
+        assert_eq!(settings.get(4), Some(2_000));
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .initial_window_size(1_000)
+            .setting(4, 2_000)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        h2.drive(response).await.unwrap();
+
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+        assert_eq!(settings.get(4), Some(4_000));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn peer_settings_resolve_without_a_request_being_sent() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv
+            .assert_client_handshake_with_settings(
+                frames::settings().setting(NO_RFC7540_PRIORITIES, 1),
+            )
+            .await;
+        assert_default_settings!(settings);
+        srv.recv_eof().await;
+    };
+
+    let h2 = async move {
+        let (client, mut h2) = client::handshake(io).await.unwrap();
+
+        // Nothing is sent on this connection and nothing needs to be. The
+        // peer's SETTINGS is the first frame it sends, so waiting for it is
+        // the whole of finding out what the peer said.
+        let settings = h2.drive(client.peer_settings()).await.unwrap();
+
+        assert_eq!(settings.get(NO_RFC7540_PRIORITIES), Some(1));
+    };
+
+    join(srv, h2).await;
+}
+
+#[tokio::test]
+async fn peer_settings_end_in_an_error_if_the_connection_does() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        srv.read_preface().await.unwrap();
+        let settings = assert_settings!(srv.next().await.expect("unexpected EOF").unwrap());
+        assert_default_settings!(settings);
+        // And then nothing. A waiter parked on settings that will never
+        // arrive must not be left parked.
+    };
+
+    let h2 = async move {
+        let (client, mut h2) = client::handshake(io).await.unwrap();
+
+        let err = h2.drive(client.peer_settings()).await.unwrap_err();
+        assert!(err.is_io(), "{err:?}");
+    };
+
+    join(srv, h2).await;
+}
+
 #[tokio::test]
 async fn extended_connect_request() {
     h2_support::trace_init!();

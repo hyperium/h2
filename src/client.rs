@@ -139,7 +139,7 @@ use crate::codec::{Codec, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
-use crate::{FlowControl, PingPong, RecvStream, SendStream};
+use crate::{FlowControl, PeerSettings, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
 use http::{uri, HeaderMap, Method, Request, Response, Version};
@@ -540,6 +540,42 @@ where
             })
     }
 
+    /// Polls for the `SETTINGS` parameters the server peer sent.
+    ///
+    /// A client is permitted to send requests without waiting for the peer's
+    /// `SETTINGS` ([RFC 9113 Section 3.4][1]), so a fresh connection has not
+    /// seen them. This returns `Pending` until that frame has been received
+    /// and acknowledged, and errors if the connection ends first.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc9113#section-3.4
+    pub fn poll_peer_settings(&self, cx: &Context) -> Poll<Result<PeerSettings, crate::Error>> {
+        self.inner.poll_peer_settings(cx)
+    }
+
+    /// Waits for the `SETTINGS` parameters the server peer sent.
+    ///
+    /// The `async` form of [`poll_peer_settings`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use bytes::Bytes;
+    /// # use h2::client::SendRequest;
+    /// # async fn doc(client: SendRequest<Bytes>) -> Result<(), h2::Error> {
+    /// let settings = client.peer_settings().await?;
+    ///
+    /// if settings.get(0x4d44) == Some(1) {
+    ///     // the peer advertised whatever 0x4d44 means to your extension
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`poll_peer_settings`]: SendRequest::poll_peer_settings
+    pub async fn peer_settings(&self) -> Result<PeerSettings, crate::Error> {
+        crate::poll_fn(|cx| self.poll_peer_settings(cx)).await
+    }
+
     /// Returns whether the [extended CONNECT protocol][1] is enabled or not.
     ///
     /// This setting is configured by the server peer by sending the
@@ -704,6 +740,63 @@ impl Builder {
     /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
+        self
+    }
+
+    /// Sets the `SETTINGS` parameter `id` to `value`.
+    ///
+    /// [RFC 9113 Section 5.5][1] permits an extension to define new settings
+    /// and makes using one safe without prior arrangement: implementations
+    /// "MUST ignore unknown or unsupported values in all extensible protocol
+    /// elements". So an identifier h2 knows nothing about is sent unexamined,
+    /// and is safe to send to a peer that knows nothing about it either.
+    /// Identifiers are allocated in the IANA ["HTTP/2 Settings" registry][reg];
+    /// h2 carries the number and does not define what it means.
+    ///
+    /// An identifier h2 does define is routed to the setting it names and
+    /// checked the same way, so `setting(4, n)` is another spelling of
+    /// [`initial_window_size`](Builder::initial_window_size) rather than a
+    /// second copy of it, and one identifier can never be sent twice in one
+    /// frame. What the peer sent is read with [`SendRequest::peer_settings`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // An extension names its own identifiers; h2 only carries them.
+    /// const ENABLE_METADATA: u16 = 0x4d44;
+    ///
+    /// let client_fut = Builder::new()
+    ///     .setting(ENABLE_METADATA, 1)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on a value the method named for that setting would panic on:
+    /// `MAX_FRAME_SIZE` (`5`) outside the range
+    /// [`Builder::max_frame_size`] accepts.
+    ///
+    /// Panics if twelve identifiers h2 does not itself define are already set
+    /// and this is not one of them, since a setting a caller asked for must not
+    /// be quietly left unsent. The twelve are what a `SETTINGS` frame has to
+    /// give here once room is reserved for every identifier h2 defines, so
+    /// those can never panic.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc9113#section-5.5
+    /// [reg]: https://www.iana.org/assignments/http2-parameters/http2-parameters.xhtml
+    /// [`SendRequest::peer_settings`]: SendRequest::peer_settings
+    pub fn setting(&mut self, id: u16, value: u32) -> &mut Self {
+        self.settings.set(id, Some(value));
         self
     }
 

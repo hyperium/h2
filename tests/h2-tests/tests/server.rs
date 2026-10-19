@@ -1713,6 +1713,113 @@ async fn extended_connect_protocol_enabled_during_handshake() {
 }
 
 #[tokio::test]
+async fn arbitrary_settings_are_advertised_during_handshake() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    // The identifiers are the ones draft-ietf-webtrans-http2 registers, used
+    // here as plausible extension codepoints: h2 defines no meaning for them,
+    // and nothing below needs it to.
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        // Set in descending order below and written in ascending order here:
+        // the frame's bytes are a function of the values, not of the calls.
+        let mut bytes = BytesMut::new();
+        settings.encode(&mut bytes);
+        assert_eq!(
+            &bytes[..],
+            &[
+                0, 0, 18, // payload length: three settings
+                4,  // SETTINGS
+                0,  // no flags
+                0, 0, 0, 0, // stream 0
+                0, 0x09, 0, 0, 0, 1, //
+                0, 0x10, 0, 0, 0x03, 0xe8, //
+                0x4d, 0x44, 0, 0, 0x27, 0x10, //
+            ][..],
+        );
+    };
+
+    let srv = async move {
+        let mut builder = server::Builder::new();
+        builder.setting(0x4d44, 10_000);
+        builder.setting(0x10, 1_000);
+        builder.setting(0x9, 1);
+
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn arbitrary_settings_the_client_sent_are_read_back() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(
+                frames::settings()
+                    .setting(0x9, 1)
+                    .setting(0x10, 1_000)
+                    .setting(0x4d44, u32::MAX),
+            )
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+
+        // No check that the settings have arrived: `handshake` does not
+        // resolve until they have, which 3.4 makes part of the preface.
+        // A client's SETTINGS is the first frame of a connection, so by the
+        // time this server has a request to answer it has the client's values.
+        // No GOAWAY: there is no value of an identifier h2 does not define
+        // that h2 may reject, and `u32::MAX` is the proof.
+        let (_req, mut respond) = srv.next().await.unwrap().expect("request");
+        respond
+            .send_response(Response::new(()), true)
+            .expect("respond");
+
+        let settings = srv.peer_settings();
+        assert_eq!(settings.get(0x9), Some(1));
+        assert_eq!(settings.get(0x10), Some(1_000));
+        assert_eq!(settings.get(0x4d44), Some(u32::MAX));
+        assert_eq!(settings.get(0x4d45), None);
+
+        // The same three, without having to know their identifiers first.
+        assert_eq!(
+            settings.iter().collect::<Vec<_>>(),
+            vec![(0x9, 1), (0x10, 1_000), (0x4d44, u32::MAX)],
+        );
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn reject_pseudo_protocol_on_non_connect_request() {
     h2_support::trace_init!();
 
@@ -1993,4 +2100,35 @@ async fn remote_reset_does_not_panic_connection_driver() {
         .await
         .expect("server task timed out")
         .expect("server task panicked");
+}
+
+/// 3.4: the preface "MUST be followed by a SETTINGS frame", and an invalid
+/// connection preface is a `PROTOCOL_ERROR`. A request that arrives instead is
+/// not a connection with no settings; it is not a connection.
+#[tokio::test]
+async fn a_frame_before_the_client_settings_is_a_protocol_error() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client.write_preface().await;
+        let _ = client.next().await; // the server's own SETTINGS
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let srv = async move {
+        // The handshake itself refuses it: 3.4 makes the client's SETTINGS
+        // part of the preface, so this never becomes a connection.
+        let err = server::handshake(io).await.expect_err("no connection");
+        assert_eq!(err.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(client, srv).await;
 }

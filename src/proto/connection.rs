@@ -194,6 +194,15 @@ where
         self.inner.settings.send_settings(settings)
     }
 
+    /// Whether the peer's opening SETTINGS frame has been applied.
+    pub(crate) fn has_received_remote_initial_settings(&self) -> bool {
+        self.inner.settings.has_received_remote_initial_settings()
+    }
+
+    pub(crate) fn peer_settings(&self) -> Option<crate::PeerSettings> {
+        self.inner.streams.peer_settings()
+    }
+
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by this peer.
     pub(crate) fn max_send_streams(&self) -> usize {
@@ -384,11 +393,22 @@ where
             }
             ready!(self.poll_ready(cx))?;
 
-            match self
-                .inner
-                .as_dyn()
-                .recv_frame(ready!(Pin::new(&mut self.codec).poll_next(cx)?))?
+            let frame = ready!(Pin::new(&mut self.codec).poll_next(cx)?);
+
+            // RFC 9113 3.4: a client's preface "MUST be followed by a SETTINGS
+            // frame", a server's "MUST be the first frame the server sends",
+            // and "Clients and servers MUST treat an invalid connection
+            // preface as a connection error ... of type PROTOCOL_ERROR". So
+            // nothing may precede it, and a peer that sends something anyway
+            // is told so rather than quietly having no settings to report.
+            if !self.inner.settings.has_received_remote_initial_settings()
+                && !matches!(frame, None | Some(Frame::Settings(_)))
             {
+                proto_err!(conn: "frame before the peer's SETTINGS; frame={:?}", frame);
+                return Poll::Ready(Err(Error::library_go_away(Reason::PROTOCOL_ERROR)));
+            }
+
+            match self.inner.as_dyn().recv_frame(frame)? {
                 ReceivedFrame::Settings(frame) => {
                     self.inner.settings.recv_settings(
                         frame,
@@ -559,6 +579,7 @@ where
 
     fn recv_frame(&mut self, frame: Option<Frame>) -> Result<ReceivedFrame, Error> {
         use crate::frame::Frame::*;
+
         match frame {
             Some(Headers(frame)) => {
                 tracing::trace!(?frame, "recv HEADERS");

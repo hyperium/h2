@@ -390,6 +390,11 @@ impl Mock<frame::Settings> {
         self
     }
 
+    pub fn setting(mut self, id: u16, val: u32) -> Self {
+        self.0.set(id, Some(val));
+        self
+    }
+
     pub fn header_table_size(mut self, val: u32) -> Self {
         self.0.set_header_table_size(Some(val));
         self

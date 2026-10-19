@@ -101,6 +101,26 @@ struct Actions {
     /// Task that calls `poll_complete`.
     task: Option<Waker>,
 
+    /// Whoever is waiting for the peer's opening SETTINGS to arrive.
+    peer_settings_task: Option<Waker>,
+
+    /// Set when the half of `Streams` the connection task holds goes away
+    /// without an EOF, so that a waiter is not left parked on settings that
+    /// can no longer arrive.
+    connection_gone: bool,
+
+    /// Every SETTINGS value the peer has sent, with the last value for an
+    /// identifier winning, or `None` until its opening frame has been applied.
+    ///
+    /// `None` rather than an empty frame, so that "the peer has not spoken
+    /// yet" and "the peer sent nothing" cannot be confused: every value read
+    /// out of an absent frame would be a default rather than an answer.
+    ///
+    /// Held because a setting outlives the frame that carried it, and because
+    /// this is the only part of the connection a `SendRequest` can reach. The
+    /// frame is a fixed size, so what a peer sends cannot grow it.
+    peer_settings: Option<frame::Settings>,
+
     /// If the connection errors, a copy is kept for any StreamRefs.
     conn_error: Option<proto::Error>,
 }
@@ -245,6 +265,12 @@ where
         let send_buffer = &mut *send_buffer;
 
         me.counts.apply_remote_settings(frame, is_initial);
+        if is_initial {
+            me.actions.peer_settings = Some(frame.clone());
+            me.actions.wake_peer_settings();
+        } else if let Some(held) = &mut me.actions.peer_settings {
+            held.merge(frame);
+        }
 
         me.actions.send.apply_remote_settings(
             frame,
@@ -359,6 +385,46 @@ where
         ))
     }
 
+    /// Resolves once the peer's opening SETTINGS frame has been applied.
+    ///
+    /// Every value `peer_setting` reports reads as absent until then, so this
+    /// is the point at which those answers become the peer's rather than
+    /// nothing at all. An HTTP/2 peer must send SETTINGS as its first frame,
+    /// so the wait is bounded by the connection: it ends in an error if the
+    /// connection ends first.
+    pub(crate) fn poll_peer_settings(
+        &self,
+        cx: &Context,
+    ) -> Poll<Result<crate::PeerSettings, crate::Error>> {
+        let mut me = self.inner.lock().unwrap();
+        let me = &mut *me;
+
+        if let Some(settings) = &me.actions.peer_settings {
+            return Poll::Ready(Ok(crate::PeerSettings::new(settings.clone())));
+        }
+        me.actions.ensure_no_conn_error()?;
+        if me.actions.connection_gone {
+            return Poll::Ready(Err(proto::Error::from(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "connection closed before the peer's SETTINGS arrived",
+            ))
+            .into()));
+        }
+        me.actions.peer_settings_task = Some(cx.waker().clone());
+        Poll::Pending
+    }
+
+    /// Every setting the peer has sent, copied out from under the lock.
+    pub(crate) fn peer_settings(&self) -> Option<crate::PeerSettings> {
+        self.inner
+            .lock()
+            .unwrap()
+            .actions
+            .peer_settings
+            .clone()
+            .map(crate::PeerSettings::new)
+    }
+
     pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
         self.inner
             .lock()
@@ -460,6 +526,9 @@ impl Inner {
                 recv: Recv::new(peer, &config),
                 send: Send::new(&config),
                 task: None,
+                peer_settings_task: None,
+                connection_gone: false,
+                peer_settings: None,
                 conn_error: None,
             },
             store: Store::new(),
@@ -795,6 +864,7 @@ impl Inner {
         });
 
         actions.conn_error = Some(err);
+        actions.wake_peer_settings();
 
         last_processed_id
     }
@@ -826,6 +896,7 @@ impl Inner {
         });
 
         actions.conn_error = Some(err);
+        actions.wake_peer_settings();
 
         Ok(())
     }
@@ -953,6 +1024,8 @@ impl Inner {
                 .into(),
             );
         }
+
+        actions.wake_peer_settings();
 
         tracing::trace!("Streams::recv_eof");
 
@@ -1182,6 +1255,8 @@ where
                 if let Some(task) = inner.actions.task.take() {
                     task.wake();
                 }
+                inner.actions.connection_gone = true;
+                inner.actions.wake_peer_settings();
             }
         }
     }
@@ -1830,6 +1905,17 @@ impl Actions {
             self.send.ensure_not_idle(id)
         } else {
             self.recv.ensure_not_idle(id)
+        }
+    }
+
+    /// Wake whoever is waiting on the peer's opening SETTINGS.
+    ///
+    /// Called both when they arrive and when the connection ends without
+    /// them, because a waiter parked on settings that will never come never
+    /// wakes.
+    fn wake_peer_settings(&mut self) {
+        if let Some(task) = self.peer_settings_task.take() {
+            task.wake();
         }
     }
 

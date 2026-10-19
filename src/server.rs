@@ -118,7 +118,7 @@
 use crate::codec::{Codec, UserError};
 use crate::frame::{self, Pseudo, PushPromiseHeaderError, Reason, Settings, StreamId};
 use crate::proto::{self, Config, Error, Prioritized};
-use crate::{FlowControl, PingPong, RecvStream, SendStream};
+use crate::{FlowControl, PeerSettings, PingPong, RecvStream, SendStream};
 
 use bytes::{Buf, Bytes};
 use http::{HeaderMap, Method, Request, Response};
@@ -314,9 +314,16 @@ impl<B: Buf + fmt::Debug> fmt::Debug for SendPushedResponse<B> {
 enum Handshaking<T, B: Buf> {
     /// State 1. Connection is flushing pending SETTINGS frame.
     Flushing(Instrumented<Flush<T, Prioritized<B>>>),
-    /// State 2. Connection is waiting for the client preface.
+    /// State 2. Connection is waiting for the twenty-four byte client preface.
     ReadingPreface(Instrumented<ReadPreface<T, Prioritized<B>>>),
-    /// State 3. Handshake is done, polling again would panic.
+    /// State 3. Connection is waiting for the `SETTINGS` frame that RFC 9113
+    /// 3.4 makes the rest of that preface.
+    ///
+    /// Boxed: a `Connection` is the largest thing here by some way, and one
+    /// allocation per handshake is cheaper than carrying its width in every
+    /// state.
+    ReadingSettings(Box<Connection<T, B>>),
+    /// State 4. Handshake is done, polling again would panic.
     Done,
 }
 
@@ -501,6 +508,39 @@ where
     pub fn enable_connect_protocol(&mut self) -> Result<(), crate::Error> {
         self.connection.set_enable_connect_protocol()?;
         Ok(())
+    }
+
+    /// The `SETTINGS` parameters the client peer sent.
+    ///
+    /// No wait, unlike the client side, and nothing optional about it: RFC
+    /// 9113 3.4 makes the client's `SETTINGS` part of the connection preface,
+    /// so [`handshake`] does not yield a connection until it has arrived. A
+    /// peer that sends any other frame first has sent an invalid preface,
+    /// which is a `PROTOCOL_ERROR` and no connection at all.
+    ///
+    /// A peer that sends an *empty* `SETTINGS`, which 3.4 permits, is reported
+    /// as such: see [`PeerSettings::is_empty`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use bytes::Buf;
+    /// # fn doc<T, B: Buf>(conn: &h2::server::Connection<T, B>)
+    /// # where T: AsyncRead + AsyncWrite + Unpin
+    /// # {
+    /// // The client's opening SETTINGS have been applied by the time a
+    /// // connection exists at all, so there is nothing here to be absent.
+    /// for (id, value) in conn.peer_settings().iter() {
+    ///     println!("{id:#06x} = {value}");
+    /// }
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    pub fn peer_settings(&self) -> PeerSettings {
+        self.connection
+            .peer_settings()
+            .expect("the handshake does not complete without the client's SETTINGS")
     }
 
     /// Returns `Ready` when the underlying connection has closed.
@@ -697,6 +737,63 @@ impl Builder {
     /// ```
     pub fn initial_window_size(&mut self, size: u32) -> &mut Self {
         self.settings.set_initial_window_size(Some(size));
+        self
+    }
+
+    /// Sets the `SETTINGS` parameter `id` to `value`.
+    ///
+    /// [RFC 9113 Section 5.5][1] permits an extension to define new settings
+    /// and makes using one safe without prior arrangement: implementations
+    /// "MUST ignore unknown or unsupported values in all extensible protocol
+    /// elements". So an identifier h2 knows nothing about is sent unexamined,
+    /// and is safe to send to a peer that knows nothing about it either.
+    /// Identifiers are allocated in the IANA ["HTTP/2 Settings" registry][reg];
+    /// h2 carries the number and does not define what it means.
+    ///
+    /// An identifier h2 does define is routed to the setting it names and
+    /// checked the same way, so `setting(4, n)` is another spelling of
+    /// [`initial_window_size`](Builder::initial_window_size) rather than a
+    /// second copy of it, and one identifier can never be sent twice in one
+    /// frame. What the peer sent is read with
+    /// [`Connection::peer_settings`](Connection::peer_settings).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::server::*;
+    /// #
+    /// # fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Handshake<T>
+    /// # {
+    /// // An extension names its own identifiers; h2 only carries them.
+    /// const ENABLE_METADATA: u16 = 0x4d44;
+    ///
+    /// let server_fut = Builder::new()
+    ///     .setting(ENABLE_METADATA, 1)
+    ///     .handshake(my_io);
+    /// # server_fut
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on a value the method named for that setting would panic on:
+    /// `MAX_FRAME_SIZE` (`5`) outside the range
+    /// [`Builder::max_frame_size`] accepts.
+    ///
+    /// Panics if twelve identifiers h2 does not itself define are already set
+    /// and this is not one of them, since a setting a caller asked for must not
+    /// be quietly left unsent. The twelve are what a `SETTINGS` frame has to
+    /// give here once room is reserved for every identifier h2 defines, so
+    /// those can never panic.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc9113#section-5.5
+    /// [reg]: https://www.iana.org/assignments/http2-parameters/http2-parameters.xhtml
+    pub fn setting(&mut self, id: u16, value: u32) -> &mut Self {
+        self.settings.set(id, Some(value));
         self
     }
 
@@ -1538,18 +1635,61 @@ where
                         },
                     );
 
-                    tracing::trace!("connection established!");
                     let mut c = Connection { connection };
                     if let Some(sz) = self.builder.initial_target_connection_window_size {
                         c.set_target_window_size(sz);
                     }
 
-                    return Poll::Ready(Ok(c));
+                    self.state = Handshaking::ReadingSettings(Box::new(c));
+                }
+                Handshaking::ReadingSettings(c) => {
+                    // RFC 9113 3.4: the twenty-four octets "MUST be followed
+                    // by a SETTINGS frame", so the preface is not complete
+                    // until that frame has been applied, and a connection
+                    // handed over before then would report its peer's
+                    // parameters as absent rather than as what they are.
+                    //
+                    // No timeout: 3.4 specifies none, and this crate cannot
+                    // impose one. It reads a clock -- reset-stream expiry
+                    // compares `Instant::now()` -- but only where something
+                    // else already polls it. A peer that sends the preface and
+                    // stops produces no events, so a deadline here would need a
+                    // timer to wake at, and this crate has none. Bounding the
+                    // wait is the caller's, and a caller that does not bound it
+                    // holds the connection for as long as the peer stays silent.
+                    if !c.connection.has_received_remote_initial_settings() {
+                        match c.poll_closed(cx) {
+                            Poll::Ready(Ok(())) => {
+                                self.state = Handshaking::Done;
+                                return Poll::Ready(Err(crate::Error::from_io(io::Error::new(
+                                    io::ErrorKind::UnexpectedEof,
+                                    "closed before the client's SETTINGS",
+                                ))));
+                            }
+                            Poll::Ready(Err(e)) => {
+                                self.state = Handshaking::Done;
+                                return Poll::Ready(Err(e));
+                            }
+                            Poll::Pending => {
+                                if !c.connection.has_received_remote_initial_settings() {
+                                    return Poll::Pending;
+                                }
+                            }
+                        }
+                    }
+
+                    tracing::trace!("connection established!");
+                    break;
                 }
                 Handshaking::Done => {
                     panic!("Handshaking::poll() called again after handshaking was complete")
                 }
             }
+        }
+
+        match std::mem::replace(&mut self.state, Handshaking::Done) {
+            Handshaking::ReadingSettings(c) => Poll::Ready(Ok(*c)),
+            _ => unreachable!("only ReadingSettings breaks the loop"),
         }
     }
 }
@@ -1782,6 +1922,7 @@ where
         match *self {
             Handshaking::Flushing(_) => f.write_str("Flushing(_)"),
             Handshaking::ReadingPreface(_) => f.write_str("ReadingPreface(_)"),
+            Handshaking::ReadingSettings(_) => f.write_str("ReadingSettings(_)"),
             Handshaking::Done => f.write_str("Done"),
         }
     }

@@ -59,6 +59,7 @@ pub use self::priority::{Priority, StreamDependency};
 pub use self::reason::Reason;
 pub use self::reset::Reset;
 pub use self::settings::Settings;
+pub(crate) use self::settings::MAX_SETTINGS;
 pub use self::stream_id::{StreamId, StreamIdOverflow};
 pub use self::window_update::WindowUpdate;
 

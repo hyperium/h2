@@ -136,7 +136,10 @@ mod share;
 pub mod fuzz_bridge;
 
 pub use crate::error::{Error, Reason};
-pub use crate::share::{FlowControl, Ping, PingPong, Pong, RecvStream, SendStream, StreamId};
+pub use crate::share::{
+    FlowControl, PeerSettings, Ping, PingPong, Pong, RecvStream, SendStream, StreamId,
+    MAX_PEER_SETTINGS,
+};
 
 #[cfg(feature = "unstable")]
 pub use codec::{Codec, SendError, UserError};

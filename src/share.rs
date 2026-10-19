@@ -1,5 +1,5 @@
 use crate::codec::UserError;
-use crate::frame::Reason;
+use crate::frame::{self, Reason};
 use crate::proto::{self, WindowSize};
 
 use bytes::{Buf, Bytes};
@@ -196,6 +196,25 @@ pub struct FlowControl {
     inner: proto::OpaqueStreamRef,
 }
 
+/// The `SETTINGS` parameters a peer has sent.
+///
+/// Taken from [`client::SendRequest::peer_settings`] or
+/// [`server::Connection::peer_settings`]. A snapshot can only be taken once
+/// the peer's opening `SETTINGS` frame has been applied, so an identifier
+/// absent from one is an identifier the peer sent no value for, and not one
+/// whose frame has yet to arrive.
+///
+/// Identifiers this crate defines are included, as the peer sent them rather
+/// than as this crate went on to act on them. A repeated identifier appears
+/// once, with the last value received, as [RFC 9113 Section 6.5.3][1]
+/// requires.
+///
+/// [`client::SendRequest::peer_settings`]: crate::client::SendRequest::peer_settings
+/// [`server::Connection::peer_settings`]: crate::server::Connection::peer_settings
+/// [1]: https://datatracker.ietf.org/doc/html/rfc9113#section-6.5.3
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PeerSettings(frame::Settings);
+
 /// A handle to send and receive PING frames with the peer.
 // NOT Clone on purpose
 pub struct PingPong {
@@ -383,6 +402,56 @@ impl<B: Buf> SendStream<B> {
 }
 
 // ===== impl StreamId =====
+
+/// How many of a peer's `SETTINGS` parameters are retained.
+///
+/// The numerically lowest are kept, so every identifier this crate defines is
+/// always among them; what a peer can cost itself is the visibility of its
+/// higher ones. A caller mirroring a [`PeerSettings`] into storage of its own
+/// needs this to size it.
+pub const MAX_PEER_SETTINGS: usize = frame::MAX_SETTINGS;
+
+impl PeerSettings {
+    pub(crate) fn new(settings: frame::Settings) -> Self {
+        PeerSettings(settings)
+    }
+
+    /// The value the peer sent for the `SETTINGS` identifier `id`, or `None`
+    /// if it sent none.
+    pub fn get(&self, id: u16) -> Option<u32> {
+        self.0.get(id)
+    }
+
+    /// Every parameter the peer sent, ascending by identifier, which is not
+    /// the order the peer sent them in.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, u32)> + '_ {
+        self.0.entries()
+    }
+
+    /// Whether the peer advertised the [extended CONNECT protocol][1].
+    ///
+    /// `SETTINGS_ENABLE_CONNECT_PROTOCOL`, whose initial value RFC 8441 gives
+    /// as `0`, so a peer that sent no value for it has not advertised it.
+    ///
+    /// Unlike [`client::SendRequest::is_extended_connect_protocol_enabled`],
+    /// this cannot be asked too early: a snapshot exists only once the peer's
+    /// opening frame has been applied, so `false` here is the peer's answer
+    /// and not the absence of one.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    /// [`client::SendRequest::is_extended_connect_protocol_enabled`]: crate::client::SendRequest::is_extended_connect_protocol_enabled
+    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
+        self.0
+            .is_extended_connect_protocol_enabled()
+            .unwrap_or(false)
+    }
+
+    /// Whether the peer sent no parameters at all, which an empty `SETTINGS`
+    /// frame is entitled to do.
+    pub fn is_empty(&self) -> bool {
+        self.0.entries().next().is_none()
+    }
+}
 
 impl StreamId {
     pub(crate) fn from_internal(id: crate::frame::StreamId) -> Self {
