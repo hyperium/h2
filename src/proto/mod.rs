@@ -13,6 +13,9 @@ pub(crate) use self::ping_pong::UserPings;
 pub(crate) use self::streams::{DynStreams, OpaqueStreamRef, StreamRef, Streams};
 pub(crate) use self::streams::{Open, PollReset, Prioritized};
 
+#[cfg(feature = "internal")]
+pub(crate) use self::streams::FlowControl;
+
 use crate::codec::Codec;
 
 use self::go_away::GoAway;

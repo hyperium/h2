@@ -3072,3 +3072,44 @@ async fn poll_capacity_window_update_settings_race() {
 
     join(srv, h2).await;
 }
+
+#[tokio::test]
+async fn send_data_resumes_after_connection_window_decreased_from_outside() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        let held = tokio::time::timeout(Duration::from_millis(100), client.next()).await;
+        assert!(held.is_err(), "data frame sent before WINDOW_UPDATE");
+        client.send_frame(frames::window_update(0, 100)).await;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            client.recv_frame(frames::data(1, vec![0; 10]).eos()),
+        )
+        .await
+        .expect("data frame stalled");
+    };
+
+    let srv = async move {
+        let mut conn = server::handshake(io).await.unwrap();
+        let (_req, mut respond) = conn.next().await.unwrap().unwrap();
+        let mut body = respond.send_response(Response::new(()), false).unwrap();
+        body.send_data(vec![0; 10].into(), true).unwrap();
+        // Shrink the connection window below the 10 bytes the stream
+        // already holds, so `pop_frame` must wait for a WINDOW_UPDATE.
+        conn.with_flow_control(|flow| flow.dec_send_window(65_535 - 5).unwrap());
+        assert!(conn.next().await.is_none());
+    };
+
+    join(srv, client).await;
+}
