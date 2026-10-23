@@ -612,6 +612,11 @@ impl Recv {
                             .recv_flow
                             .dec_recv_window(dec)
                             .map_err(proto::Error::library_go_away)?;
+
+                        if stream.recv_flow.unclaimed_capacity().is_some() {
+                            self.pending_window_updates.push(&mut stream);
+                        }
+
                         Ok::<_, proto::Error>(())
                     })?;
                 }
@@ -1318,6 +1323,180 @@ mod tests {
         assert!(stream.pending_recv.is_empty());
         assert_eq!(stream.in_flight_recv_data, 0);
         assert_eq!(recv.in_flight_data, 0);
+    }
+
+    fn test_config() -> Config {
+        Config {
+            initial_max_send_streams: 100,
+            local_max_buffer_size: 1024,
+            local_next_stream_id: StreamId::from(2),
+            local_push_enabled: false,
+            extended_connect_protocol_enabled: false,
+            local_reset_duration: Duration::from_secs(30),
+            local_reset_max: 100,
+            remote_reset_max: 100,
+            remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            remote_max_initiated: Some(100),
+            local_max_error_reset_streams: None,
+            data_frame_budget: DataFrameBudget::Configured(DEFAULT_DATA_FRAME_BUDGET),
+        }
+    }
+
+    #[test]
+    fn apply_local_settings_shrink_queues_released_capacity() {
+        let config = test_config();
+        let mut recv = Recv::new(peer::Dyn::Server, &config);
+        let mut store = Store::new();
+        let id = StreamId::from(1);
+
+        {
+            let mut stream = store.insert(
+                id,
+                Stream::new(id, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_INITIAL_WINDOW_SIZE),
+            );
+            stream
+                .recv_flow
+                .send_data(DEFAULT_INITIAL_WINDOW_SIZE)
+                .unwrap();
+            stream.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
+        }
+        recv.flow.send_data(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
+        recv.in_flight_data = DEFAULT_INITIAL_WINDOW_SIZE;
+
+        let mut task = None;
+        for bytes in [16_384, 16_384, 16_384, 16_383] {
+            {
+                let mut stream = store.find_mut(&id).unwrap();
+                recv.release_capacity(bytes, &mut stream, &mut task)
+                    .unwrap();
+            }
+            if let Some(mut stream) = recv.pending_window_updates.pop(&mut store) {
+                let amount = stream.recv_flow.unclaimed_capacity().unwrap();
+                stream.recv_flow.inc_window(amount).unwrap();
+            }
+        }
+
+        {
+            let stream = store.find_mut(&id).unwrap();
+            assert_eq!(stream.recv_flow.window_size(), 49_152);
+            assert_eq!(stream.recv_flow.available().as_size(), 65_535);
+            assert_eq!(stream.in_flight_recv_data, 0);
+        }
+        assert!(recv.pending_window_updates.pop(&mut store).is_none());
+
+        let mut settings = frame::Settings::default();
+        settings.set_initial_window_size(Some(1024));
+        recv.apply_local_settings(&settings, &mut store).unwrap();
+
+        let mut stream = recv
+            .pending_window_updates
+            .pop(&mut store)
+            .expect("shrinking window must queue previously released capacity");
+        assert_eq!(stream.id, id);
+        assert_eq!(stream.recv_flow.unclaimed_capacity(), Some(16_383));
+        assert_eq!(stream.recv_flow.available().as_size(), 1024);
+        stream.recv_flow.inc_window(16_383).unwrap();
+        assert_eq!(stream.recv_flow.window_size(), 1024);
+        assert_eq!(stream.recv_flow.unclaimed_capacity(), None);
+        drop(stream);
+
+        assert!(recv.pending_window_updates.pop(&mut store).is_none());
+    }
+
+    #[test]
+    fn apply_local_settings_shrink_without_released_capacity_does_not_queue() {
+        let config = test_config();
+        let mut recv = Recv::new(peer::Dyn::Server, &config);
+        let mut store = Store::new();
+        let id = StreamId::from(1);
+
+        {
+            let mut stream = store.insert(
+                id,
+                Stream::new(id, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_INITIAL_WINDOW_SIZE),
+            );
+            stream
+                .recv_flow
+                .send_data(DEFAULT_INITIAL_WINDOW_SIZE)
+                .unwrap();
+            stream.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
+        }
+
+        let mut settings = frame::Settings::default();
+        settings.set_initial_window_size(Some(1024));
+        recv.apply_local_settings(&settings, &mut store).unwrap();
+
+        {
+            let stream = store.find_mut(&id).unwrap();
+            assert_eq!(stream.recv_flow.unclaimed_capacity(), None);
+        }
+        assert!(recv.pending_window_updates.pop(&mut store).is_none());
+    }
+
+    #[test]
+    fn apply_local_settings_shrink_deduplicates_already_queued_stream() {
+        let config = test_config();
+        let mut recv = Recv::new(peer::Dyn::Server, &config);
+        let mut store = Store::new();
+        let id1 = StreamId::from(1);
+        let id3 = StreamId::from(3);
+
+        {
+            let mut s1 = store.insert(
+                id1,
+                Stream::new(
+                    id1,
+                    DEFAULT_INITIAL_WINDOW_SIZE,
+                    DEFAULT_INITIAL_WINDOW_SIZE,
+                ),
+            );
+            s1.recv_flow.send_data(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
+            s1.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
+        }
+        {
+            let mut s3 = store.insert(
+                id3,
+                Stream::new(
+                    id3,
+                    DEFAULT_INITIAL_WINDOW_SIZE,
+                    DEFAULT_INITIAL_WINDOW_SIZE,
+                ),
+            );
+            s3.recv_flow.send_data(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
+            s3.in_flight_recv_data = DEFAULT_INITIAL_WINDOW_SIZE;
+        }
+        recv.flow.send_data(DEFAULT_INITIAL_WINDOW_SIZE).unwrap();
+        recv.in_flight_data = DEFAULT_INITIAL_WINDOW_SIZE;
+
+        // Leave s1 already queued in pending_window_updates.
+        {
+            let mut task = None;
+            let mut s1 = store.find_mut(&id1).unwrap();
+            recv.release_capacity(32_768, &mut s1, &mut task).unwrap();
+        }
+
+        // Put s3 into the sub-threshold batched state (16,383 unclaimed, not queued).
+        recv.flow.inc_window(32_768).unwrap();
+        recv.flow.send_data(32_768).unwrap();
+        recv.in_flight_data += 32_768;
+        {
+            let mut s3 = store.find_mut(&id3).unwrap();
+            s3.recv_flow.inc_window(49_152).unwrap();
+            s3.recv_flow.assign_capacity(49_152).unwrap();
+            s3.in_flight_recv_data = 16_383;
+            let mut task = None;
+            recv.release_capacity(16_383, &mut s3, &mut task).unwrap();
+            assert!(!s3.is_pending_window_update);
+        }
+
+        let mut settings = frame::Settings::default();
+        settings.set_initial_window_size(Some(1024));
+        recv.apply_local_settings(&settings, &mut store).unwrap();
+
+        let first = recv.pending_window_updates.pop(&mut store).unwrap().id;
+        let second = recv.pending_window_updates.pop(&mut store).unwrap().id;
+        assert_eq!((first, second), (id1, id3));
+        assert!(recv.pending_window_updates.pop(&mut store).is_none());
     }
 }
 

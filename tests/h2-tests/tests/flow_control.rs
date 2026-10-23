@@ -3072,3 +3072,105 @@ async fn poll_capacity_window_update_settings_race() {
 
     join(srv, h2).await;
 }
+#[tokio::test]
+async fn late_settings_ack_shrinks_window_and_sends_batched_window_update() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+    let (fourth_released_tx, fourth_released_rx) = oneshot::channel();
+
+    let peer = async move {
+        client.write_preface().await;
+        client
+            .send(frame::Settings::default().into())
+            .await
+            .unwrap();
+
+        // Read server's initial SETTINGS (initial_window_size = 1024) and its ACK of ours,
+        // intentionally delaying our SETTINGS ACK so stream 1 starts at 65,535.
+        let frame = client.next().await.expect("unexpected EOF").unwrap();
+        let settings = assert_settings!(frame);
+        assert_eq!(settings.initial_window_size(), Some(1024));
+
+        let frame = client.next().await.expect("unexpected EOF").unwrap();
+        let ack = assert_settings!(frame);
+        assert!(ack.is_ack());
+
+        client
+            .send_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+
+        // Exhaust the initial 65,535-byte stream window across 4 DATA frames.
+        for len in [16_384, 16_384, 16_384, 16_383] {
+            client.send_frame(frames::data(1, vec![0u8; len])).await;
+        }
+
+        // First three 16,384-byte releases each cross the 50% threshold; the 4th
+        // (16,383 < 49,152 / 2) remains batched below threshold.
+        for _ in 0..3 {
+            client.recv_frame(frames::window_update(0, 16_384)).await;
+            client.recv_frame(frames::window_update(1, 16_384)).await;
+        }
+
+        fourth_released_rx.await.unwrap();
+        yield_once().await;
+
+        // Now ACK the server's initial SETTINGS (shrinking stream window to 1024).
+        // The server must advertise the batched 16,383-byte stream credit so our window
+        // moves from -15,359 to +1,024 without waiting for another DATA frame.
+        client.send_frame(frames::settings_ack()).await;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            client.recv_frame(frames::window_update(1, 16_383)),
+        )
+        .await
+        .expect("timed out waiting for stream WINDOW_UPDATE after delayed SETTINGS ACK");
+
+        client
+            .send_frame(frames::data(1, vec![0u8; 1024]).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let mut builder = server::Builder::new();
+    builder.initial_window_size(1024);
+
+    let srv = async move {
+        let mut h2 = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut respond) = h2.accept().await.unwrap().unwrap();
+        let mut body = req.into_body();
+
+        let drive_conn = async move {
+            poll_fn(|cx| h2.poll_closed(cx)).await.unwrap();
+        };
+
+        let handle_stream = async move {
+            // Drain all 4 initial chunks (65,535 bytes) before releasing chunk-by-chunk
+            // so the stream window starts at 0 and reproduces the exact batching steps.
+            let mut lengths = Vec::with_capacity(4);
+            for _ in 0..4 {
+                let chunk = body.data().await.unwrap().unwrap();
+                lengths.push(chunk.len());
+            }
+            assert_eq!(lengths, vec![16_384, 16_384, 16_384, 16_383]);
+
+            for len in lengths {
+                body.flow_control().release_capacity(len).unwrap();
+                yield_once().await;
+            }
+            fourth_released_tx.send(()).unwrap();
+
+            let tail = body.data().await.unwrap().unwrap();
+            assert_eq!(tail.len(), 1024);
+            assert!(body.data().await.is_none());
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            respond.send_response(rsp, true).unwrap();
+        };
+
+        join(drive_conn, handle_stream).await;
+    };
+
+    join(peer, srv).await;
+}
