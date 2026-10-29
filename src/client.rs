@@ -914,21 +914,9 @@ impl Builder {
 
     /// Sets the maximum number of concurrent locally reset streams.
     ///
-    /// When a stream is explicitly reset, the HTTP/2 specification requires
-    /// that any further frames received for that stream must be ignored for
-    /// "some time".
-    ///
-    /// In order to satisfy the specification, internal state must be maintained
-    /// to implement the behavior. This state grows linearly with the number of
-    /// streams that are locally reset.
-    ///
-    /// The `max_concurrent_reset_streams` setting configures sets an upper
-    /// bound on the amount of state that is maintained. When this max value is
-    /// reached, the oldest reset stream is purged from memory.
-    ///
-    /// Once the stream has been fully purged from memory, any additional frames
-    /// received for that stream will result in a connection level protocol
-    /// error, forcing the connection to terminate.
+    /// This bounds how many locally reset streams the client remembers. Once
+    /// a stream is forgotten, late HEADERS and DATA are still discarded after
+    /// updating the connection's header compression and flow-control state.
     ///
     /// The default value is currently 50.
     ///
@@ -959,21 +947,8 @@ impl Builder {
 
     /// Sets the duration to remember locally reset streams.
     ///
-    /// When a stream is explicitly reset, the HTTP/2 specification requires
-    /// that any further frames received for that stream must be ignored for
-    /// "some time".
-    ///
-    /// In order to satisfy the specification, internal state must be maintained
-    /// to implement the behavior. This state grows linearly with the number of
-    /// streams that are locally reset.
-    ///
-    /// The `reset_stream_duration` setting configures the max amount of time
-    /// this state will be maintained in memory. Once the duration elapses, the
-    /// stream state is purged from memory.
-    ///
-    /// Once the stream has been fully purged from memory, any additional frames
-    /// received for that stream will result in a connection level protocol
-    /// error, forcing the connection to terminate.
+    /// This limits how long the client retains reset stream state. Late HEADERS
+    /// and DATA are handled as described in [`Self::max_concurrent_reset_streams`].
     ///
     /// The default value is currently 1 second.
     ///

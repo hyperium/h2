@@ -489,21 +489,10 @@ impl Inner {
         let key = match self.store.find_entry(id) {
             Entry::Occupied(e) => e.key(),
             Entry::Vacant(e) => {
-                // Client: it's possible to send a request, and then send
-                // a RST_STREAM while the response HEADERS were in transit.
-                //
-                // Server: we can't reset a stream before having received
-                // the request headers, so don't allow.
-                if !peer.is_server() {
-                    // This may be response headers for a stream we've already
-                    // forgotten about...
-                    if self.actions.may_have_forgotten_stream(peer, id) {
-                        tracing::debug!(
-                            "recv_headers for old stream={:?}, sending STREAM_CLOSED",
-                            id,
-                        );
-                        return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
-                    }
+                // A response can cross our CANCEL. HPACK has already processed
+                // the header block even if we no longer track the stream.
+                if !peer.is_server() && self.actions.may_have_forgotten_stream(peer, id) {
+                    return Ok(RecvOutcome::Processed);
                 }
 
                 match self
@@ -608,6 +597,10 @@ impl Inner {
         let id = frame.stream_id();
 
         let stream = match self.store.find_mut(&id) {
+            Some(stream) if !peer.is_server() && stream.is_pending_open => {
+                proto_err!(conn: "recv_data: received frame on idle stream {:?}", id);
+                return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+            }
             Some(stream) => stream,
             None => {
                 // The GOAWAY process has begun. All streams with a greater ID
@@ -629,8 +622,6 @@ impl Inner {
                 }
 
                 if self.actions.may_have_forgotten_stream(peer, id) {
-                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
-
                     let sz = frame.flow_controlled_len();
                     // This should have been enforced at the codec::FramedRead layer, so
                     // this is just a sanity check.
@@ -638,6 +629,19 @@ impl Inner {
                     let sz = sz as WindowSize;
                     self.actions.recv.ignore_data(sz)?;
 
+                    if !peer.is_server() {
+                        // An empty END_STREAM can race with CANCEL. Counting it
+                        // would let ordinary cancellations exhaust the connection's
+                        // lifetime limit on empty DATA frames.
+                        if frame.payload().is_empty() && !frame.is_end_stream() {
+                            self.counts
+                                .record_data_frame(0)
+                                .map_err(too_many_data_frames)?;
+                        }
+                        return Ok(());
+                    }
+
+                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id);
                     return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
                 }
 
@@ -652,15 +656,16 @@ impl Inner {
             let sz = frame.flow_controlled_len();
             let is_end_stream = frame.is_end_stream();
             let payload_len = frame.payload().len();
-            let mut res = actions.recv.recv_data(frame, stream);
-            // A stream can receive at most one final DATA frame, so it cannot
-            // be used to create unbounded framing overhead on that stream.
-            if res.is_ok() && !is_end_stream {
-                res = counts.record_data_frame(payload_len).map_err(|_| {
-                    tracing::debug!("too many small DATA frames");
-                    Error::library_go_away_data(Reason::ENHANCE_YOUR_CALM, "too_many_data_frames")
-                });
-            }
+            let res = actions.recv.recv_data(frame, stream).and_then(|buffered| {
+                // Discarded client DATA neither uses nor replenishes the buffer
+                // budget. Empty non-final frames still count toward the flood limit.
+                if !is_end_stream && (buffered || payload_len == 0 || peer.is_server()) {
+                    counts
+                        .record_data_frame(payload_len)
+                        .map_err(too_many_data_frames)?;
+                }
+                Ok(())
+            });
 
             // Any stream error after receiving a DATA frame means
             // we won't give the data to the user, and so they can't
@@ -1697,6 +1702,11 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
     });
 }
 
+fn too_many_data_frames(_: super::counts::BudgetExhausted) -> Error {
+    tracing::debug!("too many small DATA frames");
+    Error::library_go_away_data(Reason::ENHANCE_YOUR_CALM, "too_many_data_frames")
+}
+
 fn maybe_cancel(stream: &mut store::Ptr, actions: &mut Actions, counts: &mut Counts) {
     if stream.is_canceled_interest() {
         // Server is allowed to early respond without fully consuming the client input stream
@@ -1841,15 +1851,7 @@ impl Actions {
         }
     }
 
-    /// Check if we possibly could have processed and since forgotten this stream.
-    ///
-    /// If we send a RST_STREAM for a stream, we will eventually "forget" about
-    /// the stream to free up memory. It's possible that the remote peer had
-    /// frames in-flight, and by the time we receive them, our own state is
-    /// gone. We *could* tear everything down by sending a GOAWAY, but it
-    /// is more likely to be latency/memory constraints that caused this,
-    /// and not a bad actor. So be less catastrophic, the spec allows
-    /// us to send another RST_STREAM of STREAM_CLOSED.
+    /// Could this ID refer to a stream whose state has already been released?
     fn may_have_forgotten_stream(&self, peer: peer::Dyn, id: StreamId) -> bool {
         if id.is_zero() {
             return false;

@@ -48,8 +48,8 @@ pub(super) struct Prioritize {
     /// Connection level flow control governing sent data
     flow: FlowControl,
 
-    /// Stream ID of the last stream opened.
-    last_opened_id: StreamId,
+    /// On clients, the highest request ID handed to the codec.
+    pub(super) last_opened_id: StreamId,
 
     /// What `DATA` frame is currently being sent in the codec.
     in_flight_data_frame: InFlightData,
@@ -881,7 +881,10 @@ impl Prioritize {
 
             tracing::trace!("pop_frame; frame={:?}", frame);
 
-            if cfg!(debug_assertions) && stream.state.is_idle() {
+            let opens_request = matches!(&frame, Frame::Headers(h) if h.pseudo().method.is_some());
+            if opens_request
+                || (cfg!(debug_assertions) && counts.peer().is_server() && stream.state.is_idle())
+            {
                 debug_assert!(stream.id > self.last_opened_id);
                 self.last_opened_id = stream.id;
             }

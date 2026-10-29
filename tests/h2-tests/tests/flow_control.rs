@@ -705,22 +705,20 @@ async fn padded_data_on_forgotten_stream_releases_connection_capacity() {
         srv.send_frame(frames::headers(1).response(200)).await;
         srv.send_frame(frames::data(1, vec![0; 16_384])).await;
         srv.recv_frame(frames::reset(1).cancel()).await;
-        // Wait for the reset to expire so the stream is forgotten.
-        idle_ms(50).await;
-        srv.ping_pong([1; 8]).await;
-        // Stream 1 has been evicted. Send a padded DATA frame for it.
+        // Reset stream retention is disabled, so stream 1 is already forgotten.
         srv.send_frame(frames::data(1, &padded[..]).padded().eos())
             .await;
         // Released capacity must cover both frames using their full
         // flow_controlled_len. There used to be a bug where the padded
         // frame would release only 16378 (payload) instead of 16384.
         srv.recv_frame(frames::window_update(0, 16_384 * 2)).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        // and the frame is discarded without a reset
+        srv.ping_pong([1; 8]).await;
     };
 
     let client = async move {
         let (mut client, conn) = client::Builder::new()
-            .reset_stream_duration(Duration::from_millis(10))
+            .max_concurrent_reset_streams(0)
             .handshake::<_, Bytes>(io)
             .await
             .expect("handshake");
