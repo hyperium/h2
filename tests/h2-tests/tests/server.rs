@@ -1994,3 +1994,80 @@ async fn remote_reset_does_not_panic_connection_driver() {
         .expect("server task timed out")
         .expect("server task panicked");
 }
+
+async fn assert_malformed_frame_goes_away(frame: &'static [u8], reason: Reason) {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client.send_bytes(frame).await;
+        client.recv_frame(frames::go_away(0).reason(reason)).await;
+        client.recv_eof().await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let err = poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect_err("connection should error");
+        assert_eq!(err.reason(), Some(reason));
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn settings_ack_with_payload_is_frame_size_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 6, 4, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 100],
+        Reason::FRAME_SIZE_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn settings_length_not_multiple_of_6_is_frame_size_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 5, 4, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0],
+        Reason::FRAME_SIZE_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn ping_wrong_length_is_frame_size_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 7, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Reason::FRAME_SIZE_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn window_update_wrong_length_is_frame_size_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 3, 8, 0, 0, 0, 0, 0, 0, 0, 1],
+        Reason::FRAME_SIZE_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn goaway_too_short_is_frame_size_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 4, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        Reason::FRAME_SIZE_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn initial_window_size_too_large_is_flow_control_error() {
+    assert_malformed_frame_goes_away(
+        &[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 0x80, 0, 0, 0],
+        Reason::FLOW_CONTROL_ERROR,
+    )
+    .await;
+}

@@ -147,6 +147,21 @@ impl FrameDecoder {
 
 /// Decodes a frame.
 ///
+/// The connection error reason for a frame that failed to load.
+///
+/// A frame with the wrong length is a `FRAME_SIZE_ERROR` (RFC 9113, Section 4.2),
+/// and an oversized `SETTINGS_INITIAL_WINDOW_SIZE` is a `FLOW_CONTROL_ERROR`
+/// (Section 6.5.2). Anything else is a `PROTOCOL_ERROR`.
+fn load_error_reason(e: &frame::Error) -> Reason {
+    match e {
+        frame::Error::BadFrameSize
+        | frame::Error::InvalidPayloadLength
+        | frame::Error::InvalidPayloadAckSettings => Reason::FRAME_SIZE_ERROR,
+        frame::Error::InvalidInitialWindowSize => Reason::FLOW_CONTROL_ERROR,
+        _ => Reason::PROTOCOL_ERROR,
+    }
+}
+
 /// This function is intentionally de-generified and outlined because it is very large.
 fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Option<Frame>, Error> {
     let span = tracing::trace_span!("FramedRead::decode_frame", offset = bytes.len());
@@ -233,7 +248,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(load_error_reason(&e))
             })?
             .into()
         }
@@ -242,7 +257,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load PING frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(load_error_reason(&e))
             })?
             .into()
         }
@@ -251,7 +266,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load WINDOW_UPDATE frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(load_error_reason(&e))
             })?
             .into()
         }
@@ -271,7 +286,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
             let res = frame::Reset::load(head, &bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load RESET frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(load_error_reason(&e))
             })?
             .into()
         }
@@ -279,7 +294,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
             let res = frame::GoAway::load(head, &bytes[frame::HEADER_LEN..]);
             res.map_err(|e| {
                 proto_err!(conn: "failed to load GO_AWAY frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                Error::library_go_away(load_error_reason(&e))
             })?
             .into()
         }

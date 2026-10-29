@@ -141,6 +141,9 @@ pub enum Error {
     /// An invalid setting value was provided
     InvalidSettingValue,
 
+    /// A `SETTINGS_INITIAL_WINDOW_SIZE` above the maximum window size was provided
+    InvalidInitialWindowSize,
+
     /// An invalid window update value
     InvalidWindowUpdateValue,
 

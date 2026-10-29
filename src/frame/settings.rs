@@ -174,7 +174,7 @@ impl Settings {
                 }
                 Some(InitialWindowSize(val)) => {
                     if val as usize > MAX_INITIAL_WINDOW_SIZE {
-                        return Err(Error::InvalidSettingValue);
+                        return Err(Error::InvalidInitialWindowSize);
                     } else {
                         settings.initial_window_size = Some(val);
                     }
