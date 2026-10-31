@@ -539,6 +539,86 @@ mod test {
     }
 
     #[test]
+    fn test_sensitive_exact_static_matches_are_never_indexed() {
+        for (name, value) in [("accept-encoding", "gzip, deflate"), ("authorization", "")] {
+            let mut encoder = Encoder::default();
+            let mut decoder = crate::hpack::Decoder::default();
+            let mut wire = encode(&mut encoder, vec![sensitive_header(name, value)]);
+            assert_eq!(wire[0] & 0xf0, 0x10, "{name}: literal never-indexed");
+            assert_decodes(&mut decoder, &mut wire, name, value);
+
+            let mut ordinary = encode(&mut encoder, vec![header(name, value)]);
+            assert_eq!(
+                ordinary[0] & 0x80,
+                0x80,
+                "ordinary static matches stay indexed"
+            );
+            assert_decodes(&mut decoder, &mut ordinary, name, value);
+        }
+    }
+
+    #[test]
+    fn test_sensitive_exact_dynamic_match_is_never_indexed() {
+        let mut encoder = Encoder::default();
+        let mut decoder = crate::hpack::Decoder::default();
+        let (name, value) = ("x-api-key", "same-value");
+        let mut primed = encode(&mut encoder, vec![header(name, value)]);
+        assert_eq!(
+            primed[0] & 0xc0,
+            0x40,
+            "the ordinary field enters the dynamic table"
+        );
+        assert_decodes(&mut decoder, &mut primed, name, value);
+
+        let mut sensitive = encode(&mut encoder, vec![sensitive_header(name, value)]);
+        assert_eq!(
+            sensitive[0] & 0xf0,
+            0x10,
+            "an exact match still needs never-indexed"
+        );
+        assert_decodes(&mut decoder, &mut sensitive, name, value);
+
+        let mut ordinary = encode(&mut encoder, vec![header(name, value)]);
+        assert_eq!(
+            ordinary[0] & 0x80,
+            0x80,
+            "the ordinary field remains compressible"
+        );
+        assert_decodes(&mut decoder, &mut ordinary, name, value);
+    }
+
+    fn sensitive_header(name: &str, value: &str) -> Header<Option<HeaderName>> {
+        let mut value = HeaderValue::from_bytes(value.as_bytes()).unwrap();
+        value.set_sensitive(true);
+        Header::Field {
+            name: Some(name.parse().unwrap()),
+            value,
+        }
+    }
+
+    fn assert_decodes(
+        decoder: &mut crate::hpack::Decoder,
+        wire: &mut BytesMut,
+        name: &str,
+        value: &str,
+    ) {
+        let mut fields = Vec::new();
+        decoder
+            .decode(&mut std::io::Cursor::new(wire), |header| {
+                fields.push((
+                    header.name().as_slice().to_vec(),
+                    header.value_slice().to_vec(),
+                ));
+                std::ops::ControlFlow::Continue(())
+            })
+            .unwrap();
+        assert_eq!(
+            fields,
+            vec![(name.as_bytes().to_vec(), value.as_bytes().to_vec())]
+        );
+    }
+
+    #[test]
     fn test_content_length_value_not_indexed() {
         let mut encoder = Encoder::default();
         let res = encode(&mut encoder, vec![header("content-length", "1234")]);
