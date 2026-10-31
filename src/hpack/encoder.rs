@@ -577,14 +577,39 @@ mod test {
             "the ordinary field enters the dynamic table"
         );
         assert_decodes(&mut decoder, &mut primed, name, value);
+        let mut other = encode(&mut encoder, vec![header("x-other", "ordinary")]);
+        assert_decodes(&mut decoder, &mut other, "x-other", "ordinary");
 
         let mut sensitive = encode(&mut encoder, vec![sensitive_header(name, value)]);
+        let first_len = sensitive.len();
         assert_eq!(
             sensitive[0] & 0xf0,
             0x10,
             "an exact match still needs never-indexed"
         );
         assert_decodes(&mut decoder, &mut sensitive, name, value);
+
+        let mut second = HeaderValue::from_static("second-value");
+        second.set_sensitive(true);
+        let mut duplicates = encode(
+            &mut encoder,
+            vec![
+                sensitive_header(name, value),
+                Header::Field {
+                    name: None,
+                    value: second,
+                },
+            ],
+        );
+        let mut first = duplicates.split_to(first_len);
+        assert_eq!(first[0] & 0xf0, 0x10);
+        assert_decodes(&mut decoder, &mut first, name, value);
+        assert_eq!(
+            duplicates[0] & 0xf0,
+            0x10,
+            "a nameless duplicate stays never-indexed"
+        );
+        assert_decodes(&mut decoder, &mut duplicates, name, "second-value");
 
         let mut ordinary = encode(&mut encoder, vec![header(name, value)]);
         assert_eq!(
