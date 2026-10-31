@@ -539,7 +539,7 @@ mod test {
     }
 
     #[test]
-    fn test_sensitive_exact_static_matches_are_never_indexed() {
+    fn test_sensitive_static_names_are_never_indexed() {
         for (name, value) in [("accept-encoding", "gzip, deflate"), ("authorization", "")] {
             let mut encoder = Encoder::default();
             let mut decoder = crate::hpack::Decoder::default();
@@ -548,11 +548,19 @@ mod test {
             assert_decodes(&mut decoder, &mut wire, name, value);
 
             let mut ordinary = encode(&mut encoder, vec![header(name, value)]);
-            assert_eq!(
-                ordinary[0] & 0x80,
-                0x80,
-                "ordinary static matches stay indexed"
-            );
+            if name == "authorization" {
+                assert_eq!(
+                    ordinary[0] & 0xf0,
+                    0,
+                    "ordinary authorization stays without indexing"
+                );
+            } else {
+                assert_eq!(
+                    ordinary[0] & 0x80,
+                    0x80,
+                    "ordinary static matches stay indexed"
+                );
+            }
             assert_decodes(&mut decoder, &mut ordinary, name, value);
         }
     }
