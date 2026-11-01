@@ -750,7 +750,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
             "https" => Some((7, true)),
             _ => Some((6, false)),
         },
-        Header::Path(ref v) => match &**v {
+        Header::Path(ref v, _) => match &**v {
             "/" => Some((4, true)),
             "/index.html" => Some((5, true)),
             _ => Some((4, false)),

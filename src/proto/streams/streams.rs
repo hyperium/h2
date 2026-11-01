@@ -269,6 +269,10 @@ where
         use http::Method;
 
         let protocol = request.extensions_mut().remove::<Protocol>();
+        let sensitive_path = request
+            .extensions_mut()
+            .remove::<crate::ext::SensitivePath>()
+            .is_some();
 
         // Clear before taking lock, incase extensions contain a StreamRef.
         request.extensions_mut().clear();
@@ -317,8 +321,13 @@ where
         }
 
         // Convert the message
-        let headers =
-            client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
+        let headers = client::Peer::convert_send_message(
+            stream_id,
+            request,
+            protocol,
+            sensitive_path,
+            end_of_stream,
+        )?;
 
         let mut stream = me.store.insert(stream.id, stream);
 

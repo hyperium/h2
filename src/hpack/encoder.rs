@@ -160,7 +160,13 @@ impl Encoder {
             Index::Name(idx, _) => {
                 let header = self.table.resolve(index);
 
-                encode_not_indexed(idx, header.value_slice(), header.is_sensitive(), dst);
+                encode_not_indexed(
+                    idx,
+                    header.value_slice(),
+                    header.is_sensitive(),
+                    header.is_sensitive_path(),
+                    dst,
+                );
             }
             Index::Inserted(_) => {
                 let header = self.table.resolve(index);
@@ -187,6 +193,7 @@ impl Encoder {
                     header.name().as_slice(),
                     header.value_slice(),
                     header.is_sensitive(),
+                    header.is_sensitive_path(),
                     dst,
                 );
             }
@@ -206,7 +213,7 @@ impl Encoder {
             | Index::InsertedValue(..) => {
                 let idx = self.table.resolve_idx(last);
 
-                encode_not_indexed(idx, value.as_ref(), value.is_sensitive(), dst);
+                encode_not_indexed(idx, value.as_ref(), value.is_sensitive(), false, dst);
             }
             Index::NotIndexed(_) => {
                 let last = self.table.resolve(last);
@@ -215,6 +222,7 @@ impl Encoder {
                     last.name().as_slice(),
                     value.as_ref(),
                     value.is_sensitive(),
+                    false,
                     dst,
                 );
             }
@@ -232,17 +240,33 @@ fn encode_size_update(val: usize, dst: &mut BytesMut) {
     encode_int(val, 5, 0b0010_0000, dst)
 }
 
-fn encode_not_indexed(name: usize, value: &[u8], sensitive: bool, dst: &mut BytesMut) {
+fn encode_not_indexed(
+    name: usize,
+    value: &[u8],
+    sensitive: bool,
+    verbatim: bool,
+    dst: &mut BytesMut,
+) {
     if sensitive {
         encode_int(name, 4, 0b10000, dst);
     } else {
         encode_int(name, 4, 0, dst);
     }
 
-    encode_str(value, dst);
+    if verbatim {
+        encode_str_verbatim(value, dst);
+    } else {
+        encode_str(value, dst);
+    }
 }
 
-fn encode_not_indexed2(name: &[u8], value: &[u8], sensitive: bool, dst: &mut BytesMut) {
+fn encode_not_indexed2(
+    name: &[u8],
+    value: &[u8],
+    sensitive: bool,
+    verbatim: bool,
+    dst: &mut BytesMut,
+) {
     if sensitive {
         dst.put_u8(0b10000);
     } else {
@@ -250,7 +274,25 @@ fn encode_not_indexed2(name: &[u8], value: &[u8], sensitive: bool, dst: &mut Byt
     }
 
     encode_str(name, dst);
-    encode_str(value, dst);
+    if verbatim {
+        encode_str_verbatim(value, dst);
+    } else {
+        encode_str(value, dst);
+    }
+}
+
+fn encode_str_verbatim(value: &[u8], dst: &mut BytesMut) {
+    // RFC 7541 §5.2: a zero Huffman bit and a seven-bit length prefix
+    // carry the literal octets exactly as the caller provided them.
+    const STRING_LENGTH_PREFIX_BITS: usize = 7;
+    const HUFFMAN_DISABLED: u8 = 0;
+    encode_int(
+        value.len(),
+        STRING_LENGTH_PREFIX_BITS,
+        HUFFMAN_DISABLED,
+        dst,
+    );
+    dst.extend_from_slice(value);
 }
 
 fn encode_str(val: &[u8], dst: &mut BytesMut) {
@@ -536,6 +578,47 @@ mod test {
         assert_eq!(&[0b11111, 47], &res[..2]);
         assert_eq!(0x80 | 4, res[2]);
         assert_eq!("12345", huff_decode(&res[3..]));
+    }
+
+    #[test]
+    fn test_sensitive_path_is_verbatim_never_indexed_even_on_static_match() {
+        use crate::hpack::BytesStr;
+
+        // RFC 7541 Appendix A assigns :path "/" index 4. A field prefix of
+        // 0x80 uses that whole indexed value; 0x10 marks a never-indexed
+        // literal and its low four bits still refer to the static name.
+        const STATIC_PATH_INDEXED: u8 = 0x80 | 4;
+        const STATIC_PATH_NEVER_INDEXED_NAME: u8 = 0x10 | 4;
+        let mut encoder = Encoder::default();
+        let ordinary = encode(
+            &mut encoder,
+            vec![Header::Path(BytesStr::from_static("/"), false)],
+        );
+        assert_eq!(&ordinary[..], &[STATIC_PATH_INDEXED]);
+
+        let static_match = encode(
+            &mut encoder,
+            vec![Header::Path(BytesStr::from_static("/"), true)],
+        );
+        assert_eq!(
+            &static_match[..],
+            &[STATIC_PATH_NEVER_INDEXED_NAME, 1, b'/']
+        );
+
+        let query = b"/call?key=dummy-query-value";
+        let marked = encode(
+            &mut encoder,
+            vec![Header::Path(
+                BytesStr::from_static("/call?key=dummy-query-value"),
+                true,
+            )],
+        );
+        assert_eq!(
+            &marked[..2],
+            &[STATIC_PATH_NEVER_INDEXED_NAME, query.len() as u8]
+        );
+        assert_eq!(&marked[2..], query);
+        assert_eq!(encoder.table.len(), 0);
     }
 
     #[test]

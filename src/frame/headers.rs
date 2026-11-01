@@ -71,6 +71,7 @@ pub struct Pseudo {
     pub scheme: Option<BytesStr>,
     pub authority: Option<BytesStr>,
     pub path: Option<BytesStr>,
+    pub path_sensitive: bool,
     pub protocol: Option<Protocol>,
 
     // Response
@@ -585,6 +586,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path,
+            path_sensitive: false,
             protocol,
             status: None,
         };
@@ -609,6 +611,7 @@ impl Pseudo {
             scheme: None,
             authority: None,
             path: None,
+            path_sensitive: false,
             protocol: None,
             status: Some(status),
         }
@@ -730,7 +733,7 @@ impl Iterator for Iter {
             }
 
             if let Some(path) = pseudo.path.take() {
-                return Some(Path(path));
+                return Some(Path(path, pseudo.path_sensitive));
             }
 
             if let Some(protocol) = pseudo.protocol.take() {
@@ -960,7 +963,7 @@ impl HeaderBlock {
                 Authority(v) => set_pseudo!(authority, v),
                 Method(v) => set_pseudo!(method, v),
                 Scheme(v) => set_pseudo!(scheme, v),
-                Path(v) => set_pseudo!(path, v),
+                Path(v, _) => set_pseudo!(path, v),
                 Protocol(v) => set_pseudo!(protocol, v),
                 Status(v) => set_pseudo!(status, v),
             }
