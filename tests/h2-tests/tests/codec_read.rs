@@ -255,3 +255,32 @@ async fn read_goaway_stream_id_not_zero() {
 
     poll_err!(codec);
 }
+
+// Frame loading and HPACK decoding must retain their specific wire error codes.
+#[tokio::test]
+async fn malformed_settings_and_hpack_preserve_error_codes() {
+    let cases: &[(&[u8], Reason)] = &[
+        (
+            &[0, 0, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+            Reason::FRAME_SIZE_ERROR,
+        ),
+        (&[0, 0, 1, 4, 1, 0, 0, 0, 0, 0], Reason::FRAME_SIZE_ERROR),
+        (
+            &[0, 0, 1, 1, 4, 0, 0, 0, 1, 0x80],
+            Reason::COMPRESSION_ERROR,
+        ),
+        (
+            &[0, 0, 1, 1, 4, 0, 0, 0, 1, 0xff],
+            Reason::COMPRESSION_ERROR,
+        ),
+        (
+            &[0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 9, 4, 0, 0, 0, 1, 0x80],
+            Reason::COMPRESSION_ERROR,
+        ),
+    ];
+    for &(wire, expected) in cases {
+        let mut codec = raw_codec! { read => [wire,]; };
+        let error: h2::Error = poll_err!(codec).into();
+        assert_eq!(error.reason(), Some(expected), "wire={:?}", wire);
+    }
+}

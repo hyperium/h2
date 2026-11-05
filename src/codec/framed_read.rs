@@ -193,6 +193,10 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
             match frame.load_hpack(&mut payload, decoder.max_header_list_size, &mut decoder.hpack) {
                 Ok(_) => {},
                 Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {},
+                Err(frame::Error::Hpack(e)) => {
+                    proto_err!(conn: "failed HPACK decoding; err={:?}", e);
+                    return Err(Error::library_go_away(Reason::COMPRESSION_ERROR));
+                },
                 Err(frame::Error::MalformedMessage) => {
                     let id = $head.stream_id();
                     proto_err!(stream: "malformed header block; stream={:?}", id);
@@ -233,7 +237,12 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
 
             res.map_err(|e| {
                 proto_err!(conn: "failed to load SETTINGS frame; err={:?}", e);
-                Error::library_go_away(Reason::PROTOCOL_ERROR)
+                let reason = match e {
+                    frame::Error::InvalidPayloadLength
+                    | frame::Error::InvalidPayloadAckSettings => Reason::FRAME_SIZE_ERROR,
+                    _ => Reason::PROTOCOL_ERROR,
+                };
+                Error::library_go_away(reason)
             })?
             .into()
         }
@@ -376,6 +385,10 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
             ) {
                 Ok(_) => {}
                 Err(frame::Error::Hpack(hpack::DecoderError::NeedMore(_))) if !is_end_headers => {}
+                Err(frame::Error::Hpack(e)) => {
+                    proto_err!(conn: "failed HPACK decoding; err={:?}", e);
+                    return Err(Error::library_go_away(Reason::COMPRESSION_ERROR));
+                }
                 Err(frame::Error::MalformedMessage) => {
                     let id = head.stream_id();
                     proto_err!(stream: "malformed CONTINUATION frame; stream={:?}", id);
