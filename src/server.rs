@@ -550,6 +550,30 @@ where
         self.connection.go_away_gracefully();
     }
 
+    /// Announces a [graceful shutdown][1] without starting it.
+    ///
+    /// Sends the first GOAWAY of a graceful shutdown, with the last stream
+    /// identifier set to 2^31-1, telling the client not to open new
+    /// streams. Requests keep being accepted, as the client may have sent
+    /// some before it saw the GOAWAY, until
+    /// [`graceful_shutdown`](Connection::graceful_shutdown) finishes the
+    /// shutdown with the final GOAWAY. The connection isn't closed when it
+    /// becomes idle until then.
+    ///
+    /// A PING goes with the GOAWAY: if the client has acknowledged it by
+    /// the time `graceful_shutdown` is called, the client has seen the
+    /// GOAWAY, and the final one is sent at once rather than a round trip
+    /// later.
+    ///
+    /// This lets a server warn clients of a shutdown early (when it starts
+    /// draining, say) and finish it later, as other HTTP/2 servers do.
+    /// Does nothing if a GOAWAY was sent already.
+    ///
+    /// [1]: https://httpwg.org/specs/rfc9113.html#GOAWAY
+    pub fn shutdown_notice(&mut self) {
+        self.connection.go_away_notice();
+    }
+
     /// Takes a `PingPong` instance from the connection.
     ///
     /// # Note

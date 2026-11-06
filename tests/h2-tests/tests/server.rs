@@ -919,6 +919,141 @@ async fn graceful_shutdown() {
 }
 
 #[tokio::test]
+async fn shutdown_notice_then_graceful_shutdown() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::go_away(2147483647)).await;
+        client.recv_frame(frames::ping(frame::Ping::SHUTDOWN)).await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+        client
+            .send_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
+            .await;
+        // The connection stays open, and takes streams, until the server
+        // finishes the shutdown.
+        client
+            .send_frame(
+                frames::headers(3)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // The PING was acknowledged, so the final GOAWAY comes at once.
+        client.recv_frame(frames::go_away(3)).await;
+        client
+            .recv_frame(frames::headers(3).response(200).eos())
+            .await;
+        client.recv_eof().await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        srv.shutdown_notice();
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        srv.graceful_shutdown();
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none(), "unexpected request");
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn graceful_shutdown_before_shutdown_notice_acked() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        // One GOAWAY and one PING, however many calls.
+        client.recv_frame(frames::go_away(2147483647)).await;
+        client.recv_frame(frames::ping(frame::Ping::SHUTDOWN)).await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+        // Pretend this stream was sent while the GOAWAY was in flight
+        client
+            .send_frame(frames::headers(3).request("POST", "https://example.com/"))
+            .await;
+        client
+            .send_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
+            .await;
+        client.recv_frame(frames::go_away(3)).await;
+        client.send_frame(frames::data(3, "").eos()).await;
+        client
+            .recv_frame(frames::headers(3).response(200).eos())
+            .await;
+        client.recv_eof().await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::GET);
+
+        srv.shutdown_notice();
+        srv.graceful_shutdown();
+        srv.shutdown_notice();
+        srv.graceful_shutdown();
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        assert_eq!(req.method(), &http::Method::POST);
+        let body = req.into_parts().1;
+
+        let body = async move {
+            let buf = util::concat(body).await.unwrap();
+            assert!(buf.is_empty());
+
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+        };
+
+        let mut srv = Box::pin(async move {
+            assert!(srv.next().await.is_none(), "unexpected request");
+        });
+        srv.drive(body).await;
+        srv.await;
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
 async fn goaway_even_if_client_sent_goaway() {
     h2_support::trace_init!();
     let (io, mut client) = mock::new();
