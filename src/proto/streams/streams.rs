@@ -259,7 +259,9 @@ where
         let mut me = self.inner.lock().unwrap();
         let me = &mut *me;
 
-        me.actions.recv.apply_local_settings(frame, &mut me.store)
+        me.actions
+            .recv
+            .apply_local_settings(frame, &mut me.store, &mut me.actions.task)
     }
 
     pub fn send_request(
