@@ -6,18 +6,58 @@ use http::header::{HeaderName, HeaderValue};
 
 const DEFAULT_MAX_ALLOWED_SIZE: usize = 4 * 1024;
 
-#[derive(Debug)]
 pub struct Encoder {
+    state: EncoderState,
+    scratch: BytesMut,
+}
+
+/// HPACK compression state, independent of the frame writer's byte buffers.
+#[derive(Debug)]
+pub(crate) struct EncoderState {
     table: Table,
     max_allowed_size: usize,
     size_update: Option<SizeUpdate>,
-    /// Reusable buffer for the encoded header block of a single frame.
-    ///
-    /// A header block only has to live until it is copied into the
-    /// connection write buffer, so the buffer that holds it can be reused
-    /// across frames instead of being allocated and freed per frame. See
-    /// `take_scratch` / `return_scratch`.
-    scratch: BytesMut,
+}
+
+impl Encoder {
+    pub fn new(max_size: usize, capacity: usize) -> Encoder {
+        Encoder {
+            state: EncoderState::new(max_size, capacity),
+            scratch: BytesMut::new(),
+        }
+    }
+
+    #[cfg_attr(not(any(test, fuzzing)), allow(dead_code))]
+    #[inline]
+    pub fn update_max_size(&mut self, val: usize) {
+        self.state.update_max_size(val);
+    }
+
+    /// Encode a set of headers into the provided buffer.
+    #[cfg_attr(not(any(test, fuzzing)), allow(dead_code))]
+    #[inline]
+    pub fn encode<I>(&mut self, headers: I, dst: &mut BytesMut)
+    where
+        I: IntoIterator<Item = Header<Option<HeaderName>>>,
+    {
+        self.state.encode(headers, dst);
+    }
+
+    #[inline]
+    pub(crate) fn parts_mut(&mut self) -> (&mut EncoderState, &mut BytesMut) {
+        (&mut self.state, &mut self.scratch)
+    }
+}
+
+impl std::fmt::Debug for Encoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Encoder")
+            .field("table", &self.state.table)
+            .field("max_allowed_size", &self.state.max_allowed_size)
+            .field("size_update", &self.state.size_update)
+            .field("scratch", &self.scratch)
+            .finish()
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -26,15 +66,14 @@ enum SizeUpdate {
     Two(usize, usize), // min, max
 }
 
-impl Encoder {
-    pub fn new(max_size: usize, capacity: usize) -> Encoder {
+impl EncoderState {
+    pub(crate) fn new(max_size: usize, capacity: usize) -> EncoderState {
         let max_size = max_size.min(DEFAULT_MAX_ALLOWED_SIZE);
 
-        Encoder {
+        EncoderState {
             table: Table::new(max_size, capacity),
             max_allowed_size: DEFAULT_MAX_ALLOWED_SIZE,
             size_update: None,
-            scratch: BytesMut::new(),
         }
     }
 
@@ -47,25 +86,10 @@ impl Encoder {
         }
     }
 
-    /// Takes the reusable buffer for one header-block encode.
-    ///
-    /// The buffer is returned by `return_scratch` once the encoded block has
-    /// been copied into the write buffer. If it is not returned - the
-    /// CONTINUATION path keeps it, since the remainder is still needed - the
-    /// next call simply starts from a fresh buffer.
-    pub(crate) fn take_scratch(&mut self) -> BytesMut {
-        std::mem::take(&mut self.scratch)
-    }
-
-    /// Returns a fully-written header block buffer for reuse.
-    pub(crate) fn return_scratch(&mut self, scratch: BytesMut) {
-        self.scratch = scratch;
-    }
-
     /// Queues a max size update.
     ///
     /// The next call to `encode` will include a dynamic size update frame.
-    pub fn update_max_size(&mut self, val: usize) {
+    pub(crate) fn update_max_size(&mut self, val: usize) {
         let val = val.min(self.max_allowed_size);
 
         match self.size_update {
@@ -98,7 +122,7 @@ impl Encoder {
     }
 
     /// Encode a set of headers into the provide buffer
-    pub fn encode<I>(&mut self, headers: I, dst: &mut BytesMut)
+    pub(crate) fn encode<I>(&mut self, headers: I, dst: &mut BytesMut)
     where
         I: IntoIterator<Item = Header<Option<HeaderName>>>,
     {
@@ -222,6 +246,12 @@ impl Encoder {
     }
 }
 
+impl Default for EncoderState {
+    fn default() -> EncoderState {
+        EncoderState::new(4096, 0)
+    }
+}
+
 impl Default for Encoder {
     fn default() -> Encoder {
         Encoder::new(4096, 0)
@@ -338,8 +368,20 @@ fn position(buf: &BytesMut) -> usize {
 
 #[cfg(test)]
 mod test {
+    use super::EncoderState as Encoder;
     use super::*;
     use http::*;
+
+    #[test]
+    fn standalone_encoder_delegates_updates_and_encoding() {
+        let mut encoder = super::Encoder::default();
+        let mut dst = BytesMut::new();
+        encoder.update_max_size(0);
+        encoder.encode(Vec::<Header<Option<HeaderName>>>::new(), &mut dst);
+        assert_eq!(dst.as_ref(), &[0x20]);
+        encoder.encode(vec![method("GET")], &mut dst);
+        assert_eq!(dst.as_ref(), &[0x20, 0x82]);
+    }
 
     #[test]
     fn test_encode_method_get() {
