@@ -574,7 +574,6 @@ impl Recv {
         &mut self,
         settings: &frame::Settings,
         store: &mut Store,
-        task: &mut Option<Waker>,
     ) -> Result<(), proto::Error> {
         if let Some(val) = settings.is_extended_connect_protocol_enabled() {
             self.is_extended_connect_protocol_enabled = val;
@@ -617,13 +616,11 @@ impl Recv {
 
                         // Shrinking the window can make capacity that was
                         // already released eligible for a WINDOW_UPDATE
-                        // without another DATA frame arriving (#976).
+                        // without another DATA frame arriving (#976). The
+                        // connection task flushes `pending_window_updates`
+                        // in `poll_complete` after this returns.
                         if stream.recv_flow.unclaimed_capacity().is_some() {
                             pending_window_updates.push(&mut stream);
-
-                            if let Some(task) = task.take() {
-                                task.wake();
-                            }
                         }
 
                         Ok::<_, proto::Error>(())
