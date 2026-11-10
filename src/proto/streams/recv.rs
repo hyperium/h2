@@ -607,11 +607,22 @@ impl Recv {
                     let dec = old_sz - target;
                     tracing::trace!("decrementing all windows; dec={}", dec);
 
+                    let pending_window_updates = &mut self.pending_window_updates;
                     store.try_for_each(|mut stream| {
                         stream
                             .recv_flow
                             .dec_recv_window(dec)
                             .map_err(proto::Error::library_go_away)?;
+
+                        // Shrinking the window can make capacity that was
+                        // already released eligible for a WINDOW_UPDATE
+                        // without another DATA frame arriving (#976). The
+                        // connection task flushes `pending_window_updates`
+                        // in `poll_complete` after this returns.
+                        if stream.recv_flow.unclaimed_capacity().is_some() {
+                            pending_window_updates.push(&mut stream);
+                        }
+
                         Ok::<_, proto::Error>(())
                     })?;
                 }
