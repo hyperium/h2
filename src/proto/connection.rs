@@ -227,11 +227,11 @@ where
             .settings
             .poll_send(cx, &mut self.codec, &mut self.inner.streams))?;
         if let Some(id) = self.inner.pending_refusal {
-            // Keep the refusal pending if making room requires socket progress.
-            ready!(self.codec.poll_ready(cx))?;
+            let frame = frame::Reset::new(id, Reason::REFUSED_STREAM).into();
+            ready!(self.codec.poll_ready_control(cx, &frame))?;
             self.inner.streams.count_pending_refusal()?;
             self.codec
-                .buffer(frame::Reset::new(id, Reason::REFUSED_STREAM).into())
+                .buffer_control(frame)
                 .expect("invalid RST_STREAM frame");
             self.inner.pending_refusal = None;
         }

@@ -274,9 +274,21 @@ impl Headers {
         self.header_block.fields
     }
 
+    // Retain the standalone frame API; the codec supplies its own scratch buffer.
+    #[cfg_attr(not(feature = "unstable"), allow(dead_code))]
     pub fn encode(
         self,
         encoder: &mut hpack::Encoder,
+        dst: &mut EncodeBuf<'_>,
+    ) -> Option<Continuation> {
+        let (state, scratch) = encoder.parts_mut();
+        self.encode_with_state(state, scratch, dst)
+    }
+
+    pub(crate) fn encode_with_state(
+        self,
+        encoder: &mut hpack::EncoderState,
+        scratch: &mut BytesMut,
         dst: &mut EncodeBuf<'_>,
     ) -> Option<Continuation> {
         // At this point, the `is_end_headers` flag should always be set
@@ -286,8 +298,8 @@ impl Headers {
         let head = self.head();
 
         self.header_block
-            .into_encoding(encoder)
-            .encode(&head, dst, Some(encoder), |_| {})
+            .into_encoding(encoder, scratch)
+            .encode(&head, dst, Some(scratch), |_| {})
     }
 
     fn head(&self) -> Head {
@@ -495,9 +507,21 @@ impl PushPromise {
         self.header_block.is_over_size
     }
 
+    // Retain the standalone frame API; the codec supplies its own scratch buffer.
+    #[cfg_attr(not(feature = "unstable"), allow(dead_code))]
     pub fn encode(
         self,
         encoder: &mut hpack::Encoder,
+        dst: &mut EncodeBuf<'_>,
+    ) -> Option<Continuation> {
+        let (state, scratch) = encoder.parts_mut();
+        self.encode_with_state(state, scratch, dst)
+    }
+
+    pub(crate) fn encode_with_state(
+        self,
+        encoder: &mut hpack::EncoderState,
+        scratch: &mut BytesMut,
         dst: &mut EncodeBuf<'_>,
     ) -> Option<Continuation> {
         // At this point, the `is_end_headers` flag should always be set
@@ -507,8 +531,8 @@ impl PushPromise {
         let promised_id = self.promised_id;
 
         self.header_block
-            .into_encoding(encoder)
-            .encode(&head, dst, Some(encoder), |dst| {
+            .into_encoding(encoder, scratch)
+            .encode(&head, dst, Some(scratch), |dst| {
                 dst.put_u32(promised_id.into());
             })
     }
@@ -651,7 +675,7 @@ impl EncodingHeaderBlock {
         mut self,
         head: &Head,
         dst: &mut EncodeBuf<'_>,
-        encoder: Option<&mut hpack::Encoder>,
+        scratch: Option<&mut BytesMut>,
         f: F,
     ) -> Option<Continuation>
     where
@@ -681,8 +705,8 @@ impl EncodingHeaderBlock {
             dst.put_slice(&self.hpack);
             // The block is fully written, so the buffer can be reused by the
             // next frame on this connection.
-            if let Some(encoder) = encoder {
-                encoder.return_scratch(self.hpack);
+            if let Some(scratch) = scratch {
+                *scratch = self.hpack;
             }
 
             None
@@ -989,8 +1013,12 @@ impl HeaderBlock {
         Ok(())
     }
 
-    fn into_encoding(self, encoder: &mut hpack::Encoder) -> EncodingHeaderBlock {
-        let mut hpack = encoder.take_scratch();
+    fn into_encoding(
+        self,
+        encoder: &mut hpack::EncoderState,
+        scratch: &mut BytesMut,
+    ) -> EncodingHeaderBlock {
+        let mut hpack = std::mem::take(scratch);
         hpack.clear();
         let headers = Iter {
             pseudo: Some(self.pseudo),

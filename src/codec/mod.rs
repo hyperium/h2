@@ -152,6 +152,20 @@ where
         self.framed_write().buffer(item)
     }
 
+    /// Returns `Ready` when the codec can buffer a control frame.
+    pub(crate) fn poll_ready_control(
+        &mut self,
+        cx: &mut Context,
+        item: &Frame<B>,
+    ) -> Poll<io::Result<()>> {
+        self.framed_write().poll_ready_control(cx, item)
+    }
+
+    /// Buffer a control frame after `poll_ready_control` returns ready.
+    pub(crate) fn buffer_control(&mut self, item: Frame<B>) -> Result<(), UserError> {
+        self.framed_write().buffer_control(item)
+    }
+
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.framed_write().flush(cx)

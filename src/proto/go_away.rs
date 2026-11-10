@@ -127,13 +127,14 @@ impl GoAway {
         B: Buf,
     {
         if let Some(frame) = self.pending.take() {
-            if !dst.poll_ready(cx)?.is_ready() {
+            let encoded = frame.clone().into();
+            if !dst.poll_ready_control(cx, &encoded)?.is_ready() {
                 self.pending = Some(frame);
                 return Poll::Pending;
             }
 
             let reason = frame.reason();
-            dst.buffer(frame.into()).expect("invalid GOAWAY frame");
+            dst.buffer_control(encoded).expect("invalid GOAWAY frame");
 
             return Poll::Ready(Some(Ok(reason)));
         } else if self.should_close_now() {
