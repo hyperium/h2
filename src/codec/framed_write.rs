@@ -187,6 +187,7 @@ where
         }
         let control = &mut self.encoder.scratch;
         assert!(control_frame_capacity(&item) <= MAX_CONTROL_BUFFER_SIZE - control.len());
+        tracing::debug!(frame = ?item, "send");
         match item {
             Frame::Ping(frame) => frame.encode(control),
             Frame::Settings(frame) => frame.encode(control),

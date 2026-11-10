@@ -48,7 +48,7 @@ async fn receive_data_while_writing(control: Control) {
         .unwrap();
     let request_body = Bytes::from((0..32_768).map(|i| (i % 251) as u8).collect::<Vec<_>>());
     send.send_data(request_body.clone(), true).unwrap();
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     peer.recv_frame(frames::headers(1).request("POST", "https://example.com/"))
         .now_or_never()
         .expect("request headers fit before writes are blocked");
@@ -56,7 +56,7 @@ async fn receive_data_while_writing(control: Control) {
     let second = Bytes::from(vec![29; 16_384]);
     peer.send_frame(frames::headers(1).response(200)).await;
     peer.send_frame(frames::data(1, first.clone())).await;
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     let mut body = response
         .now_or_never()
         .expect("response headers are readable while request DATA is blocked")
@@ -93,7 +93,7 @@ async fn receive_data_while_writing(control: Control) {
         }
     }
     peer.send_frame(frames::data(1, second.clone()).eos()).await;
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     if saturated {
         // A full control queue must keep applying backpressure until writes resume.
         assert!(body.data().now_or_never().is_none());
@@ -172,16 +172,17 @@ async fn receive_data_while_writing(control: Control) {
     if let Some(ping) = &mut ping_pong {
         conn.drive(poll_fn(|cx| ping.poll_pong(cx))).await.unwrap();
     }
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     drop(ping_pong);
     drop(body);
     drop(send);
     close_client(client, conn, &mut peer).await;
 }
 
-async fn poll_connection(conn: &mut client::Connection<mock::Mock, Bytes>) {
+async fn assert_pending(future: impl Future) {
+    futures::pin_mut!(future);
     poll_fn(|cx| {
-        assert!(conn.poll_unpin(cx).is_pending());
+        assert!(future.as_mut().poll(cx).is_pending());
         Poll::Ready(())
     })
     .await;
@@ -226,7 +227,7 @@ async fn settings_ack_follows_blocked_continuations() {
     let request = request.body(()).unwrap();
     let fields = request.headers().clone();
     let (response, send) = client.send_request(request, true).unwrap();
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     peer.recv_frame(frames::ping(frame::Ping::USER))
         .now_or_never()
         .expect("PING is written before the blocked header block");
@@ -240,7 +241,7 @@ async fn settings_ack_follows_blocked_continuations() {
     peer.codec_mut().set_max_recv_frame_size(32_768);
     peer.send_frame(frames::ping(frame::Ping::USER).pong())
         .await;
-    poll_connection(&mut conn).await;
+    assert_pending(&mut conn).await;
     poll_fn(|cx| ping.poll_pong(cx))
         .now_or_never()
         .expect("PONG must be read while the SETTINGS ACK waits for CONTINUATION")
@@ -299,7 +300,7 @@ async fn graceful_shutdown_reads_data_while_writes_are_blocked() {
     peer.write_preface().await;
     peer.send_frame(frame::Settings::default()).await;
     let mut conn = server::handshake(io).await.unwrap();
-    poll_server_connection(&mut conn).await;
+    assert_pending(conn.accept()).await;
     peer.recv_frame(frame::Settings::default()).await;
     peer.recv_frame(frames::settings_ack()).await;
     peer.send_frame(frames::settings_ack()).await;
@@ -312,7 +313,7 @@ async fn graceful_shutdown_reads_data_while_writes_are_blocked() {
         .unwrap();
     let response_body = Bytes::from(vec![53; 32_768]);
     send.send_data(response_body.clone(), true).unwrap();
-    poll_server_connection(&mut conn).await;
+    assert_pending(conn.accept()).await;
     peer.recv_frame(frames::headers(1).response(200))
         .now_or_never()
         .expect("response headers fit before writes are blocked");
@@ -320,12 +321,12 @@ async fn graceful_shutdown_reads_data_while_writes_are_blocked() {
     let first = Bytes::from(vec![67; 16_384]);
     let second = Bytes::from(vec![79; 16_384]);
     peer.send_frame(frames::data(1, first.clone())).await;
-    poll_server_connection(&mut conn).await;
+    assert_pending(conn.accept()).await;
     assert_eq!(body.data().now_or_never().unwrap().unwrap().unwrap(), first);
 
     conn.graceful_shutdown();
     peer.send_frame(frames::data(1, second.clone()).eos()).await;
-    poll_server_connection(&mut conn).await;
+    assert_pending(conn.accept()).await;
     assert_eq!(
         body.data()
             .now_or_never()
@@ -358,13 +359,5 @@ async fn graceful_shutdown_reads_data_while_writes_are_blocked() {
             peer.recv_eof().await;
         },
     )
-    .await;
-}
-
-async fn poll_server_connection(conn: &mut server::Connection<mock::Mock, Bytes>) {
-    poll_fn(|cx| {
-        assert!(conn.poll_accept(cx).is_pending());
-        Poll::Ready(())
-    })
     .await;
 }
