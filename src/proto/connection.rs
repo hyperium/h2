@@ -3,6 +3,7 @@ use crate::frame::{Reason, StreamId};
 use crate::{client, server};
 
 use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
+use crate::proto::go_away::Notice;
 use crate::proto::*;
 
 use bytes::Bytes;
@@ -448,6 +449,21 @@ where
         self.go_away.go_away(frame);
     }
 
+    /// The first GOAWAY of a graceful shutdown, and the PING that tells
+    /// when the peer has seen it.
+    fn go_away_notice(&mut self) {
+        let frame = frame::GoAway::new(StreamId::MAX, Reason::NO_ERROR);
+        self.streams.send_go_away(StreamId::MAX);
+        self.go_away.notice(frame);
+        self.ping_pong.ping_shutdown();
+    }
+
+    /// The final GOAWAY of a graceful shutdown.
+    fn go_away_final(&mut self) {
+        let last_processed_id = self.streams.last_processed_id();
+        self.go_away(last_processed_id, Reason::NO_ERROR);
+    }
+
     fn go_away_now(&mut self, e: Reason) {
         let last_processed_id = self.streams.last_processed_id();
         let frame = frame::GoAway::new(last_processed_id, e);
@@ -604,8 +620,13 @@ where
                         "received unexpected shutdown ping"
                     );
 
-                    let last_processed_id = self.streams.last_processed_id();
-                    self.go_away(last_processed_id, Reason::NO_ERROR);
+                    if self.go_away.notice_state() == Notice::Sent {
+                        // The peer has seen the shutdown notice; the final
+                        // GOAWAY waits for `graceful_shutdown`.
+                        self.go_away.notice_acked();
+                    } else {
+                        self.go_away_final();
+                    }
                 }
             }
             Some(WindowUpdate(frame)) => {
@@ -652,8 +673,37 @@ where
         self.inner.streams.next_incoming()
     }
 
+    /// Sends the first GOAWAY of a graceful shutdown, and a PING to learn
+    /// when the peer has seen it, without the final GOAWAY: that waits for
+    /// `go_away_gracefully`.
+    pub fn go_away_notice(&mut self) {
+        if self.inner.go_away.is_going_away() {
+            // A notice, a graceful shutdown or an error was sent already.
+            return;
+        }
+
+        self.inner.as_dyn().go_away_notice();
+    }
+
     // Graceful shutdown only makes sense for server peers.
     pub fn go_away_gracefully(&mut self) {
+        match self.inner.go_away.notice_state() {
+            Notice::None => {}
+            Notice::Sent => {
+                // The final GOAWAY goes when the notice's PING is
+                // acknowledged.
+                self.inner.go_away.end_notice();
+                return;
+            }
+            Notice::Acked => {
+                // The peer has seen the notice a round trip ago at least, so
+                // nothing it started before it is still in flight.
+                self.inner.go_away.end_notice();
+                self.inner.as_dyn().go_away_final();
+                return;
+            }
+        }
+
         if self.inner.go_away.is_going_away() {
             // No reason to start a new one.
             return;
