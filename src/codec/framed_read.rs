@@ -21,6 +21,8 @@ use tokio_util::codec::{LengthDelimitedCodec, LengthDelimitedCodecError};
 // 16 MB "sane default" taken from golang http2
 const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
 
+const MAX_FIELDS_HINT: usize = 64;
+
 #[derive(Debug)]
 pub struct FramedRead<T> {
     inner: InnerFramedRead<T, LengthDelimitedCodec>,
@@ -36,6 +38,10 @@ struct FrameDecoder {
     max_header_list_size: usize,
 
     max_continuation_frames: usize,
+
+    /// Moving average of the field count of recent header blocks, used to
+    /// size the next block's `HeaderMap` so decoding it doesn't rehash.
+    fields_hint: usize,
 
     partial: Option<Partial>,
 }
@@ -122,8 +128,16 @@ impl FrameDecoder {
                 max_header_list_size,
                 max_frame_size,
             ),
+            fields_hint: 0,
             partial: None,
         }
+    }
+
+    fn update_fields_hint(&mut self, len: usize) {
+        // The newest block weighs 1/4. Rounding up keeps a steady count from
+        // decaying, and the cap bounds what one huge block makes later ones reserve.
+        let len = len.min(MAX_FIELDS_HINT);
+        self.fields_hint = (self.fields_hint * 3 + len + 3) / 4;
     }
 
     fn set_max_frame_size(&mut self, val: usize) {
@@ -172,7 +186,7 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
             $bytes.advance(frame::HEADER_LEN);
 
             // Parse the header frame w/o parsing the payload
-            let (mut frame, mut payload) = match frame::$frame::load($head, $bytes) {
+            let (mut frame, mut payload) = match frame::$frame::load($head, $bytes, decoder.fields_hint) {
                 Ok(res) => res,
                 Err(frame::Error::InvalidDependencyId) => {
                     proto_err!(stream: "invalid HEADERS dependency ID");
@@ -407,6 +421,10 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
         }
     };
 
+    if let Frame::Headers(ref headers) = frame {
+        decoder.update_fields_hint(headers.fields().keys_len());
+    }
+
     Ok(Some(frame))
 }
 
@@ -489,5 +507,55 @@ impl<T> From<Continuable> for Frame<T> {
                 push.into()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BufMut;
+    use http::HeaderMap;
+
+    fn headers_frame(stream_id: u32, fields: usize) -> BytesMut {
+        let mut block = vec![0x82, 0x86, 0x84]; // :method GET, :scheme http, :path /
+        for i in 0..fields {
+            let name = format!("x-h-{i}");
+            block.push(0x00); // literal without indexing, new name
+            block.push(name.len() as u8);
+            block.extend_from_slice(name.as_bytes());
+            block.extend_from_slice(&[1, b'v']);
+        }
+        let mut frame = BytesMut::new();
+        frame.put_uint(block.len() as u64, 3);
+        frame.put_u8(0x01); // HEADERS
+        frame.put_u8(0x04); // END_HEADERS
+        frame.put_u32(stream_id);
+        frame.extend_from_slice(&block);
+        frame
+    }
+
+    fn decode_fields(decoder: &mut FrameDecoder, stream_id: u32, fields: usize) -> HeaderMap {
+        match decode_frame(decoder, headers_frame(stream_id, fields)) {
+            Ok(Some(Frame::Headers(headers))) => headers.into_fields(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn header_block_reserves_recent_field_count() {
+        let mut decoder = FrameDecoder::new(DEFAULT_MAX_FRAME_SIZE as usize);
+        assert_eq!(decode_fields(&mut decoder, 1, 0).capacity(), 0);
+
+        for id in (3..40).step_by(2) {
+            decode_fields(&mut decoder, id, 20);
+        }
+        assert_eq!(decoder.fields_hint, 20);
+        // Reserved up front, before a single field was decoded into it.
+        assert!(decode_fields(&mut decoder, 41, 0).capacity() >= 20);
+
+        for id in (43..80).step_by(2) {
+            decode_fields(&mut decoder, id, 1000);
+        }
+        assert_eq!(decoder.fields_hint, MAX_FIELDS_HINT);
     }
 }
