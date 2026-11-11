@@ -496,13 +496,16 @@ impl Inner {
                 // the request headers, so don't allow.
                 if !peer.is_server() {
                     // This may be response headers for a stream we've already
-                    // forgotten about...
+                    // forgotten about. RFC 9113 section 5.1 lets an endpoint
+                    // discard frames on any closed stream, and the codec has
+                    // already updated the HPACK state. Answering with a reset
+                    // would count against `max_local_error_reset_streams` and
+                    // eventually close the connection, although the server did
+                    // nothing wrong when it sent the response before it read
+                    // our RST_STREAM.
                     if self.actions.may_have_forgotten_stream(peer, id) {
-                        tracing::debug!(
-                            "recv_headers for old stream={:?}, sending STREAM_CLOSED",
-                            id,
-                        );
-                        return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
+                        tracing::debug!("recv_headers for old stream={:?}, ignoring", id);
+                        return Ok(RecvOutcome::Processed);
                     }
                 }
 
@@ -629,8 +632,6 @@ impl Inner {
                 }
 
                 if self.actions.may_have_forgotten_stream(peer, id) {
-                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id,);
-
                     let sz = frame.flow_controlled_len();
                     // This should have been enforced at the codec::FramedRead layer, so
                     // this is just a sanity check.
@@ -638,6 +639,31 @@ impl Inner {
                     let sz = sz as WindowSize;
                     self.actions.recv.ignore_data(sz)?;
 
+                    // A client discards the rest of a response it no longer
+                    // tracks, for the same reason as in `recv_headers`. The
+                    // frame counts against the DATA frame budget as it would
+                    // on an open stream, so a final frame doesn't count.
+                    // Servers often end a response with an empty one, which
+                    // would otherwise count against
+                    // `MAX_RECV_EMPTY_DATA_FRAMES` for every cancelled stream.
+                    if !peer.is_server() {
+                        tracing::debug!("recv_data for old stream={:?}, ignoring", id);
+                        if frame.is_end_stream() {
+                            return Ok(());
+                        }
+                        return self
+                            .counts
+                            .record_data_frame(frame.payload().len())
+                            .map_err(|_| {
+                                tracing::debug!("too many small DATA frames");
+                                Error::library_go_away_data(
+                                    Reason::ENHANCE_YOUR_CALM,
+                                    "too_many_data_frames",
+                                )
+                            });
+                    }
+
+                    tracing::debug!("recv_data for old stream={:?}, sending STREAM_CLOSED", id);
                     return Err(Error::library_reset(id, Reason::STREAM_CLOSED));
                 }
 
@@ -1848,8 +1874,9 @@ impl Actions {
     /// frames in-flight, and by the time we receive them, our own state is
     /// gone. We *could* tear everything down by sending a GOAWAY, but it
     /// is more likely to be latency/memory constraints that caused this,
-    /// and not a bad actor. So be less catastrophic, the spec allows
-    /// us to send another RST_STREAM of STREAM_CLOSED.
+    /// and not a bad actor. So be less catastrophic: a client discards
+    /// these frames, and a server answers with a RST_STREAM of
+    /// STREAM_CLOSED, both of which the spec allows.
     fn may_have_forgotten_stream(&self, peer: peer::Dyn, id: StreamId) -> bool {
         if id.is_zero() {
             return false;
