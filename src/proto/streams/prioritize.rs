@@ -54,6 +54,11 @@ pub(super) struct Prioritize {
     /// What `DATA` frame is currently being sent in the codec.
     in_flight_data_frame: InFlightData,
 
+    /// Whether the in-flight `DATA` frame carries all of its buffer. When it
+    /// does not, the unsent suffix is only returned to the stream's queue when
+    /// the frame is reclaimed, so nothing queued behind it may be written yet.
+    in_flight_data_is_whole: bool,
+
     /// The maximum amount of bytes a stream should buffer.
     max_buffer_size: usize,
 }
@@ -100,6 +105,7 @@ impl Prioritize {
             flow,
             last_opened_id: StreamId::ZERO,
             in_flight_data_frame: InFlightData::Nothing,
+            in_flight_data_is_whole: false,
             max_buffer_size: config.local_max_buffer_size,
         }
     }
@@ -526,6 +532,9 @@ impl Prioritize {
 
         loop {
             if !dst.has_send_capacity() {
+                if self.buffer_headers_after_data(buffer, store, counts, dst, max_frame_len) {
+                    continue;
+                }
                 return Ok(BufferStatus::CodecFull);
             }
 
@@ -541,6 +550,9 @@ impl Prioritize {
                     debug_assert_eq!(self.in_flight_data_frame, InFlightData::Nothing);
                     if let Frame::Data(ref frame) = frame {
                         self.in_flight_data_frame = InFlightData::DataFrame(frame.payload().stream);
+                        let payload = &frame.payload().inner;
+                        self.in_flight_data_is_whole =
+                            payload.get_ref().remaining() == payload.remaining();
                     }
                     dst.buffer(frame).expect("invalid frame");
 
@@ -554,6 +566,64 @@ impl Prioritize {
                     return Ok(BufferStatus::Complete);
                 }
             }
+        }
+    }
+
+    /// While the codec holds a chained DATA frame, moves a HEADERS frame at
+    /// the head of the send queue into the same write, behind it.
+    ///
+    /// A unary response is HEADERS, DATA, then trailers; without this, the
+    /// trailers wait for the DATA payload to be flushed and cost a second
+    /// write. Only a HEADERS frame already at the head of the queue is taken,
+    /// so frame order and stream scheduling are unchanged, and no DATA frame
+    /// is ever added while one is in flight.
+    fn buffer_headers_after_data<T, B>(
+        &mut self,
+        buffer: &mut Buffer<Frame<B>>,
+        store: &mut Store,
+        counts: &mut Counts,
+        dst: &mut Codec<T, Prioritized<B>>,
+        max_frame_len: usize,
+    ) -> bool
+    where
+        T: AsyncWrite + Unpin,
+        B: Buf,
+    {
+        // A frame that carries only part of its buffer leaves the rest to be
+        // queued again on reclaim; HEADERS behind it would end the stream
+        // before that remainder is sent.
+        if !matches!(self.in_flight_data_frame, InFlightData::DataFrame(_))
+            || !self.in_flight_data_is_whole
+            || !dst.can_buffer_headers_after_data()
+        {
+            return false;
+        }
+        let headers_next = match self.pending_send.pop(store) {
+            Some(mut stream) => {
+                let headers_next = match stream.pending_send.pop_front(buffer) {
+                    Some(frame) => {
+                        let is_headers = matches!(frame, Frame::Headers(_));
+                        stream.pending_send.push_front(buffer, frame);
+                        is_headers
+                    }
+                    None => false,
+                };
+                self.pending_send.push_front(&mut stream);
+                headers_next
+            }
+            None => false,
+        };
+        if !headers_next {
+            return false;
+        }
+        match self.pop_frame(buffer, store, max_frame_len, counts) {
+            Some(Frame::Headers(frame)) => {
+                tracing::trace!(?frame, "writing after in-flight data");
+                dst.buffer_headers_after_data(frame);
+                true
+            }
+            Some(_) => unreachable!("the queue head was checked to be a HEADERS frame"),
+            None => false,
         }
     }
 

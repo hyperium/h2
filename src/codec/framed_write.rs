@@ -41,6 +41,17 @@ struct Encoder<B> {
     /// Next frame to encode
     next: Option<Next<B>>,
 
+    /// Frames encoded while a chained DATA frame is pending in `next`.
+    ///
+    /// Written in the same vectored write, after the DATA payload, so a
+    /// HEADERS frame that follows a chained DATA frame (such as trailers)
+    /// does not cost a separate write. Holds at most one frame.
+    tail: Cursor<BytesMut>,
+
+    /// The CONTINUATION of a HEADERS frame in `tail` that did not fit in one
+    /// frame. Encoded once the tail has been written.
+    tail_continuation: Option<frame::Continuation>,
+
     /// Last data frame
     last_data_frame: Option<frame::Data<B>>,
 
@@ -95,6 +106,8 @@ where
                 hpack: hpack::Encoder::default(),
                 buf: Cursor::new(BytesMut::with_capacity(DEFAULT_BUFFER_CAPACITY)),
                 next: None,
+                tail: Cursor::new(BytesMut::new()),
+                tail_continuation: None,
                 last_data_frame: None,
                 max_frame_size: frame::DEFAULT_MAX_FRAME_SIZE,
                 chain_threshold,
@@ -134,6 +147,18 @@ where
         self.encoder.buffer(item)
     }
 
+    /// Returns whether a HEADERS frame can be queued behind the chained DATA
+    /// frame that currently prevents `has_capacity`.
+    pub(crate) fn can_buffer_headers_after_data(&self) -> bool {
+        self.encoder.can_buffer_headers_after_data()
+    }
+
+    /// Queue a HEADERS frame to be written after the pending chained DATA
+    /// frame, in the same write. `can_buffer_headers_after_data` must be true.
+    pub(crate) fn buffer_headers_after_data(&mut self, item: frame::Headers) {
+        self.encoder.buffer_headers_after_data(item)
+    }
+
     /// Flush buffered data to the wire
     pub fn flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         let span = tracing::trace_span!("FramedWrite::flush");
@@ -144,7 +169,9 @@ where
                 let n = match self.encoder.next {
                     Some(Next::Data(ref mut frame)) => {
                         tracing::trace!(queued_data_frame = true);
-                        let mut buf = (&mut self.encoder.buf).chain(frame.payload_mut());
+                        let mut buf = (&mut self.encoder.buf)
+                            .chain(frame.payload_mut())
+                            .chain(&mut self.encoder.tail);
                         ready!(poll_write_buf(Pin::new(&mut self.inner), cx, &mut buf))?
                     }
                     _ => {
@@ -205,6 +232,16 @@ where
         match self.next.take() {
             Some(Next::Data(frame)) => {
                 self.last_data_frame = Some(frame);
+                // The tail was written with the data frame.
+                self.tail.set_position(0);
+                self.tail.get_mut().clear();
+                if let Some(continuation) = self.tail_continuation.take() {
+                    let mut buf = limited_write_buf!(self);
+                    if let Some(continuation) = continuation.encode(&mut buf) {
+                        self.next = Some(Next::Continuation(continuation));
+                    }
+                    return ControlFlow::Continue;
+                }
                 debug_assert!(self.is_empty());
                 ControlFlow::Break
             }
@@ -312,9 +349,30 @@ where
                 >= self.min_buffer_capacity)
     }
 
+    fn can_buffer_headers_after_data(&self) -> bool {
+        matches!(self.next, Some(Next::Data(_)))
+            && self.tail.get_ref().is_empty()
+            && self.tail_continuation.is_none()
+    }
+
+    fn buffer_headers_after_data(&mut self, item: frame::Headers) {
+        assert!(self.can_buffer_headers_after_data());
+        let span = tracing::trace_span!("FramedWrite::buffer_headers_after_data", frame = ?item);
+        let _e = span.enter();
+        tracing::debug!(frame = ?item, "send");
+
+        // Same per-frame bound as `buf`: one frame plus its header. A larger
+        // header block continues in a CONTINUATION frame written afterwards.
+        let limit = self.max_frame_size() + frame::HEADER_LEN;
+        let mut tail = self.tail.get_mut().limit(limit);
+        self.tail_continuation = item.encode(&mut self.hpack, &mut tail);
+    }
+
     fn is_empty(&self) -> bool {
         match self.next {
-            Some(Next::Data(ref frame)) => !frame.payload().has_remaining(),
+            Some(Next::Data(ref frame)) => {
+                !frame.payload().has_remaining() && !self.tail.has_remaining()
+            }
             _ => !self.buf.has_remaining(),
         }
     }
@@ -374,5 +432,163 @@ mod unstable {
         pub fn get_ref(&self) -> &T {
             &self.inner
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{Data, Headers, StreamId};
+    use bytes::Bytes;
+    use http::HeaderMap;
+    use std::sync::Arc;
+    use std::task::{Wake, Waker};
+
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn noop_waker() -> Waker {
+        Waker::from(Arc::new(NoopWake))
+    }
+
+    /// Records each write call as one entry; reports vectored support.
+    #[derive(Default)]
+    struct RecordingIo {
+        writes: Vec<Vec<u8>>,
+        max_per_write: Option<usize>,
+    }
+
+    impl AsyncWrite for RecordingIo {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let n = self
+                .max_per_write
+                .map_or(buf.len(), |max| buf.len().min(max));
+            self.writes.push(buf[..n].to_vec());
+            Poll::Ready(Ok(n))
+        }
+
+        fn poll_write_vectored(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            bufs: &[io::IoSlice<'_>],
+        ) -> Poll<io::Result<usize>> {
+            let mut write = Vec::new();
+            for buf in bufs {
+                write.extend_from_slice(buf);
+            }
+            if let Some(max) = self.max_per_write {
+                write.truncate(max);
+            }
+            let n = write.len();
+            self.writes.push(write);
+            Poll::Ready(Ok(n))
+        }
+
+        fn is_write_vectored(&self) -> bool {
+            true
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn trailers(stream: u32) -> Headers {
+        let mut fields = HeaderMap::new();
+        fields.insert("grpc-status", "0".parse().unwrap());
+        Headers::trailers(StreamId::from(stream), fields)
+    }
+
+    fn flush(write: &mut FramedWrite<RecordingIo, Bytes>) {
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(write.flush(&mut cx).is_ready());
+    }
+
+    /// The bytes one frame encodes to when buffered on its own.
+    fn alone(frames: Vec<Frame<Bytes>>) -> Vec<u8> {
+        let mut write = FramedWrite::new(RecordingIo::default());
+        for frame in frames {
+            let waker = noop_waker();
+            let mut cx = Context::from_waker(&waker);
+            assert!(write.poll_ready(&mut cx).is_ready());
+            write.buffer(frame).unwrap();
+        }
+        flush(&mut write);
+        write.inner.writes.concat()
+    }
+
+    #[test]
+    fn headers_after_a_chained_data_frame_share_its_write() {
+        let payload = Bytes::from(vec![7_u8; 1_000]);
+        let mut write = FramedWrite::new(RecordingIo::default());
+        write
+            .buffer(Data::new(StreamId::from(1), payload.clone()).into())
+            .unwrap();
+        // The chained payload blocks ordinary buffering ...
+        assert!(!write.has_capacity());
+        // ... but a HEADERS frame may follow it in the same write.
+        assert!(write.can_buffer_headers_after_data());
+        write.buffer_headers_after_data(trailers(1));
+        assert!(!write.can_buffer_headers_after_data());
+        flush(&mut write);
+
+        assert_eq!(
+            write.inner.writes.len(),
+            1,
+            "one write for data and trailers"
+        );
+        // Byte-identical to writing the two frames in order separately.
+        let expected = alone(vec![
+            Data::new(StreamId::from(1), payload).into(),
+            trailers(1).into(),
+        ]);
+        assert_eq!(write.inner.writes[0], expected);
+        assert!(write.has_capacity());
+        assert!(write.take_last_data_frame().is_some());
+    }
+
+    #[test]
+    fn partial_writes_drain_data_before_the_queued_headers() {
+        let payload = Bytes::from((0..4_000_u32).map(|i| i as u8).collect::<Vec<_>>());
+        let mut write = FramedWrite::new(RecordingIo {
+            max_per_write: Some(333),
+            ..RecordingIo::default()
+        });
+        write
+            .buffer(Data::new(StreamId::from(3), payload.clone()).into())
+            .unwrap();
+        write.buffer_headers_after_data(trailers(3));
+        flush(&mut write);
+
+        let expected = alone(vec![
+            Data::new(StreamId::from(3), payload).into(),
+            trailers(3).into(),
+        ]);
+        assert_eq!(write.inner.writes.concat(), expected);
+        assert!(write.has_capacity());
+    }
+
+    #[test]
+    fn headers_cannot_follow_unchained_or_absent_data() {
+        let mut write = FramedWrite::<_, Bytes>::new(RecordingIo::default());
+        assert!(!write.can_buffer_headers_after_data());
+        // A small payload is copied, not chained, so ordinary buffering applies.
+        write
+            .buffer(Data::new(StreamId::from(1), Bytes::from_static(b"small")).into())
+            .unwrap();
+        assert!(write.has_capacity());
+        assert!(!write.can_buffer_headers_after_data());
     }
 }

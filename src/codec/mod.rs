@@ -157,6 +157,17 @@ where
         self.framed_write().flush(cx)
     }
 
+    /// Returns whether a HEADERS frame can be queued behind a pending
+    /// chained DATA frame, to be written in the same write.
+    pub(crate) fn can_buffer_headers_after_data(&mut self) -> bool {
+        self.framed_write().can_buffer_headers_after_data()
+    }
+
+    /// Queue a HEADERS frame behind the pending chained DATA frame.
+    pub(crate) fn buffer_headers_after_data(&mut self, item: crate::frame::Headers) {
+        self.framed_write().buffer_headers_after_data(item)
+    }
+
     /// Shutdown the send half
     pub fn shutdown(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.framed_write().shutdown(cx)
