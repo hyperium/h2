@@ -550,6 +550,26 @@ where
         self.connection.go_away_gracefully();
     }
 
+    /// Sends an ORIGIN frame ([RFC 8336]) listing the origins this connection
+    /// may be used for.
+    ///
+    /// Each origin is an ASCII serialization such as `https://example.com`.
+    /// Entries that can't be encoded are skipped.
+    ///
+    /// Origins added before the connection is next polled are sent together,
+    /// split into several frames if they exceed the peer's max frame size.
+    ///
+    /// Must continue being polled to write the frame.
+    ///
+    /// [RFC 8336]: https://www.rfc-editor.org/rfc/rfc8336
+    pub fn send_origins<I, S>(&mut self, origins: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.connection.send_origins(origins);
+    }
+
     /// Takes a `PingPong` instance from the connection.
     ///
     /// # Note

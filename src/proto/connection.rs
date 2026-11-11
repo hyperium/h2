@@ -7,12 +7,16 @@ use crate::proto::*;
 
 use bytes::Bytes;
 use futures_core::Stream;
+use std::collections::HashSet;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::AsyncRead;
+
+// Limits the origins kept from a peer, further ones are ignored.
+const MAX_RECEIVED_ORIGINS: usize = 256;
 
 /// An H2 connection
 #[derive(Debug)]
@@ -48,6 +52,12 @@ where
     /// A refused stream to reset before receiving another frame.
     pending_refusal: Option<StreamId>,
 
+    /// Origins to send in an ORIGIN frame.
+    pending_origins: Vec<String>,
+
+    /// Origins announced by the peer in ORIGIN frames.
+    received_origins: HashSet<String>,
+
     /// Ping/pong handler
     ping_pong: PingPong,
 
@@ -72,6 +82,9 @@ struct DynConnection<'a, B: Buf = Bytes> {
     streams: DynStreams<'a, B>,
 
     error: &'a mut Option<frame::GoAway>,
+
+    // Only a client keeps the ORIGIN frames of a server.
+    received_origins: Option<&'a mut HashSet<String>>,
 
     ping_pong: &'a mut PingPong,
 }
@@ -164,6 +177,8 @@ where
                 error: None,
                 go_away: GoAway::new(),
                 pending_refusal: None,
+                pending_origins: Vec::new(),
+                received_origins: HashSet::new(),
                 ping_pong: PingPong::new(),
                 settings: Settings::new(config.settings),
                 streams,
@@ -234,6 +249,30 @@ where
                 .buffer(frame::Reset::new(id, Reason::REFUSED_STREAM).into())
                 .expect("invalid RST_STREAM frame");
             self.inner.pending_refusal = None;
+        }
+
+        let pending_origins = &mut self.inner.pending_origins;
+        while !pending_origins.is_empty() {
+            ready!(self.codec.poll_ready(cx))?;
+            // Split the origins into frames which fit the peer's max frame size.
+            let max = self.codec.max_send_frame_size();
+            let mut size = 0;
+            let count = pending_origins
+                .iter()
+                .take_while(|origin| {
+                    size += 2 + origin.len();
+                    size <= max
+                })
+                .count();
+            if count == 0 {
+                // This origin can never be sent.
+                pending_origins.remove(0);
+                continue;
+            }
+            let origins = pending_origins.drain(..count);
+            self.codec
+                .buffer(frame::Origin::new(origins).into())
+                .expect("invalid ORIGIN frame");
         }
 
         Poll::Ready(Ok(()))
@@ -424,6 +463,7 @@ where
             go_away,
             streams,
             error,
+            received_origins,
             ping_pong,
             ..
         } = self;
@@ -433,6 +473,7 @@ where
             go_away,
             streams,
             error,
+            received_origins: (!P::r#dyn().is_server()).then_some(received_origins),
             ping_pong,
         }
     }
@@ -616,6 +657,17 @@ where
                 tracing::trace!(?frame, "recv PRIORITY");
                 // TODO: handle
             }
+            Some(Origin(frame)) => {
+                tracing::trace!(?frame, "recv ORIGIN");
+                if let Some(received_origins) = &mut self.received_origins {
+                    for origin in frame.into_origins() {
+                        if received_origins.len() >= MAX_RECEIVED_ORIGINS {
+                            break;
+                        }
+                        received_origins.insert(origin);
+                    }
+                }
+            }
             None => {
                 tracing::trace!("codec closed");
                 self.streams.recv_eof(false).expect("mutex poisoned");
@@ -641,6 +693,10 @@ where
     pub(crate) fn streams(&self) -> &Streams<B, client::Peer> {
         &self.inner.streams
     }
+
+    pub(crate) fn received_origins(&self) -> &HashSet<String> {
+        &self.inner.received_origins
+    }
 }
 
 impl<T, B> Connection<T, server::Peer, B>
@@ -650,6 +706,17 @@ where
 {
     pub fn next_incoming(&mut self) -> Option<StreamRef<B>> {
         self.inner.streams.next_incoming()
+    }
+
+    /// Queue an ORIGIN frame to be written.
+    pub fn send_origins<I, S>(&mut self, origins: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.inner
+            .pending_origins
+            .extend(frame::Origin::valid_origins(origins));
     }
 
     // Graceful shutdown only makes sense for server peers.
