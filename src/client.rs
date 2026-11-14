@@ -135,7 +135,7 @@
 //! [`Builder`]: struct.Builder.html
 //! [`Error`]: ../struct.Error.html
 
-use crate::codec::{Codec, SendError, UserError};
+use crate::codec::{Codec, InitialBufferCapacities, SendError, UserError};
 use crate::ext::Protocol;
 use crate::frame::{Headers, Pseudo, Reason, Settings, StreamId};
 use crate::proto::{self, Error};
@@ -323,6 +323,9 @@ pub struct Builder {
 
     /// Maximum amount of bytes to "buffer" for writing per stream.
     max_send_buffer_size: usize,
+
+    /// Initial capacities for connection-level codec buffers.
+    initial_buffer_capacities: InitialBufferCapacities,
 
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
@@ -665,11 +668,40 @@ impl Builder {
             pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
+            initial_buffer_capacities: InitialBufferCapacities::default(),
             settings: Default::default(),
             stream_id: 1.into(),
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
             data_frame_budget: proto::DataFrameBudget::Auto,
         }
+    }
+
+    /// Sets the initial capacity of the connection read buffer.
+    ///
+    /// The buffer grows as needed. If this is not set, the default capacity is
+    /// preserved.
+    pub fn initial_read_buffer_capacity(&mut self, capacity: usize) -> &mut Self {
+        self.initial_buffer_capacities.read = Some(capacity);
+        self
+    }
+
+    /// Sets the initial capacity of the connection write buffer.
+    ///
+    /// The buffer grows as needed and is clamped to the minimum required by
+    /// the frame encoder. If this is not set, the default capacity is
+    /// preserved.
+    pub fn initial_write_buffer_capacity(&mut self, capacity: usize) -> &mut Self {
+        self.initial_buffer_capacities.write = Some(capacity);
+        self
+    }
+
+    /// Sets the initial capacity of the HPACK decoder scratch buffer.
+    ///
+    /// The buffer grows as needed. If this is not set, the default capacity is
+    /// preserved.
+    pub fn initial_hpack_decode_buffer_capacity(&mut self, capacity: usize) -> &mut Self {
+        self.initial_buffer_capacities.hpack_decode = Some(capacity);
+        self
     }
 
     /// Indicates the initial window size (in octets) for stream-level
@@ -1339,7 +1371,8 @@ where
         bind_connection(&mut io).await?;
 
         // Create the codec
-        let mut codec = Codec::new(io);
+        let mut codec =
+            Codec::with_initial_buffer_capacities(io, builder.initial_buffer_capacities);
 
         if let Some(max) = builder.settings.max_frame_size() {
             codec.set_max_recv_frame_size(max as usize);
@@ -1746,5 +1779,27 @@ impl proto::Peer for Peer {
         *response.headers_mut() = fields;
 
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codec_buffer_capacities_are_opt_in() {
+        let default = Builder::new();
+        assert_eq!(default.initial_buffer_capacities.read, None);
+        assert_eq!(default.initial_buffer_capacities.write, None);
+        assert_eq!(default.initial_buffer_capacities.hpack_decode, None);
+
+        let mut configured = Builder::new();
+        configured
+            .initial_read_buffer_capacity(4 * 1024)
+            .initial_write_buffer_capacity(4 * 1024)
+            .initial_hpack_decode_buffer_capacity(0);
+        assert_eq!(configured.initial_buffer_capacities.read, Some(4 * 1024));
+        assert_eq!(configured.initial_buffer_capacities.write, Some(4 * 1024));
+        assert_eq!(configured.initial_buffer_capacities.hpack_decode, Some(0));
     }
 }

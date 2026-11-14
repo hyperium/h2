@@ -154,12 +154,21 @@ struct StringMarker {
 impl Decoder {
     /// Creates a new `Decoder` with all settings set to default values.
     pub fn new(size: usize) -> Decoder {
+        Self::with_buffer_capacity(size, 4096)
+    }
+
+    pub(crate) fn with_buffer_capacity(size: usize, buffer_capacity: usize) -> Decoder {
         Decoder {
             max_size_update: None,
             last_max_update: size,
             table: Table::new(size),
-            buffer: BytesMut::with_capacity(4096),
+            buffer: BytesMut::with_capacity(buffer_capacity),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffer_capacity(&self) -> usize {
+        self.buffer.capacity()
     }
 
     /// Queues a potential size update
@@ -838,6 +847,12 @@ pub fn get_static(idx: usize) -> Header {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn decode_buffer_capacity_is_configurable_without_changing_the_default() {
+        assert_eq!(Decoder::new(4096).buffer.capacity(), 4096);
+        assert_eq!(Decoder::with_buffer_capacity(4096, 0).buffer.capacity(), 0);
+    }
 
     #[test]
     fn test_peek_u8() {
