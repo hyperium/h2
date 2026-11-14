@@ -17,7 +17,7 @@ pub(crate) use self::streams::{DynStreams, OpaqueStreamRef, RecvOutcome, StreamR
 
 use self::buffer::Buffer;
 use self::counts::Counts;
-use self::flow_control::FlowControl;
+pub(crate) use self::flow_control::FlowControl;
 use self::prioritize::Prioritize;
 use self::recv::Recv;
 use self::send::Send;

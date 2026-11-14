@@ -100,6 +100,12 @@ impl<T, B> Codec<T, B> {
         self.inner.set_header_table_size(val)
     }
 
+    /// Get a mutable reference to the decoder's HPACK decoder.
+    #[cfg(feature = "internal")]
+    pub fn hpack_mut(&mut self) -> &mut crate::hpack::Decoder {
+        self.inner.hpack_mut()
+    }
+
     /// Set the max header list size that can be received.
     pub fn set_max_recv_header_list_size(&mut self, val: usize) {
         self.inner.set_max_header_list_size(val);

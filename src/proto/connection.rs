@@ -211,6 +211,16 @@ where
         self.inner.streams.num_wired_streams()
     }
 
+    #[cfg(feature = "internal")]
+    pub fn hpack_mut(&mut self) -> &mut crate::hpack::Decoder {
+        self.codec.hpack_mut()
+    }
+
+    #[cfg(feature = "internal")]
+    pub fn with_flow_control<R>(&mut self, f: impl FnOnce(&mut super::FlowControl) -> R) -> R {
+        self.inner.streams.with_flow_control(f)
+    }
+
     /// Returns `Ready` when the connection is ready to receive a frame.
     ///
     /// Returns `Error` as this may raise errors that are caused by delayed

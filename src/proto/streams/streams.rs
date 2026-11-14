@@ -1154,6 +1154,12 @@ where
         let me = self.inner.lock().unwrap();
         me.store.num_wired_streams()
     }
+
+    #[cfg(feature = "internal")]
+    pub fn with_flow_control<R>(&mut self, f: impl FnOnce(&mut super::FlowControl) -> R) -> R {
+        let mut me = self.inner.lock().unwrap();
+        f(&mut me.actions.send.prioritize.flow)
+    }
 }
 
 // no derive because we don't need B and P to be Clone.

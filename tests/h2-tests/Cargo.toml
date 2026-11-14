@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 
 [dev-dependencies]
+h2 = { path = "../..", features = ["internal"] }
 h2-support = { path = "../h2-support" }
 tracing = "0.1.13"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }

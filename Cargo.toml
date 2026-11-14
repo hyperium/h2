@@ -29,6 +29,10 @@ stream = []
 # depends on this feature.
 unstable = []
 
+# Exposes each connection's HPACK decoder and connection level send flow
+# control. Same guarantees as `unstable`: none.
+internal = []
+
 [workspace]
 members = [
     "tests/h2-fuzz",
