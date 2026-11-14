@@ -1641,6 +1641,7 @@ impl Peer {
         id: StreamId,
         request: Request<()>,
         protocol: Option<Protocol>,
+        sensitive_path: bool,
         end_of_stream: bool,
     ) -> Result<Headers, SendError> {
         use http::request::Parts;
@@ -1661,6 +1662,7 @@ impl Peer {
         // Build the set pseudo header set. All requests will include `method`
         // and `path`.
         let mut pseudo = Pseudo::request(method, uri, protocol);
+        pseudo.path_sensitive = sensitive_path;
 
         if pseudo.scheme.is_none() {
             // If the scheme is not set, then there are a two options.

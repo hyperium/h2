@@ -145,8 +145,8 @@ impl Table {
         }
 
         // If the header is already indexed by the static table, return that
-        if let Some((n, true)) = statik {
-            return Index::Indexed(n, header);
+        if let Some((_, true)) = statik {
+            return Index::new(statik, header);
         }
 
         // Don't index large headers
@@ -220,7 +220,11 @@ impl Table {
 
             if self.slots[real_idx].header.value_eq(&header) {
                 // We have a full match!
-                return Index::Indexed(real_idx + DYN_OFFSET, header);
+                return if header.is_sensitive() {
+                    Index::Name(real_idx + DYN_OFFSET, header)
+                } else {
+                    Index::Indexed(real_idx + DYN_OFFSET, header)
+                };
             }
 
             if let Some(next) = self.slots[real_idx].next {
@@ -633,8 +637,8 @@ impl Index {
     fn new(v: Option<(usize, bool)>, e: Header) -> Index {
         match v {
             None => Index::NotIndexed(e),
-            Some((n, true)) => Index::Indexed(n, e),
-            Some((n, false)) => Index::Name(n, e),
+            Some((n, true)) if !e.is_sensitive() => Index::Indexed(n, e),
+            Some((n, _)) => Index::Name(n, e),
         }
     }
 }
@@ -741,7 +745,7 @@ fn index_static(header: &Header) -> Option<(usize, bool)> {
             "https" => Some((7, true)),
             _ => Some((6, false)),
         },
-        Header::Path(ref v) => match &**v {
+        Header::Path(ref v, _) => match &**v {
             "/" => Some((4, true)),
             "/index.html" => Some((5, true)),
             _ => Some((4, false)),

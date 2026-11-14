@@ -231,7 +231,7 @@ fn gen_header(g: &mut StdRng) -> Header<Option<HeaderName>> {
                     _ => gen_string(g, 2, 20),
                 };
 
-                Header::Path(to_shared(value))
+                Header::Path(to_shared(value), false)
             }
             4 => {
                 let status = (g.gen::<u16>() % 500) + 100;

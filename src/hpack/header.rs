@@ -14,7 +14,7 @@ pub enum Header<T = HeaderName> {
     Authority(BytesStr),
     Method(Method),
     Scheme(BytesStr),
-    Path(BytesStr),
+    Path(BytesStr, bool),
     Protocol(Protocol),
     Status(StatusCode),
 }
@@ -53,7 +53,7 @@ impl Header<Option<HeaderName>> {
             Authority(v) => Authority(v),
             Method(v) => Method(v),
             Scheme(v) => Scheme(v),
-            Path(v) => Path(v),
+            Path(v, sensitive) => Path(v, sensitive),
             Protocol(v) => Protocol(v),
             Status(v) => Status(v),
         })
@@ -81,7 +81,7 @@ impl Header {
                 }
                 b"path" => {
                     let value = BytesStr::try_from(value)?;
-                    Ok(Header::Path(value))
+                    Ok(Header::Path(value, false))
                 }
                 b"protocol" => {
                     let value = Protocol::try_from(value)?;
@@ -111,7 +111,7 @@ impl Header {
             Header::Authority(ref v) => 32 + 10 + v.len(),
             Header::Method(ref v) => 32 + 7 + v.as_ref().len(),
             Header::Scheme(ref v) => 32 + 7 + v.len(),
-            Header::Path(ref v) => 32 + 5 + v.len(),
+            Header::Path(ref v, _) => 32 + 5 + v.len(),
             Header::Protocol(ref v) => 32 + 9 + v.as_str().len(),
             Header::Status(_) => 32 + 7 + 3,
         }
@@ -136,7 +136,7 @@ impl Header {
             Header::Authority(ref v) => v.as_ref(),
             Header::Method(ref v) => v.as_ref().as_ref(),
             Header::Scheme(ref v) => v.as_ref(),
-            Header::Path(ref v) => v.as_ref(),
+            Header::Path(ref v, _) => v.as_ref(),
             Header::Protocol(ref v) => v.as_ref(),
             Header::Status(ref v) => v.as_str().as_ref(),
         }
@@ -163,8 +163,8 @@ impl Header {
                 Header::Scheme(ref b) => a == b,
                 _ => false,
             },
-            Header::Path(ref a) => match *other {
-                Header::Path(ref b) => a == b,
+            Header::Path(ref a, _) => match *other {
+                Header::Path(ref b, _) => a == b,
                 _ => false,
             },
             Header::Protocol(ref a) => match *other {
@@ -181,9 +181,14 @@ impl Header {
     pub fn is_sensitive(&self) -> bool {
         match *self {
             Header::Field { ref value, .. } => value.is_sensitive(),
+            Header::Path(_, sensitive) => sensitive,
             // TODO: Technically these other header values can be sensitive too.
             _ => false,
         }
+    }
+
+    pub fn is_sensitive_path(&self) -> bool {
+        matches!(self, Header::Path(_, true))
     }
 
     pub fn skip_value_index(&self) -> bool {
@@ -219,7 +224,7 @@ impl From<Header> for Header<Option<HeaderName>> {
             Header::Authority(v) => Header::Authority(v),
             Header::Method(v) => Header::Method(v),
             Header::Scheme(v) => Header::Scheme(v),
-            Header::Path(v) => Header::Path(v),
+            Header::Path(v, sensitive) => Header::Path(v, sensitive),
             Header::Protocol(v) => Header::Protocol(v),
             Header::Status(v) => Header::Status(v),
         }
@@ -236,7 +241,7 @@ impl<'a> Name<'a> {
             Name::Authority => Ok(Header::Authority(BytesStr::try_from(value)?)),
             Name::Method => Ok(Header::Method(Method::from_bytes(&value)?)),
             Name::Scheme => Ok(Header::Scheme(BytesStr::try_from(value)?)),
-            Name::Path => Ok(Header::Path(BytesStr::try_from(value)?)),
+            Name::Path => Ok(Header::Path(BytesStr::try_from(value)?, false)),
             Name::Protocol => Ok(Header::Protocol(Protocol::try_from(value)?)),
             Name::Status => {
                 match StatusCode::from_bytes(&value) {

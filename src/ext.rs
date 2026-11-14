@@ -5,6 +5,11 @@ use crate::hpack::BytesStr;
 use bytes::Bytes;
 use std::fmt;
 
+/// Marks a request URI's `:path` pseudo-header as sensitive for HPACK encoding.
+/// This extension is consumed per request and never appears on the wire.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SensitivePath;
+
 /// Represents the `:protocol` pseudo-header used by
 /// the [Extended CONNECT Protocol].
 ///
