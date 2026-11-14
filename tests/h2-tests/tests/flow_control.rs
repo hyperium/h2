@@ -683,7 +683,7 @@ async fn padded_data_stream_error_releases_connection_capacity() {
 }
 
 // Regression test for TODO
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn padded_data_on_forgotten_stream_releases_connection_capacity() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();

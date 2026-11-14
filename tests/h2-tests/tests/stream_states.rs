@@ -982,7 +982,7 @@ async fn send_rst_stream_allows_recv_trailers() {
     join(srv, client).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rst_stream_expires() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();

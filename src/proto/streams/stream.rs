@@ -4,7 +4,8 @@ use super::*;
 
 use std::fmt;
 use std::task::{Context, Waker};
-use std::time::Instant;
+
+use tokio::time::Instant;
 
 /// Tracks Stream related state
 ///

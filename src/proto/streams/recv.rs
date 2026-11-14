@@ -4,11 +4,11 @@ use crate::frame::{PushPromiseHeaderError, Reason, DEFAULT_INITIAL_WINDOW_SIZE};
 use crate::proto;
 
 use http::{HeaderMap, Request, Response};
+use tokio::time::Instant;
 
 use std::cmp::Ordering;
 use std::io;
 use std::task::{Context, Poll, Waker};
-use std::time::Instant;
 
 #[derive(Debug)]
 pub(super) struct Recv {
