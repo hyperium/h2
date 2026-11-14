@@ -272,6 +272,20 @@ where
         }
     }
 
+    fn remote_go_away_if_idle(&self) -> Option<Error> {
+        let frame = self.inner.error.as_ref()?;
+        if frame.reason() == Reason::NO_ERROR || self.inner.streams.has_streams() {
+            return None;
+        }
+
+        // A later transport error should not hide the peer's shutdown reason
+        // once all streams have finished or been rejected by its GOAWAY.
+        Some(Error::remote_go_away(
+            frame.debug_data().clone(),
+            frame.reason(),
+        ))
+    }
+
     /// Closes the connection by transitioning to a GOAWAY state
     /// iff there are no streams or references
     pub fn maybe_close_connection_if_no_streams(&mut self) {
@@ -322,7 +336,9 @@ where
                             // Ensure all window updates have been sent.
                             //
                             // This will also handle flushing `self.codec`
-                            ready!(self.inner.streams.poll_complete(cx, &mut self.codec))?;
+                            ready!(self.inner.streams.poll_complete(cx, &mut self.codec)).map_err(
+                                |err| self.remote_go_away_if_idle().unwrap_or_else(|| err.into()),
+                            )?;
 
                             if (self.inner.error.is_some()
                                 || self.inner.go_away.should_close_on_idle())
@@ -336,12 +352,20 @@ where
                         }
                     };
 
+                    if matches!(&result, Err(Error::Io(..))) {
+                        if let Some(err) = self.remote_go_away_if_idle() {
+                            return Poll::Ready(Err(err));
+                        }
+                    }
+
                     self.inner.as_dyn().handle_poll2_result(result)?
                 }
                 State::Closing(reason, initiator) => {
                     tracing::trace!("connection closing after flush");
                     // Flush/shutdown the codec
-                    ready!(self.codec.shutdown(cx))?;
+                    ready!(self.codec.shutdown(cx)).map_err(|err| {
+                        self.remote_go_away_if_idle().unwrap_or_else(|| err.into())
+                    })?;
 
                     // Transition the state to error
                     self.inner.state = State::Closed(reason, initiator);
