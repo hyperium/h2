@@ -419,6 +419,20 @@ impl Recv {
         frame: frame::Headers,
         stream: &mut store::Ptr,
     ) -> Result<(), Error> {
+        // Validate before closing or discarding pseudo-headers, without masking state errors.
+        let pseudo = frame.pseudo();
+        if stream.state.is_recv_streaming()
+            && (pseudo.method.is_some()
+                || pseudo.scheme.is_some()
+                || pseudo.authority.is_some()
+                || pseudo.path.is_some()
+                || pseudo.protocol.is_some()
+                || pseudo.status.is_some())
+        {
+            proto_err!(stream: "recv_trailers: pseudo-header field; stream={:?};", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR));
+        }
+
         // Transition the state
         stream.state.recv_close()?;
 

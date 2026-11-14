@@ -514,7 +514,7 @@ async fn recv_invalid_push_promise_headers_is_stream_protocol_error() {
                 .fields(fields),
         )
         .await;
-        srv.send_frame(frames::headers(1).response(404).eos()).await;
+        srv.send_frame(frames::headers(1).eos()).await;
         srv.recv_frame(frames::reset(2).protocol_error()).await;
         srv.recv_frame(frames::reset(4).protocol_error()).await;
         srv.recv_frame(frames::reset(8).protocol_error()).await;
