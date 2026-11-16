@@ -43,6 +43,10 @@ struct FrameDecoder {
     /// size the next block's `HeaderMap` so decoding it doesn't rehash.
     fields_hint: usize,
 
+    /// Frames with a payload of at most this size are copied out of the read
+    /// buffer. 0 disables copying.
+    max_copy_size: usize,
+
     partial: Option<Partial>,
 }
 
@@ -107,6 +111,12 @@ impl<T> FramedRead<T> {
     pub fn set_header_table_size(&mut self, val: usize) {
         self.decoder.set_header_table_size(val);
     }
+
+    /// Update the max payload size of frames copied out of the read buffer.
+    #[inline]
+    pub fn set_max_copy_size(&mut self, val: usize) {
+        self.decoder.max_copy_size = val;
+    }
 }
 
 fn calc_max_continuation_frames(header_max: usize, frame_max: usize) -> usize {
@@ -129,6 +139,7 @@ impl FrameDecoder {
                 max_frame_size,
             ),
             fields_hint: 0,
+            max_copy_size: 0,
             partial: None,
         }
     }
@@ -179,6 +190,18 @@ fn decode_frame(decoder: &mut FrameDecoder, mut bytes: BytesMut) -> Result<Optio
     let kind = head.kind();
 
     tracing::trace!(frame.kind = ?kind);
+
+    // Held payloads and header values would otherwise keep the whole read
+    // buffer alive, so give small frames their own allocation.
+    if decoder.max_copy_size > 0
+        && bytes.len() - frame::HEADER_LEN <= decoder.max_copy_size
+        && matches!(
+            kind,
+            Kind::Data | Kind::Headers | Kind::PushPromise | Kind::Continuation
+        )
+    {
+        bytes = BytesMut::from(&bytes[..]);
+    }
 
     macro_rules! header_block {
         ($frame:ident, $head:ident, $bytes:ident) => ({
