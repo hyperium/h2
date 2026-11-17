@@ -7,9 +7,8 @@ use std::task::{Context, Poll};
 pub(crate) struct Settings {
     /// Our local SETTINGS sync state with the remote.
     local: Local,
-    /// Received SETTINGS frame pending processing. The ACK must be written to
-    /// the socket first then the settings applied **before** receiving any
-    /// further frames.
+    /// Received SETTINGS frame pending processing. Queue the ACK before
+    /// applying the settings and receiving any further frames.
     remote: Option<frame::Settings>,
     /// Whether the connection has received the initial SETTINGS frame from the
     /// remote peer.
@@ -121,15 +120,11 @@ impl Settings {
         P: Peer,
     {
         if let Some(settings) = self.remote.clone() {
-            if !dst.poll_ready(cx)?.is_ready() {
-                return Poll::Pending;
-            }
+            let frame = frame::Settings::ack().into();
+            ready!(dst.poll_ready_control(cx, &frame))?;
 
-            // Create an ACK settings frame
-            let frame = frame::Settings::ack();
-
-            // Buffer the settings frame
-            dst.buffer(frame.into()).expect("invalid settings frame");
+            // Queue the ACK after frames encoded with the old settings.
+            dst.buffer_control(frame).expect("invalid settings frame");
 
             tracing::trace!("ACK sent; applying settings");
 
@@ -149,13 +144,10 @@ impl Settings {
 
         match &self.local {
             Local::ToSend(settings) => {
-                if !dst.poll_ready(cx)?.is_ready() {
-                    return Poll::Pending;
-                }
+                let frame = settings.clone().into();
+                ready!(dst.poll_ready_control(cx, &frame))?;
 
-                // Buffer the settings frame
-                dst.buffer(settings.clone().into())
-                    .expect("invalid settings frame");
+                dst.buffer_control(frame).expect("invalid settings frame");
                 tracing::trace!("local settings sent; waiting for ack: {:?}", settings);
 
                 self.local = Local::WaitingAck(settings.clone());
