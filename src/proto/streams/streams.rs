@@ -1691,6 +1691,11 @@ fn drop_stream_ref(inner: &Mutex<Inner>, key: store::Key) {
             while let Some(promise) = ppp.pop(stream.store_mut()) {
                 counts.transition(promise, |counts, stream| {
                     maybe_cancel(stream, actions, counts);
+                    // Discard unreachable push data and return connection credit.
+                    // https://www.rfc-editor.org/rfc/rfc9113.html#section-6.9.1
+                    actions
+                        .recv
+                        .release_closed_capacity(stream, &mut actions.task, counts);
                 });
             }
         }
