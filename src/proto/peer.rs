@@ -41,8 +41,8 @@ pub(crate) enum Dyn {
 
 #[derive(Debug)]
 pub enum PollMessage {
-    Client(Response<()>),
-    Server(Request<()>),
+    Client(Box<Response<()>>),
+    Server(Box<Request<()>>),
 }
 
 // ===== impl Dyn =====
@@ -65,10 +65,10 @@ impl Dyn {
     ) -> Result<PollMessage, Error> {
         if self.is_server() {
             crate::server::Peer::convert_poll_message(pseudo, fields, stream_id)
-                .map(PollMessage::Server)
+                .map(|request| PollMessage::Server(Box::new(request)))
         } else {
             crate::client::Peer::convert_poll_message(pseudo, fields, stream_id)
-                .map(PollMessage::Client)
+                .map(|response| PollMessage::Client(Box::new(response)))
         }
     }
 
