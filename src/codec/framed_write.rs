@@ -109,8 +109,9 @@ where
     /// to be flushed to `T`.
     pub fn poll_ready(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         if !self.encoder.has_capacity() {
-            // Try flushing
-            ready!(self.flush(cx))?;
+            // Write out the buffer; the transport is flushed when the connection has
+            // nothing more to send.
+            ready!(self.write_out(cx))?;
 
             if !self.encoder.has_capacity() {
                 return Poll::Pending;
@@ -139,6 +140,17 @@ where
         let span = tracing::trace_span!("FramedWrite::flush");
         let _e = span.enter();
 
+        ready!(self.write_out(cx))?;
+
+        tracing::trace!("flushing buffer");
+        // Flush the upstream
+        ready!(Pin::new(&mut self.inner).poll_flush(cx))?;
+
+        Poll::Ready(Ok(()))
+    }
+
+    /// Write buffered data to the transport, without flushing it.
+    fn write_out(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         loop {
             while !self.encoder.is_empty() {
                 let n = match self.encoder.next {
@@ -168,10 +180,6 @@ where
                 ControlFlow::Break => break,
             }
         }
-
-        tracing::trace!("flushing buffer");
-        // Flush the upstream
-        ready!(Pin::new(&mut self.inner).poll_flush(cx))?;
 
         Poll::Ready(Ok(()))
     }
