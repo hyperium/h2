@@ -220,7 +220,7 @@ impl Table {
 
             if self.slots[real_idx].header.value_eq(&header) {
                 // We have a full match!
-                return Index::Indexed(real_idx + DYN_OFFSET, header);
+                return Index::dynamic_match(real_idx + DYN_OFFSET, header);
             }
 
             if let Some(next) = self.slots[real_idx].next {
@@ -630,6 +630,23 @@ impl Table {
 }
 
 impl Index {
+    /// Index for a full match in the dynamic table.
+    ///
+    /// A sensitive header must not become an index reference: whether its
+    /// value is already in the table depends on earlier, possibly
+    /// attacker-influenced, headers, so a short index versus a literal would
+    /// leak equality through the encoded length (RFC 7541 section 7.1).
+    /// Reuse the name index and emit a never-indexed literal instead,
+    /// leaving the table untouched. Static table entries hold no secrets,
+    /// so static full matches stay indexed.
+    fn dynamic_match(n: usize, header: Header) -> Index {
+        if header.is_sensitive() {
+            Index::Name(n, header)
+        } else {
+            Index::Indexed(n, header)
+        }
+    }
+
     fn new(v: Option<(usize, bool)>, e: Header) -> Index {
         match v {
             None => Index::NotIndexed(e),
