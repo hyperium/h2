@@ -1857,7 +1857,6 @@ async fn client_ignores_headers_after_a_completed_response() {
         )
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
-        // Stream 1 completed normally. A late header block must not reopen it.
         srv.send_frame(frames::headers(1).response(201).eos()).await;
         srv.ping_pong([1; 8]).await;
     };
@@ -1865,17 +1864,12 @@ async fn client_ignores_headers_after_a_completed_response() {
     let h2 = async move {
         let (mut client, mut h2) = client::handshake(io).await.unwrap();
 
-        h2.drive(async {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://camembert.fromage")
-                .body(())
-                .unwrap();
-            let res = client.send_request(request, true).unwrap().0.await.unwrap();
-            assert_eq!(res.status(), StatusCode::OK);
-        })
-        .await;
-
+        let response = h2
+            .drive(client.get("https://camembert.fromage"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(response);
         h2.await.unwrap();
     };
 

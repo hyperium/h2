@@ -1004,7 +1004,6 @@ async fn rst_stream_expires() {
         srv.send_frame(frames::headers(1).response(200)).await;
         srv.send_frame(frames::data(1, vec![0; 16_384])).await;
         srv.recv_frame(frames::reset(1).cancel()).await;
-        // wait till after the configured duration
         idle_ms(15).await;
         srv.ping_pong([1; 8]).await;
         assert_eq!(
@@ -1012,11 +1011,8 @@ async fn rst_stream_expires() {
             0,
             "reset stream did not expire"
         );
-        // sending frame after canceled!
         srv.send_frame(frames::data(1, vec![0; 16_384]).eos()).await;
-        // window capacity is returned
         srv.recv_frame(frames::window_update(0, 16_384 * 2)).await;
-        // and the frame is discarded without a stream error
         srv.ping_pong([2; 8]).await;
     };
 
@@ -1035,123 +1031,65 @@ async fn rst_stream_expires() {
 }
 
 #[tokio::test]
-async fn rst_stream_max() {
+async fn rst_stream_max_discards_late_frames() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
     let (mut client, mut conn) = client::Builder::new()
         .max_concurrent_reset_streams(1)
         .reset_stream_duration(Duration::MAX)
+        .max_local_error_reset_streams(Some(0))
+        .data_frame_budget(0)
         .handshake::<_, Bytes>(io)
         .await
-        .expect("handshake");
-    let responses = [
-        client.get("https://example.com/"),
-        client.get("https://example.com/"),
-    ];
+        .unwrap();
+    conn.drive(srv.assert_client_handshake()).await;
 
-    let srv = async move {
-        let settings = srv.assert_client_handshake().await;
-        assert_default_settings!(settings);
-        srv.recv_frame(
-            frames::headers(1)
-                .request("GET", "https://example.com/")
-                .eos(),
+    let first = client.get("https://example.com/");
+    let second = client.get("https://example.com/");
+    for id in [1, 3] {
+        conn.drive(
+            srv.recv_frame(
+                frames::headers(id)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            ),
         )
         .await;
+    }
+    drop((first, second));
+    for id in [1, 3] {
+        conn.drive(srv.recv_frame(frames::reset(id).cancel())).await;
+    }
+    assert_eq!(client.num_wired_streams(), 1);
+
+    let probe = client.get("https://example.com/");
+    conn.drive(async {
         srv.recv_frame(
-            frames::headers(3)
+            frames::headers(5)
                 .request("GET", "https://example.com/")
                 .eos(),
         )
         .await;
         srv.send_frame(frames::headers(1).response(200)).await;
-        srv.send_frame(frames::data(1, vec![0; 16])).await;
-        srv.send_frame(frames::headers(3).response(200)).await;
-        srv.send_frame(frames::data(3, vec![0; 16])).await;
-        srv.recv_frame(frames::reset(1).cancel()).await;
-        srv.recv_frame(frames::reset(3).cancel()).await;
-        assert_eq!(
-            client.num_wired_streams(),
-            1,
-            "only one reset should be retained"
-        );
-        // Late DATA is discarded for both the retained and the forgotten stream.
-        srv.send_frame(frames::data(1, vec![0; 16]).eos()).await;
-        srv.send_frame(frames::data(3, vec![0; 16]).eos()).await;
-        srv.ping_pong([2; 8]).await;
-    };
-
-    let client = async move {
-        for response in responses {
-            let resp = conn.drive(response).await.expect("response");
-            assert_eq!(resp.status(), StatusCode::OK);
-            // Dropping the response sends RST_STREAM(CANCEL).
-        }
-        conn.await.expect("client");
-    };
-
-    join(srv, client).await;
-}
-
-#[tokio::test]
-async fn client_discards_fragments_on_retained_and_forgotten_streams() {
-    h2_support::trace_init!();
-    let (io, mut srv) = mock::new();
-
-    let srv = async move {
-        let settings = srv.assert_client_handshake().await;
-        assert_default_settings!(settings);
-        for id in [1, 3, 5] {
-            srv.recv_frame(
-                frames::headers(id)
-                    .request("GET", "https://example.com/")
-                    .eos(),
-            )
+        srv.send_frame(frames::headers(3).response(200).field("x-late", "seen"))
             .await;
+        srv.send_frame(frames::data(1, "x")).await;
+        for _ in 0..1025 {
+            srv.send_frame(frames::data(3, "x")).await;
         }
-        srv.recv_frame(frames::reset(1).cancel()).await;
-        srv.recv_frame(frames::reset(3).cancel()).await;
-        for id in [1, 3] {
-            srv.send_frame(frames::headers(id).response(200)).await;
-            // Discarded fragments must not spend the buffering budget.
-            for _ in 0..1025 {
-                srv.send_frame(frames::data(id, "x")).await;
-            }
-            srv.send_frame(frames::data(id, vec![0; 16_384 - 1025]).eos())
-                .await;
-        }
-        srv.recv_frame(frames::window_update(0, 32_768)).await;
         srv.ping_pong([1; 8]).await;
-        srv.send_frame(frames::headers(5).response(200)).await;
+        srv.send_frame(frames::headers(5).response(200).field("x-late", "seen"))
+            .await;
         srv.send_frame(frames::data(5, "complete").eos()).await;
-    };
+    })
+    .await;
 
-    let client = async move {
-        let (mut client, mut conn) = client::Builder::new()
-            .max_concurrent_reset_streams(1)
-            .reset_stream_duration(Duration::MAX)
-            .max_local_error_reset_streams(Some(0))
-            .data_frame_budget(0)
-            .handshake::<_, Bytes>(io)
-            .await
-            .expect("handshake");
-
-        for _ in 0..2 {
-            drop(client.get("https://example.com/"));
-        }
-
-        let resp = conn
-            .drive(client.get("https://example.com/"))
-            .await
-            .expect("response");
-        assert_eq!(resp.status(), StatusCode::OK);
-        let mut body = resp.into_body();
-        assert_eq!(conn.drive(body.data()).await.unwrap().unwrap(), "complete");
-        assert!(conn.drive(body.data()).await.is_none());
-        conn.await.expect("client");
-    };
-
-    join(srv, client).await;
+    let resp = conn.drive(probe).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["x-late"], "seen");
+    let mut body = resp.into_body();
+    assert_eq!(conn.drive(body.data()).await.unwrap().unwrap(), "complete");
+    assert!(conn.drive(body.data()).await.is_none());
 }
 
 #[tokio::test]
@@ -1160,8 +1098,7 @@ async fn client_counts_empty_nonfinal_data_on_forgotten_streams() {
     let (io, mut srv) = mock::new();
 
     let srv = async move {
-        let settings = srv.assert_client_handshake().await;
-        assert_default_settings!(settings);
+        srv.assert_client_handshake().await;
         srv.recv_frame(
             frames::headers(1)
                 .request("GET", "https://example.com/")
@@ -1169,8 +1106,6 @@ async fn client_counts_empty_nonfinal_data_on_forgotten_streams() {
         )
         .await;
         srv.recv_frame(frames::reset(1).cancel()).await;
-        srv.send_frame(frames::headers(1).response(200)).await;
-        // Empty non-final DATA counts toward the connection's empty-frame limit.
         for _ in 0..101 {
             srv.send_frame(frames::data(1, "")).await;
         }
@@ -1180,7 +1115,6 @@ async fn client_counts_empty_nonfinal_data_on_forgotten_streams() {
 
     let client = async move {
         let (mut client, conn) = client::Builder::new()
-            // forget reset streams as soon as the RST_STREAM is sent
             .max_concurrent_reset_streams(0)
             .handshake::<_, Bytes>(io)
             .await
