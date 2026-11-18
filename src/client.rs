@@ -1432,6 +1432,24 @@ where
         self.inner.take_user_pings().map(PingPong::new)
     }
 
+    /// Returns the origins the server announced with ORIGIN frames so far, in
+    /// no particular order.
+    ///
+    /// # Note
+    ///
+    /// Origins are only added while the connection is polled. At most 256
+    /// distinct origins are kept, further ones are ignored.
+    pub fn received_origins(&self) -> Vec<String> {
+        self.inner.received_origins().iter().cloned().collect()
+    }
+
+    /// Returns whether the server announced `origin` with an ORIGIN frame.
+    ///
+    /// See [`received_origins`](Connection::received_origins).
+    pub fn has_received_origin(&self, origin: &str) -> bool {
+        self.inner.received_origins().contains(origin)
+    }
+
     /// Returns the maximum number of concurrent streams that may be initiated
     /// by this client.
     ///

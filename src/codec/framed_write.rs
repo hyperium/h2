@@ -277,6 +277,10 @@ where
                 v.encode(self.buf.get_mut());
                 tracing::trace!(rem = self.buf.remaining(), "encoded settings");
             }
+            Frame::Origin(v) => {
+                v.encode(self.buf.get_mut());
+                tracing::trace!(rem = self.buf.remaining(), "encoded origin");
+            }
             Frame::GoAway(v) => {
                 v.encode(self.buf.get_mut());
                 tracing::trace!(rem = self.buf.remaining(), "encoded go_away");

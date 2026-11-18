@@ -77,6 +77,14 @@ pub fn ping(payload: [u8; 8]) -> Mock<frame::Ping> {
     Mock(frame::Ping::new(payload))
 }
 
+pub fn origin<I, S>(origins: I) -> Mock<frame::Origin>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    Mock(frame::Origin::new(origins))
+}
+
 // === Generic helpers of all frame types
 
 pub struct Mock<T>(T);
