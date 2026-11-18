@@ -32,7 +32,7 @@ pub(super) struct Send {
     init_window_sz: WindowSize,
 
     /// Prioritization layer
-    prioritize: Prioritize,
+    pub(super) prioritize: Prioritize,
 
     is_push_enabled: bool,
 

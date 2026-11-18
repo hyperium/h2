@@ -46,7 +46,7 @@ pub(super) struct Prioritize {
     pending_open: store::Queue<stream::NextOpen>,
 
     /// Connection level flow control governing sent data
-    flow: FlowControl,
+    pub(super) flow: FlowControl,
 
     /// Stream ID of the last stream opened.
     last_opened_id: StreamId,
@@ -787,9 +787,14 @@ impl Prioritize {
                     // Only send up to the stream's window capacity
                     let len = cmp::min(len, stream_capacity.as_size() as usize) as WindowSize;
 
-                    // There *must* be be enough connection level
-                    // capacity at this point.
-                    debug_assert!(len <= self.flow.window_size());
+                    // The connection window can be smaller than the
+                    // capacity assigned to the stream if it was decreased
+                    // from outside, see `with_flow_control`.
+                    if len > 0 && len > self.flow.window_size() {
+                        stream.pending_send.push_front(buffer, frame.into());
+                        self.pending_capacity.push(&mut stream);
+                        continue;
+                    }
 
                     // Check if the stream level window the peer knows is available. In some
                     // scenarios, maybe the window we know is available but the window which
