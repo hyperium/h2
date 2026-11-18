@@ -419,6 +419,12 @@ impl Recv {
         frame: frame::Headers,
         stream: &mut store::Ptr,
     ) -> Result<(), Error> {
+        // Reject truncated trailers before closing, without masking stream-state errors.
+        if stream.state.is_recv_streaming() && frame.is_over_size() {
+            proto_err!(stream: "recv_trailers: oversized trailers; stream={:?};", stream.id);
+            return Err(Error::library_reset(stream.id, Reason::PROTOCOL_ERROR));
+        }
+
         // Transition the state
         stream.state.recv_close()?;
 
