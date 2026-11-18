@@ -1826,7 +1826,8 @@ async fn rogue_server_reused_headers() {
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
         srv.send_frame(frames::headers(1)).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        // the client discards HEADERS on a stream it no longer tracks
+        srv.ping_pong([1; 8]).await;
     };
 
     let h2 = async move {
