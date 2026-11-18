@@ -27,6 +27,7 @@ struct UserPingsRx(Arc<UserPingsInner>);
 #[derive(Debug)]
 struct UserPingsInner {
     state: AtomicUsize,
+    concurrent: super::concurrent_ping::ConcurrentPings,
     /// Task to wake up the main `Connection`.
     ping_task: AtomicWaker,
     /// Task to wake up `share::PingPong::poll_pong`.
@@ -77,6 +78,7 @@ impl PingPong {
 
         let user_pings = Arc::new(UserPingsInner {
             state: AtomicUsize::new(USER_STATE_EMPTY),
+            concurrent: super::concurrent_ping::ConcurrentPings::new(),
             ping_task: AtomicWaker::new(),
             pong_task: AtomicWaker::new(),
         });
@@ -116,6 +118,10 @@ impl PingPong {
             }
 
             if let Some(ref users) = self.user_pings {
+                if users.0.concurrent.receive(ping.payload()) {
+                    users.0.pong_task.wake();
+                    return ReceivedPing::Unknown;
+                }
                 if ping.payload() == &Ping::USER && users.receive_pong() {
                     tracing::trace!("recv PING USER ack");
                     return ReceivedPing::Unknown;
@@ -178,6 +184,9 @@ impl PingPong {
                 ping.sent = true;
             }
         } else if let Some(ref users) = self.user_pings {
+            // Register before checking either queue so concurrent enqueue cannot
+            // lose a wakeup between checking state and going to sleep.
+            users.0.ping_task.register(cx.waker());
             if users.0.state.load(Ordering::Acquire) == USER_STATE_PENDING_PING {
                 if !dst.poll_ready(cx)?.is_ready() {
                     return Poll::Pending;
@@ -189,9 +198,8 @@ impl PingPong {
                     .0
                     .state
                     .store(USER_STATE_PENDING_PONG, Ordering::Release);
-            } else {
-                users.0.ping_task.register(cx.waker());
             }
+            return users.0.concurrent.send_pending(cx, dst);
         }
 
         Poll::Ready(Ok(()))
@@ -207,17 +215,46 @@ impl ReceivedPing {
 // ===== impl UserPings =====
 
 impl UserPings {
+    pub(crate) fn ping(
+        &self,
+    ) -> impl std::future::Future<Output = Result<(), crate::Error>> + Send + 'static {
+        let shared = self.0.clone();
+        async move {
+            let mut ping = shared.concurrent.send(
+                || match shared.state.load(Ordering::Acquire) {
+                    USER_STATE_EMPTY => Ok(()),
+                    USER_STATE_CLOSED => Err(proto::Error::from(broken_pipe()).into()),
+                    _ => Err(crate::codec::UserError::SendPingWhilePending.into()),
+                },
+                &shared.pong_task,
+            )?;
+            shared.ping_task.wake();
+            crate::poll_fn(|cx| ping.poll(cx)).await.map_err(Into::into)
+        }
+    }
+
     pub(crate) fn send_ping(&self) -> Result<(), Option<proto::Error>> {
         let prev = self
             .0
-            .state
-            .compare_exchange(
-                USER_STATE_EMPTY,        // current
-                USER_STATE_PENDING_PING, // new
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .unwrap_or_else(|v| v);
+            .concurrent
+            .with_legacy_send(|| {
+                self.0
+                    .state
+                    .compare_exchange(
+                        USER_STATE_EMPTY,        // current
+                        USER_STATE_PENDING_PING, // new
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .unwrap_or_else(|v| v)
+            })
+            .ok_or_else(|| {
+                if self.0.state.load(Ordering::Acquire) == USER_STATE_CLOSED {
+                    Some(broken_pipe().into())
+                } else {
+                    None
+                }
+            })?;
 
         match prev {
             USER_STATE_EMPTY => {
@@ -233,9 +270,12 @@ impl UserPings {
     }
 
     pub(crate) fn poll_pong(&self, cx: &mut Context) -> Poll<Result<(), proto::Error>> {
-        // Must register before checking state, in case state were to change
-        // before we could register, and then the ping would just be lost.
+        // Both legacy and abandoned exchanges use this waiter. Register before
+        // checking either state so cancellation/ACK cannot lose a wakeup.
         self.0.pong_task.register(cx.waker());
+        if let Some(result) = self.0.concurrent.poll_abandoned() {
+            return result.map(Ok);
+        }
         let prev = self
             .0
             .state
@@ -282,6 +322,7 @@ impl UserPingsRx {
 impl Drop for UserPingsRx {
     fn drop(&mut self) {
         self.0.state.store(USER_STATE_CLOSED, Ordering::Release);
+        self.0.concurrent.close();
         self.0.pong_task.wake();
     }
 }

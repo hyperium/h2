@@ -547,9 +547,48 @@ impl PingPong {
     }
 
     /// Send a PING frame and wait for the peer to send the pong.
-    pub async fn ping(&mut self, ping: Ping) -> Result<Pong, crate::Error> {
-        self.send_ping(ping)?;
-        crate::poll_fn(|cx| self.poll_pong(cx)).await
+    ///
+    /// The returned future owns its exchange and does not borrow this handle.
+    /// Multiple calls can therefore be polled concurrently on one connection:
+    ///
+    /// ```no_run
+    /// # async fn example(pings: &mut h2::PingPong) -> Result<(), h2::Error> {
+    /// let first = pings.ping(h2::Ping::opaque());
+    /// let second = pings.ping(h2::Ping::opaque());
+    /// let (first, second) = tokio::join!(first, second);
+    /// let first_pong = first?;
+    /// let second_pong = second?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Like an async function, this is lazy: the PING is queued on the future's
+    /// first poll, not when `ping` is called. At most 64 started exchanges may
+    /// be outstanding, including ACKed responses not yet consumed. Reaching
+    /// this limit returns an error from the future; no implicit capacity wait
+    /// or timeout is imposed. The connection must also be polled to do I/O.
+    ///
+    /// Each exchange has a unique payload and independent completion; ACKs may
+    /// arrive in any order. As in the original single-PING API, dropping a
+    /// started future leaves its exchange pending. Drain abandoned exchanges
+    /// using `poll_pong` before starting another PING. With multiple abandoned
+    /// futures, `poll_pong` drains them in send order, never taking a live
+    /// future's result. These entries count toward the 64-exchange bound.
+    ///
+    /// A pending legacy `send_ping` prevents starting high-level PINGs; any
+    /// pending high-level exchange prevents `send_ping`. Multiple live `ping`
+    /// futures can coexist, but starting another is rejected while abandoned
+    /// exchanges remain. Payloads are never reused; exhaustion returns an error.
+    pub fn ping(
+        &mut self,
+        ping: Ping,
+    ) -> impl std::future::Future<Output = Result<Pong, crate::Error>> + Send + 'static {
+        let _ = ping;
+        let response = self.inner.ping();
+        async move {
+            response.await?;
+            Ok(Pong { _p: () })
+        }
     }
 
     #[doc(hidden)]

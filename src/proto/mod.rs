@@ -1,3 +1,4 @@
+mod concurrent_ping;
 mod connection;
 mod error;
 mod go_away;
