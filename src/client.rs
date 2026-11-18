@@ -1161,8 +1161,9 @@ impl Builder {
     ///
     /// Small DATA frames consume this budget. The budget is restored when
     /// buffered frames are consumed by the application, while sufficiently
-    /// large frames may also restore budget. Empty DATA frames are limited
-    /// separately and do not consume this budget.
+    /// large frames may also restore budget. Empty DATA frames do not consume
+    /// this budget: they have a separate, fixed allowance that sufficiently
+    /// large frames also restore.
     ///
     /// When this budget is exhausted, the connection is closed with
     /// `ENHANCE_YOUR_CALM`.
@@ -1430,6 +1431,17 @@ where
     /// This may only be called once. Calling multiple times will return `None`.
     pub fn ping_pong(&mut self) -> Option<PingPong> {
         self.inner.take_user_pings().map(PingPong::new)
+    }
+
+    /// Returns whether the initial `SETTINGS` frame from the server peer has
+    /// been received and applied.
+    ///
+    /// Until then, [`max_concurrent_send_streams`][Self::max_concurrent_send_streams]
+    /// reflects the locally configured
+    /// [`initial_max_send_streams`][Builder::initial_max_send_streams] rather
+    /// than the server's limit.
+    pub fn has_received_initial_settings(&self) -> bool {
+        self.inner.has_received_remote_initial_settings()
     }
 
     /// Returns the maximum number of concurrent streams that may be initiated

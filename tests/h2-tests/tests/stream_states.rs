@@ -233,6 +233,71 @@ async fn too_many_padded_empty_data_frames_sends_goaway() {
 }
 
 #[tokio::test]
+async fn padded_empty_data_frames_between_large_data_frames_do_not_exhaust_budget() {
+    h2_support::trace_init!();
+
+    // More streams than the burst of empty DATA frames allowed, with one empty
+    // frame per stream.
+    const NUM_STREAMS: u32 = 150;
+    const BODY_LEN: usize = 1024;
+    // Large enough that the capacity released automatically never reaches the
+    // WINDOW_UPDATE threshold, so the client sends no further WINDOW_UPDATE
+    // frames.
+    const CONNECTION_WINDOW: u32 = 1 << 20;
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::window_update(0, CONNECTION_WINDOW - 65_535))
+            .await;
+
+        for i in 0..NUM_STREAMS {
+            let stream_id = 1 + i * 2;
+            srv.recv_frame(
+                frames::headers(stream_id)
+                    .request("GET", "https://http2.akamai.com/")
+                    .eos(),
+            )
+            .await;
+            srv.send_frame(frames::headers(stream_id).response(200))
+                .await;
+            srv.send_frame(frames::data(stream_id, vec![0; BODY_LEN]))
+                .await;
+            // A zero padding length byte with no payload, as some servers
+            // emit between the DATA frames of a body.
+            srv.send_frame(frames::data(stream_id, [0]).padded()).await;
+            srv.send_frame(frames::data(stream_id, "").eos()).await;
+        }
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .initial_connection_window_size(CONNECTION_WINDOW)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+
+        for _ in 0..NUM_STREAMS {
+            let request = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .body(())
+                .unwrap();
+            let response = client.send_request(request, true).unwrap().0;
+            let response = h2.drive(response).await.unwrap();
+            let body = h2.drive(util::concat(response.into_body())).await;
+            assert_eq!(body.unwrap().len(), BODY_LEN);
+        }
+
+        drop(client);
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn too_many_small_data_frames_sends_goaway() {
     h2_support::trace_init!();
 
