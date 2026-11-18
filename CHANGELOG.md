@@ -1,3 +1,16 @@
+# 0.4.20 (October 6, 2026)
+
+* Fix counting reserved push promises against stream concurrency limits.
+* Fix automatic small DATA frame budget to update when the connection window changes at runtime.
+* Fix rejecting duplicate `content-length` headers with different values.
+* Fix counting refused streams towards the local reset limit.
+* Fix client to reject responses without a `:status` pseudo header.
+* Fix rare race condition during shutdown.
+* Fix rejecting GOAWAY frames with a non-zero stream identifier.
+* Optimize HPACK Huffman encoding and decoding.
+* Reduce size of HPACK Huffman encoding tables.
+* Optimize receive performance by reducing send buffer locking.
+
 # 0.4.19 (August 24, 2026)
 
 * Improve default (auto) small DATA frame budget based on configured connection window.

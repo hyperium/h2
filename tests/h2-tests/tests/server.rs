@@ -70,6 +70,64 @@ async fn server_builder_set_max_concurrent_streams() {
 }
 
 #[tokio::test]
+async fn consecutive_refusals_survive_write_backpressure() {
+    // Allow only the initial SETTINGS (15 bytes) and its ACK (9 bytes).
+    let (io, mut client) = mock::new_with_write_capacity(24);
+    let mut builder = server::Builder::new();
+    builder
+        .max_concurrent_streams(0)
+        .max_local_error_reset_streams(None);
+
+    client.write_preface().await;
+    client.send_frame(frame::Settings::default()).await;
+    let mut srv = builder.handshake::<_, Bytes>(io).await.unwrap();
+    poll_fn(|cx| {
+        assert!(srv.poll_accept(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let mut settings = frame::Settings::default();
+    settings.set_max_concurrent_streams(Some(0));
+    client.recv_frame(settings).await;
+    client.recv_frame(frame::Settings::ack()).await;
+    client.send_frame(frame::Settings::ack()).await;
+
+    // Enough RST_STREAM frames to fill the codec's 16 KiB write buffer.
+    const STREAMS: u32 = 2000;
+    for n in 0..STREAMS {
+        client
+            .send_frame(
+                frames::headers(2 * n + 1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+    }
+
+    // Processing the requests fills the codec and stalls on the blocked writer.
+    poll_fn(|cx| {
+        assert!(srv.poll_accept(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+
+    client.unbounded_bytes().await;
+    join(
+        async move {
+            for n in 0..STREAMS {
+                client.recv_frame(frames::reset(2 * n + 1).refused()).await;
+            }
+            // Also detect a duplicated refusal after the expected sequence.
+            client.ping_pong([42; 8]).await;
+        },
+        async move {
+            assert!(srv.next().await.is_none());
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn server_builder_header_table_size() {
     h2_support::trace_init!();
 
@@ -628,6 +686,64 @@ async fn sends_reset_no_error_when_req_body_is_dropped() {
             let mut tx = stream.send_response(rsp, false).unwrap();
             tx.send_data(vec![0; 16384 * 2].into(), true).unwrap();
         }
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn early_response_no_error_resets_do_not_affect_local_limit() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+
+        // Leave each request body open so dropping it after the response
+        // schedules an early-response NO_ERROR reset. Exceed the error limit.
+        for id in [1, 3, 5] {
+            client
+                .send_frame(frames::headers(id).request("POST", "https://example.com/"))
+                .await;
+            client.recv_frame(frames::headers(id).response(200)).await;
+            client.recv_frame(frames::data(id, "ok").eos()).await;
+            client
+                .recv_frame(frames::reset(id).reason(Reason::NO_ERROR))
+                .await;
+        }
+
+        // The connection must still accept and complete another request.
+        client
+            .send_frame(
+                frames::headers(7)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(7).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_local_error_reset_streams(Some(1))
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        for _ in 0..3 {
+            let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(Bytes::from_static(b"ok"), true).unwrap();
+        }
+
+        let (_req, mut stream) = srv.next().await.unwrap().unwrap();
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
         assert!(srv.next().await.is_none());
     };
 
@@ -1469,6 +1585,48 @@ async fn send_reset_explicitly_does_not_affect_local_limit() {
         }
 
         assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+
+#[tokio::test]
+async fn refused_requests_count_toward_local_reset_limit() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_concurrent_streams(0));
+        for id in [1, 3, 5] {
+            client
+                .send_frame(
+                    frames::headers(id)
+                        .request("GET", "https://example.com/")
+                        .eos(),
+                )
+                .await;
+            if id < 5 {
+                client.recv_frame(frames::reset(id).refused()).await;
+            } else {
+                client
+                    .recv_frame(frames::go_away(0).calm().data("too_many_internal_resets"))
+                    .await;
+            }
+        }
+    };
+
+    let srv = async move {
+        let mut conn = server::Builder::new()
+            .max_concurrent_streams(0)
+            .max_local_error_reset_streams(Some(2))
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let err = conn.next().await.unwrap().unwrap_err();
+        assert!(err.is_go_away());
+        assert!(err.is_library());
+        assert_eq!(err.reason(), Some(Reason::ENHANCE_YOUR_CALM));
     };
 
     join(client, srv).await;

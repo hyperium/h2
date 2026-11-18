@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 struct Budget {
-    available: usize,
+    spent: usize,
     max: usize,
 }
 
@@ -11,19 +11,29 @@ pub(super) struct BudgetExhausted;
 
 impl Budget {
     fn new(max: usize) -> Self {
-        Budget {
-            available: max,
-            max,
-        }
+        Budget { spent: 0, max }
     }
 
     fn consume(&mut self, amount: usize) -> Result<(), BudgetExhausted> {
-        self.available = self.available.checked_sub(amount).ok_or(BudgetExhausted)?;
+        let spent = self.spent.checked_add(amount).ok_or(BudgetExhausted)?;
+        if spent > self.max {
+            return Err(BudgetExhausted);
+        }
+        self.spent = spent;
         Ok(())
     }
 
     fn replenish(&mut self, amount: usize) {
-        self.available = self.available.saturating_add(amount).min(self.max);
+        self.spent = self.spent.saturating_sub(amount);
+    }
+
+    fn set_max(&mut self, max: usize) {
+        self.max = max;
+    }
+
+    #[cfg(test)]
+    fn available(&self) -> usize {
+        self.max.saturating_sub(self.spent)
     }
 }
 
@@ -70,6 +80,9 @@ pub(super) struct Counts {
     /// connection-level budget for DATA framing overhead.
     data_frame_budget: Budget,
 
+    /// Whether the DATA frame budget follows the target connection window.
+    data_frame_budget_is_auto: bool,
+
     /// Number of empty, non-final DATA frames received over the lifetime of
     /// the connection.
     num_recv_empty_data_frames: usize,
@@ -90,8 +103,16 @@ impl Counts {
             num_remote_reset_streams: 0,
             max_local_error_reset_streams: config.local_max_error_reset_streams,
             num_local_error_reset_streams: 0,
-            data_frame_budget: Budget::new(config.data_frame_budget),
+            data_frame_budget: Budget::new(config.data_frame_budget.resolve(None)),
+            data_frame_budget_is_auto: config.data_frame_budget.is_auto(),
             num_recv_empty_data_frames: 0,
+        }
+    }
+
+    pub fn set_target_connection_window_size(&mut self, size: WindowSize) {
+        if self.data_frame_budget_is_auto {
+            self.data_frame_budget
+                .set_max(DataFrameBudget::Auto.resolve(Some(size)));
         }
     }
 
@@ -355,24 +376,25 @@ mod tests {
     use super::*;
     use crate::frame::DEFAULT_INITIAL_WINDOW_SIZE;
 
+    fn counts_config() -> Config {
+        Config {
+            initial_max_send_streams: 0,
+            local_max_buffer_size: 0,
+            local_next_stream_id: 2.into(),
+            local_push_enabled: false,
+            extended_connect_protocol_enabled: false,
+            local_reset_duration: Duration::ZERO,
+            local_reset_max: 0,
+            remote_reset_max: 0,
+            remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
+            remote_max_initiated: None,
+            local_max_error_reset_streams: None,
+            data_frame_budget: DataFrameBudget::Configured(DEFAULT_DATA_FRAME_BUDGET),
+        }
+    }
+
     fn counts() -> Counts {
-        Counts::new(
-            peer::Dyn::Server,
-            &Config {
-                initial_max_send_streams: 0,
-                local_max_buffer_size: 0,
-                local_next_stream_id: 2.into(),
-                local_push_enabled: false,
-                extended_connect_protocol_enabled: false,
-                local_reset_duration: Duration::ZERO,
-                local_reset_max: 0,
-                remote_reset_max: 0,
-                remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-                remote_max_initiated: None,
-                local_max_error_reset_streams: None,
-                data_frame_budget: DEFAULT_DATA_FRAME_BUDGET,
-            },
-        )
+        Counts::new(peer::Dyn::Server, &counts_config())
     }
 
     #[test]
@@ -381,7 +403,7 @@ mod tests {
 
         budget.consume(4).unwrap();
         budget.replenish(20);
-        assert_eq!(budget.available, 10);
+        assert_eq!(budget.available(), 10);
     }
 
     #[test]
@@ -390,7 +412,49 @@ mod tests {
 
         budget.consume(10).unwrap();
         assert!(budget.consume(1).is_err());
-        assert_eq!(budget.available, 0);
+        assert_eq!(budget.available(), 0);
+    }
+
+    #[test]
+    fn resizing_budget_preserves_outstanding_charges() {
+        let mut budget = Budget::new(100);
+        budget.consume(60).unwrap();
+
+        budget.set_max(200);
+        assert_eq!(budget.available(), 140);
+
+        budget.set_max(40);
+        assert_eq!(budget.available(), 0);
+        assert!(budget.consume(1).is_err());
+
+        budget.replenish(30);
+        assert_eq!(budget.available(), 10);
+    }
+
+    #[test]
+    fn auto_budget_tracks_target_window_and_configured_budget_does_not() {
+        let mut auto = Counts::new(
+            peer::Dyn::Server,
+            &Config {
+                data_frame_budget: DataFrameBudget::Auto,
+                ..counts_config()
+            },
+        );
+        auto.set_target_connection_window_size(1024 * 1024);
+        assert_eq!(auto.data_frame_budget.max, 512 * 1024);
+        for _ in 0..1_000 {
+            auto.record_data_frame(171).unwrap();
+        }
+
+        let mut configured = Counts::new(
+            peer::Dyn::Server,
+            &Config {
+                data_frame_budget: DataFrameBudget::Configured(123),
+                ..counts_config()
+            },
+        );
+        configured.set_target_connection_window_size(1024 * 1024);
+        assert_eq!(configured.data_frame_budget.max, 123);
     }
 
     #[test]
