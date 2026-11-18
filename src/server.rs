@@ -197,6 +197,47 @@ pub struct Connection<T, B: Buf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
+/// A validated event received by a server connection.
+///
+/// Events are delivered synchronously while the connection is polled, after
+/// h2 has applied its normal receive validation and state changes.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum ReceiveEvent {
+    /// A new request has been queued for [`Connection::accept`].
+    ///
+    /// This event is not emitted for trailers, ignored headers, or requests
+    /// rejected before they enter the accept queue. It does not mean the
+    /// application has accepted the request yet.
+    RequestHeaders {
+        /// The HTTP/2 request stream.
+        stream_id: crate::StreamId,
+    },
+    /// The connection accepted and applied a peer GOAWAY frame.
+    ///
+    /// This includes GOAWAY frames with [`Reason::NO_ERROR`], which may not
+    /// otherwise produce an error when the connection finishes.
+    GoAway {
+        /// The peer's last accepted stream ID.
+        last_stream_id: crate::StreamId,
+        /// The peer's error code.
+        reason: Reason,
+    },
+}
+
+/// Whether to continue receiving or return control after an observed event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReceiveAction {
+    /// Continue driving the connection normally.
+    Continue,
+    /// Stop receiving additional frames and wake the driver to resume progress.
+    ///
+    /// After a request event, [`Connection::poll_accept`] can return the queued
+    /// request before the next buffered frame is processed. Applications can
+    /// associate that request with a later GOAWAY notification in receive order.
+    Yield,
+}
+
 /// Builds server connections with custom configuration values.
 ///
 /// Methods can be chained in order to set the configuration values.
@@ -518,6 +559,28 @@ where
     /// [`SendStream`]: ../struct.SendStream.html
     pub fn poll_closed(&mut self, cx: &mut Context) -> Poll<Result<(), crate::Error>> {
         self.connection.poll(cx).map_err(Into::into)
+    }
+
+    /// Installs an observer for validated request and peer GOAWAY events.
+    ///
+    /// The observer runs synchronously during [`poll_accept`](Self::poll_accept)
+    /// or [`poll_closed`](Self::poll_closed), outside the stream-store lock. It
+    /// must return promptly; enqueue application work instead of blocking here.
+    /// Calling this method again replaces the previous observer.
+    ///
+    /// Returning [`ReceiveAction::Yield`] stops receiving more frames in this
+    /// poll and wakes the current task. Returning it for request events lets
+    /// `poll_accept` deliver a request before processing a subsequent buffered
+    /// GOAWAY. Returning it for GOAWAY lets the application react while existing
+    /// streams are still active, including when the peer reported `NO_ERROR`.
+    ///
+    /// The observer cannot suppress protocol validation or change a received
+    /// frame. Connections without an observer retain normal receive behavior.
+    pub fn set_receive_observer<F>(&mut self, observer: F)
+    where
+        F: FnMut(ReceiveEvent) -> ReceiveAction + Send + Sync + 'static,
+    {
+        self.connection.set_receive_observer(observer);
     }
 
     /// Sets the connection to a GOAWAY state.
@@ -1786,3 +1849,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "server/receive_observer_tests.rs"]
+mod receive_observer_tests;
