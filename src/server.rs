@@ -1745,6 +1745,11 @@ impl proto::Peer for Peer {
                 malformed!("malformed headers: missing path");
             }
 
+            // PathAndQuery would silently discard a fragment, including invalid suffix bytes.
+            if path.as_bytes().contains(&b'#') {
+                malformed!("malformed headers: fragment in :path ({:?})", path);
+            }
+
             let maybe_path = uri::PathAndQuery::from_maybe_shared(path.clone().into_inner());
             parts.path_and_query = Some(maybe_path.or_else(|why| {
                 malformed!("malformed headers: malformed path ({:?}): {}", path, why,)
