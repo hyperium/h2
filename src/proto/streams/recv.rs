@@ -24,6 +24,10 @@ pub(super) struct Recv {
     /// The lowest stream ID that is still idle
     next_stream_id: Result<StreamId, StreamIdOverflow>,
 
+    /// Highest PUSH_PROMISE stream ID received by a client. Unlike
+    /// `next_stream_id`, this does not advance when resetting malformed frames.
+    last_promised_id: StreamId,
+
     /// The stream ID of the last processed stream
     last_processed_id: StreamId,
 
@@ -102,6 +106,7 @@ impl Recv {
             in_flight_data: 0 as WindowSize,
             next_stream_id: Ok(next_stream_id.into()),
             pending_window_updates: store::Queue::new(),
+            last_promised_id: StreamId::ZERO,
             last_processed_id: StreamId::ZERO,
             max_stream_id: StreamId::MAX,
             pending_accept: store::Queue::new(),
@@ -141,6 +146,9 @@ impl Recv {
         }
 
         self.next_stream_id = id.next_id();
+        if counts.peer() == peer::Dyn::Client {
+            self.last_promised_id = id;
+        }
 
         if !counts.can_inc_num_recv_streams() {
             return Ok(None);
@@ -659,7 +667,12 @@ impl Recv {
         stream.pending_recv.is_empty()
     }
 
-    pub fn recv_data(&mut self, frame: frame::Data, stream: &mut store::Ptr) -> Result<(), Error> {
+    /// Returns whether DATA was queued for the application.
+    pub fn recv_data(
+        &mut self,
+        frame: frame::Data,
+        stream: &mut store::Ptr,
+    ) -> Result<bool, Error> {
         // could include padding
         let sz = frame.flow_controlled_len();
 
@@ -693,7 +706,8 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return self.ignore_data(sz);
+            self.ignore_data(sz)?;
+            return Ok(false);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -745,7 +759,7 @@ impl Recv {
                 stream.id,
             );
             self.release_connection_capacity(sz, &mut None);
-            return Ok(());
+            return Ok(false);
         }
 
         // Update stream level flow control
@@ -775,7 +789,7 @@ impl Recv {
         // message. Padding has already been accounted for and released above,
         // so there is no event to pass to the user.
         if frame.payload().is_empty() && !frame.is_end_stream() {
-            return Ok(());
+            return Ok(false);
         }
 
         let is_budgeted = !frame.is_end_stream();
@@ -788,7 +802,7 @@ impl Recv {
         stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn ignore_data(&mut self, sz: WindowSize) -> Result<(), Error> {
@@ -1008,6 +1022,10 @@ impl Recv {
     }
 
     pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        if id.is_server_initiated() {
+            return id <= self.last_promised_id;
+        }
+
         if let Ok(next_id) = self.next_stream_id {
             // Peer::is_local_init should have been called beforehand
             debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated(),);

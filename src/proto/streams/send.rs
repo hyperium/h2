@@ -642,6 +642,12 @@ impl Send {
     }
 
     pub fn may_have_created_stream(&self, id: StreamId) -> bool {
+        // Allocating a request ID does not open it: the request can still
+        // fail local validation before any HEADERS are sent.
+        if id.is_client_initiated() {
+            return id <= self.prioritize.last_opened_id;
+        }
+
         if let Ok(next_id) = self.next_stream_id {
             // Peer::is_local_init should have been called beforehand
             debug_assert_eq!(id.is_server_initiated(), next_id.is_server_initiated(),);

@@ -1810,7 +1810,39 @@ async fn rogue_server_even_headers() {
 }
 
 #[tokio::test]
-async fn rogue_server_reused_headers() {
+async fn locally_rejected_request_leaves_stream_idle() {
+    let (io, mut srv) = mock::new();
+    let (mut client, mut conn) = client::handshake(io).await.unwrap();
+    conn.drive(srv.assert_client_handshake()).await;
+
+    let req = Request::get("/").version(Version::HTTP_2).body(()).unwrap();
+    client.send_request(req, true).unwrap_err();
+
+    // Stream 1 was allocated but its request HEADERS were never sent.
+    srv.send_frame(frames::data(1, "unsolicited")).await;
+    let (result, ()) = join(conn, srv.recv_frame(frames::go_away(0).protocol_error())).await;
+    assert_eq!(result.unwrap_err().reason(), Some(Reason::PROTOCOL_ERROR));
+}
+
+#[tokio::test]
+async fn resetting_a_malformed_frame_does_not_open_push_streams() {
+    let (io, mut srv) = mock::new();
+    let (_client, mut conn) = client::handshake(io).await.unwrap();
+    conn.drive(srv.assert_client_handshake()).await;
+
+    // PRIORITY on stream 10 illegally depends on itself.
+    srv.send_bytes(&[0, 0, 5, 2, 0, 0, 0, 0, 10, 0, 0, 0, 10, 0])
+        .await;
+    conn.drive(srv.recv_frame(frames::reset(10).protocol_error()))
+        .await;
+    // No PUSH_PROMISE was received, so stream 8 is still idle.
+    srv.send_frame(frames::data(8, "unsolicited")).await;
+    let (result, ()) = join(conn, srv.recv_frame(frames::go_away(0).protocol_error())).await;
+    assert_eq!(result.unwrap_err().reason(), Some(Reason::PROTOCOL_ERROR));
+}
+
+#[tokio::test]
+async fn client_ignores_headers_after_a_completed_response() {
     h2_support::trace_init!();
     let (io, mut srv) = mock::new();
 
@@ -1825,23 +1857,19 @@ async fn rogue_server_reused_headers() {
         )
         .await;
         srv.send_frame(frames::headers(1).response(200).eos()).await;
-        srv.send_frame(frames::headers(1)).await;
-        srv.recv_frame(frames::reset(1).stream_closed()).await;
+        srv.send_frame(frames::headers(1).response(201).eos()).await;
+        srv.ping_pong([1; 8]).await;
     };
 
     let h2 = async move {
         let (mut client, mut h2) = client::handshake(io).await.unwrap();
 
-        h2.drive(async {
-            let request = Request::builder()
-                .method(Method::GET)
-                .uri("https://camembert.fromage")
-                .body(())
-                .unwrap();
-            let _res = client.send_request(request, true).unwrap().0.await.unwrap();
-        })
-        .await;
-
+        let response = h2
+            .drive(client.get("https://camembert.fromage"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(response);
         h2.await.unwrap();
     };
 
@@ -2213,7 +2241,7 @@ impl MockH2 for mock_io::Builder {
 async fn frame_on_pending_open_stream_is_conn_error() {
     h2_support::trace_init!();
 
-    for scenario in 0..5u8 {
+    for scenario in 0..6u8 {
         let (io, mut srv) = mock::new();
 
         let srv = async move {
@@ -2245,7 +2273,7 @@ async fn frame_on_pending_open_stream_is_conn_error() {
                 }
                 2 => srv.send_frame(frames::window_update(3, 1024)).await,
                 3 => srv.send_frame(frames::headers(3).response(200).eos()).await,
-                4 => srv.send_frame(frames::data(3, &b"hello"[..])).await,
+                4 | 5 => srv.send_frame(frames::data(3, &b"hello"[..])).await,
                 _ => unreachable!(),
             }
 
@@ -2275,7 +2303,11 @@ async fn frame_on_pending_open_stream_is_conn_error() {
                 .uri("https://example.com/")
                 .body(())
                 .unwrap();
-            let (_resp3, _) = client.send_request(request, true).unwrap();
+            let (_resp3, mut stream3) = client.send_request(request, true).unwrap();
+            if scenario == 5 {
+                // Canceling a queued request does not open its stream.
+                stream3.send_reset(Reason::CANCEL);
+            }
 
             // 6. Connection error propagates to poll_ready.
             conn.drive(client.ready())
