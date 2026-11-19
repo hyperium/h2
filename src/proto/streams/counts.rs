@@ -282,19 +282,16 @@ impl Counts {
     where
         F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
-        // TODO: Does this need to be computed before performing the action?
-        let is_pending_reset = stream.is_pending_reset_expiration();
-
         // Run the action
         let ret = f(self, &mut stream);
 
-        self.transition_after(stream, is_pending_reset);
+        self.transition_after(stream);
 
         ret
     }
 
     // TODO: move this to macro?
-    pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr) {
         tracing::trace!(
             "transition_after; stream={:?}; state={:?}; is_closed={:?}; \
              pending_send_empty={:?}; buffered_send_data={}; \
@@ -311,9 +308,6 @@ impl Counts {
         if stream.is_closed() {
             if !stream.is_pending_reset_expiration() {
                 stream.unlink();
-                if is_reset_counted {
-                    self.dec_num_reset_streams();
-                }
             }
 
             if !stream.state.is_scheduled_reset() && stream.is_counted {
@@ -355,7 +349,7 @@ impl Counts {
         }
     }
 
-    fn dec_num_reset_streams(&mut self) {
+    pub fn dec_num_reset_streams(&mut self) {
         assert!(self.num_local_reset_streams > 0);
         self.num_local_reset_streams -= 1;
     }

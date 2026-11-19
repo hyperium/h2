@@ -1043,16 +1043,21 @@ impl Recv {
             return;
         }
 
-        if counts.can_inc_num_reset_streams() {
-            counts.inc_num_reset_streams();
-            tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
-            self.pending_reset_expired.push(stream);
-        } else {
-            tracing::trace!(
-                "enqueue_reset_expiration; dropped {:?}, over max_concurrent_reset_streams",
-                stream.id
-            );
+        if !counts.can_inc_num_reset_streams() {
+            let oldest = match self.pending_reset_expired.pop(stream) {
+                Some(oldest) => oldest,
+                // Retention is disabled.
+                None => return,
+            };
+            tracing::trace!("enqueue_reset_expiration; evicted {:?}", oldest.id);
+            // Free the queue slot even if the stream still has frames to send.
+            counts.dec_num_reset_streams();
+            counts.transition_after(oldest);
         }
+
+        counts.inc_num_reset_streams();
+        tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
+        self.pending_reset_expired.push(stream);
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -1066,7 +1071,8 @@ impl Recv {
                 // monotonic). We use a saturating operation to avoid this panic here.
                 now.saturating_duration_since(reset_at) > reset_duration
             }) {
-                counts.transition_after(stream, true);
+                counts.dec_num_reset_streams();
+                counts.transition_after(stream);
             }
         }
     }
@@ -1096,13 +1102,14 @@ impl Recv {
     /// Called on EOF
     fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_reset_expired.pop(store) {
-            counts.transition_after(stream, true);
+            counts.dec_num_reset_streams();
+            counts.transition_after(stream);
         }
     }
 
     fn clear_all_pending_accept(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_accept.pop(store) {
-            counts.transition_after(stream, false);
+            counts.transition_after(stream);
         }
     }
 
