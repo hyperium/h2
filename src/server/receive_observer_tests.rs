@@ -30,6 +30,8 @@ struct IoState {
     incoming: VecDeque<u8>,
     outgoing: Vec<u8>,
     reader: Option<Waker>,
+    fail_flush_after_read: bool,
+    fail_flush: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,6 +47,10 @@ impl BufferedIo {
         if let Some(reader) = reader {
             reader.wake();
         }
+    }
+
+    fn fail_flush_after_read(&self) {
+        self.0.lock().unwrap().fail_flush_after_read = true;
     }
 
     fn wrote_frame(&self, kind: u8, stream_id: u32, payload: &[u8]) -> bool {
@@ -84,6 +90,10 @@ impl AsyncRead for BufferedIo {
         let len = state.incoming.len().min(buf.remaining());
         let bytes: Vec<_> = state.incoming.drain(..len).collect();
         buf.put_slice(&bytes);
+        if state.fail_flush_after_read {
+            state.fail_flush_after_read = false;
+            state.fail_flush = true;
+        }
         Poll::Ready(Ok(()))
     }
 }
@@ -99,11 +109,17 @@ impl AsyncWrite for BufferedIo {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.0.lock().unwrap().fail_flush {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "simulated flush failure",
+            )));
+        }
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_flush(cx)
     }
 }
 
@@ -111,6 +127,7 @@ impl AsyncWrite for BufferedIo {
 enum Observed {
     RequestHeaders(u32),
     GoAway(u32, Reason),
+    StreamReset(u32),
 }
 
 type Observations = Arc<Mutex<Vec<Observed>>>;
@@ -154,7 +171,7 @@ impl Harness {
         let observations = observations.clone();
         self.connection.set_receive_observer(move |event| {
             let (event, should_yield) = match event {
-                ReceiveEvent::RequestHeaders { stream_id } => {
+                ReceiveEvent::RequestHeaders { stream_id, .. } => {
                     (Observed::RequestHeaders(stream_id.as_u32()), yield_headers)
                 }
                 ReceiveEvent::GoAway {
@@ -164,6 +181,9 @@ impl Harness {
                     Observed::GoAway(last_stream_id.as_u32(), reason),
                     yield_go_away,
                 ),
+                ReceiveEvent::BeforeGoAway { .. } | ReceiveEvent::StreamReset { .. } => {
+                    return ReceiveAction::Continue;
+                }
             };
             observations.lock().unwrap().push(event);
             if should_yield {
@@ -266,7 +286,7 @@ fn yielding_headers_delivers_the_request_before_coalesced_go_away() {
     harness
         .connection
         .set_receive_observer(move |event| match event {
-            ReceiveEvent::RequestHeaders { stream_id } => {
+            ReceiveEvent::RequestHeaders { stream_id, .. } => {
                 seen.lock()
                     .unwrap()
                     .push(Observed::RequestHeaders(stream_id.as_u32()));
@@ -283,6 +303,9 @@ fn yielding_headers_delivers_the_request_before_coalesced_go_away() {
                     .lock()
                     .unwrap()
                     .push(known_requests.lock().unwrap().clone());
+                ReceiveAction::Continue
+            }
+            ReceiveEvent::BeforeGoAway { .. } | ReceiveEvent::StreamReset { .. } => {
                 ReceiveAction::Continue
             }
         });
@@ -420,7 +443,7 @@ fn increasing_go_away_remains_a_protocol_error_without_an_observer() {
 }
 
 #[test]
-fn observing_go_away_does_not_bypass_protocol_validation() {
+fn continuing_go_away_does_not_bypass_protocol_validation() {
     let mut harness = Harness::new(Builder::new());
     let observations = Observations::default();
     harness.observe(&observations, true, true);
@@ -472,4 +495,243 @@ fn yielding_wakes_the_driver_and_resumes_buffered_input() {
     assert!(harness.wakes.0.load(Ordering::SeqCst) > wakes_before_go_away);
     let (request, _respond) = harness.accept_ready();
     assert_eq!(request.body().stream_id().as_u32(), 1);
+}
+
+fn install_decreasing_go_away_policy(harness: &mut Harness, observations: &Observations) {
+    let seen = observations.clone();
+    let mut last_accepted = u32::MAX;
+    harness
+        .connection
+        .set_receive_observer(move |event| match event {
+            ReceiveEvent::RequestHeaders { stream_id, .. } => {
+                seen.lock()
+                    .unwrap()
+                    .push(Observed::RequestHeaders(stream_id.as_u32()));
+                ReceiveAction::Yield
+            }
+            ReceiveEvent::BeforeGoAway {
+                last_stream_id,
+                reason,
+            } => {
+                if u32::from(reason) >= 14 {
+                    ReceiveAction::Reject(Reason::PROTOCOL_ERROR)
+                } else if last_stream_id.as_u32() >= last_accepted {
+                    ReceiveAction::IgnoreGoAway
+                } else {
+                    ReceiveAction::Continue
+                }
+            }
+            ReceiveEvent::GoAway {
+                last_stream_id,
+                reason,
+            } => {
+                last_accepted = last_stream_id.as_u32();
+                seen.lock()
+                    .unwrap()
+                    .push(Observed::GoAway(last_accepted, reason));
+                ReceiveAction::Yield
+            }
+            ReceiveEvent::StreamReset { stream_id } => {
+                seen.lock()
+                    .unwrap()
+                    .push(Observed::StreamReset(stream_id.as_u32()));
+                ReceiveAction::Continue
+            }
+        });
+}
+
+#[test]
+fn ignored_go_away_preserves_active_stream_and_prior_saved_error() {
+    let mut harness = Harness::new(Builder::new());
+    let observations = Observations::default();
+    install_decreasing_go_away_policy(&mut harness, &observations);
+    harness.io.feed(&request_headers(1));
+    let (mut request, mut respond) = harness.accept_ready();
+    let mut send = respond.send_response(Response::new(()), false).unwrap();
+    let mut packet = go_away(0, Reason::NO_ERROR);
+    packet.extend_from_slice(&go_away(0, Reason::CANCEL));
+    packet.extend_from_slice(&go_away(2, Reason::CANCEL));
+    packet.extend_from_slice(&frame(0x0, 0x1, 1, b"after ignored GOAWAY"));
+    harness.io.feed(&packet);
+    for _ in 0..4 {
+        assert!(harness.poll_closed().is_pending());
+    }
+    assert_eq!(
+        *observations.lock().unwrap(),
+        vec![
+            Observed::RequestHeaders(1),
+            Observed::GoAway(0, Reason::NO_ERROR)
+        ]
+    );
+    let mut cx = Context::from_waker(&harness.waker);
+    match request.body_mut().poll_data(&mut cx) {
+        Poll::Ready(Some(Ok(bytes))) => assert_eq!(bytes.as_ref(), b"after ignored GOAWAY"),
+        other => panic!("ignored GOAWAY interrupted an active request: {other:?}"),
+    }
+    send.send_data(Bytes::new(), true).unwrap();
+    drop(send);
+    drop(respond);
+    drop(request);
+    for _ in 0..16 {
+        match harness.poll_closed() {
+            Poll::Ready(Ok(())) => return,
+            Poll::Ready(Err(error)) => {
+                panic!("ignored error replaced the accepted NO_ERROR: {error}")
+            }
+            Poll::Pending => (),
+        }
+    }
+    panic!("clean shutdown did not finish after the active request ended");
+}
+
+#[test]
+fn rejecting_an_invalid_code_precedes_duplicate_filtering() {
+    let mut harness = Harness::new(Builder::new());
+    let observations = Observations::default();
+    install_decreasing_go_away_policy(&mut harness, &observations);
+    harness.io.feed(&request_headers(1));
+    let (_request, _respond) = harness.accept_ready();
+    let mut packet = go_away(0, Reason::NO_ERROR);
+    packet.extend_from_slice(&go_away(0, Reason::from(14)));
+    harness.io.feed(&packet);
+    let error = harness.close_error();
+    assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+    assert_eq!(
+        *observations.lock().unwrap(),
+        vec![
+            Observed::RequestHeaders(1),
+            Observed::GoAway(0, Reason::NO_ERROR)
+        ]
+    );
+}
+
+fn metadata_headers(stream_id: u32, path: &str, websocket: bool) -> Vec<u8> {
+    let mut block = if websocket {
+        let mut method = vec![0x02, 7];
+        method.extend_from_slice(b"CONNECT");
+        method
+    } else {
+        vec![0x82]
+    };
+    block.push(0x86);
+    block.extend_from_slice(&[0x04, path.len() as u8]);
+    block.extend_from_slice(path.as_bytes());
+    block.extend_from_slice(&[0x01, 11]);
+    block.extend_from_slice(b"example.com");
+    if websocket {
+        block.extend_from_slice(b"\x00\x09:protocol\x09websocket");
+    }
+    frame(0x1, 0x4, stream_id, &block)
+}
+
+#[test]
+fn request_metadata_omits_query_and_classifies_extended_websocket() {
+    let mut builder = Builder::new();
+    builder.enable_connect_protocol();
+    let mut harness = Harness::new(builder);
+    let metadata = Arc::new(Mutex::new(Vec::new()));
+    let seen = metadata.clone();
+    harness.connection.set_receive_observer(move |event| {
+        if let ReceiveEvent::RequestHeaders {
+            stream_id,
+            path,
+            is_websocket,
+        } = event
+        {
+            seen.lock()
+                .unwrap()
+                .push((stream_id.as_u32(), path.to_owned(), is_websocket));
+            ReceiveAction::Yield
+        } else {
+            ReceiveAction::Continue
+        }
+    });
+    let mut packet = metadata_headers(1, "/example?omit_me=true", false);
+    packet.extend_from_slice(&metadata_headers(3, "/ws/example?omit_me=true", true));
+    harness.io.feed(&packet);
+    let (request, _respond) = harness.accept_ready();
+    assert_eq!(request.uri().query(), Some("omit_me=true"));
+    let (websocket, _respond_ws) = harness.accept_ready();
+    assert_eq!(websocket.method(), http::Method::CONNECT);
+    assert_eq!(
+        *metadata.lock().unwrap(),
+        vec![
+            (1, "/example".to_owned(), false),
+            (3, "/ws/example".to_owned(), true)
+        ]
+    );
+}
+
+#[test]
+fn accepted_reset_is_observable_and_preserves_other_requests() {
+    let mut harness = Harness::new(Builder::new());
+    let observations = Observations::default();
+    install_decreasing_go_away_policy(&mut harness, &observations);
+    harness.io.feed(&request_headers(1));
+    let (mut request, _respond) = harness.accept_ready();
+    let mut packet = frame(0x3, 0, 1, &u32::from(Reason::CANCEL).to_be_bytes());
+    packet.extend_from_slice(&request_headers(3));
+    harness.io.feed(&packet);
+    let (sibling, _sibling_response) = harness.accept_ready();
+    assert_eq!(sibling.body().stream_id().as_u32(), 3);
+    let mut cx = Context::from_waker(&harness.waker);
+    match request.body_mut().poll_data(&mut cx) {
+        Poll::Ready(Some(Err(error))) => assert_eq!(error.reason(), Some(Reason::CANCEL)),
+        other => panic!("accepted reset did not terminate its request: {other:?}"),
+    }
+    assert_eq!(
+        *observations.lock().unwrap(),
+        vec![
+            Observed::RequestHeaders(1),
+            Observed::StreamReset(1),
+            Observed::RequestHeaders(3)
+        ]
+    );
+}
+
+#[test]
+fn ignore_disposition_for_request_headers_reports_protocol_error() {
+    let mut harness = Harness::new(Builder::new());
+    harness
+        .connection
+        .set_receive_observer(|_| ReceiveAction::IgnoreGoAway);
+    harness.io.feed(&request_headers(1));
+    let error = harness.close_error();
+    assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+}
+
+#[test]
+fn malformed_go_away_is_rejected_before_the_policy_callback() {
+    let mut harness = Harness::new(Builder::new());
+    let before = Arc::new(AtomicUsize::new(0));
+    let seen = before.clone();
+    harness.connection.set_receive_observer(move |event| {
+        if let ReceiveEvent::BeforeGoAway { .. } = event {
+            seen.fetch_add(1, Ordering::SeqCst);
+        }
+        ReceiveAction::Continue
+    });
+    harness.io.feed(&frame(0x7, 0, 0, &0u32.to_be_bytes()));
+    let error = harness.close_error();
+    assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+    assert_eq!(before.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn an_idle_peer_go_away_error_is_not_masked_by_a_transport_failure() {
+    let mut harness = Harness::new(Builder::new());
+    let mut headers = request_headers(1);
+    headers[4] |= 0x1;
+    harness.io.feed(&headers);
+    let (request, mut respond) = harness.accept_ready();
+    respond.send_response(Response::new(()), true).unwrap();
+    drop(respond);
+    drop(request);
+    assert!(harness.poll_closed().is_pending());
+    assert!(!harness.connection.has_streams());
+    harness.io.feed(&go_away(0, Reason::CANCEL));
+    harness.io.fail_flush_after_read();
+    let error = harness.close_error();
+    assert!(error.is_go_away());
+    assert_eq!(error.reason(), Some(Reason::CANCEL));
 }

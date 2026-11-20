@@ -83,7 +83,9 @@ struct DynConnection<'a, B: Buf = Bytes> {
     yield_after_receive: &'a mut bool,
 }
 
-struct ReceiveObserver(Box<dyn FnMut(server::ReceiveEvent) -> server::ReceiveAction + Send + Sync>);
+struct ReceiveObserver(
+    Box<dyn for<'a> FnMut(server::ReceiveEvent<'a>) -> server::ReceiveAction + Send + Sync>,
+);
 
 impl fmt::Debug for ReceiveObserver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -192,7 +194,7 @@ where
 
     pub(crate) fn set_receive_observer<F>(&mut self, observer: F)
     where
-        F: FnMut(server::ReceiveEvent) -> server::ReceiveAction + Send + Sync + 'static,
+        F: for<'a> FnMut(server::ReceiveEvent<'a>) -> server::ReceiveAction + Send + Sync + 'static,
     {
         self.inner.receive_observer = Some(ReceiveObserver(Box::new(observer)));
     }
@@ -499,11 +501,41 @@ impl<B> DynConnection<'_, B>
 where
     B: Buf,
 {
-    fn observe_receive(&mut self, event: server::ReceiveEvent) {
+    fn observe_receive(&mut self, event: server::ReceiveEvent<'_>) -> Result<(), Error> {
         if let Some(observer) = self.receive_observer.as_mut() {
-            if (observer.0)(event) == server::ReceiveAction::Yield {
-                *self.yield_after_receive = true;
+            match (observer.0)(event) {
+                server::ReceiveAction::Continue => (),
+                server::ReceiveAction::Yield => *self.yield_after_receive = true,
+                server::ReceiveAction::IgnoreGoAway => {
+                    return Err(Error::library_go_away(Reason::PROTOCOL_ERROR));
+                }
+                server::ReceiveAction::Reject(reason) => {
+                    return Err(Error::library_go_away(reason));
+                }
             }
+        }
+        Ok(())
+    }
+
+    fn should_apply_goaway(&mut self, frame: &frame::GoAway) -> Result<bool, Error> {
+        let observer = match self.receive_observer.as_mut() {
+            Some(observer) => observer,
+            None => return Ok(true),
+        };
+        match (observer.0)(server::ReceiveEvent::BeforeGoAway {
+            last_stream_id: crate::StreamId::from_internal(frame.last_stream_id()),
+            reason: frame.reason(),
+        }) {
+            server::ReceiveAction::Continue => Ok(true),
+            server::ReceiveAction::Yield => {
+                *self.yield_after_receive = true;
+                Ok(true)
+            }
+            server::ReceiveAction::IgnoreGoAway => {
+                *self.yield_after_receive = true;
+                Ok(false)
+            }
+            server::ReceiveAction::Reject(reason) => Err(Error::library_go_away(reason)),
         }
     }
 
@@ -627,12 +659,27 @@ where
         match frame {
             Some(Headers(frame)) => {
                 tracing::trace!(?frame, "recv HEADERS");
+                let (path, is_websocket) = if self.receive_observer.is_some()
+                    && self.streams.is_server()
+                {
+                    (
+                        frame.pseudo().path.clone(),
+                        frame.pseudo().protocol.as_ref().map(|p| p.as_str()) == Some("websocket"),
+                    )
+                } else {
+                    (None, false)
+                };
                 match self.streams.recv_headers(frame)? {
                     streams::RecvOutcome::Processed => (),
                     streams::RecvOutcome::RequestQueued(id) => {
+                        let uri = path
+                            .as_ref()
+                            .and_then(|p| p.as_str().parse::<http::Uri>().ok());
                         self.observe_receive(server::ReceiveEvent::RequestHeaders {
                             stream_id: crate::StreamId::from_internal(id),
-                        });
+                            path: uri.as_ref().map(|uri| uri.path()).unwrap_or(""),
+                            is_websocket,
+                        })?;
                     }
                     streams::RecvOutcome::Refused(id) => return Ok(ReceivedFrame::Refused(id)),
                 }
@@ -643,7 +690,11 @@ where
             }
             Some(Reset(frame)) => {
                 tracing::trace!(?frame, "recv RST_STREAM");
+                let id = frame.stream_id();
                 self.streams.recv_reset(frame)?;
+                self.observe_receive(server::ReceiveEvent::StreamReset {
+                    stream_id: crate::StreamId::from_internal(id),
+                })?;
             }
             Some(PushPromise(frame)) => {
                 tracing::trace!(?frame, "recv PUSH_PROMISE");
@@ -662,13 +713,15 @@ where
                 // but should allow continuing to process current streams
                 // until they are all EOS. Once they are, State should
                 // transition to GoAway.
-                self.streams.recv_go_away(&frame)?;
-                let event = server::ReceiveEvent::GoAway {
-                    last_stream_id: crate::StreamId::from_internal(frame.last_stream_id()),
-                    reason: frame.reason(),
-                };
-                *self.error = Some(frame);
-                self.observe_receive(event);
+                if self.should_apply_goaway(&frame)? {
+                    self.streams.recv_go_away(&frame)?;
+                    let event = server::ReceiveEvent::GoAway {
+                        last_stream_id: crate::StreamId::from_internal(frame.last_stream_id()),
+                        reason: frame.reason(),
+                    };
+                    *self.error = Some(frame);
+                    self.observe_receive(event)?;
+                }
             }
             Some(Ping(frame)) => {
                 tracing::trace!(?frame, "recv PING");

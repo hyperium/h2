@@ -197,45 +197,67 @@ pub struct Connection<T, B: Buf> {
     connection: proto::Connection<T, Peer, B>,
 }
 
-/// A validated event received by a server connection.
+/// An event received by a server connection.
 ///
-/// Events are delivered synchronously while the connection is polled, after
-/// h2 has applied its normal receive validation and state changes.
+/// Request, reset and accepted GOAWAY events follow normal h2 validation.
+/// [`ReceiveEvent::BeforeGoAway`] follows frame decoding and precedes GOAWAY
+/// validation and connection-state changes. Events omit GOAWAY debug data;
+/// request paths omit query strings and are borrowed only for the callback.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub enum ReceiveEvent {
-    /// A new request has been queued for [`Connection::accept`].
+pub enum ReceiveEvent<'a> {
+    /// A validated request has entered the accept queue.
     ///
-    /// This event is not emitted for trailers, ignored headers, or requests
-    /// rejected before they enter the accept queue. It does not mean the
-    /// application has accepted the request yet.
+    /// This is not emitted for trailers or refused requests, and does not mean
+    /// the application has accepted the request yet.
     RequestHeaders {
-        /// The HTTP/2 request stream.
+        /// The request stream.
         stream_id: crate::StreamId,
+        /// The request path without its query string.
+        path: &'a str,
+        /// Whether the request uses the WebSocket extended CONNECT protocol.
+        is_websocket: bool,
     },
-    /// The connection accepted and applied a peer GOAWAY frame.
+    /// A decoded peer GOAWAY before validation and saved-state changes.
     ///
-    /// This includes GOAWAY frames with [`Reason::NO_ERROR`], which may not
-    /// otherwise produce an error when the connection finishes.
+    /// [`ReceiveAction::IgnoreGoAway`] discards the frame at this boundary.
+    BeforeGoAway {
+        /// The peer's last accepted stream ID.
+        last_stream_id: crate::StreamId,
+        /// The peer's error code.
+        reason: Reason,
+    },
+    /// The connection accepted and applied a peer GOAWAY, including `NO_ERROR`.
     GoAway {
         /// The peer's last accepted stream ID.
         last_stream_id: crate::StreamId,
         /// The peer's error code.
         reason: Reason,
     },
+    /// The connection accepted a peer stream reset.
+    StreamReset {
+        /// The reset request stream.
+        stream_id: crate::StreamId,
+    },
 }
 
-/// Whether to continue receiving or return control after an observed event.
+/// The connection's disposition after an observed event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReceiveAction {
-    /// Continue driving the connection normally.
+    /// Continue normal receipt and validation.
     Continue,
-    /// Stop receiving additional frames and wake the driver to resume progress.
+    /// Stop reading further frames and wake the driver to resume progress.
     ///
-    /// After a request event, [`Connection::poll_accept`] can return the queued
-    /// request before the next buffered frame is processed. Applications can
-    /// associate that request with a later GOAWAY notification in receive order.
+    /// This lets `poll_accept` deliver a queued request before a later buffered
+    /// GOAWAY, so applications can register requests in receive order.
     Yield,
+    /// Discard a [`ReceiveEvent::BeforeGoAway`] without changing connection state.
+    ///
+    /// Ignoring also yields and wakes the driver. This action is valid only
+    /// before GOAWAY; using it for another event reports `PROTOCOL_ERROR`.
+    IgnoreGoAway,
+    /// Stop receipt with a connection-level protocol error.
+    Reject(Reason),
 }
 
 /// Builds server connections with custom configuration values.
@@ -574,11 +596,14 @@ where
     /// GOAWAY. Returning it for GOAWAY lets the application react while existing
     /// streams are still active, including when the peer reported `NO_ERROR`.
     ///
-    /// The observer cannot suppress protocol validation or change a received
-    /// frame. Connections without an observer retain normal receive behavior.
+    /// A pre-GOAWAY observer may return [`ReceiveAction::IgnoreGoAway`] before
+    /// validation or state mutation, or [`ReceiveAction::Reject`] to stop the
+    /// connection. Other dispositions retain normal GOAWAY validation. Request
+    /// paths are borrowed for this callback only. Do not re-enter the connection.
+    /// Connections without an observer retain normal receive behavior.
     pub fn set_receive_observer<F>(&mut self, observer: F)
     where
-        F: FnMut(ReceiveEvent) -> ReceiveAction + Send + Sync + 'static,
+        F: for<'a> FnMut(ReceiveEvent<'a>) -> ReceiveAction + Send + Sync + 'static,
     {
         self.connection.set_receive_observer(observer);
     }
