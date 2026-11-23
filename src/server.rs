@@ -1011,7 +1011,7 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is currently 1 second.
+    /// The default value is currently 5 seconds.
     ///
     /// # Examples
     ///

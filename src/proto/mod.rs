@@ -43,5 +43,5 @@ pub const MAX_RECV_EMPTY_DATA_FRAMES: usize = 100;
 pub const DEFAULT_RESET_STREAM_MAX: usize = 50;
 // RFC 9113#5.4.2 suggests ~1 RTT. We don't track that closely, but use a
 // reasonable guess of the average here.
-pub const DEFAULT_RESET_STREAM_SECS: u64 = 1;
+pub const DEFAULT_RESET_STREAM_SECS: u64 = 5;
 pub const DEFAULT_MAX_SEND_BUFFER_SIZE: usize = 1024 * 400;
