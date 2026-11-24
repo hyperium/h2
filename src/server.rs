@@ -1055,8 +1055,10 @@ impl Builder {
     ///
     /// Small DATA frames consume this budget. The budget is restored when
     /// buffered frames are consumed by the application, while sufficiently
-    /// large frames may also restore budget. Empty DATA frames are limited
-    /// separately and do not consume this budget.
+    /// large frames may also restore budget. Each stream starts with an
+    /// allowance for one empty DATA frame without END_STREAM. Receiving
+    /// nonempty DATA for delivery restores that allowance. Additional empty
+    /// frames count toward a separate connection-wide limit.
     ///
     /// When this budget is exhausted, the connection is closed with
     /// `ENHANCE_YOUR_CALM`.

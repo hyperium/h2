@@ -84,6 +84,11 @@ pub(crate) enum Open {
     Headers,
 }
 
+pub(super) enum DataFrameAccounting {
+    Charge,
+    UseEmptyDataAllowance,
+}
+
 impl Recv {
     pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         let next_stream_id = if peer.is_server() { 1 } else { 2 };
@@ -659,7 +664,11 @@ impl Recv {
         stream.pending_recv.is_empty()
     }
 
-    pub fn recv_data(&mut self, frame: frame::Data, stream: &mut store::Ptr) -> Result<(), Error> {
+    pub fn recv_data(
+        &mut self,
+        frame: frame::Data,
+        stream: &mut store::Ptr,
+    ) -> Result<DataFrameAccounting, Error> {
         // could include padding
         let sz = frame.flow_controlled_len();
 
@@ -693,7 +702,7 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return self.ignore_data(sz);
+            return self.ignore_data(sz).map(|()| DataFrameAccounting::Charge);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -745,7 +754,7 @@ impl Recv {
                 stream.id,
             );
             self.release_connection_capacity(sz, &mut None);
-            return Ok(());
+            return Ok(DataFrameAccounting::Charge);
         }
 
         // Update stream level flow control
@@ -775,7 +784,15 @@ impl Recv {
         // message. Padding has already been accounted for and released above,
         // so there is no event to pass to the user.
         if frame.payload().is_empty() && !frame.is_end_stream() {
-            return Ok(());
+            return Ok(if std::mem::take(&mut stream.allow_empty_data) {
+                DataFrameAccounting::UseEmptyDataAllowance
+            } else {
+                DataFrameAccounting::Charge
+            });
+        }
+
+        if !frame.payload().is_empty() {
+            stream.allow_empty_data = true;
         }
 
         let is_budgeted = !frame.is_end_stream();
@@ -788,7 +805,7 @@ impl Recv {
         stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
-        Ok(())
+        Ok(DataFrameAccounting::Charge)
     }
 
     pub fn ignore_data(&mut self, sz: WindowSize) -> Result<(), Error> {
