@@ -238,7 +238,7 @@ pub struct Builder {
     reset_stream_duration: Duration,
 
     /// Maximum number of locally reset streams to keep at a time.
-    reset_stream_max: usize,
+    reset_stream_max: Option<usize>,
 
     /// Maximum number of remotely reset streams to allow in the pending
     /// accept queue.
@@ -656,7 +656,7 @@ impl Builder {
     pub fn new() -> Builder {
         Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
-            reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            reset_stream_max: None,
             pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
             settings: Settings::default(),
             initial_target_connection_window_size: None,
@@ -886,7 +886,11 @@ impl Builder {
     /// received for that stream will result in a connection level protocol
     /// error, forcing the connection to terminate.
     ///
-    /// The default value is currently 50.
+    /// If unset, this limit currently defaults to a value based on the
+    /// configured [maximum concurrent streams], or a larger fixed value
+    /// if that setting is also unset.
+    ///
+    /// [maximum concurrent streams]: Self::max_concurrent_streams
     ///
     /// # Examples
     ///
@@ -908,7 +912,7 @@ impl Builder {
     /// # pub fn main() {}
     /// ```
     pub fn max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
-        self.reset_stream_max = max;
+        self.reset_stream_max = Some(max);
         self
     }
 
