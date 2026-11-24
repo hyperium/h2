@@ -118,7 +118,7 @@ async fn recv_ignores_empty_data_without_end_stream() {
         )
         .await;
         srv.send_frame(frames::headers(1).response(200)).await;
-        for _ in 0..49 {
+        for _ in 0..51 {
             srv.send_frame(frames::data(1, "")).await;
         }
         for _ in 0..50 {
@@ -147,6 +147,53 @@ async fn recv_ignores_empty_data_without_end_stream() {
 }
 
 #[tokio::test]
+async fn allow_nonconsecutive_empty_frames_from_gcp() {
+    h2_support::trace_init!();
+
+    const CYCLES: usize = 192;
+    const BODY_CHUNK: [u8; 300] = [b'x'; 300];
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        for _ in 0..CYCLES {
+            srv.send_frame(frames::data(1, BODY_CHUNK)).await;
+            srv.send_frame(frames::data(1, [1, 0]).padded()).await;
+        }
+        srv.send_frame(frames::data(1, "done").eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let response = client.send_request(request, true).unwrap().0;
+        let response = h2.run(response).await.unwrap();
+        let chunks: Vec<_> = h2.run(response.into_body().try_collect()).await.unwrap();
+
+        let mut expected = BODY_CHUNK.repeat(CYCLES);
+        expected.extend_from_slice(b"done");
+        assert_eq!(chunks.concat(), expected);
+        drop(client);
+        h2.await.unwrap();
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn too_many_empty_data_frames_sends_goaway() {
     h2_support::trace_init!();
 
@@ -163,7 +210,7 @@ async fn too_many_empty_data_frames_sends_goaway() {
         .await;
         srv.send_frame(frames::headers(1).response(200)).await;
 
-        for _ in 0..101 {
+        for _ in 0..102 {
             srv.send_frame(frames::data(1, "")).await;
         }
 
@@ -205,9 +252,7 @@ async fn too_many_padded_empty_data_frames_sends_goaway() {
         .await;
         srv.send_frame(frames::headers(1).response(200)).await;
 
-        // One byte describing the padding length followed by one byte of
-        // padding leaves an empty application payload after decoding.
-        for _ in 0..101 {
+        for _ in 0..102 {
             srv.send_frame(frames::data(1, [1, 0]).padded()).await;
         }
 

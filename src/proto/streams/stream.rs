@@ -103,6 +103,12 @@ pub(super) struct Stream {
     /// When the RecvStream drop occurs, no data should be received.
     pub is_recv: bool,
 
+    /// Whether this stream can receive one empty DATA frame without END_STREAM
+    /// without accruing a connection-wide strike. The allowance starts available,
+    /// is spent by an eligible empty frame, and is restored when nonempty DATA
+    /// is accepted for delivery.
+    pub(super) allow_empty_data: bool,
+
     /// Task tracking receiving frames
     pub recv_task: Option<Waker>,
 
@@ -190,6 +196,7 @@ impl Stream {
             next_reset_expire: None,
             pending_recv: buffer::Deque::new(),
             is_recv: true,
+            allow_empty_data: true,
             recv_task: None,
             push_task: None,
             pending_push_promises: store::Queue::new(),
