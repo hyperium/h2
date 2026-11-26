@@ -330,6 +330,43 @@ async fn too_many_small_data_frames_sends_goaway() {
 }
 
 #[tokio::test]
+async fn discarded_small_data_frame_does_not_use_budget() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::reset(1).cancel()).await;
+        srv.send_frame(frames::data(1, "a")).await;
+        srv.ping_pong([1; 8]).await;
+    };
+
+    let h2 = async move {
+        // No budget is needed for DATA that never enters the receive buffer.
+        let (mut client, mut h2) = client::Builder::new()
+            .data_frame_budget(0)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let response = h2.drive(client.get("https://example.com/")).await.unwrap();
+        drop(response);
+        h2.await.unwrap();
+        drop(client);
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
 async fn many_small_final_data_frames_do_not_exhaust_budget() {
     h2_support::trace_init!();
 

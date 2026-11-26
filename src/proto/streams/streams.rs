@@ -658,8 +658,15 @@ impl Inner {
                 .and_then(|accounting| {
                     // Final DATA frames and empty frames using the stream's allowance
                     // are exempt from the connection-wide accounting.
-                    if !is_end_stream && matches!(accounting, DataFrameAccounting::Charge) {
-                        counts.record_data_frame(payload_len).map_err(|_| {
+                    if !is_end_stream {
+                        match accounting {
+                            DataFrameAccounting::Charge => counts.record_data_frame(payload_len),
+                            DataFrameAccounting::Discarded => {
+                                counts.record_discarded_data_frame(payload_len)
+                            }
+                            DataFrameAccounting::UseEmptyDataAllowance => Ok(()),
+                        }
+                        .map_err(|_| {
                             tracing::debug!("too many small DATA frames");
                             Error::library_go_away_data(
                                 Reason::ENHANCE_YOUR_CALM,
