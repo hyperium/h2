@@ -146,6 +146,20 @@ impl Counts {
         }
     }
 
+    /// Accounts for DATA that was discarded without buffering.
+    pub fn record_discarded_data_frame(
+        &mut self,
+        payload_len: usize,
+    ) -> Result<(), BudgetExhausted> {
+        // Empty frames still count toward their own limit, and large frames
+        // still replenish the budget. Small non-empty frames need no charge
+        // because their framing overhead is no longer held in memory.
+        if payload_len == 0 || payload_len >= DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+            self.record_data_frame(payload_len)?;
+        }
+        Ok(())
+    }
+
     /// Returns true when the next opened stream will reach capacity of outbound streams
     ///
     /// The number of client send streams is incremented in prioritize; send_request has to guess if

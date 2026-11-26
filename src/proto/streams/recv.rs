@@ -86,6 +86,7 @@ pub(crate) enum Open {
 
 pub(super) enum DataFrameAccounting {
     Charge,
+    Discarded,
     UseEmptyDataAllowance,
 }
 
@@ -702,7 +703,9 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return self.ignore_data(sz).map(|()| DataFrameAccounting::Charge);
+            return self
+                .ignore_data(sz)
+                .map(|()| DataFrameAccounting::Discarded);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -754,7 +757,7 @@ impl Recv {
                 stream.id,
             );
             self.release_connection_capacity(sz, &mut None);
-            return Ok(DataFrameAccounting::Charge);
+            return Ok(DataFrameAccounting::Discarded);
         }
 
         // Update stream level flow control
