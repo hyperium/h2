@@ -17,6 +17,20 @@ pub(super) struct GoAway {
     is_user_initiated: bool,
     /// A GOAWAY frame that must be buffered in the Codec immediately.
     pending: Option<frame::GoAway>,
+    /// Where a shutdown notice is, if the only GOAWAY sent is one.
+    notice: Notice,
+}
+
+/// A shutdown notice (see `GoAway::notice`) that no graceful shutdown has
+/// followed yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Notice {
+    /// None was sent, or a graceful shutdown has followed it.
+    None,
+    /// Sent; its PING not yet acknowledged.
+    Sent,
+    /// Sent, and its PING acknowledged: the peer has seen it.
+    Acked,
 }
 
 /// Keeps a memory of any GOAWAY frames we've sent before.
@@ -44,6 +58,7 @@ impl GoAway {
             going_away: None,
             is_user_initiated: false,
             pending: None,
+            notice: Notice::None,
         }
     }
 
@@ -66,6 +81,30 @@ impl GoAway {
             reason: f.reason(),
         });
         self.pending = Some(f);
+        self.notice = Notice::None;
+    }
+
+    /// Enqueue the GOAWAY frame announcing a graceful shutdown (with the
+    /// maximum stream ID), and remember it was only a notice.
+    pub fn notice(&mut self, f: frame::GoAway) {
+        self.go_away(f);
+        self.notice = Notice::Sent;
+    }
+
+    /// Where a shutdown notice is, if the only GOAWAY sent is one.
+    pub fn notice_state(&self) -> Notice {
+        self.notice
+    }
+
+    /// Records that the peer has acknowledged the notice's PING.
+    pub fn notice_acked(&mut self) {
+        debug_assert_eq!(self.notice, Notice::Sent);
+        self.notice = Notice::Acked;
+    }
+
+    /// Ends the notice: a graceful shutdown follows it.
+    pub fn end_notice(&mut self) {
+        self.notice = Notice::None;
     }
 
     pub fn go_away_now(&mut self, f: frame::GoAway) {
