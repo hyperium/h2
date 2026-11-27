@@ -539,6 +539,29 @@ mod test {
     }
 
     #[test]
+    fn test_sensitive_exact_dynamic_match_is_never_indexed() {
+        let mut encoder = Encoder::default();
+        let public = || header("my-password", "same-value");
+        let inserted = encode(&mut encoder, vec![public()]);
+        assert_eq!(inserted[0], 0b0100_0000);
+        assert_eq!(encoder.table.len(), 1);
+
+        let mut value = http::HeaderValue::from_static("same-value");
+        value.set_sensitive(true);
+        let sensitive = Header::Field {
+            name: Some("my-password".parse().unwrap()),
+            value,
+        };
+        let res = encode(&mut encoder, vec![sensitive]);
+        assert!(
+            res.starts_with(&[0b0001_1111, 47]),
+            "sensitive dynamic match must be a never-indexed literal: {res:?}"
+        );
+        assert_eq!(&encode(&mut encoder, vec![public()])[..], &[0xbe]);
+        assert_eq!(encoder.table.len(), 1);
+    }
+
+    #[test]
     fn test_content_length_value_not_indexed() {
         let mut encoder = Encoder::default();
         let res = encode(&mut encoder, vec![header("content-length", "1234")]);

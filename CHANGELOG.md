@@ -1,3 +1,14 @@
+# 0.4.21 (November 24, 2026)
+
+* Change default max concurrent reset stream to be based on max concurrent streams, or otherwise a much larger default.
+* Change default concurrent reset stream duration to 5 seconds.
+* Fix empty-data frame strike counter to allow 1 empty frame in a stream after a non-empty frame, allowing a common pattern from GCP.
+* Fix max concurrent reset streams to pop oldest instead of ignoring newest.
+* Fix to never index any header marked as sensitive, even if value previously indexed.
+* Fix preserving of GOAWAY error messages in more cases.
+* Fix releasing stream windows when SETTINGS reduce the size.
+* Fix reporting clean end-of-stream when a connection error happens afterward.
+
 # 0.4.20 (October 6, 2026)
 
 * Fix counting reserved push promises against stream concurrency limits.

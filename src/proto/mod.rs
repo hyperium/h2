@@ -38,10 +38,10 @@ pub const DEFAULT_LOCAL_RESET_COUNT_MAX: usize = 1024;
 pub const DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD: usize = 256;
 pub const DEFAULT_DATA_FRAME_BUDGET: usize = DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD * 100;
 pub const MAX_RECV_EMPTY_DATA_FRAMES: usize = 100;
-// RFC 9113 suggests allowing at minimum 100 streams, it seems reasonable to
-// by default allow a portion of that to be remembered as reset for some time.
-pub const DEFAULT_RESET_STREAM_MAX: usize = 50;
+pub const RESET_STREAM_LIMIT_MULTIPLIER: usize = 2;
+pub const MIN_DEFAULT_RESET_STREAM_MAX: usize = 50;
+pub const DEFAULT_RESET_STREAM_MAX: usize = 8192;
 // RFC 9113#5.4.2 suggests ~1 RTT. We don't track that closely, but use a
 // reasonable guess of the average here.
-pub const DEFAULT_RESET_STREAM_SECS: u64 = 1;
+pub const DEFAULT_RESET_STREAM_SECS: u64 = 5;
 pub const DEFAULT_MAX_SEND_BUFFER_SIZE: usize = 1024 * 400;

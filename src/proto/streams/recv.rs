@@ -84,6 +84,12 @@ pub(crate) enum Open {
     Headers,
 }
 
+pub(super) enum DataFrameAccounting {
+    Charge,
+    Discarded,
+    UseEmptyDataAllowance,
+}
+
 impl Recv {
     pub fn new(peer: peer::Dyn, config: &Config) -> Self {
         let next_stream_id = if peer.is_server() { 1 } else { 2 };
@@ -613,11 +619,22 @@ impl Recv {
                     let dec = old_sz - target;
                     tracing::trace!("decrementing all windows; dec={}", dec);
 
+                    let pending_window_updates = &mut self.pending_window_updates;
                     store.try_for_each(|mut stream| {
                         stream
                             .recv_flow
                             .dec_recv_window(dec)
                             .map_err(proto::Error::library_go_away)?;
+
+                        // Shrinking the window can make capacity that was
+                        // already released eligible for a WINDOW_UPDATE
+                        // without another DATA frame arriving (#976). The
+                        // connection task flushes `pending_window_updates`
+                        // in `poll_complete` after this returns.
+                        if stream.recv_flow.unclaimed_capacity().is_some() {
+                            pending_window_updates.push(&mut stream);
+                        }
+
                         Ok::<_, proto::Error>(())
                     })?;
                 }
@@ -654,7 +671,11 @@ impl Recv {
         stream.pending_recv.is_empty()
     }
 
-    pub fn recv_data(&mut self, frame: frame::Data, stream: &mut store::Ptr) -> Result<(), Error> {
+    pub fn recv_data(
+        &mut self,
+        frame: frame::Data,
+        stream: &mut store::Ptr,
+    ) -> Result<DataFrameAccounting, Error> {
         // could include padding
         let sz = frame.flow_controlled_len();
 
@@ -688,7 +709,9 @@ impl Recv {
                 "recv_data; frame ignored on locally reset {:?} for some time",
                 stream.id,
             );
-            return self.ignore_data(sz);
+            return self
+                .ignore_data(sz)
+                .map(|()| DataFrameAccounting::Discarded);
         }
 
         // Ensure that there is enough capacity on the connection before acting
@@ -740,7 +763,7 @@ impl Recv {
                 stream.id,
             );
             self.release_connection_capacity(sz, &mut None);
-            return Ok(());
+            return Ok(DataFrameAccounting::Discarded);
         }
 
         // Update stream level flow control
@@ -770,7 +793,15 @@ impl Recv {
         // message. Padding has already been accounted for and released above,
         // so there is no event to pass to the user.
         if frame.payload().is_empty() && !frame.is_end_stream() {
-            return Ok(());
+            return Ok(if std::mem::take(&mut stream.allow_empty_data) {
+                DataFrameAccounting::UseEmptyDataAllowance
+            } else {
+                DataFrameAccounting::Charge
+            });
+        }
+
+        if !frame.payload().is_empty() {
+            stream.allow_empty_data = true;
         }
 
         let is_budgeted = !frame.is_end_stream();
@@ -783,7 +814,7 @@ impl Recv {
         stream.pending_recv.push_back(&mut self.buffer, event);
         stream.notify_recv();
 
-        Ok(())
+        Ok(DataFrameAccounting::Charge)
     }
 
     pub fn ignore_data(&mut self, sz: WindowSize) -> Result<(), Error> {
@@ -1038,16 +1069,21 @@ impl Recv {
             return;
         }
 
-        if counts.can_inc_num_reset_streams() {
-            counts.inc_num_reset_streams();
-            tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
-            self.pending_reset_expired.push(stream);
-        } else {
-            tracing::trace!(
-                "enqueue_reset_expiration; dropped {:?}, over max_concurrent_reset_streams",
-                stream.id
-            );
+        if !counts.can_inc_num_reset_streams() {
+            let oldest = match self.pending_reset_expired.pop(stream) {
+                Some(oldest) => oldest,
+                // Retention is disabled.
+                None => return,
+            };
+            tracing::trace!("enqueue_reset_expiration; evicted {:?}", oldest.id);
+            // Free the queue slot even if the stream still has frames to send.
+            counts.dec_num_reset_streams();
+            counts.transition_after(oldest);
         }
+
+        counts.inc_num_reset_streams();
+        tracing::trace!("enqueue_reset_expiration; added {:?}", stream.id);
+        self.pending_reset_expired.push(stream);
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
@@ -1061,7 +1097,8 @@ impl Recv {
                 // monotonic). We use a saturating operation to avoid this panic here.
                 now.saturating_duration_since(reset_at) > reset_duration
             }) {
-                counts.transition_after(stream, true);
+                counts.dec_num_reset_streams();
+                counts.transition_after(stream);
             }
         }
     }
@@ -1091,13 +1128,14 @@ impl Recv {
     /// Called on EOF
     fn clear_all_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_reset_expired.pop(store) {
-            counts.transition_after(stream, true);
+            counts.dec_num_reset_streams();
+            counts.transition_after(stream);
         }
     }
 
     fn clear_all_pending_accept(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_accept.pop(store) {
-            counts.transition_after(stream, false);
+            counts.transition_after(stream);
         }
     }
 

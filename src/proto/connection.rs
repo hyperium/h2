@@ -82,7 +82,7 @@ pub(crate) struct Config {
     pub initial_max_send_streams: usize,
     pub max_send_buffer_size: usize,
     pub reset_stream_duration: Duration,
-    pub reset_stream_max: usize,
+    pub reset_stream_max: Option<usize>,
     pub remote_reset_stream_max: usize,
     pub local_error_reset_streams_max: Option<usize>,
     pub settings: frame::Settings,
@@ -133,6 +133,10 @@ where
 {
     pub fn new(codec: Codec<T, Prioritized<B>>, config: Config) -> Connection<T, P, B> {
         fn streams_config(config: &Config) -> streams::Config {
+            let remote_max_initiated = config
+                .settings
+                .max_concurrent_streams()
+                .map(|max| max as usize);
             streams::Config {
                 initial_max_send_streams: config.initial_max_send_streams,
                 local_max_buffer_size: config.max_send_buffer_size,
@@ -143,13 +147,17 @@ where
                     .is_extended_connect_protocol_enabled()
                     .unwrap_or(false),
                 local_reset_duration: config.reset_stream_duration,
-                local_reset_max: config.reset_stream_max,
+                local_reset_max: config.reset_stream_max.unwrap_or_else(|| {
+                    remote_max_initiated
+                        .map(|max| {
+                            max.saturating_mul(RESET_STREAM_LIMIT_MULTIPLIER)
+                                .max(MIN_DEFAULT_RESET_STREAM_MAX)
+                        })
+                        .unwrap_or(DEFAULT_RESET_STREAM_MAX)
+                }),
                 remote_reset_max: config.remote_reset_stream_max,
                 remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
-                remote_max_initiated: config
-                    .settings
-                    .max_concurrent_streams()
-                    .map(|max| max as usize),
+                remote_max_initiated,
                 local_max_error_reset_streams: config.local_error_reset_streams_max,
                 data_frame_budget: config.data_frame_budget,
             }
@@ -272,6 +280,20 @@ where
         }
     }
 
+    fn remote_go_away_if_idle(&self) -> Option<Error> {
+        let frame = self.inner.error.as_ref()?;
+        if frame.reason() == Reason::NO_ERROR || self.inner.streams.has_streams() {
+            return None;
+        }
+
+        // A later transport error should not hide the peer's shutdown reason
+        // once all streams have finished or been rejected by its GOAWAY.
+        Some(Error::remote_go_away(
+            frame.debug_data().clone(),
+            frame.reason(),
+        ))
+    }
+
     /// Closes the connection by transitioning to a GOAWAY state
     /// iff there are no streams or references
     pub fn maybe_close_connection_if_no_streams(&mut self) {
@@ -322,7 +344,9 @@ where
                             // Ensure all window updates have been sent.
                             //
                             // This will also handle flushing `self.codec`
-                            ready!(self.inner.streams.poll_complete(cx, &mut self.codec))?;
+                            ready!(self.inner.streams.poll_complete(cx, &mut self.codec)).map_err(
+                                |err| self.remote_go_away_if_idle().unwrap_or_else(|| err.into()),
+                            )?;
 
                             if (self.inner.error.is_some()
                                 || self.inner.go_away.should_close_on_idle())
@@ -336,12 +360,20 @@ where
                         }
                     };
 
+                    if matches!(&result, Err(Error::Io(..))) {
+                        if let Some(err) = self.remote_go_away_if_idle() {
+                            return Poll::Ready(Err(err));
+                        }
+                    }
+
                     self.inner.as_dyn().handle_poll2_result(result)?
                 }
                 State::Closing(reason, initiator) => {
                     tracing::trace!("connection closing after flush");
                     // Flush/shutdown the codec
-                    ready!(self.codec.shutdown(cx))?;
+                    ready!(self.codec.shutdown(cx)).map_err(|err| {
+                        self.remote_go_away_if_idle().unwrap_or_else(|| err.into())
+                    })?;
 
                     // Transition the state to error
                     self.inner.state = State::Closed(reason, initiator);

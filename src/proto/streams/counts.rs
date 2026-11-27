@@ -146,6 +146,20 @@ impl Counts {
         }
     }
 
+    /// Accounts for DATA that was discarded without buffering.
+    pub fn record_discarded_data_frame(
+        &mut self,
+        payload_len: usize,
+    ) -> Result<(), BudgetExhausted> {
+        // Empty frames still count toward their own limit, and large frames
+        // still replenish the budget. Small non-empty frames need no charge
+        // because their framing overhead is no longer held in memory.
+        if payload_len == 0 || payload_len >= DEFAULT_DATA_FRAME_OVERHEAD_THRESHOLD {
+            self.record_data_frame(payload_len)?;
+        }
+        Ok(())
+    }
+
     /// Returns true when the next opened stream will reach capacity of outbound streams
     ///
     /// The number of client send streams is incremented in prioritize; send_request has to guess if
@@ -282,19 +296,16 @@ impl Counts {
     where
         F: FnOnce(&mut Self, &mut store::Ptr) -> U,
     {
-        // TODO: Does this need to be computed before performing the action?
-        let is_pending_reset = stream.is_pending_reset_expiration();
-
         // Run the action
         let ret = f(self, &mut stream);
 
-        self.transition_after(stream, is_pending_reset);
+        self.transition_after(stream);
 
         ret
     }
 
     // TODO: move this to macro?
-    pub fn transition_after(&mut self, mut stream: store::Ptr, is_reset_counted: bool) {
+    pub fn transition_after(&mut self, mut stream: store::Ptr) {
         tracing::trace!(
             "transition_after; stream={:?}; state={:?}; is_closed={:?}; \
              pending_send_empty={:?}; buffered_send_data={}; \
@@ -311,9 +322,6 @@ impl Counts {
         if stream.is_closed() {
             if !stream.is_pending_reset_expiration() {
                 stream.unlink();
-                if is_reset_counted {
-                    self.dec_num_reset_streams();
-                }
             }
 
             if !stream.state.is_scheduled_reset() && stream.is_counted {
@@ -355,7 +363,7 @@ impl Counts {
         }
     }
 
-    fn dec_num_reset_streams(&mut self) {
+    pub fn dec_num_reset_streams(&mut self) {
         assert!(self.num_local_reset_streams > 0);
         self.num_local_reset_streams -= 1;
     }

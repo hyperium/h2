@@ -685,18 +685,16 @@ impl Prioritize {
 
     pub fn clear_pending_send(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(mut stream) = self.pending_send.pop(store) {
-            let is_pending_reset = stream.is_pending_reset_expiration();
             if let Some(reason) = stream.state.get_scheduled_reset() {
                 stream.set_reset(reason, Initiator::Library);
             }
-            counts.transition_after(stream, is_pending_reset);
+            counts.transition_after(stream);
         }
     }
 
     pub fn clear_pending_open(&mut self, store: &mut Store, counts: &mut Counts) {
         while let Some(stream) = self.pending_open.pop(store) {
-            let is_pending_reset = stream.is_pending_reset_expiration();
-            counts.transition_after(stream, is_pending_reset);
+            counts.transition_after(stream);
         }
     }
 
@@ -718,14 +716,7 @@ impl Prioritize {
             let span = tracing::trace_span!("popped", ?stream.id, ?stream.state);
             let _e = span.enter();
 
-            // It's possible that this stream, besides having data to send,
-            // is also queued to send a reset, and thus is already in the queue
-            // to wait for "some time" after a reset.
-            //
-            // To be safe, we just always ask the stream.
-            let is_pending_reset = stream.is_pending_reset_expiration();
-
-            tracing::trace!(is_pending_reset);
+            tracing::trace!(is_pending_reset = stream.is_pending_reset_expiration());
 
             let frame = match stream.pending_send.pop_front(buffer) {
                 Some(Frame::Data(mut frame)) => {
@@ -873,7 +864,7 @@ impl Prioritize {
                         // Since this should only happen as a consequence of `clear_queue`,
                         // we must be in a closed state of some kind.
                         debug_assert!(stream.state.is_closed());
-                        counts.transition_after(stream, is_pending_reset);
+                        counts.transition_after(stream);
                         continue;
                     }
                 }
@@ -894,7 +885,7 @@ impl Prioritize {
                 self.pending_send.push(&mut stream);
             }
 
-            counts.transition_after(stream, is_pending_reset);
+            counts.transition_after(stream);
 
             return Some(frame);
         }
