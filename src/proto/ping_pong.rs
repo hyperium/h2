@@ -145,13 +145,13 @@ impl PingPong {
         B: Buf,
     {
         if let Some(pong) = self.pending_pong.take() {
-            if !dst.poll_ready(cx)?.is_ready() {
+            let frame = Ping::pong(pong).into();
+            if !dst.poll_ready_control(cx, &frame)?.is_ready() {
                 self.pending_pong = Some(pong);
                 return Poll::Pending;
             }
 
-            dst.buffer(Ping::pong(pong).into())
-                .expect("invalid pong frame");
+            dst.buffer_control(frame).expect("invalid pong frame");
         }
 
         Poll::Ready(Ok(()))
@@ -169,22 +169,22 @@ impl PingPong {
     {
         if let Some(ref mut ping) = self.pending_ping {
             if !ping.sent {
-                if !dst.poll_ready(cx)?.is_ready() {
+                let frame = Ping::new(ping.payload).into();
+                if !dst.poll_ready_control(cx, &frame)?.is_ready() {
                     return Poll::Pending;
                 }
 
-                dst.buffer(Ping::new(ping.payload).into())
-                    .expect("invalid ping frame");
+                dst.buffer_control(frame).expect("invalid ping frame");
                 ping.sent = true;
             }
         } else if let Some(ref users) = self.user_pings {
             if users.0.state.load(Ordering::Acquire) == USER_STATE_PENDING_PING {
-                if !dst.poll_ready(cx)?.is_ready() {
+                let frame = Ping::new(Ping::USER).into();
+                if !dst.poll_ready_control(cx, &frame)?.is_ready() {
                     return Poll::Pending;
                 }
 
-                dst.buffer(Ping::new(Ping::USER).into())
-                    .expect("invalid ping frame");
+                dst.buffer_control(frame).expect("invalid ping frame");
                 users
                     .0
                     .state
