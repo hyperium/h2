@@ -22,6 +22,7 @@ rust-version = "1.63"
 [features]
 # Enables `futures::Stream` implementations for various types.
 stream = []
+ignore_connection_header = []
 
 # Enables **unstable** APIs. Any API exposed by this feature has no backwards
 # compatibility guarantees. In other words, you should not use this feature for
