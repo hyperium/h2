@@ -297,7 +297,7 @@ async fn recv_push_when_push_disabled_is_conn_error() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
@@ -307,7 +307,7 @@ async fn recv_push_when_push_disabled_is_conn_error() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
@@ -590,7 +590,7 @@ async fn recv_push_promise_skipped_stream_id() {
                 .unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
@@ -600,7 +600,7 @@ async fn recv_push_promise_skipped_stream_id() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
@@ -648,7 +648,7 @@ async fn recv_push_promise_dup_stream_id() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
@@ -658,7 +658,7 @@ async fn recv_push_promise_dup_stream_id() {
             let err = res.unwrap_err();
             assert_eq!(
                 err.to_string(),
-                "connection error detected: unspecific protocol error detected"
+                "connection error detected: protocol error detected"
             );
         };
 
