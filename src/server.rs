@@ -471,6 +471,19 @@ where
         self.connection.set_target_window_size(size);
     }
 
+    /// Returns the HPACK decoder of this connection.
+    #[cfg(feature = "internal")]
+    pub fn hpack_mut(&mut self) -> &mut crate::hpack::Decoder {
+        self.connection.hpack_mut()
+    }
+
+    /// Calls `f` with the connection level send flow control of this
+    /// connection.
+    #[cfg(feature = "internal")]
+    pub fn with_flow_control<R>(&mut self, f: impl FnOnce(&mut proto::FlowControl) -> R) -> R {
+        self.connection.with_flow_control(f)
+    }
+
     /// Set a new `INITIAL_WINDOW_SIZE` setting (in octets) for stream-level
     /// flow control for received data.
     ///
