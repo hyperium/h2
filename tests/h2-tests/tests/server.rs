@@ -1994,3 +1994,43 @@ async fn remote_reset_does_not_panic_connection_driver() {
         .expect("server task timed out")
         .expect("server task panicked");
 }
+
+#[tokio::test]
+async fn server_builder_max_recv_copy_size_copies_small_data() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_default_settings!(settings);
+        client
+            .send_frame(frames::headers(1).request("POST", "https://example.com/"))
+            .await;
+        client
+            .send_frame(frames::data(1, &b"hello"[..]).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let mut builder = server::Builder::new();
+    builder.max_recv_copy_size(5);
+
+    let h2 = async move {
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+        let conn = tokio::spawn(async move { poll_fn(|cx| srv.poll_closed(cx)).await });
+
+        let mut body = req.into_body();
+        let data = body.data().await.unwrap().unwrap();
+        assert_eq!(data, &b"hello"[..]);
+        assert!(data.is_unique());
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+        conn.await.unwrap().unwrap();
+    };
+
+    join(client, h2).await;
+}

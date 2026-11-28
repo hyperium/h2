@@ -253,6 +253,9 @@ pub struct Builder {
     /// Maximum amount of bytes to "buffer" for writing per stream.
     max_send_buffer_size: usize,
 
+    /// Max payload size of received frames copied out of the read buffer.
+    max_recv_copy_size: usize,
+
     /// Maximum number of locally reset streams due to protocol error across
     /// the lifetime of the connection.
     ///
@@ -395,6 +398,8 @@ where
         if let Some(max) = builder.settings.max_header_list_size() {
             codec.set_max_recv_header_list_size(max as usize);
         }
+
+        codec.set_max_recv_copy_size(builder.max_recv_copy_size);
 
         // Send initial settings frame.
         codec
@@ -661,6 +666,7 @@ impl Builder {
             settings: Settings::default(),
             initial_target_connection_window_size: None,
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
+            max_recv_copy_size: 0,
             local_max_error_reset_streams: Some(proto::DEFAULT_LOCAL_RESET_COUNT_MAX),
             data_frame_budget: proto::DataFrameBudget::Auto,
         }
@@ -992,6 +998,22 @@ impl Builder {
     pub fn max_send_buffer_size(&mut self, max: usize) -> &mut Self {
         assert!(max <= u32::MAX as usize);
         self.max_send_buffer_size = max;
+        self
+    }
+
+    /// Sets the max payload size of received frames that are copied out of
+    /// the connection's read buffer.
+    ///
+    /// Received DATA payloads and decoded header values are normally slices
+    /// of the read buffer, and keep the whole buffer alive while they are
+    /// held. When many streams each hold a few small frames, for instance in
+    /// a proxy relaying to slow readers, that can cost many times the bytes
+    /// actually held. DATA and header block frames with a payload of at most
+    /// `max` bytes are copied into their own allocation instead.
+    ///
+    /// The default is 0, which never copies.
+    pub fn max_recv_copy_size(&mut self, max: usize) -> &mut Self {
+        self.max_recv_copy_size = max;
         self
     }
 

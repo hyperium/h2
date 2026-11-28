@@ -324,6 +324,9 @@ pub struct Builder {
     /// Maximum amount of bytes to "buffer" for writing per stream.
     max_send_buffer_size: usize,
 
+    /// Max payload size of received frames copied out of the read buffer.
+    max_recv_copy_size: usize,
+
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: Option<usize>,
 
@@ -660,6 +663,7 @@ impl Builder {
     pub fn new() -> Builder {
         Builder {
             max_send_buffer_size: proto::DEFAULT_MAX_SEND_BUFFER_SIZE,
+            max_recv_copy_size: 0,
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: None,
             pending_accept_reset_stream_max: proto::DEFAULT_REMOTE_RESET_STREAM_MAX,
@@ -1085,6 +1089,22 @@ impl Builder {
         self
     }
 
+    /// Sets the max payload size of received frames that are copied out of
+    /// the connection's read buffer.
+    ///
+    /// Received DATA payloads and decoded header values are normally slices
+    /// of the read buffer, and keep the whole buffer alive while they are
+    /// held. When many streams each hold a few small frames, for instance in
+    /// a proxy relaying to slow readers, that can cost many times the bytes
+    /// actually held. DATA and header block frames with a payload of at most
+    /// `max` bytes are copied into their own allocation instead.
+    ///
+    /// The default is 0, which never copies.
+    pub fn max_recv_copy_size(&mut self, max: usize) -> &mut Self {
+        self.max_recv_copy_size = max;
+        self
+    }
+
     /// Enables or disables server push promises.
     ///
     /// This value is included in the initial SETTINGS handshake.
@@ -1354,6 +1374,8 @@ where
         if let Some(max) = builder.settings.max_header_list_size() {
             codec.set_max_recv_header_list_size(max as usize);
         }
+
+        codec.set_max_recv_copy_size(builder.max_recv_copy_size);
 
         // Send initial settings frame
         codec

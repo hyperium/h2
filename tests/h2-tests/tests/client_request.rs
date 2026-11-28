@@ -2286,3 +2286,45 @@ async fn frame_on_pending_open_stream_is_conn_error() {
         join(srv, client).await;
     }
 }
+
+#[tokio::test]
+async fn client_builder_max_recv_copy_size_copies_small_data() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, &b"hello"[..]).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_recv_copy_size(5)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let body_data = async move {
+            let mut body = response.await.unwrap().into_body();
+            body.data().await.unwrap().unwrap()
+        };
+        let data = h2.drive(body_data).await;
+        assert_eq!(data, &b"hello"[..]);
+        assert!(data.is_unique());
+    };
+
+    join(srv, h2).await;
+}

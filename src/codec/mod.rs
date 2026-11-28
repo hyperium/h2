@@ -105,6 +105,11 @@ impl<T, B> Codec<T, B> {
         self.inner.set_max_header_list_size(val);
     }
 
+    /// Set the max payload size of received frames copied out of the read buffer.
+    pub fn set_max_recv_copy_size(&mut self, val: usize) {
+        self.inner.set_max_copy_size(val);
+    }
+
     /// Get a reference to the inner stream.
     #[cfg(feature = "unstable")]
     pub fn get_ref(&self) -> &T {

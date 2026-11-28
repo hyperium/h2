@@ -31,6 +31,44 @@ async fn read_data_no_padding() {
 }
 
 #[tokio::test]
+async fn read_data_shares_read_buffer_by_default() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            0, 0, 5, 0, 0, 0, 0, 0, 3,
+            "world",
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert!(!data.into_payload().is_unique());
+}
+
+#[tokio::test]
+async fn read_data_copies_small_payloads() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            0, 0, 6, 0, 0, 0, 0, 0, 3,
+            "world!",
+        ];
+    };
+    codec.set_max_recv_copy_size(5);
+
+    let small = poll_frame!(Data, codec).into_payload();
+    assert_eq!(small, &b"hello"[..]);
+    assert!(small.is_unique());
+
+    let large = poll_frame!(Data, codec).into_payload();
+    assert_eq!(large, &b"world!"[..]);
+    assert!(!large.is_unique());
+
+    assert_closed!(codec);
+}
+
+#[tokio::test]
 async fn read_data_empty_payload() {
     let mut codec = raw_codec! {
         read => [
