@@ -62,7 +62,7 @@ pub(super) struct Recv {
 pub(super) enum Event {
     Headers(peer::PollMessage),
     Data(DataEvent),
-    Trailers(HeaderMap),
+    Trailers(Box<HeaderMap>),
     InformationalHeaders(peer::PollMessage),
 }
 
@@ -308,7 +308,7 @@ impl Recv {
         use super::peer::PollMessage::*;
 
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Headers(Server(request))) => request,
+            Some(Event::Headers(Server(request))) => *request,
             _ => unreachable!("server stream queue must start with Headers"),
         }
     }
@@ -324,7 +324,7 @@ impl Recv {
         let mut ppp = stream.pending_push_promises.take();
         let pushed = ppp.pop(stream.store_mut()).map(|mut pushed| {
             match pushed.pending_recv.pop_front(&mut self.buffer) {
-                Some(Event::Headers(Server(headers))) => (headers, pushed.key()),
+                Some(Event::Headers(Server(headers))) => (*headers, pushed.key()),
                 // When frames are pushed into the queue, it is verified that
                 // the first frame is a HEADERS frame.
                 _ => panic!("Headers not set on pushed stream"),
@@ -356,7 +356,7 @@ impl Recv {
         // Skip over any interim informational headers to find the main response
         loop {
             match stream.pending_recv.pop_front(&mut self.buffer) {
-                Some(Event::Headers(Client(response))) => return Poll::Ready(Ok(response)),
+                Some(Event::Headers(Client(response))) => return Poll::Ready(Ok(*response)),
                 Some(Event::InformationalHeaders(_)) => {
                     tracing::trace!("Skipping informational response in poll_response - should be consumed via poll_informational; stream_id={:?}", stream.id);
                     continue;
@@ -399,7 +399,7 @@ impl Recv {
                 }
                 Event::InformationalHeaders(Client(response)) => {
                     // Found an informational response, return it
-                    return Poll::Ready(Some(Ok(response)));
+                    return Poll::Ready(Some(Ok(*response)));
                 }
                 other => {
                     // Not an informational response, put it back at the front
@@ -438,7 +438,7 @@ impl Recv {
         // Push the frame onto the stream's recv buffer
         stream
             .pending_recv
-            .push_back(&mut self.buffer, Event::Trailers(trailers));
+            .push_back(&mut self.buffer, Event::Trailers(Box::new(trailers)));
         stream.notify_recv();
 
         Ok(())
@@ -900,7 +900,7 @@ impl Recv {
         use super::peer::PollMessage::*;
         stream
             .pending_recv
-            .push_back(&mut self.buffer, Event::Headers(Server(req)));
+            .push_back(&mut self.buffer, Event::Headers(Server(Box::new(req))));
         stream.notify_recv();
         stream.notify_push();
         Ok(())
@@ -1280,7 +1280,7 @@ impl Recv {
         stream: &mut Stream,
     ) -> Poll<Option<Result<HeaderMap, proto::Error>>> {
         match stream.pending_recv.pop_front(&mut self.buffer) {
-            Some(Event::Trailers(trailers)) => Poll::Ready(Some(Ok(trailers))),
+            Some(Event::Trailers(trailers)) => Poll::Ready(Some(Ok(*trailers))),
             Some(event) => {
                 // Frame is not trailers.. not ready to poll trailers yet.
                 stream.pending_recv.push_front(&mut self.buffer, event);
