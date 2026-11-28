@@ -54,6 +54,8 @@ pub(crate) struct DynStreams<'a, B> {
 pub(crate) enum RecvOutcome {
     /// The frame was handled, including any intentional ignoring of it.
     Processed,
+    /// A validated server request was queued for accept.
+    RequestQueued(StreamId),
     /// The connection must send REFUSED_STREAM for this stream ID.
     Refused(StreamId),
 }
@@ -541,6 +543,7 @@ impl Inner {
         }
 
         let actions = &mut self.actions;
+        let mut request_queued = false;
 
         self.counts.transition(stream, |counts, stream| {
             tracing::trace!(
@@ -551,7 +554,10 @@ impl Inner {
 
             let res = if stream.state.is_recv_headers() {
                 match actions.recv.recv_headers(frame, stream, counts) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => {
+                        request_queued = peer.is_server();
+                        Ok(())
+                    },
                     Err(RecvHeaderBlockError::Oversize) => {
                         if peer.is_server() {
                             let mut resp = frame::Headers::new(
@@ -596,7 +602,11 @@ impl Inner {
             actions.reset_on_recv_stream_err_deferred(send_buffer, stream, counts, res)
         })?;
 
-        Ok(RecvOutcome::Processed)
+        Ok(if request_queued {
+            RecvOutcome::RequestQueued(id)
+        } else {
+            RecvOutcome::Processed
+        })
     }
 
     fn recv_data<B>(
