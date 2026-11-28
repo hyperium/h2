@@ -183,3 +183,61 @@ async fn user_notifies_when_connection_closes() {
         "broken pipe",
     );
 }
+
+#[tokio::test]
+async fn queued_request_flushes_before_shutdown_ping_ack() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (sent_tx, sent_rx) = oneshot::channel();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+
+        // Buffer GOAWAY(2^31-1) + PING into the pipe before the client polls
+        // the connection again, while the client queues a request in its send
+        // buffer. Per RFC 9113 §6.8, the server will commit last_stream_id on
+        // the PING ACK, so any stream already queued before GOAWAY was
+        // processed must arrive before the PING ACK.
+        srv.send_frame(frames::go_away(StreamId::MAX)).await;
+        srv.send_frame(frames::ping(frame::Ping::SHUTDOWN)).await;
+        ready_tx.send(()).unwrap();
+        sent_rx.await.unwrap();
+
+        srv.recv_frame(
+            frames::headers(1)
+                .request("POST", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(frames::ping(frame::Ping::SHUTDOWN).pong())
+            .await;
+        srv.send_frame(frames::go_away(1)).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::go_away(0)).await;
+        srv.recv_eof().await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::handshake(io).await.expect("client handshake");
+        conn.drive(util::yield_once()).await;
+
+        ready_rx.await.unwrap();
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let (resp, _) = client.send_request(req, true).expect("send_request");
+        sent_tx.send(()).unwrap();
+
+        let resp = conn.drive(resp).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        drop(client);
+        conn.await.expect("client");
+    };
+
+    join(srv, client).await;
+}

@@ -227,6 +227,13 @@ where
         let _e = self.inner.span.enter();
         let span = tracing::trace_span!("poll_ready");
         let _e = span.enter();
+        // After receiving a peer GOAWAY, flush any locally opened streams
+        // already queued in the send buffer before sending a PING ACK so a
+        // server performing RFC 9113 §6.8 two-step shutdown observes those
+        // streams before committing its final GOAWAY last_stream_id.
+        if self.inner.error.is_some() && self.inner.ping_pong.has_pending_pong() {
+            ready!(self.inner.streams.poll_complete(cx, &mut self.codec))?;
+        }
         // The order of these calls don't really matter too much
         ready!(self.inner.ping_pong.send_pending_pong(cx, &mut self.codec))?;
         ready!(self.inner.ping_pong.send_pending_ping(cx, &mut self.codec))?;
